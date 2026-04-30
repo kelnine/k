@@ -111,19 +111,21 @@ if showSD
         if array.size(supplyBoxes) > maxZones
             box.delete(array.shift(supplyBoxes))
 
-for i = array.size(demandBoxes) - 1 to 0
-    bx = array.get(demandBoxes, i)
-    btm = box.get_bottom(bx)
-    if close < btm
-        box.set_bgcolor(bx, color.new(color.gray, 90))
-        box.set_border_color(bx, color.new(color.gray, 70))
+if array.size(demandBoxes) > 0
+    for i = array.size(demandBoxes) - 1 to 0
+        bx = array.get(demandBoxes, i)
+        btm = box.get_bottom(bx)
+        if close < btm
+            box.set_bgcolor(bx, color.new(color.gray, 90))
+            box.set_border_color(bx, color.new(color.gray, 70))
 
-for i = array.size(supplyBoxes) - 1 to 0
-    bx = array.get(supplyBoxes, i)
-    top = box.get_top(bx)
-    if close > top
-        box.set_bgcolor(bx, color.new(color.gray, 90))
-        box.set_border_color(bx, color.new(color.gray, 70))
+if array.size(supplyBoxes) > 0
+    for i = array.size(supplyBoxes) - 1 to 0
+        bx = array.get(supplyBoxes, i)
+        top = box.get_top(bx)
+        if close > top
+            box.set_bgcolor(bx, color.new(color.gray, 90))
+            box.set_border_color(bx, color.new(color.gray, 70))
 
 //======================== Breakout Consolidation ========================//
 rangeHi = ta.highest(high, rangeLen)
