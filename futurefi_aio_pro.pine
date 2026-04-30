@@ -12,16 +12,11 @@ showEMAs            = input.bool(true, "Show EMA 9/21/50/200")
 showScanner         = input.bool(true, "Show Scanner")
 scannerTf           = input.timeframe("60", "Scanner Timeframe")
 
-sym1  = input.symbol("BINANCE:BTCUSDT", "Symbol 1")
-sym2  = input.symbol("BINANCE:ETHUSDT", "Symbol 2")
-sym3  = input.symbol("BINANCE:SOLUSDT", "Symbol 3")
-sym4  = input.symbol("BINANCE:BNBUSDT", "Symbol 4")
-sym5  = input.symbol("BINANCE:XRPUSDT", "Symbol 5")
-sym6  = input.symbol("BINANCE:ADAUSDT", "Symbol 6")
-sym7  = input.symbol("BINANCE:DOGEUSDT", "Symbol 7")
-sym8  = input.symbol("BINANCE:AVAXUSDT", "Symbol 8")
-sym9  = input.symbol("BINANCE:LINKUSDT", "Symbol 9")
-sym10 = input.symbol("BINANCE:MATICUSDT", "Symbol 10")
+sym1  = input.string("", "Symbol 1 (optional, e.g. NASDAQ:TSLA)")
+sym2  = input.string("", "Symbol 2 (optional)")
+sym3  = input.string("", "Symbol 3 (optional)")
+sym4  = input.string("", "Symbol 4 (optional)")
+sym5  = input.string("", "Symbol 5 (optional)")
 
 //======================== Settings ========================//
 pivotLen        = mode == "Scalp" ? 3 : 5
@@ -201,22 +196,28 @@ f_getRow(_sym) =>
     sig = f_signalText(t, s)
     [f_trendText(t), s, sig, f_colorTrend(t)]
 
-var table dash = table.new(position.top_right, 4, 11, border_width=1)
+var table dash = table.new(position.top_right, 4, 6, border_width=1)
 if showScanner and barstate.islast
     table.cell(dash, 0, 0, "Symbol", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dash, 1, 0, "Trend", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dash, 2, 0, "Structure", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dash, 3, 0, "Signal", bgcolor=color.new(color.black, 0), text_color=color.white)
 
-    syms = array.from(sym1, sym2, sym3, sym4, sym5, sym6, sym7, sym8, sym9, sym10)
+    syms = array.from(sym1, sym2, sym3, sym4, sym5)
     for r = 0 to array.size(syms) - 1
-        s = array.get(syms, r)
-        [tTxt, sTxt, sigTxt, tCol] = f_getRow(s)
+        s = str.trim(array.get(syms, r))
         row = r + 1
-        table.cell(dash, 0, row, s, text_color=color.white)
-        table.cell(dash, 1, row, tTxt, text_color=tCol)
-        table.cell(dash, 2, row, sTxt, text_color=color.white)
-        table.cell(dash, 3, row, sigTxt, text_color=sigTxt == "Long Bias" ? color.lime : sigTxt == "Short Bias" ? color.red : color.silver)
+        if str.length(s) > 0
+            [tTxt, sTxt, sigTxt, tCol] = f_getRow(s)
+            table.cell(dash, 0, row, s, text_color=color.white)
+            table.cell(dash, 1, row, tTxt, text_color=tCol)
+            table.cell(dash, 2, row, sTxt, text_color=color.white)
+            table.cell(dash, 3, row, sigTxt, text_color=sigTxt == "Long Bias" ? color.lime : sigTxt == "Short Bias" ? color.red : color.silver)
+        else
+            table.cell(dash, 0, row, "—", text_color=color.gray)
+            table.cell(dash, 1, row, "", text_color=color.gray)
+            table.cell(dash, 2, row, "", text_color=color.gray)
+            table.cell(dash, 3, row, "", text_color=color.gray)
 
 if (not showScanner) and barstate.islast
-    table.clear(dash, 0, 0, 3, 10)
+    table.clear(dash, 0, 0, 3, 5)
