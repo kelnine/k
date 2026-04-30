@@ -1,0 +1,724 @@
+//@version=6
+indicator("Future Fi — Live Pro (Refactored)", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=300)
+
+// ══════════════════════════════════════════════════════════════════════
+// MODE
+// ══════════════════════════════════════════════════════════════════════
+gMode = "⚙️ Mode"
+i_liveMode = input.bool(true, "Live Mode (clean chart)", group=gMode)
+i_debugMode = input.bool(false, "Debug Mode (extra labels)", group=gMode)
+
+// ══════════════════════════════════════════════════════════════════════
+// THEME
+// ══════════════════════════════════════════════════════════════════════
+gT = "🎨 Theme"
+i_cBull = input.color(#26A69A, "Bullish", group=gT)
+i_cBear = input.color(#7B1FA2, "Bearish", group=gT)
+i_cNeut = input.color(#90A4AE, "Neutral", group=gT)
+i_cBrand = input.color(#58A6FF, "Brand", group=gT)
+
+// ══════════════════════════════════════════════════════════════════════
+// EMA
+// ══════════════════════════════════════════════════════════════════════
+g5 = "📈 EMA"
+i_showEMA = input.bool(true, "Show EMAs", group=g5)
+i_showCld = input.bool(true, "Show Cloud", group=g5)
+i_ema1 = input.int(20, "Fast", group=g5, minval=2)
+i_ema2 = input.int(50, "Mid", group=g5, minval=2)
+i_ema3 = input.int(200, "Slow", group=g5, minval=2)
+i_cEma1 = input.color(#FFD700, "Fast", group=g5)
+i_cEma2 = input.color(#FF6B35, "Mid", group=g5)
+i_cEma3 = input.color(#4FC3F7, "Slow", group=g5)
+
+// ══════════════════════════════════════════════════════════════════════
+// SIGNALS
+// ══════════════════════════════════════════════════════════════════════
+g6 = "🚦 Signals"
+i_showSig = input.bool(true, "Show Signals", group=g6)
+i_minScore = input.int(5, "Min Score (1-9)", group=g6, minval=1, maxval=9)
+i_cooldown = input.int(30, "Cooldown (bars)", group=g6, minval=5, maxval=500)
+i_tpMode = input.string("Balanced", "TP Profile", group=g6, options=["Conservative", "Balanced", "Runner"])
+i_exitMode = input.string("ATR", "Target Engine", group=g6, options=["ATR", "Liquidity"])
+i_slMul = input.float(1.5, "SL ATR Multiplier", group=g6, minval=0.5, maxval=5.0, step=0.1)
+
+// ══════════════════════════════════════════════════════════════════════
+// STRUCTURE
+// ══════════════════════════════════════════════════════════════════════
+g7 = "📐 Structure"
+i_showStr = input.bool(true, "Show CHoCH/BOS", group=g7)
+i_showMS = input.bool(true, "Show HH/HL/LH/LL", group=g7)
+i_swLen = input.int(15, "Swing Length", group=g7, minval=2, maxval=50)
+i_msLen = input.int(10, "MS Pivot Length", group=g7, minval=2, maxval=30)
+i_maxLbl = input.int(8, "Max Structure Labels", group=g7, minval=1, maxval=30)
+
+// ══════════════════════════════════════════════════════════════════════
+// ORDER BLOCKS
+// ══════════════════════════════════════════════════════════════════════
+gOB = "📦 Order Blocks"
+i_showOB = input.bool(true, "Show OBs", group=gOB)
+i_obLen = input.int(8, "OB Swing Length", group=gOB, minval=2, maxval=30)
+i_maxOB = input.int(6, "Max OBs Each Side", group=gOB, minval=1, maxval=20)
+i_obRight = input.int(120, "Extend Right", group=gOB, minval=5, maxval=300)
+i_obInvalidClose = input.bool(true, "Invalidate OB on close through", group=gOB)
+i_cBullOB = input.color(color.new(#26A69A, 72), "Bull OB", group=gOB)
+i_cBearOB = input.color(color.new(#7B1FA2, 72), "Bear OB", group=gOB)
+
+// ══════════════════════════════════════════════════════════════════════
+// FVG
+// ══════════════════════════════════════════════════════════════════════
+g8 = "⚡ FVG"
+i_showFVG = input.bool(true, "Show FVG", group=g8)
+i_maxFVG = input.int(12, "Max FVGs", group=g8, minval=1, maxval=30)
+i_fvgNearATR = input.float(0.25, "Near threshold (ATR)", group=g8, minval=0.05, maxval=2.0, step=0.05)
+i_cFVGBull = input.color(color.new(#26A69A, 84), "Bull FVG", group=g8)
+i_cFVGBear = input.color(color.new(#7B1FA2, 84), "Bear FVG", group=g8)
+
+// ══════════════════════════════════════════════════════════════════════
+// SUPPLY & DEMAND
+// ══════════════════════════════════════════════════════════════════════
+g9 = "🟥🟩 S&D"
+i_showSD = input.bool(true, "Show S&D", group=g9)
+i_sdLen = input.int(15, "Zone Length", group=g9, minval=3, maxval=50)
+i_sdRight = input.int(100, "Extend Right", group=g9, minval=5, maxval=250)
+i_maxSD = input.int(6, "Max Zones Each Side", group=g9, minval=1, maxval=20)
+i_cSupply = input.color(color.new(#7B1FA2, 82), "Supply", group=g9)
+i_cDemand = input.color(color.new(#26A69A, 82), "Demand", group=g9)
+
+// ══════════════════════════════════════════════════════════════════════
+// PREMIUM / DISCOUNT
+// ══════════════════════════════════════════════════════════════════════
+g11 = "📊 P/D Zones"
+i_showPD = input.bool(true, "Show P/D", group=g11)
+i_pdLen = input.int(50, "Lookback", group=g11, minval=10, maxval=300)
+i_cPrem = input.color(color.new(#7B1FA2, 88), "Premium", group=g11)
+i_cDisc = input.color(color.new(#26A69A, 88), "Discount", group=g11)
+i_cEquil = input.color(color.new(#90A4AE, 80), "Equilibrium", group=g11)
+
+// ══════════════════════════════════════════════════════════════════════
+// PREVIOUS LEVELS
+// ══════════════════════════════════════════════════════════════════════
+g12 = "📅 Prev Levels"
+i_showPDHL = input.bool(true, "Prev Day H/L", group=g12)
+i_showPWHL = input.bool(false, "Prev Week H/L", group=g12)
+i_cPDH = input.color(#FF7043, "PDH", group=g12)
+i_cPDL = input.color(#42A5F5, "PDL", group=g12)
+i_prevR = input.int(120, "Extend Right", group=g12, minval=5, maxval=300)
+
+// ══════════════════════════════════════════════════════════════════════
+// DASHBOARDS
+// ══════════════════════════════════════════════════════════════════════
+g13 = "📊 Main Dashboard"
+i_showMain = input.bool(true, "Show Main Panel", group=g13)
+i_mainPos = input.string("Bottom Right", "Position", group=g13, options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"])
+i_mainSz = input.string("Small", "Size", group=g13, options=["Tiny", "Small", "Normal"])
+
+gSC = "🔭 Scanner"
+i_showScan = input.bool(true, "Show Scanner", group=gSC)
+i_scanPos = input.string("Top Left", "Position", group=gSC, options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"])
+i_scanSz = input.string("Tiny", "Size", group=gSC, options=["Tiny", "Small", "Normal"])
+i_scanTF = input.timeframe("60", "Scanner TF", group=gSC)
+
+// Symbols (kept compact)
+gS1 = "📋 Symbols"
+i_s01 = input.symbol("", "01", group=gS1)
+i_s02 = input.symbol("", "02", group=gS1)
+i_s03 = input.symbol("", "03", group=gS1)
+i_s04 = input.symbol("", "04", group=gS1)
+i_s05 = input.symbol("", "05", group=gS1)
+
+// ══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════════
+tPos(p) =>
+    switch p
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left" => position.bottom_left
+        "Middle Right" => position.middle_right
+        "Middle Left" => position.middle_left
+        => position.bottom_right
+
+tSz(s) =>
+    switch s
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        => size.small
+
+scoreGrade(sc) => sc >= 8 ? "A+" : sc >= 6 ? "A" : sc >= 5 ? "B" : sc >= 3 ? "C" : "D"
+
+f_keepLabel(_arr, _id, _max) =>
+    array.push(_arr, _id)
+    while array.size(_arr) > _max
+        old = array.shift(_arr)
+        label.delete(old)
+
+f_keepLine(_arr, _id, _max) =>
+    array.push(_arr, _id)
+    while array.size(_arr) > _max
+        old = array.shift(_arr)
+        line.delete(old)
+
+f_zoneNear(_top, _bot, _atrMul, _atr) =>
+    nearUp = _top + _atr * _atrMul
+    nearDn = _bot - _atr * _atrMul
+    close <= nearUp and close >= nearDn
+
+f_trimBoxes(_boxes, _max) =>
+    while array.size(_boxes) > _max
+        bx = array.shift(_boxes)
+        box.delete(bx)
+
+// ══════════════════════════════════════════════════════════════════════
+// CORE CALCS
+// ══════════════════════════════════════════════════════════════════════
+e1 = ta.ema(close, i_ema1)
+e2 = ta.ema(close, i_ema2)
+e3 = ta.ema(close, i_ema3)
+
+p_e1 = plot(i_showEMA ? e1 : na, "EMA Fast", color=i_cEma1, linewidth=1)
+p_e2 = plot(i_showEMA ? e2 : na, "EMA Mid", color=i_cEma2, linewidth=1)
+plot(i_showEMA ? e3 : na, "EMA Slow", color=i_cEma3, linewidth=2)
+fill(p_e1, p_e2, color=i_showCld ? (e1 > e2 ? color.new(i_cBull, 90) : color.new(i_cBear, 90)) : na)
+
+emaBull = e1 > e2 and e2 > e3
+emaBear = e1 < e2 and e2 < e3
+trendBull = close > e3
+trendBear = close < e3
+
+atr14 = ta.atr(14)
+roc10 = ta.roc(close, 10)
+momBull = roc10 > 0.2 and close > e2
+momBear = roc10 < -0.2 and close < e2
+
+// ══════════════════════════════════════════════════════════════════════
+// PREMIUM / DISCOUNT (stable object reuse)
+// ══════════════════════════════════════════════════════════════════════
+pdH = ta.highest(high, i_pdLen)
+pdL = ta.lowest(low, i_pdLen)
+pdMid = (pdH + pdL) * 0.5
+pdRng = math.max(pdH - pdL, syminfo.mintick)
+
+var box bPrem = na
+var box bDisc = na
+var box bEquil = na
+
+if barstate.isfirst
+    bPrem := box.new(bar_index, pdH, bar_index + 1, pdMid, bgcolor=i_cPrem, border_color=color.new(#7B1FA2, 55), border_width=1)
+    bDisc := box.new(bar_index, pdMid, bar_index + 1, pdL, bgcolor=i_cDisc, border_color=color.new(#26A69A, 55), border_width=1)
+    bEquil := box.new(bar_index, pdMid + pdRng * 0.015, bar_index + 1, pdMid - pdRng * 0.015, bgcolor=i_cEquil, border_color=color.new(#90A4AE, 55), border_width=1)
+
+if i_showPD
+    leftPd = bar_index - i_pdLen
+    rightPd = bar_index + 25
+    box.set_lefttop(bPrem, leftPd, pdH)
+    box.set_rightbottom(bPrem, rightPd, pdMid)
+    box.set_bgcolor(bPrem, i_cPrem)
+
+    box.set_lefttop(bDisc, leftPd, pdMid)
+    box.set_rightbottom(bDisc, rightPd, pdL)
+    box.set_bgcolor(bDisc, i_cDisc)
+
+    box.set_lefttop(bEquil, leftPd, pdMid + pdRng * 0.015)
+    box.set_rightbottom(bEquil, rightPd, pdMid - pdRng * 0.015)
+    box.set_bgcolor(bEquil, i_cEquil)
+else
+    box.set_bgcolor(bPrem, color.new(color.black, 100))
+    box.set_bgcolor(bDisc, color.new(color.black, 100))
+    box.set_bgcolor(bEquil, color.new(color.black, 100))
+
+inPrem = close > pdMid + pdRng * 0.1
+inDisc = close < pdMid - pdRng * 0.1
+
+// ══════════════════════════════════════════════════════════════════════
+// PREV DAY/WEEK LEVELS (object reuse)
+// ══════════════════════════════════════════════════════════════════════
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+pwl = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+var line lnPDH = na
+var line lnPDL = na
+var line lnPWH = na
+var line lnPWL = na
+
+if barstate.isfirst
+    lnPDH := line.new(bar_index, close, bar_index + 1, close, color=i_cPDH, style=line.style_dashed)
+    lnPDL := line.new(bar_index, close, bar_index + 1, close, color=i_cPDL, style=line.style_dashed)
+    lnPWH := line.new(bar_index, close, bar_index + 1, close, color=color.new(i_cPDH, 35), style=line.style_dotted)
+    lnPWL := line.new(bar_index, close, bar_index + 1, close, color=color.new(i_cPDL, 35), style=line.style_dotted)
+
+if i_showPDHL and not na(pdh) and not na(pdl)
+    line.set_xy1(lnPDH, bar_index - 20, pdh)
+    line.set_xy2(lnPDH, bar_index + i_prevR, pdh)
+    line.set_color(lnPDH, i_cPDH)
+    line.set_xy1(lnPDL, bar_index - 20, pdl)
+    line.set_xy2(lnPDL, bar_index + i_prevR, pdl)
+    line.set_color(lnPDL, i_cPDL)
+else
+    line.set_color(lnPDH, color.new(color.black, 100))
+    line.set_color(lnPDL, color.new(color.black, 100))
+
+if i_showPWHL and not na(pwh) and not na(pwl)
+    line.set_xy1(lnPWH, bar_index - 20, pwh)
+    line.set_xy2(lnPWH, bar_index + i_prevR, pwh)
+    line.set_color(lnPWH, color.new(i_cPDH, 35))
+    line.set_xy1(lnPWL, bar_index - 20, pwl)
+    line.set_xy2(lnPWL, bar_index + i_prevR, pwl)
+    line.set_color(lnPWL, color.new(i_cPDL, 35))
+else
+    line.set_color(lnPWH, color.new(color.black, 100))
+    line.set_color(lnPWL, color.new(color.black, 100))
+
+// ══════════════════════════════════════════════════════════════════════
+// STRUCTURE + LABEL/LINE CLEANUP
+// ══════════════════════════════════════════════════════════════════════
+swH = ta.pivothigh(high, i_swLen, i_swLen)
+swL = ta.pivotlow(low, i_swLen, i_swLen)
+msH = ta.pivothigh(high, i_msLen, i_msLen)
+msL = ta.pivotlow(low, i_msLen, i_msLen)
+
+var float lastHH = na
+var float lastLL = na
+var float prevPH = na
+var float prevPL = na
+var bool structBull = false
+var bool structBear = false
+
+var label[] structLabels = array.new_label()
+var line[] structLines = array.new_line()
+
+if i_showStr and not na(swH)
+    if na(lastHH) or swH > lastHH
+        lastHH := swH
+    else
+        lb = label.new(bar_index - i_swLen, swH, "CHoCH", color=color.new(#FF9800, 15), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        ln = line.new(bar_index - i_swLen, swH, bar_index, swH, color=color.new(#FF9800, 55), width=1, style=line.style_dashed)
+        f_keepLabel(structLabels, lb, i_maxLbl)
+        f_keepLine(structLines, ln, i_maxLbl)
+
+if i_showStr and not na(swL)
+    if na(lastLL) or swL < lastLL
+        lastLL := swL
+    else
+        lb = label.new(bar_index - i_swLen, swL, "BOS", color=color.new(#9C27B0, 15), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        ln = line.new(bar_index - i_swLen, swL, bar_index, swL, color=color.new(#9C27B0, 55), width=1, style=line.style_dashed)
+        f_keepLabel(structLabels, lb, i_maxLbl)
+        f_keepLine(structLines, ln, i_maxLbl)
+
+if not na(msH)
+    txtH = na(prevPH) ? "HH" : msH > prevPH ? "HH" : msH < prevPH ? "LH" : "EQH"
+    if txtH == "HH"
+        structBull := true
+        structBear := false
+    if txtH == "LH"
+        structBear := true
+        structBull := false
+    if i_showMS and not i_liveMode and txtH != "EQH"
+        lb = label.new(bar_index - i_msLen, msH, txtH, color=color.new(txtH == "HH" ? i_cBull : i_cBear, 15), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        f_keepLabel(structLabels, lb, i_maxLbl)
+    prevPH := msH
+
+if not na(msL)
+    txtL = na(prevPL) ? "HL" : msL > prevPL ? "HL" : msL < prevPL ? "LL" : "EQL"
+    if txtL == "HL"
+        structBull := true
+        structBear := false
+    if txtL == "LL"
+        structBear := true
+        structBull := false
+    if i_showMS and not i_liveMode and txtL != "EQL"
+        lb = label.new(bar_index - i_msLen, msL, txtL, color=color.new(txtL == "HL" ? i_cBull : i_cBear, 15), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        f_keepLabel(structLabels, lb, i_maxLbl)
+    prevPL := msL
+
+// ══════════════════════════════════════════════════════════════════════
+// ORDER BLOCKS (active zone arrays + cleanup)
+// ══════════════════════════════════════════════════════════════════════
+obPH = ta.pivothigh(high, i_obLen, i_obLen)
+obPL = ta.pivotlow(low, i_obLen, i_obLen)
+
+var box[] obBoxesBull = array.new_box()
+var float[] obTopBull = array.new_float()
+var float[] obBotBull = array.new_float()
+var bool[] obActiveBull = array.new_bool()
+
+var box[] obBoxesBear = array.new_box()
+var float[] obTopBear = array.new_float()
+var float[] obBotBear = array.new_float()
+var bool[] obActiveBear = array.new_bool()
+
+if i_showOB and not na(obPL)
+    found = -1
+    for j = 1 to 5
+        idx = i_obLen + j
+        if found == -1 and idx <= 5000 and open[idx] > close[idx]
+            found := j
+    if found != -1
+        idx2 = i_obLen + found
+        top = high[idx2]
+        bot = low[idx2]
+        bx = box.new(bar_index - idx2, top, bar_index + i_obRight, bot, bgcolor=i_cBullOB, border_color=color.new(i_cBull, 0), border_width=1)
+        array.push(obBoxesBull, bx)
+        array.push(obTopBull, top)
+        array.push(obBotBull, bot)
+        array.push(obActiveBull, true)
+        while array.size(obBoxesBull) > i_maxOB
+            oldb = array.shift(obBoxesBull)
+            box.delete(oldb)
+            array.shift(obTopBull)
+            array.shift(obBotBull)
+            array.shift(obActiveBull)
+
+if i_showOB and not na(obPH)
+    found = -1
+    for j = 1 to 5
+        idx = i_obLen + j
+        if found == -1 and idx <= 5000 and close[idx] > open[idx]
+            found := j
+    if found != -1
+        idx2 = i_obLen + found
+        top = high[idx2]
+        bot = low[idx2]
+        bx = box.new(bar_index - idx2, top, bar_index + i_obRight, bot, bgcolor=i_cBearOB, border_color=color.new(i_cBear, 0), border_width=1)
+        array.push(obBoxesBear, bx)
+        array.push(obTopBear, top)
+        array.push(obBotBear, bot)
+        array.push(obActiveBear, true)
+        while array.size(obBoxesBear) > i_maxOB
+            oldb = array.shift(obBoxesBear)
+            box.delete(oldb)
+            array.shift(obTopBear)
+            array.shift(obBotBear)
+            array.shift(obActiveBear)
+
+if array.size(obBoxesBull) > 0
+    for i = 0 to array.size(obBoxesBull) - 1
+        top = array.get(obTopBull, i)
+        bot = array.get(obBotBull, i)
+        bx = array.get(obBoxesBull, i)
+        isAct = array.get(obActiveBull, i)
+        invalid = i_obInvalidClose ? close < bot : low < bot
+        if isAct and invalid
+            array.set(obActiveBull, i, false)
+            box.set_bgcolor(bx, color.new(i_cBullOB, 30))
+        box.set_right(bx, bar_index + i_obRight)
+
+if array.size(obBoxesBear) > 0
+    for i = 0 to array.size(obBoxesBear) - 1
+        top = array.get(obTopBear, i)
+        bot = array.get(obBotBear, i)
+        bx = array.get(obBoxesBear, i)
+        isAct = array.get(obActiveBear, i)
+        invalid = i_obInvalidClose ? close > top : high > top
+        if isAct and invalid
+            array.set(obActiveBear, i, false)
+            box.set_bgcolor(bx, color.new(i_cBearOB, 30))
+        box.set_right(bx, bar_index + i_obRight)
+
+inBullOB = false
+inBearOB = false
+if array.size(obBoxesBull) > 0
+    for i = 0 to array.size(obBoxesBull) - 1
+        if array.get(obActiveBull, i)
+            top = array.get(obTopBull, i)
+            bot = array.get(obBotBull, i)
+            inBullOB := inBullOB or f_zoneNear(top, bot, 0.10, atr14)
+
+if array.size(obBoxesBear) > 0
+    for i = 0 to array.size(obBoxesBear) - 1
+        if array.get(obActiveBear, i)
+            top = array.get(obTopBear, i)
+            bot = array.get(obBotBear, i)
+            inBearOB := inBearOB or f_zoneNear(top, bot, 0.10, atr14)
+
+// ══════════════════════════════════════════════════════════════════════
+// FVG (active state only when live/near)
+// ══════════════════════════════════════════════════════════════════════
+var box[] fvgBoxes = array.new_box()
+var float[] fvgTop = array.new_float()
+var float[] fvgBot = array.new_float()
+var bool[] fvgBull = array.new_bool()
+var bool[] fvgActive = array.new_bool()
+
+bullGap = low > high[2]
+bearGap = high < low[2]
+
+if i_showFVG and bullGap
+    top = low
+    bot = high[2]
+    bx = box.new(bar_index - 2, top, bar_index + i_obRight, bot, bgcolor=i_cFVGBull, border_color=color.new(i_cBull, 0), border_width=1)
+    array.push(fvgBoxes, bx)
+    array.push(fvgTop, top)
+    array.push(fvgBot, bot)
+    array.push(fvgBull, true)
+    array.push(fvgActive, true)
+
+if i_showFVG and bearGap
+    top = low[2]
+    bot = high
+    bx = box.new(bar_index - 2, top, bar_index + i_obRight, bot, bgcolor=i_cFVGBear, border_color=color.new(i_cBear, 0), border_width=1)
+    array.push(fvgBoxes, bx)
+    array.push(fvgTop, top)
+    array.push(fvgBot, bot)
+    array.push(fvgBull, false)
+    array.push(fvgActive, true)
+
+while array.size(fvgBoxes) > i_maxFVG
+    old = array.shift(fvgBoxes)
+    box.delete(old)
+    array.shift(fvgTop)
+    array.shift(fvgBot)
+    array.shift(fvgBull)
+    array.shift(fvgActive)
+
+nearBullFVG = false
+nearBearFVG = false
+if array.size(fvgBoxes) > 0
+    for i = 0 to array.size(fvgBoxes) - 1
+        bx = array.get(fvgBoxes, i)
+        top = array.get(fvgTop, i)
+        bot = array.get(fvgBot, i)
+        isBull = array.get(fvgBull, i)
+        active = array.get(fvgActive, i)
+        mitigated = low <= bot and high >= top
+        if active and mitigated
+            array.set(fvgActive, i, false)
+            box.set_bgcolor(bx, color.new(isBull ? i_cFVGBull : i_cFVGBear, 40))
+        box.set_right(bx, bar_index + i_obRight)
+
+        nowActive = array.get(fvgActive, i)
+        if nowActive
+            isNear = f_zoneNear(top, bot, i_fvgNearATR, atr14)
+            if isBull
+                nearBullFVG := nearBullFVG or isNear
+            else
+                nearBearFVG := nearBearFVG or isNear
+
+// ══════════════════════════════════════════════════════════════════════
+// SUPPLY / DEMAND (active arrays + capped)
+// ══════════════════════════════════════════════════════════════════════
+var box[] sdSupply = array.new_box()
+var float[] sdSupTop = array.new_float()
+var float[] sdSupBot = array.new_float()
+var bool[] sdSupActive = array.new_bool()
+
+var box[] sdDemand = array.new_box()
+var float[] sdDemTop = array.new_float()
+var float[] sdDemBot = array.new_float()
+var bool[] sdDemActive = array.new_bool()
+
+sdPH = ta.pivothigh(high, i_sdLen, i_sdLen)
+sdPL = ta.pivotlow(low, i_sdLen, i_sdLen)
+
+if i_showSD and not na(sdPH)
+    t = high[i_sdLen]
+    b = math.max(math.max(open[i_sdLen], close[i_sdLen]), low[i_sdLen])
+    bx = box.new(bar_index - i_sdLen, t, bar_index + i_sdRight, b, bgcolor=i_cSupply, border_color=color.new(i_cBear, 20), border_width=1)
+    array.push(sdSupply, bx)
+    array.push(sdSupTop, t)
+    array.push(sdSupBot, b)
+    array.push(sdSupActive, true)
+    while array.size(sdSupply) > i_maxSD
+        old = array.shift(sdSupply)
+        box.delete(old)
+        array.shift(sdSupTop)
+        array.shift(sdSupBot)
+        array.shift(sdSupActive)
+
+if i_showSD and not na(sdPL)
+    t = math.min(math.min(open[i_sdLen], close[i_sdLen]), high[i_sdLen])
+    b = low[i_sdLen]
+    bx = box.new(bar_index - i_sdLen, t, bar_index + i_sdRight, b, bgcolor=i_cDemand, border_color=color.new(i_cBull, 20), border_width=1)
+    array.push(sdDemand, bx)
+    array.push(sdDemTop, t)
+    array.push(sdDemBot, b)
+    array.push(sdDemActive, true)
+    while array.size(sdDemand) > i_maxSD
+        old = array.shift(sdDemand)
+        box.delete(old)
+        array.shift(sdDemTop)
+        array.shift(sdDemBot)
+        array.shift(sdDemActive)
+
+if array.size(sdSupply) > 0
+    for i = 0 to array.size(sdSupply) - 1
+        bx = array.get(sdSupply, i)
+        top = array.get(sdSupTop, i)
+        bot = array.get(sdSupBot, i)
+        act = array.get(sdSupActive, i)
+        if act and high > top
+            array.set(sdSupActive, i, false)
+            box.set_bgcolor(bx, color.new(i_cSupply, 35))
+        box.set_right(bx, bar_index + i_sdRight)
+
+if array.size(sdDemand) > 0
+    for i = 0 to array.size(sdDemand) - 1
+        bx = array.get(sdDemand, i)
+        top = array.get(sdDemTop, i)
+        bot = array.get(sdDemBot, i)
+        act = array.get(sdDemActive, i)
+        if act and low < bot
+            array.set(sdDemActive, i, false)
+            box.set_bgcolor(bx, color.new(i_cDemand, 35))
+        box.set_right(bx, bar_index + i_sdRight)
+
+inSupply = false
+inDemand = false
+if array.size(sdSupply) > 0
+    for i = 0 to array.size(sdSupply) - 1
+        if array.get(sdSupActive, i)
+            inSupply := inSupply or f_zoneNear(array.get(sdSupTop, i), array.get(sdSupBot, i), 0.1, atr14)
+if array.size(sdDemand) > 0
+    for i = 0 to array.size(sdDemand) - 1
+        if array.get(sdDemActive, i)
+            inDemand := inDemand or f_zoneNear(array.get(sdDemTop, i), array.get(sdDemBot, i), 0.1, atr14)
+
+// ══════════════════════════════════════════════════════════════════════
+// SIGNAL ENGINE (cooldown + realistic exits)
+// ══════════════════════════════════════════════════════════════════════
+longScore = 0
+shortScore = 0
+
+longScore += emaBull ? 2 : 0
+longScore += trendBull ? 1 : 0
+longScore += momBull ? 1 : 0
+longScore += structBull ? 1 : 0
+longScore += inBullOB ? 2 : 0
+longScore += nearBullFVG ? 1 : 0
+longScore += inDemand ? 1 : 0
+longScore += inDisc ? 1 : 0
+
+shortScore += emaBear ? 2 : 0
+shortScore += trendBear ? 1 : 0
+shortScore += momBear ? 1 : 0
+shortScore += structBear ? 1 : 0
+shortScore += inBearOB ? 2 : 0
+shortScore += nearBearFVG ? 1 : 0
+shortScore += inSupply ? 1 : 0
+shortScore += inPrem ? 1 : 0
+
+wantLong = longScore >= i_minScore and longScore > shortScore
+wantShort = shortScore >= i_minScore and shortScore > longScore
+
+var int lastSignalBar = na
+canSignal = na(lastSignalBar) or bar_index - lastSignalBar >= i_cooldown
+
+longTrig = i_showSig and canSignal and wantLong
+shortTrig = i_showSig and canSignal and wantShort
+if longTrig or shortTrig
+    lastSignalBar := bar_index
+
+plotshape(longTrig, title="BUY", style=shape.triangleup, location=location.belowbar, color=i_cBull, text="BUY", textcolor=color.white, size=size.tiny)
+plotshape(shortTrig, title="SELL", style=shape.triangledown, location=location.abovebar, color=i_cBear, text="SELL", textcolor=color.white, size=size.tiny)
+
+riskMul = i_tpMode == "Conservative" ? 1.0 : i_tpMode == "Balanced" ? 1.5 : 2.2
+reward2Mul = i_tpMode == "Conservative" ? 1.8 : i_tpMode == "Balanced" ? 2.5 : 3.6
+
+liqLongTP1 = not na(pdh) ? pdh : close + atr14 * riskMul
+liqLongTP2 = not na(pwh) ? pwh : close + atr14 * reward2Mul
+liqShortTP1 = not na(pdl) ? pdl : close - atr14 * riskMul
+liqShortTP2 = not na(pwl) ? pwl : close - atr14 * reward2Mul
+
+longEntry = close
+shortEntry = close
+longSL = close - atr14 * i_slMul
+shortSL = close + atr14 * i_slMul
+
+longTP1 = i_exitMode == "ATR" ? close + atr14 * riskMul : liqLongTP1
+longTP2 = i_exitMode == "ATR" ? close + atr14 * reward2Mul : liqLongTP2
+shortTP1 = i_exitMode == "ATR" ? close - atr14 * riskMul : liqShortTP1
+shortTP2 = i_exitMode == "ATR" ? close - atr14 * reward2Mul : liqShortTP2
+
+var line lnEntry = na
+var line lnSL = na
+var line lnTP1 = na
+var line lnTP2 = na
+
+if barstate.isfirst
+    lnEntry := line.new(bar_index, close, bar_index + 1, close, color=i_cBrand, width=1)
+    lnSL := line.new(bar_index, close, bar_index + 1, close, color=color.new(color.red, 0), width=1)
+    lnTP1 := line.new(bar_index, close, bar_index + 1, close, color=color.new(i_cBull, 0), width=1)
+    lnTP2 := line.new(bar_index, close, bar_index + 1, close, color=color.new(i_cBull, 25), width=1)
+
+if longTrig
+    line.set_xy1(lnEntry, bar_index, longEntry)
+    line.set_xy2(lnEntry, bar_index + i_prevR / 2, longEntry)
+    line.set_xy1(lnSL, bar_index, longSL)
+    line.set_xy2(lnSL, bar_index + i_prevR / 2, longSL)
+    line.set_xy1(lnTP1, bar_index, longTP1)
+    line.set_xy2(lnTP1, bar_index + i_prevR / 2, longTP1)
+    line.set_xy1(lnTP2, bar_index, longTP2)
+    line.set_xy2(lnTP2, bar_index + i_prevR / 2, longTP2)
+    line.set_color(lnTP1, color.new(i_cBull, 0))
+    line.set_color(lnTP2, color.new(i_cBull, 25))
+
+if shortTrig
+    line.set_xy1(lnEntry, bar_index, shortEntry)
+    line.set_xy2(lnEntry, bar_index + i_prevR / 2, shortEntry)
+    line.set_xy1(lnSL, bar_index, shortSL)
+    line.set_xy2(lnSL, bar_index + i_prevR / 2, shortSL)
+    line.set_xy1(lnTP1, bar_index, shortTP1)
+    line.set_xy2(lnTP1, bar_index + i_prevR / 2, shortTP1)
+    line.set_xy1(lnTP2, bar_index, shortTP2)
+    line.set_xy2(lnTP2, bar_index + i_prevR / 2, shortTP2)
+    line.set_color(lnTP1, color.new(i_cBear, 0))
+    line.set_color(lnTP2, color.new(i_cBear, 25))
+
+// ══════════════════════════════════════════════════════════════════════
+// DASHBOARD + SCANNER
+// ══════════════════════════════════════════════════════════════════════
+var table mainTb = table.new(tPos(i_mainPos), 2, 8, frame_width=1, frame_color=color.new(i_cBrand, 60), border_width=1)
+if barstate.islast and i_showMain
+    table.cell(mainTb, 0, 0, "Future Fi", bgcolor=color.new(i_cBrand, 80), text_color=color.white, text_size=tSz(i_mainSz))
+    table.cell(mainTb, 1, 0, "Live Pro", bgcolor=color.new(i_cBrand, 80), text_color=color.white, text_size=tSz(i_mainSz))
+    table.cell(mainTb, 0, 1, "Trend")
+    table.cell(mainTb, 1, 1, emaBull ? "Bull" : emaBear ? "Bear" : "Mixed", text_color=emaBull ? i_cBull : emaBear ? i_cBear : i_cNeut)
+    table.cell(mainTb, 0, 2, "Structure")
+    table.cell(mainTb, 1, 2, structBull ? "Bullish" : structBear ? "Bearish" : "Range", text_color=structBull ? i_cBull : structBear ? i_cBear : i_cNeut)
+    table.cell(mainTb, 0, 3, "Zone")
+    table.cell(mainTb, 1, 3, inDisc ? "Discount" : inPrem ? "Premium" : "Equilibrium", text_color=inDisc ? i_cBull : inPrem ? i_cBear : i_cNeut)
+    table.cell(mainTb, 0, 4, "FVG")
+    table.cell(mainTb, 1, 4, nearBullFVG ? "Bull Near" : nearBearFVG ? "Bear Near" : "None", text_color=nearBullFVG ? i_cBull : nearBearFVG ? i_cBear : i_cNeut)
+    table.cell(mainTb, 0, 5, "OB")
+    table.cell(mainTb, 1, 5, inBullOB ? "Bull Zone" : inBearOB ? "Bear Zone" : "None", text_color=inBullOB ? i_cBull : inBearOB ? i_cBear : i_cNeut)
+    table.cell(mainTb, 0, 6, "Long/Short")
+    table.cell(mainTb, 1, 6, str.tostring(longScore) + "/" + str.tostring(shortScore), text_color=color.white)
+    table.cell(mainTb, 0, 7, "Grade")
+    table.cell(mainTb, 1, 7, scoreGrade(math.max(longScore, shortScore)), text_color=color.white)
+
+scannerScore(sym) =>
+    c = request.security(sym, i_scanTF, close)
+    eFast = request.security(sym, i_scanTF, ta.ema(close, i_ema1))
+    eMid = request.security(sym, i_scanTF, ta.ema(close, i_ema2))
+    eSlow = request.security(sym, i_scanTF, ta.ema(close, i_ema3))
+    rc = request.security(sym, i_scanTF, ta.roc(close, 10))
+    sc = 0
+    sc += eFast > eMid and eMid > eSlow ? 2 : 0
+    sc += c > eSlow ? 1 : 0
+    sc += rc > 0 ? 1 : 0
+    sc
+
+var table scanTb = table.new(tPos(i_scanPos), 2, 6, frame_width=1, frame_color=color.new(i_cBrand, 60), border_width=1)
+if barstate.islast and i_showScan
+    syms = array.from(i_s01, i_s02, i_s03, i_s04, i_s05)
+    table.cell(scanTb, 0, 0, "Scanner", bgcolor=color.new(i_cBrand, 80), text_color=color.white, text_size=tSz(i_scanSz))
+    table.cell(scanTb, 1, 0, i_scanTF, bgcolor=color.new(i_cBrand, 80), text_color=color.white, text_size=tSz(i_scanSz))
+    for r = 0 to 4
+        s = array.get(syms, r)
+        txtSym = s == "" ? "—" : s
+        sc = s == "" ? na : scannerScore(s)
+        bias = na(sc) ? "-" : sc >= 3 ? "Bull" : sc <= 1 ? "Bear" : "Mix"
+        bcol = na(sc) ? i_cNeut : sc >= 3 ? i_cBull : sc <= 1 ? i_cBear : i_cNeut
+        table.cell(scanTb, 0, r + 1, txtSym, text_color=color.white, text_size=tSz(i_scanSz))
+        table.cell(scanTb, 1, r + 1, bias, text_color=bcol, text_size=tSz(i_scanSz))
+
+// ══════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════
+alertcondition(longTrig, "Future Fi Long", "Future Fi Long setup triggered")
+alertcondition(shortTrig, "Future Fi Short", "Future Fi Short setup triggered")
+alertcondition(nearBullFVG or nearBearFVG, "Future Fi FVG Near", "Price is near an active FVG")
+alertcondition(inBullOB or inBearOB, "Future Fi OB Reaction", "Price is reacting at an active Order Block")
