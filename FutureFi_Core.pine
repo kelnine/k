@@ -102,22 +102,26 @@ while array.size(bearOB) > zoneKeep
     box.delete(array.pop(bearOB))
 
 // extend/refresh right side lightly
-for i = 0 to array.size(bullOB) - 1
-    bx = array.get(bullOB, i)
-    box.set_right(bx, bar_index + 20)
-for i = 0 to array.size(bearOB) - 1
-    bx = array.get(bearOB, i)
-    box.set_right(bx, bar_index + 20)
+if array.size(bullOB) > 0
+    for i = 0 to array.size(bullOB) - 1
+        bx = array.get(bullOB, i)
+        box.set_right(bx, bar_index + 20)
+if array.size(bearOB) > 0
+    for i = 0 to array.size(bearOB) - 1
+        bx = array.get(bearOB, i)
+        box.set_right(bx, bar_index + 20)
 
 inBullOB = false
-for i = 0 to array.size(bullOB) - 1
-    bx = array.get(bullOB, i)
-    inBullOB := inBullOB or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
+if array.size(bullOB) > 0
+    for i = 0 to array.size(bullOB) - 1
+        bx = array.get(bullOB, i)
+        inBullOB := inBullOB or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
 
 inBearOB = false
-for i = 0 to array.size(bearOB) - 1
-    bx = array.get(bearOB, i)
-    inBearOB := inBearOB or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
+if array.size(bearOB) > 0
+    for i = 0 to array.size(bearOB) - 1
+        bx = array.get(bearOB, i)
+        inBearOB := inBearOB or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
 
 //==================== FVG + SUPPLY/DEMAND ====================
 var box[] bullFVG = array.new_box()
@@ -139,14 +143,16 @@ while array.size(bearFVG) > zoneKeep
     box.delete(array.pop(bearFVG))
 
 inBullFVG = false
-for i = 0 to array.size(bullFVG) - 1
-    bx = array.get(bullFVG, i)
-    inBullFVG := inBullFVG or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
+if array.size(bullFVG) > 0
+    for i = 0 to array.size(bullFVG) - 1
+        bx = array.get(bullFVG, i)
+        inBullFVG := inBullFVG or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
 
 inBearFVG = false
-for i = 0 to array.size(bearFVG) - 1
-    bx = array.get(bearFVG, i)
-    inBearFVG := inBearFVG or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
+if array.size(bearFVG) > 0
+    for i = 0 to array.size(bearFVG) - 1
+        bx = array.get(bearFVG, i)
+        inBearFVG := inBearFVG or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
 
 //==================== CONFLUENCE SCORING ====================
 longScore = 0
