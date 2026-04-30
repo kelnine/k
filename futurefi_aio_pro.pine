@@ -1,0 +1,222 @@
+//@version=6
+indicator("FutureFi AIO Pro — SMC + Breakout + Supply/Demand Scanner", overlay=true, max_boxes_count=80, max_labels_count=120, max_lines_count=120)
+
+//======================== Inputs ========================//
+mode                = input.string("Scalp", "Mode", options=["Scalp", "Swing"])
+cleanMode           = input.bool(true, "Clean Mode")
+showSD              = input.bool(true, "Show Supply/Demand Zones")
+showStructure       = input.bool(true, "Show BOS/CHOCH")
+showBreakout        = input.bool(true, "Show Breakout Boxes")
+showPrevLevels      = input.bool(true, "Show Prev Day/Week Levels")
+showEMAs            = input.bool(true, "Show EMA 9/21/50/200")
+showScanner         = input.bool(true, "Show Scanner")
+scannerTf           = input.timeframe("60", "Scanner Timeframe")
+
+sym1  = input.symbol("BINANCE:BTCUSDT", "Symbol 1")
+sym2  = input.symbol("BINANCE:ETHUSDT", "Symbol 2")
+sym3  = input.symbol("BINANCE:SOLUSDT", "Symbol 3")
+sym4  = input.symbol("BINANCE:BNBUSDT", "Symbol 4")
+sym5  = input.symbol("BINANCE:XRPUSDT", "Symbol 5")
+sym6  = input.symbol("BINANCE:ADAUSDT", "Symbol 6")
+sym7  = input.symbol("BINANCE:DOGEUSDT", "Symbol 7")
+sym8  = input.symbol("BINANCE:AVAXUSDT", "Symbol 8")
+sym9  = input.symbol("BINANCE:LINKUSDT", "Symbol 9")
+sym10 = input.symbol("BINANCE:MATICUSDT", "Symbol 10")
+
+//======================== Settings ========================//
+pivotLen        = mode == "Scalp" ? 3 : 5
+atrLen          = mode == "Scalp" ? 14 : 21
+dispMult        = mode == "Scalp" ? 1.2 : 1.5
+rangeLen        = mode == "Scalp" ? 12 : 20
+compressMult    = mode == "Scalp" ? 1.0 : 0.8
+volLen          = 20
+volMult         = 1.2
+maxZones        = cleanMode ? 6 : 12
+maxStructLabels = cleanMode ? 24 : 60
+
+//======================== Core Series ========================//
+ema9   = ta.ema(close, 9)
+ema21  = ta.ema(close, 21)
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+atrv   = ta.atr(atrLen)
+
+trendBull = ema50 > ema200 and close > ema50
+trendBear = ema50 < ema200 and close < ema50
+trendState = trendBull ? 1 : trendBear ? -1 : 0
+
+//======================== Helpers ========================//
+f_trendText(_state) =>
+    _state == 1 ? "Bullish" : _state == -1 ? "Bearish" : "Neutral"
+
+f_signalText(_trend, _struct) =>
+    (_trend == 1 and (_struct == "BOS↑" or _struct == "CHOCH↑")) ? "Long Bias" :
+     (_trend == -1 and (_struct == "BOS↓" or _struct == "CHOCH↓")) ? "Short Bias" : "Wait"
+
+f_colorTrend(_state) =>
+    _state == 1 ? color.new(color.teal, 0) : _state == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+//======================== Structure: BOS/CHOCH ========================//
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+var int mktState = 0
+bosUp   = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+bosDown = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+chochUp   = mktState == -1 and bosUp
+chochDown = mktState == 1 and bosDown
+
+if bosUp
+    mktState := 1
+if bosDown
+    mktState := -1
+
+var label[] structLabels = array.new_label()
+if showStructure
+    if bosUp or bosDown
+        txt = chochUp ? "CHOCH↑" : chochDown ? "CHOCH↓" : bosUp ? "BOS↑" : "BOS↓"
+        y   = bosUp ? high : low
+        clr = bosUp ? color.new(color.teal, 0) : color.new(color.red, 0)
+        lb = label.new(bar_index, y, txt, style=label.style_label_down, textcolor=color.white, color=color.new(clr, 65), size=size.tiny)
+        if bosDown
+            label.set_style(lb, label.style_label_up)
+        array.push(structLabels, lb)
+        if array.size(structLabels) > maxStructLabels
+            label.delete(array.shift(structLabels))
+
+structText = chochUp ? "CHOCH↑" : chochDown ? "CHOCH↓" : bosUp ? "BOS↑" : bosDown ? "BOS↓" : "None"
+
+//======================== Supply / Demand Zones ========================//
+var box[] demandBoxes = array.new_box()
+var box[] supplyBoxes = array.new_box()
+
+bullDisp = close - open > atrv * dispMult
+bearDisp = open - close > atrv * dispMult
+
+if showSD
+    if not na(pl) and bullDisp
+        zTop = math.max(open, close)
+        zBot = low
+        b = box.new(bar_index, zTop, bar_index + 1, zBot, bgcolor=color.new(color.teal, 82), border_color=color.new(color.teal, 30), extend=extend.right)
+        array.push(demandBoxes, b)
+        if array.size(demandBoxes) > maxZones
+            box.delete(array.shift(demandBoxes))
+    if not na(ph) and bearDisp
+        zTop = high
+        zBot = math.min(open, close)
+        b = box.new(bar_index, zTop, bar_index + 1, zBot, bgcolor=color.new(color.purple, 84), border_color=color.new(color.red, 30), extend=extend.right)
+        array.push(supplyBoxes, b)
+        if array.size(supplyBoxes) > maxZones
+            box.delete(array.shift(supplyBoxes))
+
+for i = array.size(demandBoxes) - 1 to 0
+    bx = array.get(demandBoxes, i)
+    btm = box.get_bottom(bx)
+    if close < btm
+        box.set_bgcolor(bx, color.new(color.gray, 90))
+        box.set_border_color(bx, color.new(color.gray, 70))
+
+for i = array.size(supplyBoxes) - 1 to 0
+    bx = array.get(supplyBoxes, i)
+    top = box.get_top(bx)
+    if close > top
+        box.set_bgcolor(bx, color.new(color.gray, 90))
+        box.set_border_color(bx, color.new(color.gray, 70))
+
+//======================== Breakout Consolidation ========================//
+rangeHi = ta.highest(high, rangeLen)
+rangeLo = ta.lowest(low, rangeLen)
+rangeW  = rangeHi - rangeLo
+compressed = rangeW < atrv * compressMult
+volOk = volume > ta.sma(volume, volLen) * volMult
+
+var box brBox = na
+if showBreakout
+    if compressed and na(brBox)
+        brBox := box.new(bar_index - rangeLen + 1, rangeHi, bar_index, rangeLo, bgcolor=color.new(color.silver, 88), border_color=color.new(color.silver, 40))
+    if not na(brBox)
+        box.set_right(brBox, bar_index)
+        box.set_top(brBox, rangeHi)
+        box.set_bottom(brBox, rangeLo)
+
+bullBreak = showBreakout and close > rangeHi[1] and compressed[1] and volOk
+bearBreak = showBreakout and close < rangeLo[1] and compressed[1] and volOk
+if bullBreak or bearBreak
+    if not na(brBox)
+        box.set_bgcolor(brBox, bullBreak ? color.new(color.green, 85) : color.new(color.red, 85))
+        box.set_border_color(brBox, bullBreak ? color.new(color.green, 30) : color.new(color.red, 30))
+    brBox := na
+
+//======================== Previous Day/Week Levels ========================//
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+pwl = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off)
+
+plot(showPrevLevels ? pdh : na, "PDH", color=color.new(color.green, 40), linewidth=1, style=plot.style_linebr)
+plot(showPrevLevels ? pdl : na, "PDL", color=color.new(color.red, 40), linewidth=1, style=plot.style_linebr)
+plot(showPrevLevels ? pwh : na, "PWH", color=color.new(color.green, 65), linewidth=1, style=plot.style_linebr)
+plot(showPrevLevels ? pwl : na, "PWL", color=color.new(color.red, 65), linewidth=1, style=plot.style_linebr)
+
+//======================== EMA Plots ========================//
+plot(showEMAs ? ema9 : na, "EMA 9", color=color.new(color.aqua, 0), linewidth=1)
+plot(showEMAs ? ema21 : na, "EMA 21", color=color.new(color.blue, 0), linewidth=1)
+plot(showEMAs ? ema50 : na, "EMA 50", color=color.new(color.orange, 0), linewidth=2)
+plot(showEMAs ? ema200 : na, "EMA 200", color=color.new(color.fuchsia, 0), linewidth=2)
+
+//======================== Scanner ========================//
+f_scan() =>
+    e50 = ta.ema(close, 50)
+    e200 = ta.ema(close, 200)
+    tr = e50 > e200 and close > e50 ? 1 : e50 < e200 and close < e50 ? -1 : 0
+    pH = ta.pivothigh(high, pivotLen, pivotLen)
+    pL = ta.pivotlow(low, pivotLen, pivotLen)
+    var float sH = na
+    var float sL = na
+    if not na(pH)
+        sH := pH
+    if not na(pL)
+        sL := pL
+    bU = not na(sH) and close > sH and close[1] <= sH
+    bD = not na(sL) and close < sL and close[1] >= sL
+    var int ms = 0
+    cU = ms == -1 and bU
+    cD = ms == 1 and bD
+    if bU
+        ms := 1
+    if bD
+        ms := -1
+    st = cU ? "CHOCH↑" : cD ? "CHOCH↓" : bU ? "BOS↑" : bD ? "BOS↓" : "None"
+    [tr, st]
+
+f_getRow(_sym) =>
+    [t, s] = request.security(_sym, scannerTf, f_scan(), lookahead=barmerge.lookahead_off)
+    sig = f_signalText(t, s)
+    [f_trendText(t), s, sig, f_colorTrend(t)]
+
+var table dash = table.new(position.top_right, 4, 11, border_width=1)
+if showScanner and barstate.islast
+    table.cell(dash, 0, 0, "Symbol", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dash, 1, 0, "Trend", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dash, 2, 0, "Structure", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dash, 3, 0, "Signal", bgcolor=color.new(color.black, 0), text_color=color.white)
+
+    syms = array.from(sym1, sym2, sym3, sym4, sym5, sym6, sym7, sym8, sym9, sym10)
+    for r = 0 to array.size(syms) - 1
+        s = array.get(syms, r)
+        [tTxt, sTxt, sigTxt, tCol] = f_getRow(s)
+        row = r + 1
+        table.cell(dash, 0, row, s, text_color=color.white)
+        table.cell(dash, 1, row, tTxt, text_color=tCol)
+        table.cell(dash, 2, row, sTxt, text_color=color.white)
+        table.cell(dash, 3, row, sigTxt, text_color=sigTxt == "Long Bias" ? color.lime : sigTxt == "Short Bias" ? color.red : color.silver)
+
+if (not showScanner) and barstate.islast
+    table.clear(dash, 0, 0, 3, 10)
