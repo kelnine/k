@@ -7,6 +7,7 @@ indicator("Future Fi — Live Pro (Refactored)", overlay=true, max_lines_count=5
 gMode = "⚙️ Mode"
 i_liveMode = input.bool(true, "Live Mode (clean chart)", group=gMode)
 i_debugMode = input.bool(false, "Debug Mode (extra labels)", group=gMode)
+i_cleanVisuals = input.bool(true, "Cleaner Visual Preset", group=gMode)
 
 // ══════════════════════════════════════════════════════════════════════
 // THEME
@@ -49,7 +50,7 @@ i_showStr = input.bool(true, "Show CHoCH/BOS", group=g7)
 i_showMS = input.bool(true, "Show HH/HL/LH/LL", group=g7)
 i_swLen = input.int(15, "Swing Length", group=g7, minval=2, maxval=50)
 i_msLen = input.int(10, "MS Pivot Length", group=g7, minval=2, maxval=30)
-i_maxLbl = input.int(8, "Max Structure Labels", group=g7, minval=1, maxval=30)
+i_maxLbl = input.int(4, "Max Structure Labels", group=g7, minval=1, maxval=30)
 
 // ══════════════════════════════════════════════════════════════════════
 // ORDER BLOCKS
@@ -57,7 +58,7 @@ i_maxLbl = input.int(8, "Max Structure Labels", group=g7, minval=1, maxval=30)
 gOB = "📦 Order Blocks"
 i_showOB = input.bool(true, "Show OBs", group=gOB)
 i_obLen = input.int(8, "OB Swing Length", group=gOB, minval=2, maxval=30)
-i_maxOB = input.int(6, "Max OBs Each Side", group=gOB, minval=1, maxval=20)
+i_maxOB = input.int(3, "Max OBs Each Side", group=gOB, minval=1, maxval=20)
 i_obRight = input.int(120, "Extend Right", group=gOB, minval=5, maxval=300)
 i_obInvalidClose = input.bool(true, "Invalidate OB on close through", group=gOB)
 i_cBullOB = input.color(color.new(#26A69A, 72), "Bull OB", group=gOB)
@@ -68,7 +69,7 @@ i_cBearOB = input.color(color.new(#7B1FA2, 72), "Bear OB", group=gOB)
 // ══════════════════════════════════════════════════════════════════════
 g8 = "⚡ FVG"
 i_showFVG = input.bool(true, "Show FVG", group=g8)
-i_maxFVG = input.int(12, "Max FVGs", group=g8, minval=1, maxval=30)
+i_maxFVG = input.int(5, "Max FVGs", group=g8, minval=1, maxval=30)
 i_fvgNearATR = input.float(0.25, "Near threshold (ATR)", group=g8, minval=0.05, maxval=2.0, step=0.05)
 i_cFVGBull = input.color(color.new(#26A69A, 84), "Bull FVG", group=g8)
 i_cFVGBear = input.color(color.new(#7B1FA2, 84), "Bear FVG", group=g8)
@@ -80,7 +81,7 @@ g9 = "🟥🟩 S&D"
 i_showSD = input.bool(true, "Show S&D", group=g9)
 i_sdLen = input.int(15, "Zone Length", group=g9, minval=3, maxval=50)
 i_sdRight = input.int(100, "Extend Right", group=g9, minval=5, maxval=250)
-i_maxSD = input.int(6, "Max Zones Each Side", group=g9, minval=1, maxval=20)
+i_maxSD = input.int(3, "Max Zones Each Side", group=g9, minval=1, maxval=20)
 i_cSupply = input.color(color.new(#7B1FA2, 82), "Supply", group=g9)
 i_cDemand = input.color(color.new(#26A69A, 82), "Demand", group=g9)
 
@@ -113,7 +114,7 @@ i_mainPos = input.string("Bottom Right", "Position", group=g13, options=["Top Ri
 i_mainSz = input.string("Small", "Size", group=g13, options=["Tiny", "Small", "Normal"])
 
 gSC = "🔭 Scanner"
-i_showScan = input.bool(true, "Show Scanner", group=gSC)
+i_showScan = input.bool(false, "Show Scanner", group=gSC)
 i_scanPos = input.string("Top Left", "Position", group=gSC, options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"])
 i_scanSz = input.string("Tiny", "Size", group=gSC, options=["Tiny", "Small", "Normal"])
 i_scanTF = input.timeframe("60", "Scanner TF", group=gSC)
@@ -191,6 +192,11 @@ atr14 = ta.atr(14)
 roc10 = ta.roc(close, 10)
 momBull = roc10 > 0.2 and close > e2
 momBear = roc10 < -0.2 and close < e2
+
+maxLblUse = i_cleanVisuals ? math.min(i_maxLbl, 2) : i_maxLbl
+maxOBUse = i_cleanVisuals ? math.min(i_maxOB, 2) : i_maxOB
+maxFVGUse = i_cleanVisuals ? math.min(i_maxFVG, 3) : i_maxFVG
+maxSDUse = i_cleanVisuals ? math.min(i_maxSD, 2) : i_maxSD
 
 // ══════════════════════════════════════════════════════════════════════
 // PREMIUM / DISCOUNT (stable object reuse)
@@ -296,8 +302,11 @@ if i_showStr and not na(swH)
     else
         lb = label.new(bar_index - i_swLen, swH, "CHoCH", color=color.new(#FF9800, 15), textcolor=color.white, style=label.style_label_down, size=size.tiny)
         ln = line.new(bar_index - i_swLen, swH, bar_index, swH, color=color.new(#FF9800, 55), width=1, style=line.style_dashed)
-        f_keepLabel(structLabels, lb, i_maxLbl)
-        f_keepLine(structLines, ln, i_maxLbl)
+        if not i_liveMode
+            f_keepLabel(structLabels, lb, maxLblUse)
+        else
+            label.delete(lb)
+        f_keepLine(structLines, ln, maxLblUse)
 
 if i_showStr and not na(swL)
     if na(lastLL) or swL < lastLL
@@ -305,8 +314,11 @@ if i_showStr and not na(swL)
     else
         lb = label.new(bar_index - i_swLen, swL, "BOS", color=color.new(#9C27B0, 15), textcolor=color.white, style=label.style_label_up, size=size.tiny)
         ln = line.new(bar_index - i_swLen, swL, bar_index, swL, color=color.new(#9C27B0, 55), width=1, style=line.style_dashed)
-        f_keepLabel(structLabels, lb, i_maxLbl)
-        f_keepLine(structLines, ln, i_maxLbl)
+        if not i_liveMode
+            f_keepLabel(structLabels, lb, maxLblUse)
+        else
+            label.delete(lb)
+        f_keepLine(structLines, ln, maxLblUse)
 
 if not na(msH)
     txtH = na(prevPH) ? "HH" : msH > prevPH ? "HH" : msH < prevPH ? "LH" : "EQH"
@@ -318,7 +330,7 @@ if not na(msH)
         structBull := false
     if i_showMS and not i_liveMode and txtH != "EQH"
         lb = label.new(bar_index - i_msLen, msH, txtH, color=color.new(txtH == "HH" ? i_cBull : i_cBear, 15), textcolor=color.white, style=label.style_label_down, size=size.tiny)
-        f_keepLabel(structLabels, lb, i_maxLbl)
+        f_keepLabel(structLabels, lb, maxLblUse)
     prevPH := msH
 
 if not na(msL)
@@ -331,7 +343,7 @@ if not na(msL)
         structBull := false
     if i_showMS and not i_liveMode and txtL != "EQL"
         lb = label.new(bar_index - i_msLen, msL, txtL, color=color.new(txtL == "HL" ? i_cBull : i_cBear, 15), textcolor=color.white, style=label.style_label_up, size=size.tiny)
-        f_keepLabel(structLabels, lb, i_maxLbl)
+        f_keepLabel(structLabels, lb, maxLblUse)
     prevPL := msL
 
 // ══════════════════════════════════════════════════════════════════════
@@ -365,7 +377,7 @@ if i_showOB and not na(obPL)
         array.push(obTopBull, top)
         array.push(obBotBull, bot)
         array.push(obActiveBull, true)
-        while array.size(obBoxesBull) > i_maxOB
+        while array.size(obBoxesBull) > maxOBUse
             oldb = array.shift(obBoxesBull)
             box.delete(oldb)
             array.shift(obTopBull)
@@ -387,7 +399,7 @@ if i_showOB and not na(obPH)
         array.push(obTopBear, top)
         array.push(obBotBear, bot)
         array.push(obActiveBear, true)
-        while array.size(obBoxesBear) > i_maxOB
+        while array.size(obBoxesBear) > maxOBUse
             oldb = array.shift(obBoxesBear)
             box.delete(oldb)
             array.shift(obTopBear)
@@ -466,7 +478,7 @@ if i_showFVG and bearGap
     array.push(fvgBull, false)
     array.push(fvgActive, true)
 
-while array.size(fvgBoxes) > i_maxFVG
+while array.size(fvgBoxes) > maxFVGUse
     old = array.shift(fvgBoxes)
     box.delete(old)
     array.shift(fvgTop)
@@ -521,7 +533,7 @@ if i_showSD and not na(sdPH)
     array.push(sdSupTop, t)
     array.push(sdSupBot, b)
     array.push(sdSupActive, true)
-    while array.size(sdSupply) > i_maxSD
+    while array.size(sdSupply) > maxSDUse
         old = array.shift(sdSupply)
         box.delete(old)
         array.shift(sdSupTop)
@@ -536,7 +548,7 @@ if i_showSD and not na(sdPL)
     array.push(sdDemTop, t)
     array.push(sdDemBot, b)
     array.push(sdDemActive, true)
-    while array.size(sdDemand) > i_maxSD
+    while array.size(sdDemand) > maxSDUse
         old = array.shift(sdDemand)
         box.delete(old)
         array.shift(sdDemTop)
