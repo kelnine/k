@@ -1,0 +1,610 @@
+// © Smart Money Suite v4 [AlgoAlpha]
+//@version=6
+indicator("Smart Money Suite v4 [AlgoAlpha]", overlay=true, max_boxes_count=60, max_lines_count=100, max_labels_count=80)
+
+// ══════════════════════════════════════════════════════════════════════
+//  DASHBOARD SETTINGS
+// ══════════════════════════════════════════════════════════════════════
+var GD = "Dashboard"
+dash_on      = input.bool(true,  "Show Dashboard",         group=GD)
+dash_pos     = input.string("Top Right", "Position",       group=GD, options=["Top Right","Top Left","Bottom Right","Bottom Left"])
+dash_size    = input.string("Normal", "Text Size",         group=GD, options=["Tiny","Small","Normal"])
+show_conf    = input.bool(true,  "Show Confluence Score",  group=GD)
+show_channel = input.bool(true,  "Show Channel State",     group=GD)
+show_volsent = input.bool(true,  "Show Vol Sentiment",     group=GD)
+show_struct  = input.bool(true,  "Show Structure",         group=GD)
+show_liq     = input.bool(true,  "Show Liquidity",         group=GD)
+show_atr     = input.bool(true,  "Show ATR",               group=GD)
+show_pwh     = input.bool(true,  "Show PWH/PWL",           group=GD)
+show_pdh     = input.bool(true,  "Show PDH/PDL",           group=GD)
+show_amh     = input.bool(true,  "Show AM High/Low",       group=GD)
+show_ch      = input.bool(true,  "Show Channel Top/Bot",   group=GD)
+
+// ══════════════════════════════════════════════════════════════════════
+//  SCANNER SETTINGS
+// ══════════════════════════════════════════════════════════════════════
+var GS = "Scanner (5 Symbols)"
+scan_on  = input.bool(true,   "Show Scanner",     group=GS)
+scan_pos = input.string("Bottom Right", "Scanner Position", group=GS, options=["Bottom Right","Bottom Left","Top Right","Top Left"])
+sym1     = input.symbol("BINANCE:BTCUSDT", "Symbol 1", group=GS)
+sym2     = input.symbol("BINANCE:ETHUSDT", "Symbol 2", group=GS)
+sym3     = input.symbol("NASDAQ:AAPL",     "Symbol 3", group=GS)
+sym4     = input.symbol("NASDAQ:TSLA",     "Symbol 4", group=GS)
+sym5     = input.symbol("OANDA:XAUUSD",    "Symbol 5", group=GS)
+scan_tf  = input.timeframe("15", "Scanner Timeframe", group=GS)
+
+// ══════════════════════════════════════════════════════════════════════
+//  INDICATOR SETTINGS
+// ══════════════════════════════════════════════════════════════════════
+var G1 = "Breakout Channel"
+smb_on   = input.bool(true,  "Enable",          group=G1)
+smb_len  = input.int(100,    "Length",           minval=10,  group=G1)
+smb_mult = input.float(1.5,  "ATR Multiplier",   step=0.1,   group=G1)
+smb_atr  = input.int(14,     "ATR Length",       minval=1,   group=G1)
+
+var G2 = "Volume Sentiment"
+vs_on    = input.bool(true,  "Enable",                  group=G2)
+vs_len   = input.int(20,     "Lookback",                group=G2)
+vs_min   = input.int(6,      "Min Consolidation Bars",  group=G2)
+vs_ratio = input.float(0.70, "Consolidation ATR Ratio", step=0.05, group=G2)
+vs_max   = input.int(4,      "Max Boxes",               minval=1, maxval=10, group=G2)
+
+var G3 = "Supply & Demand Zones"
+sd_on    = input.bool(true,  "Enable",              group=G3)
+sd_left  = input.int(10,     "Pivot Left Bars",     minval=2, group=G3)
+sd_right = input.int(3,      "Pivot Right Bars",    minval=1, group=G3)
+sd_zone_h= input.float(0.4,  "Zone Height (ATR)",   step=0.1, group=G3)
+sd_max   = input.int(4,      "Max Zones Each Side", minval=1, maxval=10, group=G3)
+
+var G3b = "Order Blocks"
+ob_on    = input.bool(true, "Enable Order Blocks",  group=G3b)
+ob_len   = input.int(10,    "OB Pivot Lookback",    minval=3, group=G3b)
+ob_max   = input.int(3,     "Max OBs Each Side",    minval=1, maxval=8,  group=G3b)
+
+var G4 = "Break of Structure"
+bos_on   = input.bool(true, "Enable",       group=G4)
+bos_len  = input.int(40,    "Swing Length", minval=5, group=G4)
+bos_max  = input.int(3,     "Max Labels",   minval=1, maxval=8, group=G4)
+
+var G5 = "Key Levels"
+kl_on    = input.bool(true, "Enable",             group=G5)
+kl_pwhl  = input.bool(true, "Show PWH/PWL",       group=G5)
+kl_pdhl  = input.bool(true, "Show PDH/PDL",       group=G5)
+kl_amhl  = input.bool(true, "Show AM High/Low",   group=G5)
+
+var G6 = "Liquidity Sweeps"
+liq_on   = input.bool(true,  "Enable",             group=G6)
+liq_len  = input.int(20,     "Lookback",           minval=5, group=G6)
+liq_tol  = input.float(0.15, "Tolerance (ATR %)",  step=0.05, group=G6)
+liq_max  = input.int(2,      "Max Labels",         minval=1, maxval=5, group=G6)
+
+var G7 = "Colors"
+col_bull = input.color(#00e676, "Bullish",       group=G7)
+col_bear = input.color(#ff3b5c, "Bearish",       group=G7)
+col_neut = input.color(#ffd600, "Neutral",       group=G7)
+col_pwh  = input.color(#ffd600, "PWH/PWL",       group=G7)
+col_pdh  = input.color(#40c4ff, "PDH/PDL",       group=G7)
+col_amh  = input.color(#b388ff, "AM High/Low",   group=G7)
+col_ob   = input.color(#ff9800, "Order Blocks",  group=G7)
+col_liq  = input.color(#e040fb, "Liq Sweep",     group=G7)
+
+// ══════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════════
+atr_val = ta.atr(smb_atr)
+atr_ma  = ta.sma(atr_val, 20)
+
+f_dsize() =>
+    dash_size == "Tiny" ? size.tiny : dash_size == "Small" ? size.small : size.normal
+
+f_dpos(p) =>
+    p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 1: BREAKOUT CHANNEL
+// ══════════════════════════════════════════════════════════════════════
+basis    = ta.ema(close, smb_len)
+ch_width = smb_mult * atr_val
+upper_ch = basis + ch_width
+lower_ch = basis - ch_width
+bull_bo  = ta.crossover(close,  upper_ch)
+bear_bo  = ta.crossunder(close, lower_ch)
+
+var int ch_state = 0
+if bull_bo
+    ch_state := 1
+else if bear_bo
+    ch_state := -1
+
+ch_col  = ch_state == 1 ? col_bull : ch_state == -1 ? col_bear : col_neut
+p_upper = plot(smb_on ? upper_ch : na, "Upper", color=color.new(ch_col, 50), linewidth=1)
+p_lower = plot(smb_on ? lower_ch : na, "Lower", color=color.new(ch_col, 50), linewidth=1)
+p_basis = plot(smb_on ? basis    : na, "EMA",   color=color.new(ch_col, 72), linewidth=1)
+fill(p_upper, p_lower, color=color.new(ch_col, 94))
+
+var label[] bo_lbl = array.new<label>()
+if smb_on and bull_bo
+    while array.size(bo_lbl) >= bos_max
+        label.delete(array.shift(bo_lbl))
+    array.push(bo_lbl, label.new(bar_index, low - atr_val * 0.4, "BO",
+         style=label.style_label_up,   color=color.new(col_bull, 60), textcolor=col_bull, size=size.tiny))
+if smb_on and bear_bo
+    while array.size(bo_lbl) >= bos_max
+        label.delete(array.shift(bo_lbl))
+    array.push(bo_lbl, label.new(bar_index, high + atr_val * 0.4, "BO",
+         style=label.style_label_down, color=color.new(col_bear, 60), textcolor=col_bear, size=size.tiny))
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 2: VOLUME SENTIMENT
+// ══════════════════════════════════════════════════════════════════════
+buy_vol  = close >= open ? volume : volume * math.max(close - low,  0.0) / math.max(high - low, 0.0001)
+sell_vol = close <  open ? volume : volume * math.max(high - close, 0.0) / math.max(high - low, 0.0001)
+buy_sum  = math.sum(buy_vol,  vs_len)
+sell_sum = math.sum(sell_vol, vs_len)
+tot_vol  = buy_sum + sell_sum
+buy_pct  = tot_vol > 0 ? buy_sum / tot_vol : 0.5
+sell_pct = 1.0 - buy_pct
+vs_bull  = buy_pct  > 0.55
+vs_bear  = sell_pct > 0.55
+
+in_consol = atr_val / math.max(atr_ma, 0.0001) < vs_ratio
+var int   cs  = 0
+var float chi = na
+var float clo = na
+var box[]   vsb = array.new<box>()
+var label[] vsl = array.new<label>()
+
+if in_consol and not in_consol[1]
+    cs  := bar_index
+    chi := high
+    clo := low
+if in_consol
+    chi := math.max(chi, high)
+    clo := math.min(clo, low)
+
+if vs_on and not in_consol and in_consol[1]
+    nb = bar_index - cs
+    if nb >= vs_min
+        while array.size(vsb) >= vs_max
+            box.delete(array.shift(vsb))
+            label.delete(array.shift(vsl))
+        vc  = vs_bull ? col_bull : vs_bear ? col_bear : col_neut
+        dom = vs_bull ? math.round(buy_pct * 100) : math.round(sell_pct * 100)
+        st  = vs_bull ? "Bull " + str.tostring(dom) + "%" :
+              vs_bear ? "Bear " + str.tostring(dom) + "%" : "Neutral"
+        mb  = cs + math.round(nb / 2)
+        array.push(vsb, box.new(cs, chi, bar_index, clo,
+             border_color=color.new(vc, 35), bgcolor=color.new(vc, 87), border_width=1))
+        array.push(vsl, label.new(mb, clo - atr_val * 0.5, st,
+             style=label.style_label_up, color=color.new(vc, 78), textcolor=vc, size=size.tiny))
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 3: SUPPLY & DEMAND ZONES
+// ══════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, sd_left, sd_right)
+pl = ta.pivotlow (low,  sd_left, sd_right)
+
+var box[]   sup_boxes = array.new<box>()
+var box[]   dem_boxes = array.new<box>()
+var label[] sd_labels = array.new<label>()
+
+if sd_on and not na(ph)
+    pb = bar_index - sd_right
+    zt = ph
+    zb = ph - atr_val[sd_right] * sd_zone_h
+    while array.size(sup_boxes) >= sd_max
+        box.delete(array.shift(sup_boxes))
+    array.push(sup_boxes, box.new(pb - sd_left, zt, pb + 1, zb,
+         border_color=color.new(col_bear, 35), bgcolor=color.new(col_bear, 82),
+         extend=extend.right, border_width=1))
+    while array.size(sd_labels) >= sd_max * 2
+        label.delete(array.shift(sd_labels))
+    array.push(sd_labels, label.new(pb, zt + atr_val[sd_right] * 0.3, "S",
+         style=label.style_label_down, color=color.new(col_bear, 50), textcolor=col_bear, size=size.small))
+
+if sd_on and not na(pl)
+    pb = bar_index - sd_right
+    zt = pl + atr_val[sd_right] * sd_zone_h
+    zb = pl
+    while array.size(dem_boxes) >= sd_max
+        box.delete(array.shift(dem_boxes))
+    array.push(dem_boxes, box.new(pb - sd_left, zt, pb + 1, zb,
+         border_color=color.new(col_bull, 35), bgcolor=color.new(col_bull, 82),
+         extend=extend.right, border_width=1))
+    while array.size(sd_labels) >= sd_max * 2
+        label.delete(array.shift(sd_labels))
+    array.push(sd_labels, label.new(pb, zb - atr_val[sd_right] * 0.3, "D",
+         style=label.style_label_up, color=color.new(col_bull, 50), textcolor=col_bull, size=size.small))
+
+if sd_on
+    if array.size(sup_boxes) > 0
+        for i = array.size(sup_boxes) - 1 to 0
+            b = array.get(sup_boxes, i)
+            if close > box.get_top(b) + atr_val * 0.1
+                box.delete(b)
+                array.remove(sup_boxes, i)
+    if array.size(dem_boxes) > 0
+        for i = array.size(dem_boxes) - 1 to 0
+            b = array.get(dem_boxes, i)
+            if close < box.get_bottom(b) - atr_val * 0.1
+                box.delete(b)
+                array.remove(dem_boxes, i)
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 4: ORDER BLOCKS (transparent, non-intrusive)
+// ══════════════════════════════════════════════════════════════════════
+ob_ph = ta.pivothigh(high, ob_len, ob_len)
+ob_pl = ta.pivotlow (low,  ob_len, ob_len)
+
+var box[] bull_obs = array.new<box>()
+var box[] bear_obs = array.new<box>()
+
+if ob_on and not na(ob_pl)
+    pb     = bar_index - ob_len
+    ob_top = math.max(open[ob_len], close[ob_len])
+    ob_bot = math.min(open[ob_len], close[ob_len])
+    if open[ob_len] > close[ob_len]
+        while array.size(bull_obs) >= ob_max
+            box.delete(array.shift(bull_obs))
+        array.push(bull_obs, box.new(pb - 1, ob_top, pb + 1, ob_bot,
+             border_color=color.new(col_ob, 50), bgcolor=color.new(col_ob, 93),
+             extend=extend.right, border_width=1,
+             text="OB", text_color=color.new(col_ob, 20),
+             text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top))
+
+if ob_on and not na(ob_ph)
+    pb     = bar_index - ob_len
+    ob_top = math.max(open[ob_len], close[ob_len])
+    ob_bot = math.min(open[ob_len], close[ob_len])
+    if close[ob_len] > open[ob_len]
+        while array.size(bear_obs) >= ob_max
+            box.delete(array.shift(bear_obs))
+        array.push(bear_obs, box.new(pb - 1, ob_top, pb + 1, ob_bot,
+             border_color=color.new(col_ob, 50), bgcolor=color.new(col_ob, 93),
+             extend=extend.right, border_width=1,
+             text="OB", text_color=color.new(col_ob, 20),
+             text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top))
+
+if ob_on
+    if array.size(bull_obs) > 0
+        for i = array.size(bull_obs) - 1 to 0
+            b = array.get(bull_obs, i)
+            if close < box.get_bottom(b) - atr_val * 0.05
+                box.delete(b)
+                array.remove(bull_obs, i)
+    if array.size(bear_obs) > 0
+        for i = array.size(bear_obs) - 1 to 0
+            b = array.get(bear_obs, i)
+            if close > box.get_top(b) + atr_val * 0.05
+                box.delete(b)
+                array.remove(bear_obs, i)
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 5: BOS / CHoCH
+// ══════════════════════════════════════════════════════════════════════
+sw_hi = ta.pivothigh(high, bos_len, bos_len)
+sw_lo = ta.pivotlow (low,  bos_len, bos_len)
+
+var float lsh = na,  var float lsl = na
+var int  lshb = na,  var int  lslb = na
+var bool upt  = true
+
+// Evaluate crosses against PREVIOUS swing levels before updating them this bar.
+// This prevents a newly-detected pivot from immediately triggering a false BOS
+// on the same bar it was discovered.
+cx_up = ta.crossover(close,  lsh)
+cx_dn = ta.crossunder(close, lsl)
+
+if not na(sw_hi)
+    lsh  := sw_hi
+    lshb := bar_index - bos_len
+if not na(sw_lo)
+    lsl  := sw_lo
+    lslb := bar_index - bos_len
+
+bos_bull = bos_on and not na(lsh) and cx_up
+bos_bear = bos_on and not na(lsl) and cx_dn
+chb      = bos_on and not upt and bos_bull
+chs      = bos_on and upt     and bos_bear
+
+if bos_bull
+    upt := true
+if bos_bear
+    upt := false
+
+var line[]  bl  = array.new<line>()
+var label[] bll = array.new<label>()
+
+if bos_on
+    if bos_bull and not na(lshb)
+        while array.size(bl)  >= bos_max
+            line.delete(array.shift(bl))
+        while array.size(bll) >= bos_max
+            label.delete(array.shift(bll))
+        lt = chb ? "CHoCH" : "BOS"
+        lw = chb ? 2 : 1
+        array.push(bl,  line.new(lshb, lsh, bar_index, lsh,
+             color=color.new(col_bull, 15), width=lw, style=line.style_dashed))
+        array.push(bll, label.new(bar_index, lsh, lt,
+             style=label.style_label_left, color=color.new(col_bull, 55), textcolor=col_bull, size=size.small))
+
+    if bos_bear and not na(lslb)
+        while array.size(bl)  >= bos_max
+            line.delete(array.shift(bl))
+        while array.size(bll) >= bos_max
+            label.delete(array.shift(bll))
+        lt = chs ? "CHoCH" : "BOS"
+        lw = chs ? 2 : 1
+        array.push(bl,  line.new(lslb, lsl, bar_index, lsl,
+             color=color.new(col_bear, 15), width=lw, style=line.style_dashed))
+        array.push(bll, label.new(bar_index, lsl, lt,
+             style=label.style_label_left, color=color.new(col_bear, 55), textcolor=col_bear, size=size.small))
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 6: LIQUIDITY SWEEPS
+// ══════════════════════════════════════════════════════════════════════
+eq_hi   = ta.highest(high, liq_len)[1]
+eq_lo   = ta.lowest(low,   liq_len)[1]
+tol     = atr_val * liq_tol
+sw_hi_c = liq_on and high > eq_hi + tol and close < eq_hi
+sw_lo_c = liq_on and low  < eq_lo - tol and close > eq_lo
+
+var label[] liq_lbl = array.new<label>()
+if sw_hi_c
+    while array.size(liq_lbl) >= liq_max
+        label.delete(array.shift(liq_lbl))
+    array.push(liq_lbl, label.new(bar_index, high + atr_val * 0.3, "LIQ",
+         style=label.style_label_down, color=color.new(col_liq, 55), textcolor=col_liq, size=size.tiny))
+if sw_lo_c
+    while array.size(liq_lbl) >= liq_max
+        label.delete(array.shift(liq_lbl))
+    array.push(liq_lbl, label.new(bar_index, low - atr_val * 0.3, "LIQ",
+         style=label.style_label_up, color=color.new(col_liq, 55), textcolor=col_liq, size=size.tiny))
+
+// ══════════════════════════════════════════════════════════════════════
+//  SECTION 7: KEY LEVELS
+// ══════════════════════════════════════════════════════════════════════
+var float pwh = na, var float pwl = na
+var float _wh = na, var float _wl = na
+new_week = timeframe.change("W")
+if new_week
+    pwh := _wh
+    pwl := _wl
+    _wh := high
+    _wl := low
+else
+    _wh := na(_wh) ? high : math.max(_wh, high)
+    _wl := na(_wl) ? low  : math.min(_wl, low)
+
+var float pdh = na, var float pdl = na
+var float _dh = na, var float _dl = na
+new_day = timeframe.change("D")
+if new_day
+    pdh := _dh
+    pdl := _dl
+    _dh := high
+    _dl := low
+else
+    _dh := na(_dh) ? high : math.max(_dh, high)
+    _dl := na(_dl) ? low  : math.min(_dl, low)
+
+var float amh = na, var float aml = na
+var float _amh = na, var float _aml = na
+var bool amd = false
+nyh = hour(time,   "America/New_York")
+nym = minute(time, "America/New_York")
+in_am = (nyh == 9 and nym >= 30) or (nyh == 10 and nym == 0)
+if new_day
+    amh := _amh, aml := _aml
+    _amh := na,  _aml := na
+    amd  := false
+if in_am and not amd
+    _amh := na(_amh) ? high : math.max(_amh, high)
+    _aml := na(_aml) ? low  : math.min(_aml, low)
+if not in_am and in_am[1] and not amd
+    amd := true, amh := _amh, aml := _aml
+
+plot(kl_on and kl_pwhl ? pwh : na, "PWH", color=color.new(col_pwh, 10), linewidth=1, style=plot.style_stepline)
+plot(kl_on and kl_pwhl ? pwl : na, "PWL", color=color.new(col_pwh, 45), linewidth=1, style=plot.style_stepline)
+plot(kl_on and kl_pdhl ? pdh : na, "PDH", color=color.new(col_pdh, 10), linewidth=1, style=plot.style_stepline)
+plot(kl_on and kl_pdhl ? pdl : na, "PDL", color=color.new(col_pdh, 45), linewidth=1, style=plot.style_stepline)
+plot(kl_on and kl_amhl ? amh : na, "AMH", color=color.new(col_amh, 10), linewidth=1, style=plot.style_cross)
+plot(kl_on and kl_amhl ? aml : na, "AML", color=color.new(col_amh, 45), linewidth=1, style=plot.style_cross)
+
+var label lbl_pwh = na, var label lbl_pwl = na
+var label lbl_pdh = na, var label lbl_pdl = na
+if kl_on and new_day
+    label.delete(lbl_pwh), label.delete(lbl_pwl)
+    label.delete(lbl_pdh), label.delete(lbl_pdl)
+    if kl_pwhl and not na(pwh)
+        lbl_pwh := label.new(bar_index, pwh, "PWH " + str.tostring(pwh, "#.##"),
+             style=label.style_label_right, color=color.new(col_pwh, 82), textcolor=col_pwh, size=size.tiny)
+    if kl_pwhl and not na(pwl)
+        lbl_pwl := label.new(bar_index, pwl, "PWL " + str.tostring(pwl, "#.##"),
+             style=label.style_label_right, color=color.new(col_pwh, 82), textcolor=color.new(col_pwh, 30), size=size.tiny)
+    if kl_pdhl and not na(pdh)
+        lbl_pdh := label.new(bar_index, pdh, "PDH " + str.tostring(pdh, "#.##"),
+             style=label.style_label_right, color=color.new(col_pdh, 82), textcolor=col_pdh, size=size.tiny)
+    if kl_pdhl and not na(pdl)
+        lbl_pdl := label.new(bar_index, pdl, "PDL " + str.tostring(pdl, "#.##"),
+             style=label.style_label_right, color=color.new(col_pdh, 82), textcolor=color.new(col_pdh, 30), size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════
+//  CONFLUENCE SCORE
+// ══════════════════════════════════════════════════════════════════════
+bull_pts = (ch_state == 1 ? 1 : 0) + (vs_bull ? 1 : 0) + (upt ? 1 : 0) + (sw_lo_c ? 1 : 0) + (close > basis ? 1 : 0)
+bear_pts = (ch_state == -1 ? 1 : 0) + (vs_bear ? 1 : 0) + (not upt ? 1 : 0) + (sw_hi_c ? 1 : 0) + (close < basis ? 1 : 0)
+c_bias   = bull_pts > bear_pts ? "BULL" : bear_pts > bull_pts ? "BEAR" : "MIX"
+c_score  = math.max(bull_pts, bear_pts)
+c_col    = c_bias == "BULL" ? col_bull : c_bias == "BEAR" ? col_bear : col_neut
+
+// ══════════════════════════════════════════════════════════════════════
+//  SCANNER — pull data from 5 symbols via request.security
+// ══════════════════════════════════════════════════════════════════════
+
+// Pre-compute at global scope so request.security can reference them safely
+scan_ema    = ta.ema(close, 50)
+scan_bv     = math.sum(close >= open ? volume : volume * math.max(close - low, 0) / math.max(high - low, 0.0001), 14) / math.max(math.sum(volume, 14), 0.0001)
+scan_trend  = close > scan_ema and close > close[5]
+
+f_scan(sym) =>
+    [s_c, s_e, s_bp, s_ut] = request.security(sym, scan_tf, [close, scan_ema, scan_bv, scan_trend], lookahead=barmerge.lookahead_off)
+    [s_c, s_e, s_bp, s_ut]
+
+[c1, e1, b1, u1] = f_scan(sym1)
+[c2, e2, b2, u2] = f_scan(sym2)
+[c3, e3, b3, u3] = f_scan(sym3)
+[c4, e4, b4, u4] = f_scan(sym4)
+[c5, e5, b5, u5] = f_scan(sym5)
+
+f_bias(c, e, bp, ut) =>
+    bull = (c > e ? 1 : 0) + (bp > 0.55 ? 1 : 0) + (ut ? 1 : 0)
+    bear = (c < e ? 1 : 0) + (bp < 0.45 ? 1 : 0) + (not ut ? 1 : 0)
+    bull > bear ? "BULL" : bear > bull ? "BEAR" : "MIX"
+
+f_bias_col(b) =>
+    b == "BULL" ? col_bull : b == "BEAR" ? col_bear : col_neut
+
+f_short_sym(sym) =>
+    parts = str.split(sym, ":")
+    array.size(parts) > 1 ? array.get(parts, 1) : sym
+
+bias1 = f_bias(c1, e1, b1, u1)
+bias2 = f_bias(c2, e2, b2, u2)
+bias3 = f_bias(c3, e3, b3, u3)
+bias4 = f_bias(c4, e4, b4, u4)
+bias5 = f_bias(c5, e5, b5, u5)
+
+// ══════════════════════════════════════════════════════════════════════
+//  DASHBOARD TABLE
+// ══════════════════════════════════════════════════════════════════════
+var table dash = table.new(f_dpos(dash_pos), 2, 12,
+     bgcolor=color.new(#0a0b0e, 8),
+     border_width=1, border_color=color.new(#1e2130, 0),
+     frame_width=1,  frame_color=color.new(#1e2130, 0))
+
+fc(c, r, txt, tc, bg) =>
+    table.cell(dash, c, r, txt, text_color=tc, text_size=f_dsize(),
+         bgcolor=bg, text_halign=c == 0 ? text.align_left : text.align_right)
+
+bg0 = color.new(#0f1117, 0)
+bgd = color.new(#0f1117, 0)
+dim = color.new(#718096, 0)
+
+if dash_on and barstate.islast
+    table.cell(dash, 0, 0, "SMART MONEY v4",
+         text_color=#00e676, text_size=size.small, bgcolor=bg0, text_halign=text.align_left)
+    table.cell(dash, 1, 0, syminfo.ticker + " " + timeframe.period,
+         text_color=color.new(#e2e8f0, 0), text_size=size.small, bgcolor=bg0, text_halign=text.align_right)
+
+    r = 1
+    if show_conf
+        fc(0, r, "CONFLUENCE", dim, bgd)
+        fc(1, r, c_bias + " " + str.tostring(c_score) + "/5", c_col, bgd)
+        r := r + 1
+    if show_channel
+        ct = ch_state == 1 ? "BULL CHANNEL" : ch_state == -1 ? "BEAR CHANNEL" : "NEUTRAL"
+        cc = ch_state == 1 ? col_bull : ch_state == -1 ? col_bear : col_neut
+        fc(0, r, "CHANNEL", dim, bgd)
+        fc(1, r, ct, cc, bgd)
+        r := r + 1
+    if show_volsent
+        vd  = vs_bull ? math.round(buy_pct * 100) : math.round(sell_pct * 100)
+        vt  = vs_bull ? "BULL " + str.tostring(vd) + "%" : vs_bear ? "BEAR " + str.tostring(vd) + "%" : "NEUTRAL"
+        vtc = vs_bull ? col_bull : vs_bear ? col_bear : col_neut
+        fc(0, r, "VOL SENT", dim, bgd)
+        fc(1, r, vt, vtc, bgd)
+        r := r + 1
+    if show_struct
+        fc(0, r, "STRUCTURE", dim, bgd)
+        fc(1, r, upt ? "UPTREND" : "DOWNTREND", upt ? col_bull : col_bear, bgd)
+        r := r + 1
+    if show_liq
+        lt  = sw_hi_c ? "SWEEP HI" : sw_lo_c ? "SWEEP LO" : "--"
+        ltc = sw_hi_c or sw_lo_c ? col_liq : dim
+        fc(0, r, "LIQUIDITY", dim, bgd)
+        fc(1, r, lt, ltc, bgd)
+        r := r + 1
+    if show_atr
+        fc(0, r, "ATR(" + str.tostring(smb_atr) + ")", dim, bgd)
+        fc(1, r, str.tostring(atr_val, "#.##"), color.new(#e2e8f0, 0), bgd)
+        r := r + 1
+    if show_pwh
+        fc(0, r, "PWH / PWL", dim, bgd)
+        fc(1, r, str.tostring(pwh, "#.##") + " / " + str.tostring(pwl, "#.##"), col_pwh, bgd)
+        r := r + 1
+    if show_pdh
+        fc(0, r, "PDH / PDL", dim, bgd)
+        fc(1, r, str.tostring(pdh, "#.##") + " / " + str.tostring(pdl, "#.##"), col_pdh, bgd)
+        r := r + 1
+    if show_amh
+        fc(0, r, "AM H / L", dim, bgd)
+        fc(1, r, str.tostring(amh, "#.##") + " / " + str.tostring(aml, "#.##"), col_amh, bgd)
+        r := r + 1
+    if show_ch
+        fc(0, r, "CH TOP/BOT", dim, bgd)
+        fc(1, r, str.tostring(upper_ch, "#.##") + " / " + str.tostring(lower_ch, "#.##"), color.new(ch_col, 0), bgd)
+
+// ══════════════════════════════════════════════════════════════════════
+//  SCANNER TABLE
+// ══════════════════════════════════════════════════════════════════════
+var table scn = table.new(f_dpos(scan_pos), 4, 6,
+     bgcolor=color.new(#0a0b0e, 8),
+     border_width=1, border_color=color.new(#1e2130, 0),
+     frame_width=1,  frame_color=color.new(#1e2130, 0))
+
+fs(c, r, txt, tc) =>
+    table.cell(scn, c, r, txt, text_color=tc, text_size=size.tiny,
+         bgcolor=color.new(#0f1117, 0),
+         text_halign=c == 0 ? text.align_left : text.align_center)
+
+if scan_on and barstate.islast
+    // Header
+    table.cell(scn, 0, 0, "SCANNER " + scan_tf + "m", text_color=#00e676,
+         text_size=size.tiny, bgcolor=color.new(#0f1117, 0), text_halign=text.align_left)
+    table.cell(scn, 1, 0, "PRICE", text_color=color.new(#718096, 0),
+         text_size=size.tiny, bgcolor=color.new(#0f1117, 0), text_halign=text.align_center)
+    table.cell(scn, 2, 0, "VOL%", text_color=color.new(#718096, 0),
+         text_size=size.tiny, bgcolor=color.new(#0f1117, 0), text_halign=text.align_center)
+    table.cell(scn, 3, 0, "BIAS", text_color=color.new(#718096, 0),
+         text_size=size.tiny, bgcolor=color.new(#0f1117, 0), text_halign=text.align_center)
+
+    // Rows
+    fs(0, 1, f_short_sym(sym1), color.new(#e2e8f0, 0))
+    fs(1, 1, str.tostring(c1, "#.##"), color.new(#e2e8f0, 0))
+    fs(2, 1, str.tostring(math.round(b1 * 100)) + "%", b1 > 0.55 ? col_bull : b1 < 0.45 ? col_bear : col_neut)
+    fs(3, 1, bias1, f_bias_col(bias1))
+
+    fs(0, 2, f_short_sym(sym2), color.new(#e2e8f0, 0))
+    fs(1, 2, str.tostring(c2, "#.##"), color.new(#e2e8f0, 0))
+    fs(2, 2, str.tostring(math.round(b2 * 100)) + "%", b2 > 0.55 ? col_bull : b2 < 0.45 ? col_bear : col_neut)
+    fs(3, 2, bias2, f_bias_col(bias2))
+
+    fs(0, 3, f_short_sym(sym3), color.new(#e2e8f0, 0))
+    fs(1, 3, str.tostring(c3, "#.##"), color.new(#e2e8f0, 0))
+    fs(2, 3, str.tostring(math.round(b3 * 100)) + "%", b3 > 0.55 ? col_bull : b3 < 0.45 ? col_bear : col_neut)
+    fs(3, 3, bias3, f_bias_col(bias3))
+
+    fs(0, 4, f_short_sym(sym4), color.new(#e2e8f0, 0))
+    fs(1, 4, str.tostring(c4, "#.##"), color.new(#e2e8f0, 0))
+    fs(2, 4, str.tostring(math.round(b4 * 100)) + "%", b4 > 0.55 ? col_bull : b4 < 0.45 ? col_bear : col_neut)
+    fs(3, 4, bias4, f_bias_col(bias4))
+
+    fs(0, 5, f_short_sym(sym5), color.new(#e2e8f0, 0))
+    fs(1, 5, str.tostring(c5, "#.##"), color.new(#e2e8f0, 0))
+    fs(2, 5, str.tostring(math.round(b5 * 100)) + "%", b5 > 0.55 ? col_bull : b5 < 0.45 ? col_bear : col_neut)
+    fs(3, 5, bias5, f_bias_col(bias5))
+
+// ══════════════════════════════════════════════════════════════════════
+//  ALERTS
+// ══════════════════════════════════════════════════════════════════════
+alertcondition(bull_bo,   "Channel Bull BO",     "{{ticker}} - Bullish Channel Breakout")
+alertcondition(bear_bo,   "Channel Bear BO",     "{{ticker}} - Bearish Channel Breakdown")
+alertcondition(bos_bull,  "BOS Bull",            "{{ticker}} - BOS Bullish")
+alertcondition(bos_bear,  "BOS Bear",            "{{ticker}} - BOS Bearish")
+alertcondition(chb,       "CHoCH Bull",          "{{ticker}} - CHoCH Bullish Flip")
+alertcondition(chs,       "CHoCH Bear",          "{{ticker}} - CHoCH Bearish Flip")
+alertcondition(sw_lo_c,   "Liq Sweep Low",       "{{ticker}} - Liquidity Sweep Low")
+alertcondition(sw_hi_c,   "Liq Sweep High",      "{{ticker}} - Liquidity Sweep High")
+alertcondition(c_score >= 4 and c_bias == "BULL", "High Conf Bull", "{{ticker}} - HIGH CONFLUENCE BULLISH SIGNAL")
+alertcondition(c_score >= 4 and c_bias == "BEAR", "High Conf Bear", "{{ticker}} - HIGH CONFLUENCE BEARISH SIGNAL")
