@@ -19,6 +19,7 @@ show_pwh     = input.bool(true,  "Show PWH/PWL",           group=GD)
 show_pdh     = input.bool(true,  "Show PDH/PDL",           group=GD)
 show_amh     = input.bool(true,  "Show AM High/Low",       group=GD)
 show_ch      = input.bool(true,  "Show Channel Top/Bot",   group=GD)
+show_mom     = input.bool(true,  "Show Momentum",          group=GD)
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER SETTINGS
@@ -71,6 +72,7 @@ kl_on    = input.bool(true, "Enable",             group=G5)
 kl_pwhl  = input.bool(true, "Show PWH/PWL",       group=G5)
 kl_pdhl  = input.bool(true, "Show PDH/PDL",       group=G5)
 kl_amhl  = input.bool(true, "Show AM High/Low",   group=G5)
+kl_wkhl  = input.bool(true, "Show Week H/L Labels", group=G5)
 
 var G6 = "Liquidity Sweeps"
 liq_on   = input.bool(true,  "Enable",             group=G6)
@@ -429,6 +431,18 @@ if kl_on and new_day
         lbl_pdl := label.new(bar_index, pdl, "PDL " + str.tostring(pdl, "#.##"),
              style=label.style_label_right, color=color.new(col_pdh, 82), textcolor=color.new(col_pdh, 30), size=size.tiny)
 
+// Current-week high ("WH") and strong low ("SL") labels anchored to right edge, updated live
+var label lbl_cwh = na, var label lbl_cwl = na
+if kl_on and kl_wkhl and barstate.islast
+    label.delete(lbl_cwh)
+    label.delete(lbl_cwl)
+    if not na(_wh)
+        lbl_cwh := label.new(bar_index, _wh, "WH " + str.tostring(_wh, "#.##"),
+             style=label.style_label_left, color=color.new(col_pwh, 72), textcolor=col_pwh, size=size.tiny)
+    if not na(_wl)
+        lbl_cwl := label.new(bar_index, _wl, "SL " + str.tostring(_wl, "#.##"),
+             style=label.style_label_left, color=color.new(col_pwh, 72), textcolor=color.new(col_pwh, 40), size=size.tiny)
+
 // ══════════════════════════════════════════════════════════════════════
 //  CONFLUENCE SCORE
 // ══════════════════════════════════════════════════════════════════════
@@ -437,6 +451,18 @@ bear_pts = (ch_state == -1 ? 1 : 0) + (vs_bear ? 1 : 0) + (not upt ? 1 : 0) + (s
 c_bias   = bull_pts > bear_pts ? "BULL" : bear_pts > bull_pts ? "BEAR" : "MIX"
 c_score  = math.max(bull_pts, bear_pts)
 c_col    = c_bias == "BULL" ? col_bull : c_bias == "BEAR" ? col_bear : col_neut
+
+// ══════════════════════════════════════════════════════════════════════
+//  MOMENTUM  (RSI + 5-bar price slope combined)
+// ══════════════════════════════════════════════════════════════════════
+mom_rsi  = ta.rsi(close, 14)
+mom_roc  = close - close[5]
+mom_bull = mom_rsi > 55 and mom_roc > 0
+mom_bear = mom_rsi < 45 and mom_roc < 0
+mom_str  = mom_bull ? "BULL " + str.tostring(math.round(mom_rsi)) :
+           mom_bear ? "BEAR " + str.tostring(math.round(mom_rsi)) :
+           "NEUT "  + str.tostring(math.round(mom_rsi))
+mom_col  = mom_bull ? col_bull : mom_bear ? col_bear : col_neut
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER — pull data from 5 symbols via request.security
@@ -478,7 +504,7 @@ bias5 = f_bias(c5, e5, b5, u5)
 // ══════════════════════════════════════════════════════════════════════
 //  DASHBOARD TABLE
 // ══════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dpos(dash_pos), 2, 12,
+var table dash = table.new(f_dpos(dash_pos), 2, 13,
      bgcolor=color.new(#0a0b0e, 8),
      border_width=1, border_color=color.new(#1e2130, 0),
      frame_width=1,  frame_color=color.new(#1e2130, 0))
@@ -544,6 +570,10 @@ if dash_on and barstate.islast
     if show_ch
         fc(0, r, "CH TOP/BOT", dim, bgd)
         fc(1, r, str.tostring(upper_ch, "#.##") + " / " + str.tostring(lower_ch, "#.##"), color.new(ch_col, 0), bgd)
+        r := r + 1
+    if show_mom
+        fc(0, r, "MOMENTUM", dim, bgd)
+        fc(1, r, mom_str, mom_col, bgd)
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER TABLE
