@@ -635,8 +635,7 @@ sniper_short = sniper_on and sniper_bear >= sniper_min and bos_bear
 
 setup_long_rdy  = sniper_bull >= sniper_min
 setup_short_rdy = sniper_bear >= sniper_min
-setup_str = setup_long_rdy  ? "LONG "  + str.tostring(sniper_bull) + "/4" :
-            setup_short_rdy ? "SHORT " + str.tostring(sniper_bear) + "/4" : "WAIT"
+setup_str = setup_long_rdy ? "LONG " + str.tostring(sniper_bull) + "/4" : setup_short_rdy ? "SHORT " + str.tostring(sniper_bear) + "/4" : "WAIT"
 setup_col = setup_long_rdy  ? col_bull : setup_short_rdy ? col_bear : color.new(#718096, 0)
 
 // Entry / SL / TP labels (replaced on each new signal)
