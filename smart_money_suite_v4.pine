@@ -132,9 +132,7 @@ f_dsize() =>
     dash_size == "Tiny" ? size.tiny : dash_size == "Small" ? size.small : size.normal
 
 f_dpos(p) =>
-    p == "Top Right"     ? position.top_right    :
-     p == "Top Left"     ? position.top_left     :
-     p == "Bottom Right" ? position.bottom_right : position.bottom_left
+    p == "Top Right" ? position.top_right : p == "Top Left" ? position.top_left : p == "Bottom Right" ? position.bottom_right : position.bottom_left
 
 // ══════════════════════════════════════════════════════════════════════
 //  SECTION 1: BREAKOUT CHANNEL
@@ -219,8 +217,7 @@ if vs_on and not in_consol and in_consol[1]
             label.delete(array.shift(vsl))
         vc  = vs_bull ? col_bull : vs_bear ? col_bear : col_neut
         dom = vs_bull ? math.round(buy_pct * 100) : math.round(sell_pct * 100)
-        st  = vs_bull ? "Bull " + str.tostring(dom) + "%" :
-              vs_bear ? "Bear " + str.tostring(dom) + "%" : "Neutral"
+        st  = vs_bull ? "Bull " + str.tostring(dom) + "%" : vs_bear ? "Bear " + str.tostring(dom) + "%" : "Neutral"
         mb  = cs + math.round(nb / 2)
         array.push(vsb, box.new(cs, chi, bar_index, clo,
              border_color=color.new(vc, 35), bgcolor=color.new(vc, 87), border_width=1))
@@ -588,9 +585,7 @@ mom_rsi  = ta.rsi(close, 14)
 mom_roc  = close - close[5]
 mom_bull = mom_rsi > 55 and mom_roc > 0
 mom_bear = mom_rsi < 45 and mom_roc < 0
-mom_str  = mom_bull ? "BULL " + str.tostring(math.round(mom_rsi)) :
-           mom_bear ? "BEAR " + str.tostring(math.round(mom_rsi)) :
-           "NEUT "  + str.tostring(math.round(mom_rsi))
+mom_str  = mom_bull ? "BULL " + str.tostring(math.round(mom_rsi)) : mom_bear ? "BEAR " + str.tostring(math.round(mom_rsi)) : "NEUT " + str.tostring(math.round(mom_rsi))
 mom_col  = mom_bull ? col_bull : mom_bear ? col_bear : col_neut
 
 // ══════════════════════════════════════════════════════════════════════
@@ -680,9 +675,7 @@ f_scan_data() =>
     _c    = close
     _e50  = ta.ema(close, 50)
     _e200 = ta.ema(close, 200)
-    _bv   = math.sum(close >= open ? volume :
-             volume * math.max(close - low, 0.0) / math.max(high - low, 0.0001), 14) /
-            math.max(math.sum(volume, 14), 0.0001)
+    _bv   = math.sum(close >= open ? volume : volume * math.max(close - low, 0.0) / math.max(high - low, 0.0001), 14) / math.max(math.sum(volume, 14), 0.0001)
     _rsi  = ta.rsi(close, 14)
     _roc  = close - close[5]
     _sh   = ta.pivothigh(high, 20, 20)
@@ -700,8 +693,7 @@ f_scan_data() =>
         _upt := true
     if _cxd
         _upt := false
-    _score = (_c > _e50 and _e50 > _e200 ? 1 : 0) + (_upt ? 1 : 0) +
-             (_rsi > 55 and _roc > 0 ? 1 : 0) + (_bv > 0.55 ? 1 : 0)
+    _score = (_c > _e50 and _e50 > _e200 ? 1 : 0) + (_upt ? 1 : 0) + (_rsi > 55 and _roc > 0 ? 1 : 0) + (_bv > 0.55 ? 1 : 0)
     [_c, _e50, _bv, _upt, _score]
 
 f_scan(sym) =>
