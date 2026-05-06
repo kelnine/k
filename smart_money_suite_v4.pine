@@ -647,10 +647,10 @@ if sniper_long
     entry_lbl := label.new(bar_index, low - atr_val * 0.6,
          "▲ LONG\nSL " + str.tostring(sl_p, "#.####") + "\nTP " + str.tostring(tp_p, "#.####"),
          style=label.style_label_up, color=color.new(col_bull, 45), textcolor=col_bull, size=size.small)
-    sl_line := line.new(bar_index, sl_p, bar_index + 20, sl_p,
-         color=color.new(col_bear, 72), width=1, style=line.style_dotted)
-    tp_line := line.new(bar_index, tp_p, bar_index + 20, tp_p,
-         color=color.new(col_bull, 72), width=1, style=line.style_dotted)
+    sl_line := line.new(bar_index, sl_p, bar_index + 1, sl_p,
+         extend=extend.right, color=color.new(col_bear, 55), width=1, style=line.style_dotted)
+    tp_line := line.new(bar_index, tp_p, bar_index + 1, tp_p,
+         extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
 
 if sniper_short
     label.delete(entry_lbl)
@@ -661,10 +661,10 @@ if sniper_short
     entry_lbl := label.new(bar_index, high + atr_val * 0.6,
          "▼ SHORT\nSL " + str.tostring(sl_p, "#.####") + "\nTP " + str.tostring(tp_p, "#.####"),
          style=label.style_label_down, color=color.new(col_bear, 45), textcolor=col_bear, size=size.small)
-    sl_line := line.new(bar_index, sl_p, bar_index + 20, sl_p,
-         color=color.new(col_bear, 72), width=1, style=line.style_dotted)
-    tp_line := line.new(bar_index, tp_p, bar_index + 20, tp_p,
-         color=color.new(col_bull, 72), width=1, style=line.style_dotted)
+    sl_line := line.new(bar_index, sl_p, bar_index + 1, sl_p,
+         extend=extend.right, color=color.new(col_bear, 55), width=1, style=line.style_dotted)
+    tp_line := line.new(bar_index, tp_p, bar_index + 1, tp_p,
+         extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER
