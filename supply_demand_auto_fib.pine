@@ -1,60 +1,72 @@
 //@version=6
-indicator("Supply & Demand + Auto Fib [v6]", overlay=true, max_boxes_count=500, max_lines_count=50, max_labels_count=100)
+indicator("S&D + Auto Fib", overlay=true, max_boxes_count=500, max_lines_count=50, max_labels_count=50)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// INPUTS
-// ══════════════════════════════════════════════════════════════════════════════
-var string GZ = "▶ Supply & Demand Zones"
-var string GF = "▶ Fibonacci (0 / 0.5 / 0.786 / 1)"
-var string GT = "▶ Trend Filter"
-var string GV = "▶ Visuals"
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  INPUT GROUPS                                                           ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+var string GZ = "Zones"
+var string GF = "Fibonacci"
+var string GE = "EMAs"
+var string GS = "Signals"
+var string GV = "Display"
 
-// Zone Detection
-pivot_len   = input.int(10,    "Pivot Lookback Length",        minval=3,  maxval=50,   group=GZ,
-                                tooltip="Bars on each side needed to confirm a swing high/low")
-base_bars   = input.int(3,     "Zone Width (base candles)",    minval=1,  maxval=10,   group=GZ,
-                                tooltip="How many candles behind the pivot define the zone body")
-zone_ext    = input.int(100,   "Zone Extension (bars right)",  minval=10, maxval=1000, group=GZ)
-max_zones   = input.int(8,     "Max Zones per Side",           minval=2,  maxval=30,   group=GZ)
-show_broken = input.bool(false, "Show Broken Zones",                                    group=GZ)
+// ── Zones ────────────────────────────────────────────────────────────────────
+show_zones   = input.bool(true,  "Show Zones",                group=GZ)
+pivot_len    = input.int(10,     "Pivot Length",               minval=3,  maxval=50,   group=GZ)
+base_bars    = input.int(3,      "Base Candles",               minval=1,  maxval=10,   group=GZ)
+zone_ext     = input.int(100,    "Extend Right (bars)",        minval=10, maxval=1000, group=GZ)
+max_zones    = input.int(8,      "Max Zones per Side",         minval=2,  maxval=30,   group=GZ)
+show_broken  = input.bool(false, "Show Broken Zones",          group=GZ)
+show_zlabels = input.bool(false, "Zone Labels (D / S)",        group=GZ)
+d_col        = input.color(color.new(#00c853, 82), "Demand Colour", group=GZ)
+s_col        = input.color(color.new(#f44336, 82), "Supply Colour", group=GZ)
 
-// Fibonacci
-show_fib    = input.bool(true,  "Show Auto Fibonacci",                                  group=GF)
-fib_lb      = input.int(55,    "Fib Lookback (bars)",          minval=10, maxval=500,   group=GF,
-                                tooltip="Bars used to find the current swing high & low")
-show_pocket = input.bool(true,  "Highlight Golden Pocket (0.5 – 0.786)",                group=GF)
-fib_col     = input.color(#f9a825, "Fib Colour",                                        group=GF)
+// ── Fibonacci ─────────────────────────────────────────────────────────────────
+show_fib     = input.bool(true,  "Show Fibonacci",             group=GF)
+fib_lb       = input.int(55,     "Lookback (bars)",            minval=10, maxval=500,  group=GF)
+show_pocket  = input.bool(true,  "Golden Pocket Box",          group=GF)
+fib_col      = input.color(#f9a825, "Fib Colour",              group=GF)
 
-// Trend
-ema_len     = input.int(200,   "Trend EMA Length",             minval=10, maxval=500,   group=GT)
-ema50_len   = input.int(50,    "Fast EMA Length",              minval=5,  maxval=200,   group=GT)
-use_trend   = input.bool(true,  "Filter Signals by Trend",                               group=GT)
-show_ema    = input.bool(true,  "Show EMA Lines",                                        group=GT)
+// ── EMAs ──────────────────────────────────────────────────────────────────────
+show_e200    = input.bool(true,  "Show EMA 200",               group=GE)
+show_e50     = input.bool(true,  "Show EMA 50",                group=GE)
+ema200_len   = input.int(200,    "EMA 200 Length",             minval=10, maxval=500,  group=GE)
+ema50_len    = input.int(50,     "EMA 50 Length",              minval=5,  maxval=200,  group=GE)
 
-// Visuals
-d_col       = input.color(color.new(#00c853, 78), "Demand Zone Colour", group=GV)
-s_col       = input.color(color.new(#f44336, 78), "Supply Zone Colour", group=GV)
-show_sig    = input.bool(true,  "Show Entry Signals",                    group=GV)
-show_dash   = input.bool(true,  "Show Dashboard",                        group=GV)
+// ── Signals ───────────────────────────────────────────────────────────────────
+show_sig     = input.bool(true,  "Show Signals",               group=GS)
+use_trend    = input.bool(true,  "Trend Filter  (price vs EMA 200)",  group=GS)
+use_cross    = input.bool(true,  "EMA Cross Filter  (50 vs 200)",     group=GS)
+use_fresh    = input.bool(true,  "Fresh Zones Only  (★★★)",           group=GS)
+use_fib      = input.bool(true,  "Require Fib Level  (★★★)",          group=GS)
+use_rsi      = input.bool(true,  "RSI Filter  (< 65 buys / > 35 sells)", group=GS)
+use_body     = input.bool(true,  "Strong Candle Filter  (body ≥ 40%)", group=GS)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TREND
-// ══════════════════════════════════════════════════════════════════════════════
-ema_v   = ta.ema(close, ema_len)
-ema50_v = ta.ema(close, ema50_len)
-is_bull  = close > ema_v
-plot(show_ema ? ema_v   : na, "EMA 200", is_bull ? #2196F3 : #FF9800, linewidth=2)
-plot(show_ema ? ema50_v : na, "EMA 50",  ema50_v > ema_v ? #00bcd4 : #FF5722,  linewidth=1)
+// ── Display ───────────────────────────────────────────────────────────────────
+show_bg      = input.bool(false, "Zone Background Tint",       group=GV)
+show_dash    = input.bool(true,  "Dashboard",                  group=GV)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PIVOT DETECTION
-// ══════════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  EMAs                                                                   ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+ema200 = ta.ema(close, ema200_len)
+ema50  = ta.ema(close, ema50_len)
+is_bull      = close  > ema200
+ema_cross_bull = ema50 > ema200
+ema_cross_bear = ema50 < ema200
+
+plot(show_e200 ? ema200 : na, "EMA 200", is_bull ? #2196F3 : #FF9800, linewidth=2)
+plot(show_e50  ? ema50  : na, "EMA 50",  ema_cross_bull ? #00bcd4 : #FF5722, linewidth=1)
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  PIVOT DETECTION                                                        ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low,   pivot_len, pivot_len)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ZONE ARRAYS   (status: 0 = fresh, 1 = tested, 2 = broken)
-// ══════════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  ZONE ARRAYS  (status: 0 = fresh  1 = tested  2 = broken)              ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 var array<box>   d_bxs  = array.new<box>()
 var array<float> d_tops = array.new<float>()
 var array<float> d_bots = array.new<float>()
@@ -65,12 +77,8 @@ var array<float> s_tops = array.new<float>()
 var array<float> s_bots = array.new<float>()
 var array<int>   s_sts  = array.new<int>()
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DEMAND ZONE CREATION  (pivot low → strong rally away)
-// Zone bottom = exact pivot low
-// Zone top    = highest candle body in the base_bars candles at/behind pivot
-// ══════════════════════════════════════════════════════════════════════════════
-if not na(pl)
+// ── Demand zone creation ──────────────────────────────────────────────────────
+if not na(pl) and show_zones
     zb = pl
     zt = math.max(open[pivot_len], close[pivot_len])
     for j = 1 to base_bars - 1
@@ -84,24 +92,21 @@ if not na(pl)
             array.shift(d_bots)
             array.shift(d_sts)
 
-        bs = bar_index - pivot_len
-        b  = box.new(bs, zt, bs + zone_ext, zb,
-                     bgcolor=d_col,
-                     border_color=color.new(#00c853, 30), border_width=1,
-                     text="DEMAND", text_size=size.tiny,
-                     text_color=color.new(#00c853, 25),
-                     text_halign=text.align_left, text_valign=text.align_top)
-        array.push(d_bxs,  b)
+        bs  = bar_index - pivot_len
+        lbl = show_zlabels ? "D" : ""
+        b   = box.new(bs, zt, bs + zone_ext, zb,
+                      bgcolor=d_col,
+                      border_color=color.new(#00c853, 40), border_width=1,
+                      text=lbl, text_size=size.tiny,
+                      text_color=color.new(#00c853, 20),
+                      text_halign=text.align_left, text_valign=text.align_top)
+        array.push(d_bxs, b)
         array.push(d_tops, zt)
         array.push(d_bots, zb)
         array.push(d_sts,  0)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SUPPLY ZONE CREATION  (pivot high → strong drop away)
-// Zone top    = exact pivot high
-// Zone bottom = lowest candle body in the base_bars candles at/behind pivot
-// ══════════════════════════════════════════════════════════════════════════════
-if not na(ph)
+// ── Supply zone creation ──────────────────────────────────────────────────────
+if not na(ph) and show_zones
     zt = ph
     zb = math.min(open[pivot_len], close[pivot_len])
     for j = 1 to base_bars - 1
@@ -115,27 +120,27 @@ if not na(ph)
             array.shift(s_bots)
             array.shift(s_sts)
 
-        bs = bar_index - pivot_len
-        b  = box.new(bs, zt, bs + zone_ext, zb,
-                     bgcolor=s_col,
-                     border_color=color.new(#f44336, 30), border_width=1,
-                     text="SUPPLY", text_size=size.tiny,
-                     text_color=color.new(#f44336, 25),
-                     text_halign=text.align_left, text_valign=text.align_top)
-        array.push(s_bxs,  b)
+        bs  = bar_index - pivot_len
+        lbl = show_zlabels ? "S" : ""
+        b   = box.new(bs, zt, bs + zone_ext, zb,
+                      bgcolor=s_col,
+                      border_color=color.new(#f44336, 40), border_width=1,
+                      text=lbl, text_size=size.tiny,
+                      text_color=color.new(#f44336, 20),
+                      text_halign=text.align_left, text_valign=text.align_top)
+        array.push(s_bxs, b)
         array.push(s_tops, zt)
         array.push(s_bots, zb)
         array.push(s_sts,  0)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// UPDATE ZONES  –  extend boxes, track tests & breaks
-// ══════════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  UPDATE ZONES  –  extend, test, break                                  ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 bool in_demand       = false
 bool in_supply       = false
-bool in_fresh_demand = false   // true only on the first bar that ever touches a virgin demand zone
+bool in_fresh_demand = false
 bool in_fresh_supply = false
 
-// ── Demand ──
 if array.size(d_bxs) > 0
     for i = 0 to array.size(d_bxs) - 1
         st = array.get(d_sts,  i)
@@ -144,21 +149,20 @@ if array.size(d_bxs) > 0
         zb = array.get(d_bots, i)
         if st != 2
             box.set_right(bx, bar_index + zone_ext)
-            if low <= zt and high >= zb        // price touches zone
-                if close < zb                  // closed below → broken
+            if low <= zt and high >= zb
+                if close < zb
                     array.set(d_sts, i, 2)
                     bc = show_broken ? color.new(color.gray, 88) : color.new(color.gray, 99)
                     box.set_bgcolor(bx, bc)
                     box.set_border_color(bx, bc)
                     box.set_text_color(bx, bc)
-                else                           // held → tested
+                else
                     in_demand := true
                     if st == 0
                         in_fresh_demand := true
                         array.set(d_sts, i, 1)
-                        box.set_bgcolor(bx, color.new(#00c853, 65))
+                        box.set_bgcolor(bx, color.new(#00c853, 68))
 
-// ── Supply ──
 if array.size(s_bxs) > 0
     for i = 0 to array.size(s_bxs) - 1
         st = array.get(s_sts,  i)
@@ -168,7 +172,7 @@ if array.size(s_bxs) > 0
         if st != 2
             box.set_right(bx, bar_index + zone_ext)
             if low <= zt and high >= zb
-                if close > zt                  // closed above → broken
+                if close > zt
                     array.set(s_sts, i, 2)
                     bc = show_broken ? color.new(color.gray, 88) : color.new(color.gray, 99)
                     box.set_bgcolor(bx, bc)
@@ -179,26 +183,20 @@ if array.size(s_bxs) > 0
                     if st == 0
                         in_fresh_supply := true
                         array.set(s_sts, i, 1)
-                        box.set_bgcolor(bx, color.new(#f44336, 65))
+                        box.set_bgcolor(bx, color.new(#f44336, 68))
 
-// ══════════════════════════════════════════════════════════════════════════════
-// AUTO FIBONACCI  –  levels 0 / 0.5 / 0.786 / 1  (from user settings)
-//
-// Uptrend  : 0 = swing low  (start of move)  →  1 = swing high (end of move)
-//            Retracement pullbacks sit BELOW swing high.
-// Downtrend: 0 = swing high (start of move)  →  1 = swing low  (end of move)
-//            Retracement rallies sit ABOVE swing low.
-// ══════════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  AUTO FIBONACCI  –  0 / 0.5 / 0.786 / 1                               ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 swing_hi = ta.highest(high, fib_lb)
 swing_lo = ta.lowest(low,   fib_lb)
 fib_rng  = swing_hi - swing_lo
 
-f_0   = is_bull ? swing_lo                        : swing_hi
-f_500 = is_bull ? swing_hi - 0.500 * fib_rng      : swing_lo + 0.500 * fib_rng
-f_786 = is_bull ? swing_hi - 0.786 * fib_rng      : swing_lo + 0.786 * fib_rng
-f_100 = is_bull ? swing_hi                        : swing_lo
+f_0   = is_bull ? swing_lo                    : swing_hi
+f_500 = is_bull ? swing_hi - 0.500 * fib_rng  : swing_lo + 0.500 * fib_rng
+f_786 = is_bull ? swing_hi - 0.786 * fib_rng  : swing_lo + 0.786 * fib_rng
+f_100 = is_bull ? swing_hi                    : swing_lo
 
-// Persistent objects – deleted & recreated on every last bar so levels stay current
 var line  ln_0   = na
 var line  ln_500 = na
 var line  ln_786 = na
@@ -210,140 +208,95 @@ var label lb_786 = na
 var label lb_100 = na
 
 if show_fib and barstate.islast
-    // Clean up previous objects
-    line.delete(ln_0)
-    line.delete(ln_500)
-    line.delete(ln_786)
-    line.delete(ln_100)
+    line.delete(ln_0),   line.delete(ln_500)
+    line.delete(ln_786), line.delete(ln_100)
     box.delete(gp_box)
-    label.delete(lb_0)
-    label.delete(lb_500)
-    label.delete(lb_786)
-    label.delete(lb_100)
+    label.delete(lb_0),  label.delete(lb_500)
+    label.delete(lb_786),label.delete(lb_100)
 
-    lc_dim = color.new(fib_col, 50)   // standard levels
-    lc_key = color.new(fib_col, 0)    // 0.786 – key level, full opacity
+    dim = color.new(fib_col, 55)
+    key = color.new(fib_col, 0)
 
-    // Draw level lines
-    ln_0   := line.new(bar_index - fib_lb, f_0,   bar_index, f_0,
-                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
-    ln_500 := line.new(bar_index - fib_lb, f_500, bar_index, f_500,
-                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
-    ln_786 := line.new(bar_index - fib_lb, f_786, bar_index, f_786,
-                       color=lc_key, width=2, style=line.style_solid,  extend=extend.right)
-    ln_100 := line.new(bar_index - fib_lb, f_100, bar_index, f_100,
-                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
+    ln_0   := line.new(bar_index - fib_lb, f_0,   bar_index, f_0,   color=dim, width=1, style=line.style_dashed, extend=extend.right)
+    ln_500 := line.new(bar_index - fib_lb, f_500, bar_index, f_500, color=dim, width=1, style=line.style_dashed, extend=extend.right)
+    ln_786 := line.new(bar_index - fib_lb, f_786, bar_index, f_786, color=key, width=2, style=line.style_solid,  extend=extend.right)
+    ln_100 := line.new(bar_index - fib_lb, f_100, bar_index, f_100, color=dim, width=1, style=line.style_dashed, extend=extend.right)
 
-    // Labels
-    lb_0   := label.new(bar_index + 2, f_0,   "0.000",
-                        color=color.new(fib_col, 75), textcolor=color.white,
-                        size=size.tiny, style=label.style_label_left)
-    lb_500 := label.new(bar_index + 2, f_500, "0.500",
-                        color=color.new(fib_col, 60), textcolor=color.white,
-                        size=size.tiny, style=label.style_label_left)
-    lb_786 := label.new(bar_index + 2, f_786, "0.786 ★",
-                        color=color.new(fib_col, 20), textcolor=color.white,
-                        size=size.tiny, style=label.style_label_left)
-    lb_100 := label.new(bar_index + 2, f_100, "1.000",
-                        color=color.new(fib_col, 75), textcolor=color.white,
-                        size=size.tiny, style=label.style_label_left)
+    lb_0   := label.new(bar_index + 2, f_0,   "0",     color=color.new(fib_col, 80), textcolor=color.white, size=size.tiny, style=label.style_label_left)
+    lb_500 := label.new(bar_index + 2, f_500, "0.5",   color=color.new(fib_col, 65), textcolor=color.white, size=size.tiny, style=label.style_label_left)
+    lb_786 := label.new(bar_index + 2, f_786, "0.786", color=color.new(fib_col, 20), textcolor=color.white, size=size.tiny, style=label.style_label_left)
+    lb_100 := label.new(bar_index + 2, f_100, "1",     color=color.new(fib_col, 80), textcolor=color.white, size=size.tiny, style=label.style_label_left)
 
-    // Golden Pocket box  (0.5 → 0.786 = highest-probability pullback zone)
     if show_pocket
         gp_top = math.max(f_500, f_786)
         gp_bot = math.min(f_500, f_786)
         gp_box := box.new(bar_index - fib_lb, gp_top, bar_index + zone_ext, gp_bot,
-                          bgcolor=color.new(fib_col, 88),
-                          border_color=color.new(fib_col, 55),
-                          border_width=1, border_style=line.style_dotted,
-                          text="Golden Pocket", text_size=size.tiny,
-                          text_color=color.new(fib_col, 15),
-                          text_halign=text.align_right, text_valign=text.align_center)
+                          bgcolor=color.new(fib_col, 90),
+                          border_color=color.new(fib_col, 60), border_width=1,
+                          border_style=line.style_dotted)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// CONFLUENCE FILTERS
-// ══════════════════════════════════════════════════════════════════════════════
-rsi_val    = ta.rsi(close, 14)
-cndl_body  = math.abs(close - open)
-cndl_rng   = high - low
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  SIGNAL FILTERS                                                         ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+rsi_val   = ta.rsi(close, 14)
+cndl_body = math.abs(close - open)
+cndl_rng  = high - low
+body_ok   = not use_body  or (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
+rsi_ok_b  = not use_rsi   or rsi_val < 65
+rsi_ok_s  = not use_rsi   or rsi_val > 35
+cross_ok_b = not use_cross or ema_cross_bull
+cross_ok_s = not use_cross or ema_cross_bear
+trend_ok_b = not use_trend or is_bull
+trend_ok_s = not use_trend or not is_bull
 
-// Strong candle: body must cover ≥ 40% of the bar's range — filters dojis/weak wicks
-strong_bull = close > open and (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
-strong_bear = close < open and (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
-
-// EMA cross: both EMAs must agree with direction (momentum confirmation)
-ema_cross_bull = ema50_v > ema_v   // 50 above 200 → uptrend structure confirmed
-ema_cross_bear = ema50_v < ema_v   // 50 below 200 → downtrend structure confirmed
-
-// RSI: must have room to run — avoids buying into overbought / selling into oversold
-rsi_ok_buy  = rsi_val < 65
-rsi_ok_sell = rsi_val > 35
-
-// Fib tolerance: 1% of current swing range (tighter than before)
 fib_tol    = fib_rng * 0.01
 at_786     = show_fib and math.abs(close - f_786) < fib_tol
 at_500     = show_fib and math.abs(close - f_500) < fib_tol
-at_fib_key = at_786 or at_500
+at_fib_key = (not use_fib) or at_786 or at_500
 
-// First bar entering any active zone
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  SIGNALS                                                                ║
+// ║  ★★★ BEST  — fresh zone + all active filters                           ║
+// ║  ★★  GOOD  — any first zone touch + trend/cross/candle/rsi             ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+zone_b = not use_fresh or in_fresh_demand
+zone_s = not use_fresh or in_fresh_supply
+
+best_buy  = show_sig and (use_fresh ? in_fresh_demand : in_demand) and at_fib_key
+             and cross_ok_b and trend_ok_b and body_ok and rsi_ok_b and close > open
+
+best_sell = show_sig and (use_fresh ? in_fresh_supply : in_supply) and at_fib_key
+             and cross_ok_s and trend_ok_s and body_ok and rsi_ok_s and close < open
+
 new_demand = in_demand and not in_demand[1]
 new_supply = in_supply and not in_supply[1]
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SIGNALS  —  two quality tiers, both strict
-//
-//  ★★★ BEST  :  FRESH zone  +  Fib 0.5/0.786  +  EMA cross  +  price vs EMA 200
-//               +  strong candle  +  RSI filter
-//               → rarest, highest conviction, all 6 conditions must be true
-//
-//  ★★  GOOD  :  any active zone (first bar only)  +  EMA cross  +  price vs EMA 200
-//               +  strong candle  +  RSI filter
-//               → no fib needed, still a quality setup
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ★★★ BEST — everything must align
-best_buy  = show_sig and in_fresh_demand and at_fib_key
-             and ema_cross_bull and is_bull
-             and strong_bull    and rsi_ok_buy
-
-best_sell = show_sig and in_fresh_supply and at_fib_key
-             and ema_cross_bear and not is_bull
-             and strong_bear    and rsi_ok_sell
-
-// ★★ GOOD — zone entry on first bar, no fib required, all other conditions still hold
 good_buy  = show_sig and new_demand and not best_buy
-             and ema_cross_bull and is_bull
-             and strong_bull    and rsi_ok_buy
+             and cross_ok_b and trend_ok_b and body_ok and rsi_ok_b and close > open
 
 good_sell = show_sig and new_supply and not best_sell
-             and ema_cross_bear and not is_bull
-             and strong_bear    and rsi_ok_sell
+             and cross_ok_s and trend_ok_s and body_ok and rsi_ok_s and close < open
 
-// ★★★ Large solid markers
-plotshape(best_buy,  "BEST BUY ★★★",  shape.triangleup,   location.belowbar,
-          color.new(#00c853, 0), size=size.large, text="★ BUY",  textcolor=#00c853)
-plotshape(best_sell, "BEST SELL ★★★", shape.triangledown, location.abovebar,
-          color.new(#f44336, 0), size=size.large, text="★ SELL", textcolor=#f44336)
+// ★★★ large solid triangles
+plotshape(best_buy,  "BEST BUY",  shape.triangleup,   location.belowbar, color.new(#00c853, 0), size=size.large)
+plotshape(best_sell, "BEST SELL", shape.triangledown, location.abovebar, color.new(#f44336, 0), size=size.large)
 
-// ★★ Smaller, faded markers
-plotshape(good_buy,  "GOOD BUY ★★",   shape.triangleup,   location.belowbar,
-          color.new(#00c853, 40), size=size.small, text="B",     textcolor=color.new(#00c853, 10))
-plotshape(good_sell, "GOOD SELL ★★",  shape.triangledown, location.abovebar,
-          color.new(#f44336, 40), size=size.small, text="S",     textcolor=color.new(#f44336, 10))
+// ★★ small faded triangles
+plotshape(good_buy,  "GOOD BUY",  shape.triangleup,   location.belowbar, color.new(#00c853, 45), size=size.small)
+plotshape(good_sell, "GOOD SELL", shape.triangledown, location.abovebar, color.new(#f44336, 45), size=size.small)
 
-// Subtle background tint while price is inside an active zone
-bgcolor(in_demand and not in_supply ? color.new(#00c853, 96) : na, title="Demand BG")
-bgcolor(in_supply and not in_demand ? color.new(#f44336, 96) : na, title="Supply BG")
+bgcolor(show_bg and in_demand and not in_supply ? color.new(#00c853, 95) : na, title="Demand BG")
+bgcolor(show_bg and in_supply and not in_demand ? color.new(#f44336, 95) : na, title="Supply BG")
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DASHBOARD
-// ══════════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  DASHBOARD                                                              ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 var table dash = table.new(position.top_right, 2, 9,
-                            bgcolor=color.new(#0d1117, 5),
-                            border_color=color.new(color.white, 75),
+                            bgcolor=color.new(#0d1117, 0),
+                            border_color=color.new(color.white, 80),
                             border_width=1,
-                            frame_color=color.new(color.white, 50),
-                            frame_width=2)
+                            frame_color=color.new(color.white, 60),
+                            frame_width=1)
 
 if barstate.islast and show_dash
     int df = 0, dt = 0
@@ -370,55 +323,54 @@ if barstate.islast and show_dash
               good_sell ? "★★  SELL" : "—"
     sig_clr = best_buy  ? #00c853 :
               best_sell ? #f44336 :
-              good_buy  ? color.new(#00c853, 30) :
-              good_sell ? color.new(#f44336, 30) : color.gray
+              good_buy  ? color.new(#00c853, 25) :
+              good_sell ? color.new(#f44336, 25) : color.gray
 
-    ema_txt = ema_cross_bull ? "50 > 200 ▲" : "50 < 200 ▼"
-    ema_clr = ema_cross_bull ? #00bcd4 : #FF5722
-    rsi_txt = str.tostring(math.round(rsi_val, 1))
-    rsi_clr = rsi_val > 70 ? #f44336 : rsi_val < 30 ? #00c853 : color.silver
-    fib_txt = at_786 ? "0.786 ★" : at_500 ? "0.500" : "—"
-    BG = color.new(#0d1117, 0)
+    BG  = color.new(#0d1117, 0)
+    HDR = color.new(#1a237e, 0)
 
-    table.cell(dash, 0, 0, "S&D + AUTO FIB",   text_color=color.white, text_size=size.small, bgcolor=#1a237e)
-    table.cell(dash, 1, 0, "Pine v6",          text_color=#f9a825,     text_size=size.tiny,  bgcolor=#1a237e)
+    table.cell(dash, 0, 0, "S&D + FIB",  text_color=color.white,  text_size=size.small, bgcolor=HDR)
+    table.cell(dash, 1, 0, "v6",         text_color=#f9a825,      text_size=size.tiny,  bgcolor=HDR)
 
-    table.cell(dash, 0, 1, "Trend",    text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 1, is_bull ? "▲ BULL" : "▼ BEAR",
-                            text_color=is_bull ? #00c853 : #f44336, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 1, "Trend",      text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 1, is_bull       ? "▲ BULL" : "▼ BEAR",
+                            text_color=is_bull ? #00c853 : #f44336,   text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 2, "EMA Cross", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 2, ema_txt,     text_color=ema_clr,      text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 2, "EMA Cross",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 2, ema_cross_bull ? "50 > 200" : "50 < 200",
+                            text_color=ema_cross_bull ? #00bcd4 : #FF5722, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 3, "RSI (14)", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 3, rsi_txt,    text_color=rsi_clr,      text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 3, "RSI",        text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 3, str.tostring(math.round(rsi_val, 1)),
+                            text_color=rsi_val > 70 ? #f44336 : rsi_val < 30 ? #00c853 : color.silver,
+                            text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 4, "Signal",   text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 4, sig_txt,    text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 4, "Fib",        text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 4, at_786 ? "0.786 ★" : at_500 ? "0.500" : "—",
+                            text_color=at_786 or at_500 ? #f9a825 : color.gray, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 5, "In Zone",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 5, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
+    table.cell(dash, 0, 5, "Signal",     text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 5, sig_txt,      text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 6, "Zone",       text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 6, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
                             text_color=in_demand ? #00c853 : in_supply ? #f44336 : color.gray,
                             text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 6, "Fib Hit",  text_color=#f9a825, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 6, fib_txt,    text_color=at_fib_key ? #f9a825 : color.gray,
-                            text_size=size.tiny, bgcolor=BG)
-
-    table.cell(dash, 0, 7, "Demand",   text_color=#00c853, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 7, "Demand",     text_color=#00c853,      text_size=size.tiny, bgcolor=BG)
     table.cell(dash, 1, 7, str.tostring(df) + "F  " + str.tostring(dt) + "T",
                             text_color=color.silver, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 8, "Supply",   text_color=#f44336, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 8, "Supply",     text_color=#f44336,      text_size=size.tiny, bgcolor=BG)
     table.cell(dash, 1, 8, str.tostring(sf) + "F  " + str.tostring(st2) + "T",
                             text_color=color.silver, text_size=size.tiny, bgcolor=BG)
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ALERTS
-// ══════════════════════════════════════════════════════════════════════════════
-alertcondition(best_buy,                   "★★★ BEST BUY",   "BEST BUY: Fresh demand zone + Fib + EMA cross + strong candle + RSI clear")
-alertcondition(best_sell,                  "★★★ BEST SELL",  "BEST SELL: Fresh supply zone + Fib + EMA cross + strong candle + RSI clear")
-alertcondition(good_buy,                   "★★ GOOD BUY",    "GOOD BUY: Demand zone entry — EMA cross + strong candle + RSI clear")
-alertcondition(good_sell,                  "★★ GOOD SELL",   "GOOD SELL: Supply zone entry — EMA cross + strong candle + RSI clear")
-alertcondition(best_buy  or best_sell,     "Any BEST Signal", "BEST signal triggered — highest-probability setup")
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  ALERTS                                                                 ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+alertcondition(best_buy,                              "★★★ Best Buy",   "Best Buy: all filters passed")
+alertcondition(best_sell,                             "★★★ Best Sell",  "Best Sell: all filters passed")
+alertcondition(good_buy,                              "★★ Good Buy",    "Good Buy: zone entry with trend/candle/RSI")
+alertcondition(good_sell,                             "★★ Good Sell",   "Good Sell: zone entry with trend/candle/RSI")
+alertcondition(best_buy  or best_sell,                "Any Best Signal", "Best signal triggered")
 alertcondition(best_buy  or best_sell or good_buy or good_sell, "Any Signal", "S&D signal triggered")
