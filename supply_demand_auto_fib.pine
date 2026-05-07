@@ -27,8 +27,9 @@ fib_col     = input.color(#f9a825, "Fib Colour",                                
 
 // Trend
 ema_len     = input.int(200,   "Trend EMA Length",             minval=10, maxval=500,   group=GT)
+ema50_len   = input.int(50,    "Fast EMA Length",              minval=5,  maxval=200,   group=GT)
 use_trend   = input.bool(true,  "Filter Signals by Trend",                               group=GT)
-show_ema    = input.bool(true,  "Show EMA Line",                                         group=GT)
+show_ema    = input.bool(true,  "Show EMA Lines",                                        group=GT)
 
 // Visuals
 d_col       = input.color(color.new(#00c853, 78), "Demand Zone Colour", group=GV)
@@ -39,9 +40,11 @@ show_dash   = input.bool(true,  "Show Dashboard",                        group=G
 // ══════════════════════════════════════════════════════════════════════════════
 // TREND
 // ══════════════════════════════════════════════════════════════════════════════
-ema_v  = ta.ema(close, ema_len)
-is_bull = close > ema_v
-plot(show_ema ? ema_v : na, "Trend EMA", is_bull ? #2196F3 : #FF9800, linewidth=2)
+ema_v   = ta.ema(close, ema_len)
+ema50_v = ta.ema(close, ema50_len)
+is_bull  = close > ema_v
+plot(show_ema ? ema_v   : na, "EMA 200", is_bull ? #2196F3 : #FF9800, linewidth=2)
+plot(show_ema ? ema50_v : na, "EMA 50",  ema50_v > ema_v ? #00bcd4 : #FF5722,  linewidth=1)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PIVOT DETECTION
