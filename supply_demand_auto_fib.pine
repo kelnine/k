@@ -130,8 +130,10 @@ if not na(ph)
 // ══════════════════════════════════════════════════════════════════════════════
 // UPDATE ZONES  –  extend boxes, track tests & breaks
 // ══════════════════════════════════════════════════════════════════════════════
-bool in_demand = false
-bool in_supply = false
+bool in_demand       = false
+bool in_supply       = false
+bool in_fresh_demand = false   // true only on the first bar that ever touches a virgin demand zone
+bool in_fresh_supply = false
 
 // ── Demand ──
 if array.size(d_bxs) > 0
@@ -152,6 +154,7 @@ if array.size(d_bxs) > 0
                 else                           // held → tested
                     in_demand := true
                     if st == 0
+                        in_fresh_demand := true
                         array.set(d_sts, i, 1)
                         box.set_bgcolor(bx, color.new(#00c853, 65))
 
@@ -174,6 +177,7 @@ if array.size(s_bxs) > 0
                 else
                     in_supply := true
                     if st == 0
+                        in_fresh_supply := true
                         array.set(s_sts, i, 1)
                         box.set_bgcolor(bx, color.new(#f44336, 65))
 
@@ -257,51 +261,84 @@ if show_fib and barstate.islast
                           text_halign=text.align_right, text_valign=text.align_center)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SIGNALS
-// Two tiers:
-//   Standard  – price enters S&D zone + confirming candle + trend aligned
-//   High-Prob – standard conditions AND price is at a key Fib level (0.5 / 0.786)
+// CONFLUENCE FILTERS
 // ══════════════════════════════════════════════════════════════════════════════
-fib_tol    = fib_rng * 0.015       // tolerance = 1.5% of current fib range
+rsi_val    = ta.rsi(close, 14)
+cndl_body  = math.abs(close - open)
+cndl_rng   = high - low
+
+// Strong candle: body must cover ≥ 40% of the bar's range — filters dojis/weak wicks
+strong_bull = close > open and (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
+strong_bear = close < open and (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
+
+// EMA cross: both EMAs must agree with direction (momentum confirmation)
+ema_cross_bull = ema50_v > ema_v   // 50 above 200 → uptrend structure confirmed
+ema_cross_bear = ema50_v < ema_v   // 50 below 200 → downtrend structure confirmed
+
+// RSI: must have room to run — avoids buying into overbought / selling into oversold
+rsi_ok_buy  = rsi_val < 65
+rsi_ok_sell = rsi_val > 35
+
+// Fib tolerance: 1% of current swing range (tighter than before)
+fib_tol    = fib_rng * 0.01
 at_786     = show_fib and math.abs(close - f_786) < fib_tol
 at_500     = show_fib and math.abs(close - f_500) < fib_tol
 at_fib_key = at_786 or at_500
 
+// First bar entering any active zone
 new_demand = in_demand and not in_demand[1]
 new_supply = in_supply and not in_supply[1]
 
-bull_candle = close > open
-bear_candle = close < open
-trend_ok_b  = not use_trend or is_bull
-trend_ok_s  = not use_trend or not is_bull
+// ══════════════════════════════════════════════════════════════════════════════
+// SIGNALS  —  two quality tiers, both strict
+//
+//  ★★★ BEST  :  FRESH zone  +  Fib 0.5/0.786  +  EMA cross  +  price vs EMA 200
+//               +  strong candle  +  RSI filter
+//               → rarest, highest conviction, all 6 conditions must be true
+//
+//  ★★  GOOD  :  any active zone (first bar only)  +  EMA cross  +  price vs EMA 200
+//               +  strong candle  +  RSI filter
+//               → no fib needed, still a quality setup
+// ══════════════════════════════════════════════════════════════════════════════
 
-buy_sig  = show_sig and new_demand and bull_candle and trend_ok_b
-sell_sig = show_sig and new_supply and bear_candle and trend_ok_s
+// ★★★ BEST — everything must align
+best_buy  = show_sig and in_fresh_demand and at_fib_key
+             and ema_cross_bull and is_bull
+             and strong_bull    and rsi_ok_buy
 
-// Zone + Fib confluence = highest-probability setup
-hpb_sig = show_sig and in_demand and at_fib_key and bull_candle and trend_ok_b
-hps_sig = show_sig and in_supply and at_fib_key and bear_candle and trend_ok_s
+best_sell = show_sig and in_fresh_supply and at_fib_key
+             and ema_cross_bear and not is_bull
+             and strong_bear    and rsi_ok_sell
 
-// Standard signals (only when not already a high-prob signal)
-plotshape(buy_sig  and not hpb_sig, "BUY",        shape.triangleup,   location.belowbar,
-          #00c853,                  size=size.small, text="B",  textcolor=#00c853)
-plotshape(sell_sig and not hps_sig, "SELL",        shape.triangledown, location.abovebar,
-          #f44336,                  size=size.small, text="S",  textcolor=#f44336)
+// ★★ GOOD — zone entry on first bar, no fib required, all other conditions still hold
+good_buy  = show_sig and new_demand and not best_buy
+             and ema_cross_bull and is_bull
+             and strong_bull    and rsi_ok_buy
 
-// High-probability confluences (larger markers)
-plotshape(hpb_sig, "BUY + FIB ★",  shape.triangleup,   location.belowbar,
-          color.new(#00c853, 0),    size=size.large,  text="BUY+FIB", textcolor=#00c853)
-plotshape(hps_sig, "SELL + FIB ★", shape.triangledown, location.abovebar,
-          color.new(#f44336, 0),    size=size.large,  text="SELL+FIB", textcolor=#f44336)
+good_sell = show_sig and new_supply and not best_sell
+             and ema_cross_bear and not is_bull
+             and strong_bear    and rsi_ok_sell
 
-// Subtle background tint while price is inside a zone
+// ★★★ Large solid markers
+plotshape(best_buy,  "BEST BUY ★★★",  shape.triangleup,   location.belowbar,
+          color.new(#00c853, 0), size=size.large, text="★ BUY",  textcolor=#00c853)
+plotshape(best_sell, "BEST SELL ★★★", shape.triangledown, location.abovebar,
+          color.new(#f44336, 0), size=size.large, text="★ SELL", textcolor=#f44336)
+
+// ★★ Smaller, faded markers
+plotshape(good_buy,  "GOOD BUY ★★",   shape.triangleup,   location.belowbar,
+          color.new(#00c853, 40), size=size.small, text="B",     textcolor=color.new(#00c853, 10))
+plotshape(good_sell, "GOOD SELL ★★",  shape.triangledown, location.abovebar,
+          color.new(#f44336, 40), size=size.small, text="S",     textcolor=color.new(#f44336, 10))
+
+// Subtle background tint while price is inside an active zone
 bgcolor(in_demand and not in_supply ? color.new(#00c853, 96) : na, title="Demand BG")
 bgcolor(in_supply and not in_demand ? color.new(#f44336, 96) : na, title="Supply BG")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(position.top_right, 2, 7,
+var table dash = table.new(position.top_right, 2, 9,
                             bgcolor=color.new(#0d1117, 5),
                             border_color=color.new(color.white, 75),
                             border_width=1,
@@ -309,9 +346,7 @@ var table dash = table.new(position.top_right, 2, 7,
                             frame_width=2)
 
 if barstate.islast and show_dash
-    // Count zone statuses
-    int df = 0
-    int dt = 0
+    int df = 0, dt = 0
     if array.size(d_sts) > 0
         for i = 0 to array.size(d_sts) - 1
             v = array.get(d_sts, i)
@@ -320,8 +355,7 @@ if barstate.islast and show_dash
             if v == 1
                 dt += 1
 
-    int sf  = 0
-    int st2 = 0
+    int sf = 0, st2 = 0
     if array.size(s_sts) > 0
         for i = 0 to array.size(s_sts) - 1
             v = array.get(s_sts, i)
@@ -330,53 +364,61 @@ if barstate.islast and show_dash
             if v == 1
                 st2 += 1
 
-    // Signal text & colour
-    sig_txt = hpb_sig ? "▲ BUY + FIB ★" :
-              hps_sig ? "▼ SELL + FIB ★" :
-              buy_sig ? "▲ BUY"           :
-              sell_sig ? "▼ SELL"         : "—"
-    sig_clr = hpb_sig ? #00c853 :
-              hps_sig ? #f44336 :
-              buy_sig ? color.new(#00c853, 30) :
-              sell_sig ? color.new(#f44336, 30) : color.gray
+    sig_txt = best_buy  ? "★★★ BUY"  :
+              best_sell ? "★★★ SELL" :
+              good_buy  ? "★★  BUY"  :
+              good_sell ? "★★  SELL" : "—"
+    sig_clr = best_buy  ? #00c853 :
+              best_sell ? #f44336 :
+              good_buy  ? color.new(#00c853, 30) :
+              good_sell ? color.new(#f44336, 30) : color.gray
 
+    ema_txt = ema_cross_bull ? "50 > 200 ▲" : "50 < 200 ▼"
+    ema_clr = ema_cross_bull ? #00bcd4 : #FF5722
+    rsi_txt = str.tostring(math.round(rsi_val, 1))
+    rsi_clr = rsi_val > 70 ? #f44336 : rsi_val < 30 ? #00c853 : color.silver
     fib_txt = at_786 ? "0.786 ★" : at_500 ? "0.500" : "—"
     BG = color.new(#0d1117, 0)
 
-    table.cell(dash, 0, 0, "S&D + AUTO FIB",  text_color=color.white,  text_size=size.small, bgcolor=#1a237e)
-    table.cell(dash, 1, 0, "Pine v6",         text_color=#f9a825,      text_size=size.tiny,  bgcolor=#1a237e)
+    table.cell(dash, 0, 0, "S&D + AUTO FIB",   text_color=color.white, text_size=size.small, bgcolor=#1a237e)
+    table.cell(dash, 1, 0, "Pine v6",          text_color=#f9a825,     text_size=size.tiny,  bgcolor=#1a237e)
 
     table.cell(dash, 0, 1, "Trend",    text_color=color.silver, text_size=size.tiny, bgcolor=BG)
     table.cell(dash, 1, 1, is_bull ? "▲ BULL" : "▼ BEAR",
                             text_color=is_bull ? #00c853 : #f44336, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 2, "Signal",   text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 2, sig_txt,    text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 2, "EMA Cross", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 2, ema_txt,     text_color=ema_clr,      text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 3, "In Zone",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 3, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
+    table.cell(dash, 0, 3, "RSI (14)", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 3, rsi_txt,    text_color=rsi_clr,      text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 4, "Signal",   text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 4, sig_txt,    text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 5, "In Zone",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 5, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
                             text_color=in_demand ? #00c853 : in_supply ? #f44336 : color.gray,
                             text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 4, "Fib Hit",  text_color=#f9a825, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 4, fib_txt,
-                            text_color=at_fib_key ? #f9a825 : color.gray,
+    table.cell(dash, 0, 6, "Fib Hit",  text_color=#f9a825, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 6, fib_txt,    text_color=at_fib_key ? #f9a825 : color.gray,
                             text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 5, "Demand",   text_color=#00c853, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 5, str.tostring(df) + "F  " + str.tostring(dt) + "T",
+    table.cell(dash, 0, 7, "Demand",   text_color=#00c853, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 7, str.tostring(df) + "F  " + str.tostring(dt) + "T",
                             text_color=color.silver, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 6, "Supply",   text_color=#f44336, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 6, str.tostring(sf) + "F  " + str.tostring(st2) + "T",
+    table.cell(dash, 0, 8, "Supply",   text_color=#f44336, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 8, str.tostring(sf) + "F  " + str.tostring(st2) + "T",
                             text_color=color.silver, text_size=size.tiny, bgcolor=BG)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ALERTS
 // ══════════════════════════════════════════════════════════════════════════════
-alertcondition(buy_sig,              "BUY — Demand Zone",           "S&D: Price entered Demand Zone — potential long entry")
-alertcondition(sell_sig,             "SELL — Supply Zone",          "S&D: Price entered Supply Zone — potential short entry")
-alertcondition(hpb_sig,              "HIGH-PROB BUY — Zone + Fib",  "S&D+FIB: Demand zone confluence with Fib 0.786/0.500 — high-probability long")
-alertcondition(hps_sig,              "HIGH-PROB SELL — Zone + Fib", "S&D+FIB: Supply zone confluence with Fib 0.786/0.500 — high-probability short")
-alertcondition(buy_sig  or sell_sig, "Any Zone Signal",             "S&D: Zone entry signal triggered")
-alertcondition(hpb_sig  or hps_sig,  "Any High-Prob Signal",        "S&D+FIB: High-probability Zone + Fib confluence signal")
+alertcondition(best_buy,                   "★★★ BEST BUY",   "BEST BUY: Fresh demand zone + Fib + EMA cross + strong candle + RSI clear")
+alertcondition(best_sell,                  "★★★ BEST SELL",  "BEST SELL: Fresh supply zone + Fib + EMA cross + strong candle + RSI clear")
+alertcondition(good_buy,                   "★★ GOOD BUY",    "GOOD BUY: Demand zone entry — EMA cross + strong candle + RSI clear")
+alertcondition(good_sell,                  "★★ GOOD SELL",   "GOOD SELL: Supply zone entry — EMA cross + strong candle + RSI clear")
+alertcondition(best_buy  or best_sell,     "Any BEST Signal", "BEST signal triggered — highest-probability setup")
+alertcondition(best_buy  or best_sell or good_buy or good_sell, "Any Signal", "S&D signal triggered")
