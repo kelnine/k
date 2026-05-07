@@ -1,0 +1,379 @@
+//@version=6
+indicator("Supply & Demand + Auto Fib [v6]", overlay=true, max_boxes_count=500, max_lines_count=50, max_labels_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+var string GZ = "▶ Supply & Demand Zones"
+var string GF = "▶ Fibonacci (0 / 0.5 / 0.786 / 1)"
+var string GT = "▶ Trend Filter"
+var string GV = "▶ Visuals"
+
+// Zone Detection
+pivot_len   = input.int(10,    "Pivot Lookback Length",        minval=3,  maxval=50,   group=GZ,
+                                tooltip="Bars on each side needed to confirm a swing high/low")
+base_bars   = input.int(3,     "Zone Width (base candles)",    minval=1,  maxval=10,   group=GZ,
+                                tooltip="How many candles behind the pivot define the zone body")
+zone_ext    = input.int(100,   "Zone Extension (bars right)",  minval=10, maxval=1000, group=GZ)
+max_zones   = input.int(8,     "Max Zones per Side",           minval=2,  maxval=30,   group=GZ)
+show_broken = input.bool(false, "Show Broken Zones",                                    group=GZ)
+
+// Fibonacci
+show_fib    = input.bool(true,  "Show Auto Fibonacci",                                  group=GF)
+fib_lb      = input.int(55,    "Fib Lookback (bars)",          minval=10, maxval=500,   group=GF,
+                                tooltip="Bars used to find the current swing high & low")
+show_pocket = input.bool(true,  "Highlight Golden Pocket (0.5 – 0.786)",                group=GF)
+fib_col     = input.color(#f9a825, "Fib Colour",                                        group=GF)
+
+// Trend
+ema_len     = input.int(200,   "Trend EMA Length",             minval=10, maxval=500,   group=GT)
+use_trend   = input.bool(true,  "Filter Signals by Trend",                               group=GT)
+show_ema    = input.bool(true,  "Show EMA Line",                                         group=GT)
+
+// Visuals
+d_col       = input.color(color.new(#00c853, 78), "Demand Zone Colour", group=GV)
+s_col       = input.color(color.new(#f44336, 78), "Supply Zone Colour", group=GV)
+show_sig    = input.bool(true,  "Show Entry Signals",                    group=GV)
+show_dash   = input.bool(true,  "Show Dashboard",                        group=GV)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TREND
+// ══════════════════════════════════════════════════════════════════════════════
+ema_v  = ta.ema(close, ema_len)
+is_bull = close > ema_v
+plot(show_ema ? ema_v : na, "Trend EMA", is_bull ? #2196F3 : #FF9800, linewidth=2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PIVOT DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low,   pivot_len, pivot_len)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ZONE ARRAYS   (status: 0 = fresh, 1 = tested, 2 = broken)
+// ══════════════════════════════════════════════════════════════════════════════
+var array<box>   d_bxs  = array.new<box>()
+var array<float> d_tops = array.new<float>()
+var array<float> d_bots = array.new<float>()
+var array<int>   d_sts  = array.new<int>()
+
+var array<box>   s_bxs  = array.new<box>()
+var array<float> s_tops = array.new<float>()
+var array<float> s_bots = array.new<float>()
+var array<int>   s_sts  = array.new<int>()
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DEMAND ZONE CREATION  (pivot low → strong rally away)
+// Zone bottom = exact pivot low
+// Zone top    = highest candle body in the base_bars candles at/behind pivot
+// ══════════════════════════════════════════════════════════════════════════════
+if not na(pl)
+    zb = pl
+    zt = math.max(open[pivot_len], close[pivot_len])
+    for j = 1 to base_bars - 1
+        idx = pivot_len + j
+        zt := math.max(zt, math.max(open[idx], close[idx]))
+
+    if zt > zb
+        while array.size(d_bxs) >= max_zones
+            box.delete(array.shift(d_bxs))
+            array.shift(d_tops)
+            array.shift(d_bots)
+            array.shift(d_sts)
+
+        bs = bar_index - pivot_len
+        b  = box.new(bs, zt, bs + zone_ext, zb,
+                     bgcolor=d_col,
+                     border_color=color.new(#00c853, 30), border_width=1,
+                     text="DEMAND", text_size=size.tiny,
+                     text_color=color.new(#00c853, 25),
+                     text_halign=text.align_left, text_valign=text.align_top)
+        array.push(d_bxs,  b)
+        array.push(d_tops, zt)
+        array.push(d_bots, zb)
+        array.push(d_sts,  0)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLY ZONE CREATION  (pivot high → strong drop away)
+// Zone top    = exact pivot high
+// Zone bottom = lowest candle body in the base_bars candles at/behind pivot
+// ══════════════════════════════════════════════════════════════════════════════
+if not na(ph)
+    zt = ph
+    zb = math.min(open[pivot_len], close[pivot_len])
+    for j = 1 to base_bars - 1
+        idx = pivot_len + j
+        zb := math.min(zb, math.min(open[idx], close[idx]))
+
+    if zt > zb
+        while array.size(s_bxs) >= max_zones
+            box.delete(array.shift(s_bxs))
+            array.shift(s_tops)
+            array.shift(s_bots)
+            array.shift(s_sts)
+
+        bs = bar_index - pivot_len
+        b  = box.new(bs, zt, bs + zone_ext, zb,
+                     bgcolor=s_col,
+                     border_color=color.new(#f44336, 30), border_width=1,
+                     text="SUPPLY", text_size=size.tiny,
+                     text_color=color.new(#f44336, 25),
+                     text_halign=text.align_left, text_valign=text.align_top)
+        array.push(s_bxs,  b)
+        array.push(s_tops, zt)
+        array.push(s_bots, zb)
+        array.push(s_sts,  0)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// UPDATE ZONES  –  extend boxes, track tests & breaks
+// ══════════════════════════════════════════════════════════════════════════════
+bool in_demand = false
+bool in_supply = false
+
+// ── Demand ──
+if array.size(d_bxs) > 0
+    for i = 0 to array.size(d_bxs) - 1
+        st = array.get(d_sts,  i)
+        bx = array.get(d_bxs,  i)
+        zt = array.get(d_tops, i)
+        zb = array.get(d_bots, i)
+        if st != 2
+            box.set_right(bx, bar_index + zone_ext)
+            if low <= zt and high >= zb        // price touches zone
+                if close < zb                  // closed below → broken
+                    array.set(d_sts, i, 2)
+                    bc = show_broken ? color.new(color.gray, 88) : color.new(color.gray, 99)
+                    box.set_bgcolor(bx, bc)
+                    box.set_border_color(bx, bc)
+                    box.set_text_color(bx, bc)
+                else                           // held → tested
+                    in_demand := true
+                    if st == 0
+                        array.set(d_sts, i, 1)
+                        box.set_bgcolor(bx, color.new(#00c853, 65))
+
+// ── Supply ──
+if array.size(s_bxs) > 0
+    for i = 0 to array.size(s_bxs) - 1
+        st = array.get(s_sts,  i)
+        bx = array.get(s_bxs,  i)
+        zt = array.get(s_tops, i)
+        zb = array.get(s_bots, i)
+        if st != 2
+            box.set_right(bx, bar_index + zone_ext)
+            if low <= zt and high >= zb
+                if close > zt                  // closed above → broken
+                    array.set(s_sts, i, 2)
+                    bc = show_broken ? color.new(color.gray, 88) : color.new(color.gray, 99)
+                    box.set_bgcolor(bx, bc)
+                    box.set_border_color(bx, bc)
+                    box.set_text_color(bx, bc)
+                else
+                    in_supply := true
+                    if st == 0
+                        array.set(s_sts, i, 1)
+                        box.set_bgcolor(bx, color.new(#f44336, 65))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AUTO FIBONACCI  –  levels 0 / 0.5 / 0.786 / 1  (from user settings)
+//
+// Uptrend  : 0 = swing low  (start of move)  →  1 = swing high (end of move)
+//            Retracement pullbacks sit BELOW swing high.
+// Downtrend: 0 = swing high (start of move)  →  1 = swing low  (end of move)
+//            Retracement rallies sit ABOVE swing low.
+// ══════════════════════════════════════════════════════════════════════════════
+swing_hi = ta.highest(high, fib_lb)
+swing_lo = ta.lowest(low,   fib_lb)
+fib_rng  = swing_hi - swing_lo
+
+f_0   = is_bull ? swing_lo                        : swing_hi
+f_500 = is_bull ? swing_hi - 0.500 * fib_rng      : swing_lo + 0.500 * fib_rng
+f_786 = is_bull ? swing_hi - 0.786 * fib_rng      : swing_lo + 0.786 * fib_rng
+f_100 = is_bull ? swing_hi                        : swing_lo
+
+// Persistent objects – deleted & recreated on every last bar so levels stay current
+var line  ln_0   = na
+var line  ln_500 = na
+var line  ln_786 = na
+var line  ln_100 = na
+var box   gp_box = na
+var label lb_0   = na
+var label lb_500 = na
+var label lb_786 = na
+var label lb_100 = na
+
+if show_fib and barstate.islast
+    // Clean up previous objects
+    line.delete(ln_0)
+    line.delete(ln_500)
+    line.delete(ln_786)
+    line.delete(ln_100)
+    box.delete(gp_box)
+    label.delete(lb_0)
+    label.delete(lb_500)
+    label.delete(lb_786)
+    label.delete(lb_100)
+
+    lc_dim = color.new(fib_col, 50)   // standard levels
+    lc_key = color.new(fib_col, 0)    // 0.786 – key level, full opacity
+
+    // Draw level lines
+    ln_0   := line.new(bar_index - fib_lb, f_0,   bar_index, f_0,
+                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
+    ln_500 := line.new(bar_index - fib_lb, f_500, bar_index, f_500,
+                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
+    ln_786 := line.new(bar_index - fib_lb, f_786, bar_index, f_786,
+                       color=lc_key, width=2, style=line.style_solid,  extend=extend.right)
+    ln_100 := line.new(bar_index - fib_lb, f_100, bar_index, f_100,
+                       color=lc_dim, width=1, style=line.style_dashed, extend=extend.right)
+
+    // Labels
+    lb_0   := label.new(bar_index + 2, f_0,   "0.000",
+                        color=color.new(fib_col, 75), textcolor=color.white,
+                        size=size.tiny, style=label.style_label_left)
+    lb_500 := label.new(bar_index + 2, f_500, "0.500",
+                        color=color.new(fib_col, 60), textcolor=color.white,
+                        size=size.tiny, style=label.style_label_left)
+    lb_786 := label.new(bar_index + 2, f_786, "0.786 ★",
+                        color=color.new(fib_col, 20), textcolor=color.white,
+                        size=size.tiny, style=label.style_label_left)
+    lb_100 := label.new(bar_index + 2, f_100, "1.000",
+                        color=color.new(fib_col, 75), textcolor=color.white,
+                        size=size.tiny, style=label.style_label_left)
+
+    // Golden Pocket box  (0.5 → 0.786 = highest-probability pullback zone)
+    if show_pocket
+        gp_top = math.max(f_500, f_786)
+        gp_bot = math.min(f_500, f_786)
+        gp_box := box.new(bar_index - fib_lb, gp_top, bar_index + zone_ext, gp_bot,
+                          bgcolor=color.new(fib_col, 88),
+                          border_color=color.new(fib_col, 55),
+                          border_width=1, border_style=line.style_dotted,
+                          text="Golden Pocket", text_size=size.tiny,
+                          text_color=color.new(fib_col, 15),
+                          text_halign=text.align_right, text_valign=text.align_center)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SIGNALS
+// Two tiers:
+//   Standard  – price enters S&D zone + confirming candle + trend aligned
+//   High-Prob – standard conditions AND price is at a key Fib level (0.5 / 0.786)
+// ══════════════════════════════════════════════════════════════════════════════
+fib_tol    = fib_rng * 0.015       // tolerance = 1.5% of current fib range
+at_786     = show_fib and math.abs(close - f_786) < fib_tol
+at_500     = show_fib and math.abs(close - f_500) < fib_tol
+at_fib_key = at_786 or at_500
+
+new_demand = in_demand and not in_demand[1]
+new_supply = in_supply and not in_supply[1]
+
+bull_candle = close > open
+bear_candle = close < open
+trend_ok_b  = not use_trend or is_bull
+trend_ok_s  = not use_trend or not is_bull
+
+buy_sig  = show_sig and new_demand and bull_candle and trend_ok_b
+sell_sig = show_sig and new_supply and bear_candle and trend_ok_s
+
+// Zone + Fib confluence = highest-probability setup
+hpb_sig = show_sig and in_demand and at_fib_key and bull_candle and trend_ok_b
+hps_sig = show_sig and in_supply and at_fib_key and bear_candle and trend_ok_s
+
+// Standard signals (only when not already a high-prob signal)
+plotshape(buy_sig  and not hpb_sig, "BUY",        shape.triangleup,   location.belowbar,
+          #00c853,                  size=size.small, text="B",  textcolor=#00c853)
+plotshape(sell_sig and not hps_sig, "SELL",        shape.triangledown, location.abovebar,
+          #f44336,                  size=size.small, text="S",  textcolor=#f44336)
+
+// High-probability confluences (larger markers)
+plotshape(hpb_sig, "BUY + FIB ★",  shape.triangleup,   location.belowbar,
+          color.new(#00c853, 0),    size=size.large,  text="BUY+FIB", textcolor=#00c853)
+plotshape(hps_sig, "SELL + FIB ★", shape.triangledown, location.abovebar,
+          color.new(#f44336, 0),    size=size.large,  text="SELL+FIB", textcolor=#f44336)
+
+// Subtle background tint while price is inside a zone
+bgcolor(in_demand and not in_supply ? color.new(#00c853, 96) : na, title="Demand BG")
+bgcolor(in_supply and not in_demand ? color.new(#f44336, 96) : na, title="Supply BG")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════════
+var table dash = table.new(position.top_right, 2, 7,
+                            bgcolor=color.new(#0d1117, 5),
+                            border_color=color.new(color.white, 75),
+                            border_width=1,
+                            frame_color=color.new(color.white, 50),
+                            frame_width=2)
+
+if barstate.islast and show_dash
+    // Count zone statuses
+    int df = 0
+    int dt = 0
+    if array.size(d_sts) > 0
+        for i = 0 to array.size(d_sts) - 1
+            v = array.get(d_sts, i)
+            if v == 0
+                df += 1
+            if v == 1
+                dt += 1
+
+    int sf  = 0
+    int st2 = 0
+    if array.size(s_sts) > 0
+        for i = 0 to array.size(s_sts) - 1
+            v = array.get(s_sts, i)
+            if v == 0
+                sf  += 1
+            if v == 1
+                st2 += 1
+
+    // Signal text & colour
+    sig_txt = hpb_sig ? "▲ BUY + FIB ★" :
+              hps_sig ? "▼ SELL + FIB ★" :
+              buy_sig ? "▲ BUY"           :
+              sell_sig ? "▼ SELL"         : "—"
+    sig_clr = hpb_sig ? #00c853 :
+              hps_sig ? #f44336 :
+              buy_sig ? color.new(#00c853, 30) :
+              sell_sig ? color.new(#f44336, 30) : color.gray
+
+    fib_txt = at_786 ? "0.786 ★" : at_500 ? "0.500" : "—"
+    BG = color.new(#0d1117, 0)
+
+    table.cell(dash, 0, 0, "S&D + AUTO FIB",  text_color=color.white,  text_size=size.small, bgcolor=#1a237e)
+    table.cell(dash, 1, 0, "Pine v6",         text_color=#f9a825,      text_size=size.tiny,  bgcolor=#1a237e)
+
+    table.cell(dash, 0, 1, "Trend",    text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 1, is_bull ? "▲ BULL" : "▼ BEAR",
+                            text_color=is_bull ? #00c853 : #f44336, text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 2, "Signal",   text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 2, sig_txt,    text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 3, "In Zone",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 3, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
+                            text_color=in_demand ? #00c853 : in_supply ? #f44336 : color.gray,
+                            text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 4, "Fib Hit",  text_color=#f9a825, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 4, fib_txt,
+                            text_color=at_fib_key ? #f9a825 : color.gray,
+                            text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 5, "Demand",   text_color=#00c853, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 5, str.tostring(df) + "F  " + str.tostring(dt) + "T",
+                            text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 6, "Supply",   text_color=#f44336, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 6, str.tostring(sf) + "F  " + str.tostring(st2) + "T",
+                            text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+alertcondition(buy_sig,              "BUY — Demand Zone",           "S&D: Price entered Demand Zone — potential long entry")
+alertcondition(sell_sig,             "SELL — Supply Zone",          "S&D: Price entered Supply Zone — potential short entry")
+alertcondition(hpb_sig,              "HIGH-PROB BUY — Zone + Fib",  "S&D+FIB: Demand zone confluence with Fib 0.786/0.500 — high-probability long")
+alertcondition(hps_sig,              "HIGH-PROB SELL — Zone + Fib", "S&D+FIB: Supply zone confluence with Fib 0.786/0.500 — high-probability short")
+alertcondition(buy_sig  or sell_sig, "Any Zone Signal",             "S&D: Zone entry signal triggered")
+alertcondition(hpb_sig  or hps_sig,  "Any High-Prob Signal",        "S&D+FIB: High-probability Zone + Fib confluence signal")
