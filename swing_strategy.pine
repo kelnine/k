@@ -71,8 +71,11 @@ sideways  = not uptrend and not downtrend
 // ══════════════════════════════════════════════════════════════════════
 prox = ema_prox_pct / 100.0
 
-bull_touch = low  <= ema20 * (1.0 + prox) and close > ema20 * (1.0 - prox) and uptrend
-bear_touch = high >= ema20 * (1.0 - prox) and close < ema20 * (1.0 + prox) and downtrend
+// Touch window: EMA was tapped on this bar OR the prior 2 bars (catches delayed reactions)
+raw_bull_t = low  <= ema20 * (1.0 + prox) and close > ema20 * (1.0 - prox) and uptrend
+raw_bear_t = high >= ema20 * (1.0 - prox) and close < ema20 * (1.0 + prox) and downtrend
+bull_touch  = raw_bull_t or raw_bull_t[1] or raw_bull_t[2]
+bear_touch  = raw_bear_t or raw_bear_t[1] or raw_bear_t[2]
 
 // ══════════════════════════════════════════════════════════════════════
 // CANDLESTICK PATTERNS
@@ -83,10 +86,12 @@ upper_w = high - math.max(close, open)
 lower_w = math.min(close, open) - low
 mid_px  = (high + low) / 2.0
 
-bull_pin    = rng > 0 and lower_w >= body * 2.0 and lower_w >= rng * 0.5 and close >= mid_px
-bear_pin    = rng > 0 and upper_w >= body * 2.0 and upper_w >= rng * 0.5 and close <= mid_px
-bull_engulf = close[1] < open[1] and close > open and open <= close[1] and close >= open[1]
-bear_engulf = close[1] > open[1] and close < open and open >= close[1] and close <= open[1]
+// Stricter pin bar: lower wick >= 2.5× body, wick >= 60% of range, close in top 30%
+bull_pin    = rng > 0 and lower_w >= body * 2.5 and lower_w >= rng * 0.6 and close >= low + rng * 0.7
+bear_pin    = rng > 0 and upper_w >= body * 2.5 and upper_w >= rng * 0.6 and close <= low + rng * 0.3
+// Stricter engulfing: current body >= 1.5× prior body (strong momentum)
+bull_engulf = close[1] < open[1] and close > open and open <= close[1] and close >= open[1] and body >= math.abs(close[1] - open[1]) * 1.5
+bear_engulf = close[1] > open[1] and close < open and open >= close[1] and close <= open[1] and body >= math.abs(close[1] - open[1]) * 1.5
 
 bull_pat = bull_pin or bull_engulf
 bear_pat = bear_pin or bear_engulf
@@ -132,8 +137,12 @@ var int last_sell = na
 buy_rdy  = na(last_buy)  or bar_index - last_buy  > cooldown
 sell_rdy = na(last_sell) or bar_index - last_sell > cooldown
 
-buy_raw  = uptrend   and bull_touch and bull_pat and rsi > rsi_mid and vol_ok and ms_bull
-sell_raw = downtrend and bear_touch and bear_pat and rsi < rsi_mid and vol_ok and ms_bear
+// RSI must be above midline AND have turned upward in last 2 bars (momentum confirmation)
+rsi_bull = rsi > rsi_mid and rsi > rsi[2]
+rsi_bear = rsi < rsi_mid and rsi < rsi[2]
+
+buy_raw  = uptrend   and bull_touch and bull_pat and rsi_bull and vol_ok and ms_bull
+sell_raw = downtrend and bear_touch and bear_pat and rsi_bear and vol_ok and ms_bear
 
 buy_sig  = buy_raw  and buy_rdy
 sell_sig = sell_raw and sell_rdy
@@ -273,10 +282,11 @@ if show_tbl and barstate.islast
                bgcolor=color.new(trend_col, 80))
 
     // ── RSI ──
-    rsi_col = rsi > 70 ? C_BEAR : rsi < 30 ? C_BULL : rsi > rsi_mid ? C_BULL : C_DIM
+    rsi_col     = rsi > 70 ? C_BEAR : rsi < 30 ? C_BULL : rsi_bull ? C_BULL : rsi_bear ? C_BEAR : C_DIM
+    rsi_dir_txt = rsi_bull ? " ▲" : rsi_bear ? " ▼" : ""
     table.cell(t, 0, 3, "RSI  (" + str.tostring(rsi_len) + ")",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 3, str.tostring(rsi, "#.##"),
+    table.cell(t, 1, 3, str.tostring(rsi, "#.##") + rsi_dir_txt,
                text_color=rsi_col, text_size=size.small,
                bgcolor=color.new(rsi_col, 80))
 
