@@ -1,26 +1,26 @@
 //@version=6
 indicator("FutureFi Swing Pro™", shorttitle="FF·SWING", overlay=true,
-          max_labels_count=500, max_lines_count=500)
+          max_labels_count=500, max_lines_count=500, max_boxes_count=200)
 
 // ╔══════════════════════════════════════════════════════════════════════╗
-// ║               ◈  F U T U R E F I   S W I N G   P R O ™            ║
-// ║          Institutional Swing Strategy  |  200/20 EMA + RSI          ║
+// ║           ◈  F U T U R E F I   S W I N G   P R O ™                ║
+// ║       Institutional-Grade Swing Strategy  |  200/20 EMA + RSI       ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 // ══════════════════════════════════════════════════════════════════════
 // BRAND PALETTE
 // ══════════════════════════════════════════════════════════════════════
-C_BRAND    = color.rgb(0,   229, 255)   // FutureFi Cyan
-C_BULL     = color.rgb(0,   230, 118)   // Neon Green
-C_BEAR     = color.rgb(255, 59,  107)   // Hot Crimson
-C_SL       = color.rgb(255, 82,  82)    // Alert Red
-C_TP1      = color.rgb(105, 240, 71)    // Lime TP1
-C_TP2      = color.rgb(0,   200, 255)   // Cyan TP2
-C_AMBER    = color.rgb(255, 179, 0)     // EMA-20 Amber
-C_DARK     = color.rgb(8,   12,  22)    // Deep Navy
-C_PANEL    = color.rgb(14,  20,  40)    // Panel BG
-C_TEXT     = color.rgb(210, 215, 230)   // Soft White
-C_DIM      = color.rgb(70,  80,  100)   // Inactive Gray
+C_BRAND  = color.rgb(0,   229, 255)   // FutureFi Cyan
+C_BULL   = color.rgb(0,   230, 118)   // Neon Green
+C_BEAR   = color.rgb(255, 59,  107)   // Hot Crimson
+C_SL     = color.rgb(255, 82,  82)    // Alert Red
+C_TP1    = color.rgb(105, 240, 71)    // Lime TP1
+C_TP2    = color.rgb(0,   200, 255)   // Cyan TP2
+C_AMBER  = color.rgb(255, 179, 0)     // EMA-20 Amber
+C_DARK   = color.rgb(8,   12,  22)    // Deep Navy
+C_PANEL  = color.rgb(14,  20,  40)    // Panel BG
+C_TEXT   = color.rgb(210, 215, 230)   // Soft White
+C_DIM    = color.rgb(70,  80,  100)   // Inactive Gray
 
 // ══════════════════════════════════════════════════════════════════════
 // INPUTS
@@ -31,19 +31,19 @@ G_SIG  = "── Signal Filters ──"
 G_RISK = "── Risk Management ──"
 G_DISP = "── Display ──"
 
-fast_len     = input.int(20,    "Fast EMA Period",          minval=1,              group=G_EMA)
-slow_len     = input.int(200,   "Slow EMA Period",          minval=1,              group=G_EMA)
-ema_prox_pct = input.float(0.3, "EMA Touch Proximity %",   minval=0.05, step=0.05,group=G_EMA,
+fast_len     = input.int(20,    "Fast EMA Period",         minval=1,               group=G_EMA)
+slow_len     = input.int(200,   "Slow EMA Period",         minval=1,               group=G_EMA)
+ema_prox_pct = input.float(0.3, "EMA Touch Proximity %",  minval=0.05, step=0.05, group=G_EMA,
                tooltip="Max % distance from EMA 20 to count as a touch")
 
-rsi_len  = input.int(14,    "RSI Length",   minval=1,          group=G_RSI)
-rsi_mid  = input.float(50,  "RSI Midline",  minval=1, maxval=99,group=G_RSI)
+rsi_len = input.int(14,   "RSI Length",  minval=1,           group=G_RSI)
+rsi_mid = input.float(50, "RSI Midline", minval=1, maxval=99, group=G_RSI)
 
-use_vol   = input.bool(true, "Volume Filter (above 20-bar avg)", group=G_SIG)
-use_ms    = input.bool(true, "Market Structure Filter",          group=G_SIG)
-pivot_len = input.int(5,     "Pivot Lookback",     minval=2,    group=G_SIG)
-cooldown  = input.int(5,     "Signal Cooldown (bars)", minval=0,group=G_SIG,
-            tooltip="Minimum bars between consecutive signals — prevents stacking")
+use_vol    = input.bool(true, "Volume Filter (above 20-bar avg)", group=G_SIG)
+use_ms     = input.bool(true, "Market Structure Filter",          group=G_SIG)
+pivot_len  = input.int(5,    "Pivot Lookback",     minval=2,     group=G_SIG)
+cooldown   = input.int(8,    "Master Cooldown (bars)", minval=0, group=G_SIG,
+             tooltip="Bars locked after ANY signal fires — prevents opposing signals stacking")
 
 rr_tp1    = input.float(2.0, "TP1 Risk:Reward Ratio", minval=0.5, step=0.5, group=G_RISK)
 sl_lb     = input.int(10,    "SL Lookback (bars)",    minval=3,              group=G_RISK)
@@ -51,8 +51,10 @@ tp2_lb    = input.int(50,    "TP2 Lookback (bars)",   minval=10,             gro
 show_sltp = input.bool(true, "Show SL / TP Lines",                           group=G_RISK)
 line_ext  = input.int(30,    "Line Length (bars)",    minval=5,              group=G_RISK)
 
-show_bg  = input.bool(true, "Trend Background Shading", group=G_DISP)
-show_tbl = input.bool(true, "FutureFi Dashboard",       group=G_DISP)
+show_bg  = input.bool(true, "Trend Background",    group=G_DISP)
+show_tbl = input.bool(true, "FutureFi Dashboard",  group=G_DISP)
+show_box = input.bool(true, "Entry Candle Box",    group=G_DISP)
+show_glow= input.bool(true, "EMA Neon Glow",       group=G_DISP)
 
 // ══════════════════════════════════════════════════════════════════════
 // CORE INDICATORS
@@ -60,6 +62,7 @@ show_tbl = input.bool(true, "FutureFi Dashboard",       group=G_DISP)
 ema20   = ta.ema(close, fast_len)
 ema200  = ta.ema(close, slow_len)
 rsi     = ta.rsi(close, rsi_len)
+atr     = ta.atr(14)
 avg_vol = ta.sma(volume, 20)
 
 uptrend   = close > ema200
@@ -67,45 +70,43 @@ downtrend = close < ema200
 sideways  = not uptrend and not downtrend
 
 // ══════════════════════════════════════════════════════════════════════
-// EMA TOUCH DETECTION
+// EMA TOUCH  (±2 bar window)
 // ══════════════════════════════════════════════════════════════════════
 prox = ema_prox_pct / 100.0
 
-// Touch window: EMA was tapped on this bar OR the prior 2 bars (catches delayed reactions)
 raw_bull_t = low  <= ema20 * (1.0 + prox) and close > ema20 * (1.0 - prox) and uptrend
 raw_bear_t = high >= ema20 * (1.0 - prox) and close < ema20 * (1.0 + prox) and downtrend
 bull_touch  = raw_bull_t or raw_bull_t[1] or raw_bull_t[2]
 bear_touch  = raw_bear_t or raw_bear_t[1] or raw_bear_t[2]
 
 // ══════════════════════════════════════════════════════════════════════
-// CANDLESTICK PATTERNS
+// CANDLESTICK PATTERNS  (strict)
 // ══════════════════════════════════════════════════════════════════════
 body    = math.abs(close - open)
 rng     = high - low
 upper_w = high - math.max(close, open)
 lower_w = math.min(close, open) - low
-mid_px  = (high + low) / 2.0
 
-// Stricter pin bar: lower wick >= 2.5× body, wick >= 60% of range, close in top 30%
+// Pin bar: wick >= 2.5× body, wick >= 60% of range, close in outer 30%
 bull_pin    = rng > 0 and lower_w >= body * 2.5 and lower_w >= rng * 0.6 and close >= low + rng * 0.7
 bear_pin    = rng > 0 and upper_w >= body * 2.5 and upper_w >= rng * 0.6 and close <= low + rng * 0.3
-// Stricter engulfing: current body >= 1.5× prior body (strong momentum)
+// Engulfing: full wrap + current body >= 1.5× prior body
 bull_engulf = close[1] < open[1] and close > open and open <= close[1] and close >= open[1] and body >= math.abs(close[1] - open[1]) * 1.5
 bear_engulf = close[1] > open[1] and close < open and open >= close[1] and close <= open[1] and body >= math.abs(close[1] - open[1]) * 1.5
 
 bull_pat = bull_pin or bull_engulf
 bear_pat = bear_pin or bear_engulf
 
-pat_name = bull_pin ? "Pin Bar  ▲" : bull_engulf ? "Engulfing ▲" :
-           bear_pin ? "Pin Bar  ▼" : bear_engulf ? "Engulfing ▼" : "—"
+pat_name = bull_pin ? "Pin Bar ▲" : bull_engulf ? "Engulf ▲" :
+           bear_pin ? "Pin Bar ▼" : bear_engulf ? "Engulf ▼" : "—"
 
 // ══════════════════════════════════════════════════════════════════════
-// VOLUME FILTER
+// VOLUME
 // ══════════════════════════════════════════════════════════════════════
 vol_ok = use_vol ? volume > avg_vol : true
 
 // ══════════════════════════════════════════════════════════════════════
-// MARKET STRUCTURE  (HH/HL  |  LH/LL)
+// MARKET STRUCTURE
 // ══════════════════════════════════════════════════════════════════════
 ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low,  pivot_len, pivot_len)
@@ -129,28 +130,44 @@ ms_bull = use_ms ? hh_hl : true
 ms_bear = use_ms ? lh_ll : true
 
 // ══════════════════════════════════════════════════════════════════════
-// SIGNAL CONDITIONS  +  COOLDOWN (prevents label stacking)
+// RSI MOMENTUM  (above midline AND rising)
 // ══════════════════════════════════════════════════════════════════════
-var int last_buy  = na
-var int last_sell = na
-
-buy_rdy  = na(last_buy)  or bar_index - last_buy  > cooldown
-sell_rdy = na(last_sell) or bar_index - last_sell > cooldown
-
-// RSI must be above midline AND have turned upward in last 2 bars (momentum confirmation)
 rsi_bull = rsi > rsi_mid and rsi > rsi[2]
 rsi_bear = rsi < rsi_mid and rsi < rsi[2]
 
+// ══════════════════════════════════════════════════════════════════════
+// DIRECTION LOCK  — after a LONG fires, no SHORT until trend flips
+//                  after a SHORT fires, no LONG until trend flips
+// This eliminates BUY/SELL appearing in the same zone
+// ══════════════════════════════════════════════════════════════════════
+var int  sig_dir       = 0   // 0=none  1=last was long  -1=last was short
+var int  last_any_bar  = na
+
+trend_flipped_bull = uptrend   and downtrend[1]
+trend_flipped_bear = downtrend and uptrend[1]
+
+if trend_flipped_bull or trend_flipped_bear
+    sig_dir := 0
+
+master_rdy  = na(last_any_bar) or bar_index - last_any_bar > cooldown
+dir_ok_bull = sig_dir != -1
+dir_ok_bear = sig_dir != 1
+
+// ══════════════════════════════════════════════════════════════════════
+// FINAL SIGNALS
+// ══════════════════════════════════════════════════════════════════════
 buy_raw  = uptrend   and bull_touch and bull_pat and rsi_bull and vol_ok and ms_bull
 sell_raw = downtrend and bear_touch and bear_pat and rsi_bear and vol_ok and ms_bear
 
-buy_sig  = buy_raw  and buy_rdy
-sell_sig = sell_raw and sell_rdy
+buy_sig  = buy_raw  and master_rdy and dir_ok_bull
+sell_sig = sell_raw and master_rdy and dir_ok_bear
 
 if buy_sig
-    last_buy := bar_index
+    last_any_bar := bar_index
+    sig_dir      := 1
 if sell_sig
-    last_sell := bar_index
+    last_any_bar := bar_index
+    sig_dir      := -1
 
 // ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
@@ -165,41 +182,65 @@ buy_tp2   = ta.highest(high, tp2_lb)
 sell_tp2  = ta.lowest(low,   tp2_lb)
 
 // ══════════════════════════════════════════════════════════════════════
-// PLOTS  —  EMAs & Background
+// EMA NEON GLOW  (3 layers per EMA)
 // ══════════════════════════════════════════════════════════════════════
-plot(ema20,  "EMA 20",  color=color.new(C_AMBER, 0), linewidth=2)
-plot(ema200, "EMA 200", color=color.new(C_BRAND, 0), linewidth=3)
+plot(show_glow ? ema20  : na, "EMA20 Glow3",  color=color.new(C_AMBER, 88), linewidth=12, display=display.pane)
+plot(show_glow ? ema20  : na, "EMA20 Glow2",  color=color.new(C_AMBER, 70), linewidth=6,  display=display.pane)
+plot(ema20,                   "EMA 20",        color=color.new(C_AMBER, 0),  linewidth=2)
 
-bgcolor(show_bg and uptrend   ? color.new(C_BULL,  95) : na, title="Uptrend BG")
-bgcolor(show_bg and downtrend ? color.new(C_BEAR,  95) : na, title="Downtrend BG")
-bgcolor(show_bg and sideways  ? color.new(C_BRAND, 97) : na, title="Range Zone BG")
-
-// Entry candle glow
-barcolor(buy_sig  ? color.new(C_BULL, 30) : sell_sig ? color.new(C_BEAR, 30) : na)
+plot(show_glow ? ema200 : na, "EMA200 Glow3", color=color.new(C_BRAND, 88), linewidth=16, display=display.pane)
+plot(show_glow ? ema200 : na, "EMA200 Glow2", color=color.new(C_BRAND, 68), linewidth=8,  display=display.pane)
+plot(ema200,                  "EMA 200",       color=color.new(C_BRAND, 0),  linewidth=3)
 
 // ══════════════════════════════════════════════════════════════════════
-// SIGNAL LABELS  —  FutureFi branded
+// BACKGROUND
 // ══════════════════════════════════════════════════════════════════════
-rr_str = str.tostring(rr_tp1, "#.#")
+bgcolor(show_bg and uptrend   ? color.new(C_BULL,  96) : na, title="Uptrend BG")
+bgcolor(show_bg and downtrend ? color.new(C_BEAR,  96) : na, title="Downtrend BG")
+bgcolor(show_bg and sideways  ? color.new(C_BRAND, 97) : na, title="Range BG")
+
+// ══════════════════════════════════════════════════════════════════════
+// ENTRY CANDLE BOX  (highlights the exact signal bar)
+// ══════════════════════════════════════════════════════════════════════
+if show_box and buy_sig
+    box.new(bar_index, high + atr * 0.1, bar_index, low - atr * 0.1,
+            border_color=color.new(C_BULL, 0),
+            bgcolor=color.new(C_BULL, 78),
+            border_width=2,
+            xloc=xloc.bar_index)
+
+if show_box and sell_sig
+    box.new(bar_index, high + atr * 0.1, bar_index, low - atr * 0.1,
+            border_color=color.new(C_BEAR, 0),
+            bgcolor=color.new(C_BEAR, 78),
+            border_width=2,
+            xloc=xloc.bar_index)
+
+// Entry candle fill
+barcolor(buy_sig  ? color.new(C_BULL, 20) : sell_sig ? color.new(C_BEAR, 20) : na)
+
+// ══════════════════════════════════════════════════════════════════════
+// SIGNAL LABELS
+// ══════════════════════════════════════════════════════════════════════
+rr_str   = str.tostring(rr_tp1, "#.#")
+entry_px = str.tostring(close, format.mintick)
 
 if buy_sig
     label.new(bar_index, na,
-              "◈  F U T U R E F I\n▲  L O N G\n" +
-              str.tostring(close, format.mintick) + "   RR 1:" + rr_str,
+              "◈  F U T U R E F I\n▲  L O N G\n" + entry_px + "   1:" + rr_str,
               xloc=xloc.bar_index, yloc=yloc.belowbar,
               style=label.style_label_up,
-              color=color.new(C_BULL, 5),
+              color=color.new(C_BULL, 0),
               textcolor=C_DARK,
               size=size.normal,
               textalign=text.align_center)
 
 if sell_sig
     label.new(bar_index, na,
-              "◈  F U T U R E F I\n▼  S H O R T\n" +
-              str.tostring(close, format.mintick) + "   RR 1:" + rr_str,
+              "◈  F U T U R E F I\n▼  S H O R T\n" + entry_px + "   1:" + rr_str,
               xloc=xloc.bar_index, yloc=yloc.abovebar,
               style=label.style_label_down,
-              color=color.new(C_BEAR, 5),
+              color=color.new(C_BEAR, 0),
               textcolor=color.white,
               size=size.normal,
               textalign=text.align_center)
@@ -209,141 +250,128 @@ if sell_sig
 // ══════════════════════════════════════════════════════════════════════
 if show_sltp and buy_sig
     line.new(bar_index, buy_sl,  bar_index + line_ext, buy_sl,
-             color=color.new(C_SL,  15), style=line.style_dashed, width=1)
+             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
     line.new(bar_index, buy_tp1, bar_index + line_ext, buy_tp1,
-             color=color.new(C_TP1, 15), style=line.style_dashed, width=1)
+             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
     line.new(bar_index, buy_tp2, bar_index + line_ext, buy_tp2,
-             color=color.new(C_TP2, 25), style=line.style_dotted, width=1)
+             color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
     label.new(bar_index + line_ext, buy_sl,  " SL",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL,  15), textcolor=color.white, size=size.tiny)
+              color=color.new(C_SL,  10), textcolor=color.white, size=size.tiny)
     label.new(bar_index + line_ext, buy_tp1, " TP1",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP1, 15), textcolor=C_DARK, size=size.tiny)
+              color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
     label.new(bar_index + line_ext, buy_tp2, " TP2",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP2, 25), textcolor=C_DARK, size=size.tiny)
+              color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
 
 if show_sltp and sell_sig
     line.new(bar_index, sell_sl,  bar_index + line_ext, sell_sl,
-             color=color.new(C_SL,  15), style=line.style_dashed, width=1)
+             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
     line.new(bar_index, sell_tp1, bar_index + line_ext, sell_tp1,
-             color=color.new(C_TP1, 15), style=line.style_dashed, width=1)
+             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
     line.new(bar_index, sell_tp2, bar_index + line_ext, sell_tp2,
-             color=color.new(C_TP2, 25), style=line.style_dotted, width=1)
+             color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
     label.new(bar_index + line_ext, sell_sl,  " SL",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL,  15), textcolor=color.white, size=size.tiny)
+              color=color.new(C_SL,  10), textcolor=color.white, size=size.tiny)
     label.new(bar_index + line_ext, sell_tp1, " TP1",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP1, 15), textcolor=C_DARK, size=size.tiny)
+              color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
     label.new(bar_index + line_ext, sell_tp2, " TP2",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP2, 25), textcolor=C_DARK, size=size.tiny)
+              color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════
 // FUTUREFI DASHBOARD
 // ══════════════════════════════════════════════════════════════════════
 if show_tbl and barstate.islast
     t = table.new(position.top_right, 2, 10,
-                  bgcolor=color.new(C_DARK, 10),
-                  border_color=color.new(C_BRAND, 55),
+                  bgcolor=color.new(C_DARK, 8),
+                  border_color=color.new(C_BRAND, 50),
                   border_width=1,
                   frame_color=C_BRAND,
                   frame_width=2)
 
-    // ── HEADER ──
+    hdr = color.new(C_PANEL, 15)
+
+    // Header
     table.cell(t, 0, 0, "◈  FUTUREFI  SWING  PRO™",
                text_color=C_BRAND, text_size=size.small,
-               bgcolor=color.new(C_PANEL, 5),
-               text_halign=text.align_center)
-    table.cell(t, 1, 0, syminfo.ticker + "  " + timeframe.period + "m",
+               bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
+    table.cell(t, 1, 0, syminfo.ticker + "  ·  " + timeframe.period + "m",
                text_color=C_BRAND, text_size=size.small,
-               bgcolor=color.new(C_PANEL, 5),
-               text_halign=text.align_center)
+               bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
 
-    // ── SEPARATOR ──
-    table.cell(t, 0, 1, "──────────────",
-               text_color=color.new(C_BRAND, 65), text_size=size.tiny,
-               bgcolor=color.new(C_DARK, 5))
-    table.cell(t, 1, 1, "──────────",
-               text_color=color.new(C_BRAND, 65), text_size=size.tiny,
-               bgcolor=color.new(C_DARK, 5))
+    // Divider
+    table.cell(t, 0, 1, "────────────────", text_color=color.new(C_BRAND, 60),
+               text_size=size.tiny, bgcolor=color.new(C_DARK, 0))
+    table.cell(t, 1, 1, "───────────",      text_color=color.new(C_BRAND, 60),
+               text_size=size.tiny, bgcolor=color.new(C_DARK, 0))
 
-    hdr = color.new(C_PANEL, 20)
-
-    // ── TREND ──
-    trend_txt = uptrend ? "▲  BULL" : downtrend ? "▼  BEAR" : "◆  RANGE"
-    trend_col = uptrend ? C_BULL : downtrend ? C_BEAR : C_BRAND
+    // Trend
+    tc = uptrend ? C_BULL : downtrend ? C_BEAR : C_BRAND
     table.cell(t, 0, 2, "Trend",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 2, trend_txt,
-               text_color=trend_col, text_size=size.small,
-               bgcolor=color.new(trend_col, 80))
+    table.cell(t, 1, 2, uptrend ? "▲  BULL" : downtrend ? "▼  BEAR" : "◆  RANGE",
+               text_color=tc, text_size=size.small, bgcolor=color.new(tc, 80))
 
-    // ── RSI ──
-    rsi_col     = rsi > 70 ? C_BEAR : rsi < 30 ? C_BULL : rsi_bull ? C_BULL : rsi_bear ? C_BEAR : C_DIM
-    rsi_dir_txt = rsi_bull ? " ▲" : rsi_bear ? " ▼" : ""
+    // RSI
+    rc = rsi > 70 ? C_BEAR : rsi < 30 ? C_BULL : rsi_bull ? C_BULL : rsi_bear ? C_BEAR : C_DIM
     table.cell(t, 0, 3, "RSI  (" + str.tostring(rsi_len) + ")",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 3, str.tostring(rsi, "#.##") + rsi_dir_txt,
-               text_color=rsi_col, text_size=size.small,
-               bgcolor=color.new(rsi_col, 80))
+    table.cell(t, 1, 3, str.tostring(rsi, "#.##") + (rsi_bull ? "  ▲" : rsi_bear ? "  ▼" : ""),
+               text_color=rc, text_size=size.small, bgcolor=color.new(rc, 80))
 
-    // ── EMA TOUCH ──
-    is_touch = bull_touch or bear_touch
+    // EMA Touch
+    is_t = bull_touch or bear_touch
     table.cell(t, 0, 4, "EMA Touch",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 4, is_touch ? "✓  NEAR" : "✗  FAR",
-               text_color=is_touch ? C_BULL : C_DIM, text_size=size.small,
-               bgcolor=is_touch ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
+    table.cell(t, 1, 4, is_t ? "✓  NEAR" : "✗  FAR",
+               text_color=is_t ? C_BULL : C_DIM, text_size=size.small,
+               bgcolor=is_t ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
-    // ── PATTERN ──
-    has_pat = bull_pat or bear_pat
+    // Pattern
+    hp = bull_pat or bear_pat
     table.cell(t, 0, 5, "Pattern",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 5, has_pat ? pat_name : "✗  NONE",
-               text_color=has_pat ? C_BULL : C_DIM, text_size=size.small,
-               bgcolor=has_pat ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
+    table.cell(t, 1, 5, hp ? pat_name : "✗  NONE",
+               text_color=hp ? C_BULL : C_DIM, text_size=size.small,
+               bgcolor=hp ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
-    // ── STRUCTURE ──
-    struct_txt = hh_hl ? "HH / HL  ▲" : lh_ll ? "LH / LL  ▼" : "—"
-    struct_col = hh_hl ? C_BULL : lh_ll ? C_BEAR : C_DIM
+    // Structure
+    sc = hh_hl ? C_BULL : lh_ll ? C_BEAR : C_DIM
     table.cell(t, 0, 6, "Structure",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 6, struct_txt,
-               text_color=struct_col, text_size=size.small,
-               bgcolor=color.new(struct_col, 80))
+    table.cell(t, 1, 6, hh_hl ? "HH / HL  ▲" : lh_ll ? "LH / LL  ▼" : "—",
+               text_color=sc, text_size=size.small, bgcolor=color.new(sc, 80))
 
-    // ── VOLUME ──
-    vol_hi = volume > avg_vol
+    // Volume
+    vh = volume > avg_vol
     table.cell(t, 0, 7, "Volume",
                text_color=C_TEXT, text_size=size.small, bgcolor=hdr)
-    table.cell(t, 1, 7, vol_hi ? "↑  STRONG" : "↓  WEAK",
-               text_color=vol_hi ? C_BULL : C_DIM, text_size=size.small,
-               bgcolor=vol_hi ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
+    table.cell(t, 1, 7, vh ? "↑  STRONG" : "↓  WEAK",
+               text_color=vh ? C_BULL : C_DIM, text_size=size.small,
+               bgcolor=vh ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
-    // ── SEPARATOR ──
-    table.cell(t, 0, 8, "──────────────",
-               text_color=color.new(C_BRAND, 65), text_size=size.tiny,
-               bgcolor=color.new(C_DARK, 5))
-    table.cell(t, 1, 8, "──────────",
-               text_color=color.new(C_BRAND, 65), text_size=size.tiny,
-               bgcolor=color.new(C_DARK, 5))
+    // Divider
+    table.cell(t, 0, 8, "────────────────", text_color=color.new(C_BRAND, 60),
+               text_size=size.tiny, bgcolor=color.new(C_DARK, 0))
+    table.cell(t, 1, 8, "───────────",      text_color=color.new(C_BRAND, 60),
+               text_size=size.tiny, bgcolor=color.new(C_DARK, 0))
 
-    // ── SIGNAL STATUS ──
-    sig_txt = buy_sig  ? "◈  LONG  ▲" : sell_sig ? "◈  SHORT  ▼" : "  SCANNING..."
-    sig_col = buy_sig  ? C_BULL : sell_sig ? C_BEAR : C_BRAND
+    // Signal
+    sg = buy_sig ? C_BULL : sell_sig ? C_BEAR : C_BRAND
     table.cell(t, 0, 9, "Signal",
-               text_color=C_TEXT, text_size=size.small,
-               bgcolor=color.new(C_PANEL, 10))
-    table.cell(t, 1, 9, sig_txt,
-               text_color=sig_col, text_size=size.small,
-               bgcolor=color.new(sig_col, buy_sig or sell_sig ? 65 : 88))
+               text_color=C_TEXT, text_size=size.small, bgcolor=color.new(C_PANEL, 10))
+    table.cell(t, 1, 9,
+               buy_sig ? "◈  LONG  ▲" : sell_sig ? "◈  SHORT  ▼" : "  SCANNING...",
+               text_color=sg, text_size=size.small,
+               bgcolor=color.new(sg, buy_sig or sell_sig ? 60 : 88))
 
 // ══════════════════════════════════════════════════════════════════════
 // ALERTS
 // ══════════════════════════════════════════════════════════════════════
-alertcondition(buy_sig,            "FutureFi — LONG",  "◈ FutureFi LONG on {{ticker}} {{interval}}")
-alertcondition(sell_sig,           "FutureFi — SHORT", "◈ FutureFi SHORT on {{ticker}} {{interval}}")
-alertcondition(buy_sig or sell_sig,"FutureFi — Signal","◈ FutureFi signal on {{ticker}} {{interval}}")
+alertcondition(buy_sig,            "FutureFi — LONG",   "◈ FutureFi LONG on {{ticker}} {{interval}}")
+alertcondition(sell_sig,           "FutureFi — SHORT",  "◈ FutureFi SHORT on {{ticker}} {{interval}}")
+alertcondition(buy_sig or sell_sig,"FutureFi — Signal", "◈ FutureFi signal on {{ticker}} {{interval}}")
