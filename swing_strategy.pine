@@ -246,41 +246,64 @@ if sell_sig
               textalign=text.align_center)
 
 // ══════════════════════════════════════════════════════════════════════
-// SL / TP LINES
+// SL / ENTRY / TP LINES
+// Level order for LONG:  SL (below) → ENTRY → TP1 → TP2 (above)
+// Level order for SHORT: TP2 → TP1 → ENTRY → SL (above)
+// TP2 only drawn when it is genuinely beyond TP1
 // ══════════════════════════════════════════════════════════════════════
 if show_sltp and buy_sig
+    // SL
     line.new(bar_index, buy_sl,  bar_index + line_ext, buy_sl,
              color=color.new(C_SL,  10), style=line.style_dashed, width=1)
-    line.new(bar_index, buy_tp1, bar_index + line_ext, buy_tp1,
-             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
-    line.new(bar_index, buy_tp2, bar_index + line_ext, buy_tp2,
-             color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
     label.new(bar_index + line_ext, buy_sl,  " SL",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL,  10), textcolor=color.white, size=size.tiny)
+              color=color.new(C_SL, 10), textcolor=color.white, size=size.tiny)
+    // ENTRY
+    line.new(bar_index, close, bar_index + line_ext, close,
+             color=color.new(C_BRAND, 10), style=line.style_solid, width=1)
+    label.new(bar_index + line_ext, close, " ENTRY",
+              xloc=xloc.bar_index, style=label.style_label_left,
+              color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
+    // TP1
+    line.new(bar_index, buy_tp1, bar_index + line_ext, buy_tp1,
+             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
     label.new(bar_index + line_ext, buy_tp1, " TP1",
               xloc=xloc.bar_index, style=label.style_label_left,
               color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
-    label.new(bar_index + line_ext, buy_tp2, " TP2",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+    // TP2 — only when it is above TP1 (genuine further target)
+    if buy_tp2 > buy_tp1
+        line.new(bar_index, buy_tp2, bar_index + line_ext, buy_tp2,
+                 color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
+        label.new(bar_index + line_ext, buy_tp2, " TP2",
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
 
 if show_sltp and sell_sig
-    line.new(bar_index, sell_sl,  bar_index + line_ext, sell_sl,
-             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
+    // TP2 — only when it is below TP1 (genuine further target)
+    if sell_tp2 < sell_tp1
+        line.new(bar_index, sell_tp2, bar_index + line_ext, sell_tp2,
+                 color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
+        label.new(bar_index + line_ext, sell_tp2, " TP2",
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+    // TP1
     line.new(bar_index, sell_tp1, bar_index + line_ext, sell_tp1,
              color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
-    line.new(bar_index, sell_tp2, bar_index + line_ext, sell_tp2,
-             color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
-    label.new(bar_index + line_ext, sell_sl,  " SL",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL,  10), textcolor=color.white, size=size.tiny)
     label.new(bar_index + line_ext, sell_tp1, " TP1",
               xloc=xloc.bar_index, style=label.style_label_left,
               color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
-    label.new(bar_index + line_ext, sell_tp2, " TP2",
+    // ENTRY
+    line.new(bar_index, close, bar_index + line_ext, close,
+             color=color.new(C_BRAND, 10), style=line.style_solid, width=1)
+    label.new(bar_index + line_ext, close, " ENTRY",
               xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+              color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
+    // SL
+    line.new(bar_index, sell_sl,  bar_index + line_ext, sell_sl,
+             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
+    label.new(bar_index + line_ext, sell_sl,  " SL",
+              xloc=xloc.bar_index, style=label.style_label_left,
+              color=color.new(C_SL, 10), textcolor=color.white, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════
 // FUTUREFI DASHBOARD
