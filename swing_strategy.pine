@@ -63,7 +63,7 @@ show_tbl   = input.bool(true,  "FutureFi Dashboard",  group=G_DISP)
 tbl_pos_str  = input.string("Top Right", "Dashboard Position",
                options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"],
                group=G_DISP)
-tbl_sz_str   = input.string("Small", "Dashboard Text Size",
+tbl_sz_str   = input.string("Tiny", "Dashboard Text Size",
                options=["Tiny","Small","Normal"],
                group=G_DISP)
 
@@ -329,7 +329,7 @@ if show_sltp and sell_sig
 // FUTUREFI DASHBOARD
 // ══════════════════════════════════════════════════════════════════════
 if show_tbl and barstate.islast
-    t = table.new(tbl_pos, 2, 12,
+    t = table.new(tbl_pos, 2, 8,
                   bgcolor=color.new(C_DARK, 8),
                   border_color=color.new(C_BRAND, 50),
                   border_width=1,
@@ -337,90 +337,72 @@ if show_tbl and barstate.islast
                   frame_width=2)
 
     hdr = color.new(C_PANEL, 15)
-    div = color.new(C_DARK, 0)
 
     // ── HEADER ──
-    tf_badge  = is_15m ? "15m  ✓ OPTIMAL" : timeframe.period + "m"
-    tf_color  = is_15m ? C_BULL : C_BRAND
-    table.cell(t, 0, 0, "◈  FUTUREFI  SWING  PRO™",
+    table.cell(t, 0, 0, "CONDITION",
                text_color=C_BRAND, text_size=tbl_sz,
                bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
-    table.cell(t, 1, 0, syminfo.ticker + "  ·  " + tf_badge,
-               text_color=tf_color, text_size=tbl_sz,
+    table.cell(t, 1, 0, "STATUS",
+               text_color=C_BRAND, text_size=tbl_sz,
                bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
 
-    table.cell(t, 0, 1, "────────────────", text_color=color.new(C_BRAND, 60), text_size=size.tiny, bgcolor=div)
-    table.cell(t, 1, 1, "───────────",      text_color=color.new(C_BRAND, 60), text_size=size.tiny, bgcolor=div)
-
-    // ── HTF BIAS ──
+    // ── TREND  (HTF + current merged) ──
+    tc      = uptrend ? C_BULL : downtrend ? C_BEAR : C_BRAND
     htf_col = htf_uptrend ? C_BULL : htf_dntrend ? C_BEAR : C_DIM
-    table.cell(t, 0, 2, htf_label + " Bias",
+    // Show mismatch warning if HTF and 15m disagree
+    trend_status = (uptrend and htf_uptrend)   ? "▲  BULL" :
+                   (downtrend and htf_dntrend) ? "▼  BEAR" :
+                   uptrend                     ? "▲ (HTF ▼)" :
+                   downtrend                   ? "▼ (HTF ▲)" : "◆  RANGE"
+    trend_col    = (uptrend and htf_uptrend) or (downtrend and htf_dntrend) ? tc : C_AMBER
+    table.cell(t, 0, 1, "Trend",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 2, htf_uptrend ? "▲  BULL" : htf_dntrend ? "▼  BEAR" : "◆  RANGE",
-               text_color=htf_col, text_size=tbl_sz, bgcolor=color.new(htf_col, 80))
-
-    // ── 15m TREND ──
-    tc = uptrend ? C_BULL : downtrend ? C_BEAR : C_BRAND
-    table.cell(t, 0, 3, "15m Trend",
-               text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 3, uptrend ? "▲  BULL" : downtrend ? "▼  BEAR" : "◆  RANGE",
-               text_color=tc, text_size=tbl_sz, bgcolor=color.new(tc, 80))
+    table.cell(t, 1, 1, trend_status,
+               text_color=trend_col, text_size=tbl_sz, bgcolor=color.new(trend_col, 80))
 
     // ── RSI ──
     rc = rsi > rsi_ob ? C_BEAR : rsi < rsi_os ? C_BULL : rsi_bull ? C_BULL : rsi_bear ? C_BEAR : C_DIM
-    table.cell(t, 0, 4, "RSI  (" + str.tostring(rsi_len) + ")",
+    table.cell(t, 0, 2, "RSI  (" + str.tostring(rsi_len) + ")",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 4, str.tostring(rsi, "#.##") + (rsi_bull ? "  ▲" : rsi_bear ? "  ▼" : ""),
+    table.cell(t, 1, 2, str.tostring(rsi, "#.##") + (rsi_bull ? "  ▲" : rsi_bear ? "  ▼" : ""),
                text_color=rc, text_size=tbl_sz, bgcolor=color.new(rc, 80))
 
     // ── EMA TOUCH ──
     is_t = bull_touch or bear_touch
-    table.cell(t, 0, 5, "EMA Touch",
+    table.cell(t, 0, 3, "EMA Touch",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 5, is_t ? "✓  NEAR" : "✗  FAR",
+    table.cell(t, 1, 3, is_t ? "✓  NEAR" : "✗  FAR",
                text_color=is_t ? C_BULL : C_DIM, text_size=tbl_sz,
                bgcolor=is_t ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
     // ── PATTERN ──
     hp = bull_pat or bear_pat
-    table.cell(t, 0, 6, "Pattern",
+    table.cell(t, 0, 4, "Pattern",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 6, hp ? pat_name : "✗  NONE",
+    table.cell(t, 1, 4, hp ? pat_name : "✗  NONE",
                text_color=hp ? C_BULL : C_DIM, text_size=tbl_sz,
                bgcolor=hp ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
     // ── STRUCTURE ──
     sc = hh_hl ? C_BULL : lh_ll ? C_BEAR : C_DIM
-    table.cell(t, 0, 7, "Structure",
+    table.cell(t, 0, 5, "Structure",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 7, hh_hl ? "HH / HL  ▲" : lh_ll ? "LH / LL  ▼" : "—",
+    table.cell(t, 1, 5, hh_hl ? "HH / HL  ▲" : lh_ll ? "LH / LL  ▼" : "—",
                text_color=sc, text_size=tbl_sz, bgcolor=color.new(sc, 80))
 
     // ── VOLUME ──
     vh = volume > avg_vol
-    table.cell(t, 0, 8, "Volume",
+    table.cell(t, 0, 6, "Volume",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=hdr)
-    table.cell(t, 1, 8, vh ? "↑  STRONG" : "↓  WEAK",
+    table.cell(t, 1, 6, vh ? "↑  STRONG" : "↓  WEAK",
                text_color=vh ? C_BULL : C_DIM, text_size=tbl_sz,
                bgcolor=vh ? color.new(C_BULL, 80) : color.new(C_DIM, 85))
 
-    table.cell(t, 0, 9, "────────────────", text_color=color.new(C_BRAND, 60), text_size=size.tiny, bgcolor=div)
-    table.cell(t, 1, 9, "───────────",      text_color=color.new(C_BRAND, 60), text_size=size.tiny, bgcolor=div)
-
-    // ── HTF ALIGNED ──
-    aligned     = (uptrend and htf_uptrend) or (downtrend and htf_dntrend)
-    aligned_col = aligned ? C_BULL : C_BEAR
-    table.cell(t, 0, 10, "HTF Aligned",
-               text_color=C_TEXT, text_size=tbl_sz, bgcolor=color.new(C_PANEL, 10))
-    table.cell(t, 1, 10, aligned ? "✓  YES" : "✗  NO",
-               text_color=aligned_col, text_size=tbl_sz,
-               bgcolor=color.new(aligned_col, 75))
-
     // ── SIGNAL ──
     sg = buy_sig ? C_BULL : sell_sig ? C_BEAR : C_BRAND
-    table.cell(t, 0, 11, "Signal",
+    table.cell(t, 0, 7, "Signal",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=color.new(C_PANEL, 10))
-    table.cell(t, 1, 11,
+    table.cell(t, 1, 7,
                buy_sig ? "◈  LONG  ▲" : sell_sig ? "◈  SHORT  ▼" : "SCANNING...",
                text_color=sg, text_size=tbl_sz,
                bgcolor=color.new(sg, buy_sig or sell_sig ? 60 : 88))
