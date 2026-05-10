@@ -100,23 +100,55 @@ tbl_sz  = tbl_sz_str  == "Tiny"   ? size.tiny   : tbl_sz_str  == "Normal" ? size
 sig_sz  = sig_lbl_sz_str == "Tiny" ? size.tiny  : sig_lbl_sz_str == "Normal" ? size.normal : size.small
 
 // ══════════════════════════════════════════════════════════════════════
-// SCANNER — fetch trend + RSI for each symbol slot
+// SCANNER — full signal detection per symbol (trend + pattern + RSI + EMA touch)
 // ══════════════════════════════════════════════════════════════════════
 f_scan_data(sym) =>
-    s        = sym == "" ? syminfo.tickerid : sym
-    s_close  = request.security(s, timeframe.period, close,                    lookahead=barmerge.lookahead_off)
-    s_ema200 = request.security(s, timeframe.period, ta.ema(close, slow_len),  lookahead=barmerge.lookahead_off)
-    s_rsi    = request.security(s, timeframe.period, ta.rsi(close, rsi_len),   lookahead=barmerge.lookahead_off)
-    [s_close > s_ema200, s_close < s_ema200, s_rsi]
+    s = sym == "" ? syminfo.tickerid : sym
+
+    // Trend
+    _up  = request.security(s, timeframe.period, close > ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
+    _dn  = request.security(s, timeframe.period, close < ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
+    _rsi = request.security(s, timeframe.period, ta.rsi(close, rsi_len),          lookahead=barmerge.lookahead_off)
+
+    // EMA20 touch (bull + bear)
+    _etb = request.security(s, timeframe.period,
+           low  <= ta.ema(close, fast_len) * (1.0 + prox) and
+           close > ta.ema(close, fast_len) * (1.0 - prox) and
+           close > ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
+    _ets = request.security(s, timeframe.period,
+           high >= ta.ema(close, fast_len) * (1.0 - prox) and
+           close < ta.ema(close, fast_len) * (1.0 + prox) and
+           close < ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
+
+    // Candlestick patterns (pin bar + engulfing)
+    _bp = request.security(s, timeframe.period,
+          (math.abs(close - open) > 0 and
+           (math.min(close, open) - low) >= math.abs(close - open) * 2.5 and
+           close >= low + (high - low) * 0.7) or
+          (close[1] < open[1] and close > open and open <= close[1] and
+           close >= open[1] and math.abs(close - open) >= math.abs(close[1] - open[1]) * 1.5),
+          lookahead=barmerge.lookahead_off)
+    _sp = request.security(s, timeframe.period,
+          (math.abs(close - open) > 0 and
+           (high - math.max(close, open)) >= math.abs(close - open) * 2.5 and
+           close <= low + (high - low) * 0.3) or
+          (close[1] > open[1] and close < open and open >= close[1] and
+           close <= open[1] and math.abs(close - open) >= math.abs(close[1] - open[1]) * 1.5),
+          lookahead=barmerge.lookahead_off)
+
+    _long  = _up and _etb and _bp and _rsi > rsi_mid and _rsi < rsi_ob
+    _short = _dn and _ets and _sp and _rsi < rsi_mid and _rsi > rsi_os
+
+    [_up, _dn, _rsi, _long, _short]
 
 f_sym_name(sym) =>
     sym == "" ? "—" : array.get(str.split(sym, ":"), array.size(str.split(sym, ":")) - 1)
 
-[s1_bull, s1_bear, s1_rsi] = f_scan_data(sym1)
-[s2_bull, s2_bear, s2_rsi] = f_scan_data(sym2)
-[s3_bull, s3_bear, s3_rsi] = f_scan_data(sym3)
-[s4_bull, s4_bear, s4_rsi] = f_scan_data(sym4)
-[s5_bull, s5_bear, s5_rsi] = f_scan_data(sym5)
+[s1_up, s1_dn, s1_rsi, s1_long, s1_short] = f_scan_data(sym1)
+[s2_up, s2_dn, s2_rsi, s2_long, s2_short] = f_scan_data(sym2)
+[s3_up, s3_dn, s3_rsi, s3_long, s3_short] = f_scan_data(sym3)
+[s4_up, s4_dn, s4_rsi, s4_long, s4_short] = f_scan_data(sym4)
+[s5_up, s5_dn, s5_rsi, s5_long, s5_short] = f_scan_data(sym5)
 
 // ══════════════════════════════════════════════════════════════════════
 // CORE INDICATORS
@@ -453,36 +485,43 @@ if show_scan and barstate.islast
                      frame_color=C_BRAND,
                      frame_width=2)
 
-    // Header
-    table.cell(sc_t, 0, 0, "SCANNER", text_color=C_BRAND, text_size=size.tiny,
+    table.cell(sc_t, 0, 0, "◈ SCANNER", text_color=C_BRAND, text_size=size.tiny,
                bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
     table.cell(sc_t, 1, 0, timeframe.period + "m", text_color=C_BRAND, text_size=size.tiny,
                bgcolor=color.new(C_PANEL, 0), text_halign=text.align_center)
 
-    // Helper arrays for display
-    syms  = array.from(sym1, sym2, sym3, sym4, sym5)
-    bulls = array.from(s1_bull, s2_bull, s3_bull, s4_bull, s5_bull)
-    bears = array.from(s1_bear, s2_bear, s3_bear, s4_bear, s5_bear)
-    rsis  = array.from(s1_rsi,  s2_rsi,  s3_rsi,  s4_rsi,  s5_rsi)
+    syms   = array.from(sym1,    sym2,    sym3,    sym4,    sym5)
+    ups    = array.from(s1_up,   s2_up,   s3_up,   s4_up,   s5_up)
+    dns    = array.from(s1_dn,   s2_dn,   s3_dn,   s4_dn,   s5_dn)
+    rsis_a = array.from(s1_rsi,  s2_rsi,  s3_rsi,  s4_rsi,  s5_rsi)
+    longs  = array.from(s1_long, s2_long, s3_long, s4_long, s5_long)
+    shorts = array.from(s1_short,s2_short,s3_short,s4_short,s5_short)
 
     for i = 0 to 4
-        sym_i  = array.get(syms,  i)
-        bull_i = array.get(bulls, i)
-        bear_i = array.get(bears, i)
-        rsi_i  = array.get(rsis,  i)
+        sym_i   = array.get(syms,   i)
+        up_i    = array.get(ups,    i)
+        dn_i    = array.get(dns,    i)
+        rsi_i   = array.get(rsis_a, i)
+        long_i  = array.get(longs,  i)
+        short_i = array.get(shorts, i)
 
-        name_i   = f_sym_name(sym_i)
         is_empty = sym_i == ""
-        clr_i    = is_empty ? C_DIM : bull_i ? C_BULL : bear_i ? C_BEAR : C_BRAND
-        status_i = is_empty ? "—" : (bull_i ? "▲ " : bear_i ? "▼ " : "◆ ") +
-                   (is_empty ? "" : str.tostring(rsi_i, "#.#"))
+        name_i   = f_sym_name(sym_i)
+
+        // Full signal takes priority, otherwise show trend + RSI
+        clr_i    = is_empty ? C_DIM : long_i ? C_BULL : short_i ? C_BEAR : up_i ? color.new(C_BULL, 50) : dn_i ? color.new(C_BEAR, 50) : C_DIM
+        status_i = is_empty   ? "—" :
+                   long_i     ? "◈ LONG  ▲" :
+                   short_i    ? "◈ SHORT ▼" :
+                   up_i       ? "▲  " + str.tostring(rsi_i, "#.#") :
+                   dn_i       ? "▼  " + str.tostring(rsi_i, "#.#") : "◆  " + str.tostring(rsi_i, "#.#")
+        bg_i     = is_empty ? color.new(C_DIM, 92) : (long_i or short_i) ? color.new(clr_i, 65) : color.new(clr_i, 85)
 
         table.cell(sc_t, 0, i + 1, name_i,
                    text_color=is_empty ? C_DIM : C_TEXT,
                    text_size=size.tiny, bgcolor=color.new(C_PANEL, 15))
         table.cell(sc_t, 1, i + 1, status_i,
-                   text_color=clr_i, text_size=size.tiny,
-                   bgcolor=color.new(clr_i, is_empty ? 95 : 82))
+                   text_color=clr_i, text_size=size.tiny, bgcolor=bg_i)
 
 // ══════════════════════════════════════════════════════════════════════
 // ALERTS
@@ -490,3 +529,13 @@ if show_scan and barstate.islast
 alertcondition(buy_sig,            "FutureFi — LONG",   "◈ FutureFi LONG on {{ticker}} {{interval}}")
 alertcondition(sell_sig,           "FutureFi — SHORT",  "◈ FutureFi SHORT on {{ticker}} {{interval}}")
 alertcondition(buy_sig or sell_sig,"FutureFi — Signal", "◈ FutureFi signal on {{ticker}} {{interval}}")
+
+// Scanner alerts — fires when any watched symbol gets a full signal
+scan_any_long  = (sym1 != "" and s1_long)  or (sym2 != "" and s2_long)  or
+                 (sym3 != "" and s3_long)  or (sym4 != "" and s4_long)  or (sym5 != "" and s5_long)
+scan_any_short = (sym1 != "" and s1_short) or (sym2 != "" and s2_short) or
+                 (sym3 != "" and s3_short) or (sym4 != "" and s4_short) or (sym5 != "" and s5_short)
+
+alertcondition(scan_any_long,               "Scanner — LONG",   "◈ Scanner LONG setup detected {{interval}}")
+alertcondition(scan_any_short,              "Scanner — SHORT",  "◈ Scanner SHORT setup detected {{interval}}")
+alertcondition(scan_any_long or scan_any_short, "Scanner — Any","◈ Scanner signal detected {{interval}}")
