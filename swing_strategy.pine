@@ -100,46 +100,42 @@ tbl_sz  = tbl_sz_str  == "Tiny"   ? size.tiny   : tbl_sz_str  == "Normal" ? size
 sig_sz  = sig_lbl_sz_str == "Tiny" ? size.tiny  : sig_lbl_sz_str == "Normal" ? size.normal : size.small
 
 // ══════════════════════════════════════════════════════════════════════
-// SCANNER — full signal detection per symbol (trend + pattern + RSI + EMA touch)
+// SCANNER — single request.security() per symbol, conditions computed locally
+// (avoids CW10002: ta.ema() called at tuple top-level, not inside conditionals)
 // ══════════════════════════════════════════════════════════════════════
 f_scan_data(sym) =>
     s = sym == "" ? syminfo.tickerid : sym
 
+    // One call fetches all raw OHLC + indicators — no conditionals inside security
+    [_c, _o, _h, _l, _c1, _o1, _e20, _e200, _rsiv] = request.security(s, timeframe.period,
+        [close, open, high, low, close[1], open[1],
+         ta.ema(close, fast_len), ta.ema(close, slow_len), ta.rsi(close, rsi_len)],
+        lookahead=barmerge.lookahead_off)
+
     // Trend
-    _up  = request.security(s, timeframe.period, close > ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
-    _dn  = request.security(s, timeframe.period, close < ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
-    _rsi = request.security(s, timeframe.period, ta.rsi(close, rsi_len),          lookahead=barmerge.lookahead_off)
+    _up = _c > _e200
+    _dn = _c < _e200
 
-    // EMA20 touch (bull + bear)
-    _etb = request.security(s, timeframe.period,
-           low  <= ta.ema(close, fast_len) * (1.0 + prox) and
-           close > ta.ema(close, fast_len) * (1.0 - prox) and
-           close > ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
-    _ets = request.security(s, timeframe.period,
-           high >= ta.ema(close, fast_len) * (1.0 - prox) and
-           close < ta.ema(close, fast_len) * (1.0 + prox) and
-           close < ta.ema(close, slow_len), lookahead=barmerge.lookahead_off)
+    // EMA20 touch
+    _etb = _l  <= _e20 * (1.0 + prox) and _c > _e20 * (1.0 - prox) and _c > _e200
+    _ets = _h >= _e20 * (1.0 - prox) and _c < _e20 * (1.0 + prox) and _c < _e200
 
-    // Candlestick patterns (pin bar + engulfing)
-    _bp = request.security(s, timeframe.period,
-          (math.abs(close - open) > 0 and
-           (math.min(close, open) - low) >= math.abs(close - open) * 2.5 and
-           close >= low + (high - low) * 0.7) or
-          (close[1] < open[1] and close > open and open <= close[1] and
-           close >= open[1] and math.abs(close - open) >= math.abs(close[1] - open[1]) * 1.5),
-          lookahead=barmerge.lookahead_off)
-    _sp = request.security(s, timeframe.period,
-          (math.abs(close - open) > 0 and
-           (high - math.max(close, open)) >= math.abs(close - open) * 2.5 and
-           close <= low + (high - low) * 0.3) or
-          (close[1] > open[1] and close < open and open >= close[1] and
-           close <= open[1] and math.abs(close - open) >= math.abs(close[1] - open[1]) * 1.5),
-          lookahead=barmerge.lookahead_off)
+    // Candlestick pattern components
+    _body    = math.abs(_c  - _o)
+    _body1   = math.abs(_c1 - _o1)
+    _rng     = _h - _l
+    _lower_w = math.min(_c, _o) - _l
+    _upper_w = _h - math.max(_c, _o)
 
-    _long  = _up and _etb and _bp and _rsi > rsi_mid and _rsi < rsi_ob
-    _short = _dn and _ets and _sp and _rsi < rsi_mid and _rsi > rsi_os
+    _bp = (_body > 0 and _lower_w >= _body * 2.5 and _c >= _l + _rng * 0.7) or
+          (_c1 < _o1 and _c > _o and _o <= _c1 and _c >= _o1 and _body >= _body1 * 1.5)
+    _sp = (_body > 0 and _upper_w >= _body * 2.5 and _c <= _l + _rng * 0.3) or
+          (_c1 > _o1 and _c < _o and _o >= _c1 and _c <= _o1 and _body >= _body1 * 1.5)
 
-    [_up, _dn, _rsi, _long, _short]
+    _long  = _up and _etb and _bp and _rsiv > rsi_mid and _rsiv < rsi_ob
+    _short = _dn and _ets and _sp and _rsiv < rsi_mid and _rsiv > rsi_os
+
+    [_up, _dn, _rsiv, _long, _short]
 
 f_sym_name(sym) =>
     sym == "" ? "—" : array.get(str.split(sym, ":"), array.size(str.split(sym, ":")) - 1)
