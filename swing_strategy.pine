@@ -84,12 +84,13 @@ sym5 = input.symbol("", "Symbol 5", group=G_SCAN)
 
 // Resolve position constants
 f_pos(s) =>
-    s == "Top Left"     ? position.top_left     :
-    s == "Bottom Right" ? position.bottom_right :
-    s == "Bottom Left"  ? position.bottom_left  :
-    s == "Middle Right" ? position.middle_right :
-    s == "Middle Left"  ? position.middle_left  :
-    position.top_right
+    switch s
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        "Middle Right" => position.middle_right
+        "Middle Left"  => position.middle_left
+        =>               position.top_right
 
 tbl_pos  = f_pos(tbl_pos_str)
 scan_pos = f_pos(scan_pos_str)
