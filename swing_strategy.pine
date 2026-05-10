@@ -99,6 +99,9 @@ scan_pos = f_pos(scan_pos_str)
 tbl_sz  = tbl_sz_str  == "Tiny"   ? size.tiny   : tbl_sz_str  == "Normal" ? size.normal : size.small
 sig_sz  = sig_lbl_sz_str == "Tiny" ? size.tiny  : sig_lbl_sz_str == "Normal" ? size.normal : size.small
 
+// prox must be declared before f_scan_data uses it
+prox = ema_prox_pct / 100.0
+
 // ══════════════════════════════════════════════════════════════════════
 // SCANNER — single request.security() per symbol, conditions computed locally
 // (avoids CW10002: ta.ema() called at tuple top-level, not inside conditionals)
@@ -176,8 +179,6 @@ is_15m    = timeframe.period == "15"
 // ══════════════════════════════════════════════════════════════════════
 // EMA TOUCH  (±2 bar window)
 // ══════════════════════════════════════════════════════════════════════
-prox = ema_prox_pct / 100.0
-
 raw_bull_t = low  <= ema20 * (1.0 + prox) and close > ema20 * (1.0 - prox) and uptrend
 raw_bear_t = high >= ema20 * (1.0 - prox) and close < ema20 * (1.0 + prox) and downtrend
 bull_touch  = raw_bull_t or raw_bull_t[1] or raw_bull_t[2]
