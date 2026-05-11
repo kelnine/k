@@ -355,19 +355,19 @@ if show_zones and barstate.islast
     box.delete(dz_box2)
     if sz1_ok
         sz_box1 := box.new(sz_bar1, sz_top1, bar_index + zone_ext, sz_bot1,
-                           border_color=color.new(C_BEAR, 20), bgcolor=color.new(C_BEAR, 88),
+                           border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
                            border_width=1, xloc=xloc.bar_index)
     if sz2_ok
         sz_box2 := box.new(sz_bar2, sz_top2, bar_index + zone_ext, sz_bot2,
-                           border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 92),
+                           border_color=color.new(C_BEAR, 60), bgcolor=color.new(C_BEAR, 95),
                            border_width=1, xloc=xloc.bar_index)
     if dz1_ok
         dz_box1 := box.new(dz_bar1, dz_top1, bar_index + zone_ext, dz_bot1,
-                           border_color=color.new(C_BULL, 20), bgcolor=color.new(C_BULL, 88),
+                           border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
                            border_width=1, xloc=xloc.bar_index)
     if dz2_ok
         dz_box2 := box.new(dz_bar2, dz_top2, bar_index + zone_ext, dz_bot2,
-                           border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 92),
+                           border_color=color.new(C_BULL, 60), bgcolor=color.new(C_BULL, 95),
                            border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
@@ -578,64 +578,72 @@ if sell_sig
               textalign=text.align_center)
 
 // ══════════════════════════════════════════════════════════════════════
-// SL / ENTRY / TP LINES
-// Level order for LONG:  SL (below) → ENTRY → TP1 → TP2 (above)
-// Level order for SHORT: TP2 → TP1 → ENTRY → SL (above)
-// TP2 only drawn when it is genuinely beyond TP1
+// SL / ENTRY / TP LINES  —  only the MOST RECENT signal shown at a time
+// Redrawn on barstate.islast so lines always extend to the current bar
 // ══════════════════════════════════════════════════════════════════════
-if show_sltp and buy_sig
-    // SL
-    line.new(bar_index, buy_sl,  bar_index + line_ext, buy_sl,
-             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
-    label.new(bar_index + line_ext, buy_sl,  " SL",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL, 10), textcolor=color.white, size=size.tiny)
-    // ENTRY
-    line.new(bar_index, close, bar_index + line_ext, close,
-             color=color.new(C_BRAND, 10), style=line.style_solid, width=1)
-    label.new(bar_index + line_ext, close, " ENTRY",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
-    // TP1
-    line.new(bar_index, buy_tp1, bar_index + line_ext, buy_tp1,
-             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
-    label.new(bar_index + line_ext, buy_tp1, " TP1",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
-    // TP2 — only when it is above TP1 (genuine further target)
-    if buy_tp2 > buy_tp1
-        line.new(bar_index, buy_tp2, bar_index + line_ext, buy_tp2,
-                 color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
-        label.new(bar_index + line_ext, buy_tp2, " TP2",
-                  xloc=xloc.bar_index, style=label.style_label_left,
-                  color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+var float _sig_entry = na
+var float _sig_sl    = na
+var float _sig_tp1   = na
+var float _sig_tp2   = na
+var bool  _sig_bull  = true
+var int   _sig_bar   = na
 
-if show_sltp and sell_sig
-    // TP2 — only when it is below TP1 (genuine further target)
-    if sell_tp2 < sell_tp1
-        line.new(bar_index, sell_tp2, bar_index + line_ext, sell_tp2,
-                 color=color.new(C_TP2, 20), style=line.style_dotted, width=1)
-        label.new(bar_index + line_ext, sell_tp2, " TP2",
-                  xloc=xloc.bar_index, style=label.style_label_left,
-                  color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
-    // TP1
-    line.new(bar_index, sell_tp1, bar_index + line_ext, sell_tp1,
-             color=color.new(C_TP1, 10), style=line.style_dashed, width=1)
-    label.new(bar_index + line_ext, sell_tp1, " TP1",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_TP1, 10), textcolor=C_DARK, size=size.tiny)
-    // ENTRY
-    line.new(bar_index, close, bar_index + line_ext, close,
-             color=color.new(C_BRAND, 10), style=line.style_solid, width=1)
-    label.new(bar_index + line_ext, close, " ENTRY",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
-    // SL
-    line.new(bar_index, sell_sl,  bar_index + line_ext, sell_sl,
-             color=color.new(C_SL,  10), style=line.style_dashed, width=1)
-    label.new(bar_index + line_ext, sell_sl,  " SL",
-              xloc=xloc.bar_index, style=label.style_label_left,
-              color=color.new(C_SL, 10), textcolor=color.white, size=size.tiny)
+if buy_sig
+    _sig_entry := close
+    _sig_sl    := buy_sl
+    _sig_tp1   := buy_tp1
+    _sig_tp2   := buy_tp2
+    _sig_bull  := true
+    _sig_bar   := bar_index
+
+if sell_sig
+    _sig_entry := close
+    _sig_sl    := sell_sl
+    _sig_tp1   := sell_tp1
+    _sig_tp2   := sell_tp2
+    _sig_bull  := false
+    _sig_bar   := bar_index
+
+var line  _ln_sl    = na
+var line  _ln_entry = na
+var line  _ln_tp1   = na
+var line  _ln_tp2   = na
+var label _lb_sl    = na
+var label _lb_entry = na
+var label _lb_tp1   = na
+var label _lb_tp2   = na
+
+if show_sltp and barstate.islast and not na(_sig_bar)
+    line.delete(_ln_sl)
+    line.delete(_ln_entry)
+    line.delete(_ln_tp1)
+    line.delete(_ln_tp2)
+    label.delete(_lb_sl)
+    label.delete(_lb_entry)
+    label.delete(_lb_tp1)
+    label.delete(_lb_tp2)
+
+    r = bar_index + line_ext
+
+    _ln_sl    := line.new(_sig_bar, _sig_sl,    r, _sig_sl,
+                          color=color.new(C_SL,    10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
+    _lb_sl    := label.new(r, _sig_sl,    " SL",    xloc=xloc.bar_index,
+                           style=label.style_label_left, color=color.new(C_SL,    10), textcolor=color.white, size=size.tiny)
+    _ln_entry := line.new(_sig_bar, _sig_entry, r, _sig_entry,
+                          color=color.new(C_BRAND, 10), style=line.style_solid,  width=1, xloc=xloc.bar_index)
+    _lb_entry := label.new(r, _sig_entry, " ENTRY", xloc=xloc.bar_index,
+                           style=label.style_label_left, color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
+    _ln_tp1   := line.new(_sig_bar, _sig_tp1,   r, _sig_tp1,
+                          color=color.new(C_TP1,   10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
+    _lb_tp1   := label.new(r, _sig_tp1,   " TP1",   xloc=xloc.bar_index,
+                           style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK,        size=size.tiny)
+
+    tp2_valid = _sig_bull ? _sig_tp2 > _sig_tp1 : _sig_tp2 < _sig_tp1
+    if tp2_valid
+        _ln_tp2 := line.new(_sig_bar, _sig_tp2, r, _sig_tp2,
+                            color=color.new(C_TP2, 20), style=line.style_dotted, width=1, xloc=xloc.bar_index)
+        _lb_tp2 := label.new(r, _sig_tp2, " TP2", xloc=xloc.bar_index,
+                             style=label.style_label_left, color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════
 // FUTUREFI DASHBOARD
