@@ -713,24 +713,18 @@ if sell_sig
 // Most recent signal: full-color labeled lines extending to current bar
 // ══════════════════════════════════════════════════════════════════════
 
-// ── Historical lines (all signals) — short lines with left-anchor labels ──
+// ── Historical lines (all signals) — lines only, no labels ──
 if show_sltp and buy_sig
     _hr = bar_index + 10
     line.new(bar_index, buy_sl,  _hr, buy_sl,  color=color.new(C_SL,    52), style=line.style_dashed, width=1)
     line.new(bar_index, close,   _hr, close,   color=color.new(C_BRAND, 52), style=line.style_solid,  width=1)
     line.new(bar_index, buy_tp1, _hr, buy_tp1, color=color.new(C_TP1,   52), style=line.style_dashed, width=1)
-    label.new(bar_index, buy_sl,  " SL",    xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_SL,    10), textcolor=color.white, size=size.tiny)
-    label.new(bar_index, close,   " ENTRY", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
-    label.new(bar_index, buy_tp1, " TP1",   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK,      size=size.tiny)
 
 if show_sltp and sell_sig
     _hr = bar_index + 10
     line.new(bar_index, sell_sl,  _hr, sell_sl,  color=color.new(C_SL,    52), style=line.style_dashed, width=1)
     line.new(bar_index, close,    _hr, close,    color=color.new(C_BRAND, 52), style=line.style_solid,  width=1)
     line.new(bar_index, sell_tp1, _hr, sell_tp1, color=color.new(C_TP1,   52), style=line.style_dashed, width=1)
-    label.new(bar_index, sell_sl,  " SL",    xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_SL,    10), textcolor=color.white, size=size.tiny)
-    label.new(bar_index, close,    " ENTRY", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
-    label.new(bar_index, sell_tp1, " TP1",   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK,      size=size.tiny)
 
 // ── Track most recent signal for the labeled live set ──
 var float _sig_entry = na
