@@ -440,43 +440,65 @@ if show_ob and barstate.islast
                            border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
-// BOS  (Break of Structure) + CHoCH (Change of Character)
-// BOS   = close breaks last swing in SAME direction as trend
-// CHoCH = close breaks last swing AGAINST current trend (early reversal)
+// BOS + CHoCH  —  uses zone_lb pivots (slower, only major swings)
+// BOS   = break of last major swing in trend direction  (continuation)
+// CHoCH = break of last major swing AGAINST trend       (early reversal)
+// Each level fires once; small dashed box marks the inducement area
 // ══════════════════════════════════════════════════════════════════════
-var float ms_last_ph = na
-var float ms_last_pl = na
-var float bos_ph_used = na
-var float bos_pl_used = na
+bos_ph = ta.pivothigh(high, zone_lb, zone_lb)
+bos_pl = ta.pivotlow(low,   zone_lb, zone_lb)
 
-if not na(ph)
-    ms_last_ph := ph
-if not na(pl)
-    ms_last_pl := pl
+var float bos_last_ph  = na
+var float bos_last_pl  = na
+var int   bos_last_ph_bar = na
+var int   bos_last_pl_bar = na
+var float bos_ph_used  = na
+var float bos_pl_used  = na
 
-bos_bull   = not na(ms_last_ph) and close > ms_last_ph and ms_last_ph != bos_ph_used and uptrend
-choch_bull = not na(ms_last_ph) and close > ms_last_ph and ms_last_ph != bos_ph_used and downtrend
-bos_bear   = not na(ms_last_pl) and close < ms_last_pl and ms_last_pl != bos_pl_used and downtrend
-choch_bear = not na(ms_last_pl) and close < ms_last_pl and ms_last_pl != bos_pl_used and uptrend
+if not na(bos_ph)
+    bos_last_ph     := bos_ph
+    bos_last_ph_bar := bar_index - zone_lb
+if not na(bos_pl)
+    bos_last_pl     := bos_pl
+    bos_last_pl_bar := bar_index - zone_lb
+
+bos_bull   = not na(bos_last_ph) and close > bos_last_ph and bos_last_ph != bos_ph_used and uptrend
+choch_bull = not na(bos_last_ph) and close > bos_last_ph and bos_last_ph != bos_ph_used and downtrend
+bos_bear   = not na(bos_last_pl) and close < bos_last_pl and bos_last_pl != bos_pl_used and downtrend
+choch_bear = not na(bos_last_pl) and close < bos_last_pl and bos_last_pl != bos_pl_used and uptrend
 
 if bos_bull or choch_bull
-    bos_ph_used := ms_last_ph
+    bos_ph_used := bos_last_ph
 if bos_bear or choch_bear
-    bos_pl_used := ms_last_pl
+    bos_pl_used := bos_last_pl
 
 if show_bos
+    // BOS label + small dashed box at the broken level
     if bos_bull
-        label.new(bar_index, na, "BOS",   xloc=xloc.bar_index, yloc=yloc.belowbar,
-                  style=label.style_none, textcolor=color.new(C_BULL, 20), size=size.tiny)
+        label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.belowbar,
+                  style=label.style_none, textcolor=C_BULL, size=size.tiny)
+        box.new(bos_last_ph_bar, bos_last_ph + atr * 0.2, bar_index, bos_last_ph,
+                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 93),
+                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
     if bos_bear
-        label.new(bar_index, na, "BOS",   xloc=xloc.bar_index, yloc=yloc.abovebar,
-                  style=label.style_none, textcolor=color.new(C_BEAR, 20), size=size.tiny)
+        label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.abovebar,
+                  style=label.style_none, textcolor=C_BEAR, size=size.tiny)
+        box.new(bos_last_pl_bar, bos_last_pl, bar_index, bos_last_pl - atr * 0.2,
+                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 93),
+                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+    // CHoCH label + small dashed box
     if choch_bull
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.belowbar,
-                  style=label.style_none, textcolor=color.new(C_BRAND, 20), size=size.tiny)
+                  style=label.style_none, textcolor=C_BEAR, size=size.tiny)
+        box.new(bos_last_ph_bar, bos_last_ph + atr * 0.2, bar_index, bos_last_ph,
+                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 93),
+                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
     if choch_bear
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.abovebar,
-                  style=label.style_none, textcolor=color.new(C_BRAND, 20), size=size.tiny)
+                  style=label.style_none, textcolor=C_BULL, size=size.tiny)
+        box.new(bos_last_pl_bar, bos_last_pl, bar_index, bos_last_pl - atr * 0.2,
+                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 93),
+                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
 // PREMIUM / DISCOUNT / EQUILIBRIUM
