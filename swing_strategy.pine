@@ -467,13 +467,13 @@ type PivotState
     bool  crossed = false
     int   bar_i   = na
 
-// Leg detector: returns -1 when swing high confirmed, 1 when swing low confirmed
+// Leg detector: 0 = bearish leg (pivot high confirmed), 1 = bullish leg (pivot low confirmed)
 f_leg(int sz) =>
     var int lg = 0
     if high[sz] > ta.highest(sz)
-        lg := -1
+        lg := 0   // bearish leg start = pivot high just confirmed
     else if low[sz] < ta.lowest(sz)
-        lg := 1
+        lg := 1   // bullish leg start = pivot low just confirmed
     lg
 
 int_lg = f_leg(5)
