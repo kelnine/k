@@ -503,22 +503,24 @@ _bh = atr * 0.10
 
 if show_bos
     if bos_bull or choch_bull
-        _lbl = bos_bull ? "BOS" : "CHoCH"
-        _col = bos_bull ? C_BRAND : C_BULL
-        // Dashed line from pivot bar to break bar at swing high level
-        line.new(bar_index - bos_lb, swg_h, bar_index, swg_h,
+        _lbl  = bos_bull ? "BOS" : "CHoCH"
+        _col  = bos_bull ? C_BRAND : C_BULL
+        // Find the actual swing high bar (not a fixed offset)
+        _ph_bar = bar_index - 1 + ta.highestbars(high, bos_lb + 1)[1]
+        line.new(_ph_bar, swg_h, bar_index + 2, swg_h,
                  color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
-        label.new(bar_index, swg_h, _lbl,
+        label.new(bar_index + 2, swg_h, " " + _lbl,
                   xloc=xloc.bar_index, style=label.style_none,
                   textcolor=_col, size=size.tiny)
         bos_any_bar := bar_index
     if bos_bear or choch_bear
-        _lbl = bos_bear ? "BOS" : "CHoCH"
-        _col = bos_bear ? C_BRAND : C_BEAR
-        // Dashed line from pivot bar to break bar at swing low level
-        line.new(bar_index - bos_lb, swg_l, bar_index, swg_l,
+        _lbl  = bos_bear ? "BOS" : "CHoCH"
+        _col  = bos_bear ? C_BRAND : C_BEAR
+        // Find the actual swing low bar
+        _pl_bar = bar_index - 1 + ta.lowestbars(low, bos_lb + 1)[1]
+        line.new(_pl_bar, swg_l, bar_index + 2, swg_l,
                  color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
-        label.new(bar_index, swg_l, _lbl,
+        label.new(bar_index + 2, swg_l, " " + _lbl,
                   xloc=xloc.bar_index, style=label.style_none,
                   textcolor=_col, size=size.tiny)
         bos_any_bar := bar_index
