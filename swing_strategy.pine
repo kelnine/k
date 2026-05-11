@@ -62,8 +62,10 @@ line_ext    = input.int(30,    "Line Length (bars)",  minval=5,              gro
 show_bg    = input.bool(true,  "Trend Background",             group=G_DISP)
 show_glow  = input.bool(true,  "EMA Neon Glow",                group=G_DISP)
 show_box   = input.bool(true,  "Entry Candle Box",             group=G_DISP)
-show_liqd  = input.bool(true,  "Engulf Liquidity Highlight",   group=G_DISP,
-             tooltip="Highlights engulfing candles purple — marks liquidity sweeps even without a full signal")
+show_liqd  = input.bool(true,  "Liquidity Sweep Highlight",    group=G_DISP,
+             tooltip="Highlights purple when price wicks through a recent swing high/low then closes back inside — a stop hunt / liquidity grab")
+liq_lb     = input.int(20,    "Liquidity Lookback (bars)",   minval=5, group=G_DISP,
+             tooltip="How many bars back to watch for swept swing highs/lows")
 show_tbl   = input.bool(true,  "FutureFi Dashboard",           group=G_DISP)
 
 tbl_pos_str  = input.string("Top Right", "Dashboard Position",
@@ -370,6 +372,17 @@ plot(show_glow ? ema200 : na, "EMA200 G2", color=color.new(C_BRAND, 68), linewid
 plot(ema200,                  "EMA 200",   color=color.new(C_BRAND, 0),  linewidth=3)
 
 // ══════════════════════════════════════════════════════════════════════
+// LIQUIDITY SWEEP DETECTION
+// A liquidity grab = wick punches through a recent swing high/low,
+// then price closes BACK inside — stop hunt, not a pattern.
+// ══════════════════════════════════════════════════════════════════════
+swing_high = ta.highest(high, liq_lb)[1]   // highest high before this bar
+swing_low  = ta.lowest(low,   liq_lb)[1]   // lowest low before this bar
+
+bull_liq = low < swing_low  and close > swing_low    // wick below recent low, close back above = buy-side sweep
+bear_liq = high > swing_high and close < swing_high  // wick above recent high, close back below = sell-side sweep
+
+// ══════════════════════════════════════════════════════════════════════
 // BACKGROUND
 // ══════════════════════════════════════════════════════════════════════
 bgcolor(show_bg and uptrend   ? color.new(C_BULL,  96) : na, title="Uptrend BG")
@@ -389,10 +402,11 @@ if show_box and sell_sig
             border_color=color.new(C_BEAR, 0), bgcolor=color.new(C_BEAR, 80),
             border_width=2, xloc=xloc.bar_index)
 
-// Signals take priority; standalone engulfing candles get purple liquidity highlight
-barcolor(buy_sig                              ? color.new(C_BULL, 20) :
-         sell_sig                             ? color.new(C_BEAR, 20) :
-         show_liqd and (bull_engulf or bear_engulf) ? color.new(C_LIQD, 25) : na)
+// Signals take priority; liquidity sweeps (wick through swing high/low → close back inside) highlight purple
+barcolor(buy_sig                       ? color.new(C_BULL, 20) :
+         sell_sig                      ? color.new(C_BEAR, 20) :
+         show_liqd and bull_liq        ? color.new(C_LIQD, 20) :
+         show_liqd and bear_liq        ? color.new(C_LIQD, 20) : na)
 
 // ══════════════════════════════════════════════════════════════════════
 // SIGNAL LABELS  —  compact, no FutureFi text on each
