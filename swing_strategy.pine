@@ -89,6 +89,8 @@ ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  grou
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
 show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
              tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
+bos_lb     = input.int(10,    "BOS Pivot Lookback",   minval=3, maxval=25,   group=G_ZONE,
+             tooltip="Bars each side to confirm a swing pivot for BOS/CHoCH. 10 = reactive, 15 = major swings only.")
 show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE)
 pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
@@ -452,11 +454,15 @@ if show_ob and barstate.islast
                            text_halign=text.align_left, text_valign=text.align_top)
 
 // ══════════════════════════════════════════════════════════════════════
-// BOS + CHoCH + EQH/EQL  (zone_lb pivots — major swings only)
-// Small dashed boxes sit AT the pivot, not stretching to the break bar
+// BOS + CHoCH + EQH/EQL
+// Uses bos_lb pivots (independent of zone_lb — faster/more responsive)
+// Logic: track direction of last structural break
+//   BOS   = close breaks pivot in SAME direction as last break (continuation)
+//   CHoCH = close breaks pivot in OPPOSITE direction (reversal)
+// No EMA/hh_hl filter — pure price structure like LuxAlgo
 // ══════════════════════════════════════════════════════════════════════
-bos_ph = ta.pivothigh(high, zone_lb, zone_lb)
-bos_pl = ta.pivotlow(low,   zone_lb, zone_lb)
+bos_ph = ta.pivothigh(high, bos_lb, bos_lb)
+bos_pl = ta.pivotlow(low,   bos_lb, bos_lb)
 
 var float bos_last_ph     = na
 var float bos_last_pl     = na
@@ -464,63 +470,70 @@ var int   bos_last_ph_bar = na
 var int   bos_last_pl_bar = na
 var float bos_ph_used     = na
 var float bos_pl_used     = na
-var int   bos_last_any_bar = na   // cooldown: min 10 bars between any BOS/CHoCH label
+var int   bos_last_any_bar = na
+var int   bos_last_dir    = 0   // 1 = last break was bullish, -1 = bearish
 
-// EQH/EQL: check before updating stored level
+// EQH/EQL — consecutive equal pivots within 0.1%
 if not na(bos_ph)
     if show_bos and not na(bos_last_ph) and math.abs(bos_ph - bos_last_ph) <= bos_last_ph * 0.001
-        label.new(bar_index - zone_lb, bos_ph, "EQH",
+        label.new(bar_index - bos_lb, bos_ph, "EQH",
                   xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
     bos_last_ph     := bos_ph
-    bos_last_ph_bar := bar_index - zone_lb
+    bos_last_ph_bar := bar_index - bos_lb
 
 if not na(bos_pl)
     if show_bos and not na(bos_last_pl) and math.abs(bos_pl - bos_last_pl) <= bos_last_pl * 0.001
-        label.new(bar_index - zone_lb, bos_pl, "EQL",
+        label.new(bar_index - bos_lb, bos_pl, "EQL",
                   xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
     bos_last_pl     := bos_pl
-    bos_last_pl_bar := bar_index - zone_lb
+    bos_last_pl_bar := bar_index - bos_lb
 
-bos_bull   = not na(bos_last_ph) and close > bos_last_ph * 1.001 and bos_last_ph != bos_ph_used and hh_hl
-choch_bull = not na(bos_last_ph) and close > bos_last_ph * 1.001 and bos_last_ph != bos_ph_used and lh_ll
-bos_bear   = not na(bos_last_pl) and close < bos_last_pl * 0.999 and bos_last_pl != bos_pl_used and lh_ll
-choch_bear = not na(bos_last_pl) and close < bos_last_pl * 0.999 and bos_last_pl != bos_pl_used and hh_hl
+// Break conditions — just needs close to cross the pivot level
+bos_bull_brk = not na(bos_last_ph) and close > bos_last_ph and bos_last_ph != bos_ph_used
+bos_bear_brk = not na(bos_last_pl) and close < bos_last_pl and bos_last_pl != bos_pl_used
+
+bos_bull   = bos_bull_brk and bos_last_dir >= 0   // bullish break after bullish (or fresh) → BOS
+choch_bull = bos_bull_brk and bos_last_dir < 0    // bullish break after bearish → CHoCH reversal
+bos_bear   = bos_bear_brk and bos_last_dir <= 0
+choch_bear = bos_bear_brk and bos_last_dir > 0
 
 if bos_bull or choch_bull
-    bos_ph_used := bos_last_ph
+    bos_ph_used  := bos_last_ph
+    bos_last_dir := 1
 if bos_bear or choch_bear
-    bos_pl_used := bos_last_pl
+    bos_pl_used  := bos_last_pl
+    bos_last_dir := -1
 
-_bh = atr * 0.10   // half-height of the pivot marker box
-bos_cd_ok = na(bos_last_any_bar) or bar_index - bos_last_any_bar >= 20
+_bh       = atr * 0.10
+bos_cd_ok = na(bos_last_any_bar) or bar_index - bos_last_any_bar >= 15
 
 if show_bos and bos_cd_ok
     if bos_bull
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.belowbar,
                   style=label.style_none, textcolor=C_BRAND, size=size.tiny)
         box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 6, bos_last_ph - _bh,
-                border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 94),
+                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
         bos_last_any_bar := bar_index
     if bos_bear
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.abovebar,
                   style=label.style_none, textcolor=C_BRAND, size=size.tiny)
         box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 6, bos_last_pl - _bh,
-                border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 94),
+                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
         bos_last_any_bar := bar_index
     if choch_bull
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.belowbar,
                   style=label.style_none, textcolor=C_BULL, size=size.tiny)
         box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 6, bos_last_ph - _bh,
-                border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 94),
+                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
         bos_last_any_bar := bar_index
     if choch_bear
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.abovebar,
                   style=label.style_none, textcolor=C_BEAR, size=size.tiny)
         box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 6, bos_last_pl - _bh,
-                border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 94),
+                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
         bos_last_any_bar := bar_index
 
