@@ -83,13 +83,13 @@ G_ZONE = "── Supply & Demand Zones ──"
 show_zones = input.bool(true,  "Show S&D Zones",           group=G_ZONE)
 zone_lb    = input.int(15,     "Zone Pivot Lookback",  minval=5, maxval=30, group=G_ZONE,
              tooltip="Higher = only major swing zones shown. 15 is ideal on 15m.")
-zone_ext   = input.int(50,     "Zone Extension (bars)", minval=10,          group=G_ZONE)
+zone_ext   = input.int(30,     "Zone Extension (bars)", minval=10,          group=G_ZONE)
 show_ob    = input.bool(true,  "Show Order Blocks",        group=G_ZONE)
 ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  group=G_ZONE)
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
 show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
              tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
-show_pd    = input.bool(false, "Show Premium/Discount",    group=G_ZONE)
+show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE)
 pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
 G_SCAN = "── Mini Scanner (optional) ──"
@@ -452,6 +452,7 @@ var int   bos_last_ph_bar = na
 var int   bos_last_pl_bar = na
 var float bos_ph_used     = na
 var float bos_pl_used     = na
+var int   bos_last_any_bar = na   // cooldown: min 10 bars between any BOS/CHoCH label
 
 // EQH/EQL: check before updating stored level
 if not na(bos_ph)
@@ -478,33 +479,38 @@ if bos_bull or choch_bull
 if bos_bear or choch_bear
     bos_pl_used := bos_last_pl
 
-_bh = atr * 0.12   // half-height of the pivot marker box
+_bh = atr * 0.10   // half-height of the pivot marker box
+bos_cd_ok = na(bos_last_any_bar) or bar_index - bos_last_any_bar >= 10
 
-if show_bos
+if show_bos and bos_cd_ok
     if bos_bull
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.belowbar,
                   style=label.style_none, textcolor=C_BRAND, size=size.tiny)
-        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 8, bos_last_ph - _bh,
-                border_color=color.new(C_BULL, 35), bgcolor=color.new(C_BULL, 92),
+        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 6, bos_last_ph - _bh,
+                border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 94),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_last_any_bar := bar_index
     if bos_bear
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.abovebar,
                   style=label.style_none, textcolor=C_BRAND, size=size.tiny)
-        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 8, bos_last_pl - _bh,
-                border_color=color.new(C_BEAR, 35), bgcolor=color.new(C_BEAR, 92),
+        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 6, bos_last_pl - _bh,
+                border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 94),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_last_any_bar := bar_index
     if choch_bull
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.belowbar,
                   style=label.style_none, textcolor=C_BULL, size=size.tiny)
-        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 8, bos_last_ph - _bh,
-                border_color=color.new(C_BULL, 35), bgcolor=color.new(C_BULL, 92),
+        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 6, bos_last_ph - _bh,
+                border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 94),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_last_any_bar := bar_index
     if choch_bear
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.abovebar,
                   style=label.style_none, textcolor=C_BEAR, size=size.tiny)
-        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 8, bos_last_pl - _bh,
-                border_color=color.new(C_BEAR, 35), bgcolor=color.new(C_BEAR, 92),
+        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 6, bos_last_pl - _bh,
+                border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 94),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_last_any_bar := bar_index
 
 // ══════════════════════════════════════════════════════════════════════
 // PREMIUM / DISCOUNT / EQUILIBRIUM
@@ -523,21 +529,18 @@ if show_pd and barstate.islast
     label.delete(pd_lbl_disc)
     pd_lbl_eq   := label.new(bar_index + 2, pd_mid,
                              "Equilibrium", xloc=xloc.bar_index,
-                             style=label.style_label_left,
-                             color=color.new(C_BRAND, 85), textcolor=color.new(C_BRAND, 20),
-                             size=size.tiny)
-    pd_lbl_prem := label.new(bar_index + 2, pd_hi - (pd_hi - pd_mid) * 0.25,
+                             style=label.style_none,
+                             textcolor=color.new(C_BRAND, 35), size=size.tiny)
+    pd_lbl_prem := label.new(bar_index + 2, pd_hi - (pd_hi - pd_mid) * 0.15,
                              "Premium", xloc=xloc.bar_index,
-                             style=label.style_label_left,
-                             color=color.new(C_BEAR, 88), textcolor=color.new(C_BEAR, 20),
-                             size=size.tiny)
-    pd_lbl_disc := label.new(bar_index + 2, pd_lo + (pd_mid - pd_lo) * 0.25,
+                             style=label.style_none,
+                             textcolor=color.new(C_BEAR, 25), size=size.tiny)
+    pd_lbl_disc := label.new(bar_index + 2, pd_lo + (pd_mid - pd_lo) * 0.15,
                              "Discount", xloc=xloc.bar_index,
-                             style=label.style_label_left,
-                             color=color.new(C_BULL, 88), textcolor=color.new(C_BULL, 20),
-                             size=size.tiny)
+                             style=label.style_none,
+                             textcolor=color.new(C_BULL, 25), size=size.tiny)
 
-plot(show_pd ? pd_mid : na, "Equilibrium", color=color.new(C_BRAND, 70), linewidth=1, style=plot.style_circles)
+plot(show_pd ? pd_mid : na, "Equilibrium", color=color.new(C_BRAND, 82), linewidth=1, style=plot.style_line)
 
 // ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
@@ -554,14 +557,12 @@ buy_tp2     = ta.highest(high, tp2_lb)
 sell_tp2    = ta.lowest(low,   tp2_lb)
 
 // ══════════════════════════════════════════════════════════════════════
-// EMA NEON GLOW
+// EMA SUBTLE GLOW  (single soft haze layer — removed outer bloom ring)
 // ══════════════════════════════════════════════════════════════════════
-plot(show_glow ? ema20  : na, "EMA20 G3",  color=color.new(C_AMBER, 88), linewidth=12, display=display.pane)
-plot(show_glow ? ema20  : na, "EMA20 G2",  color=color.new(C_AMBER, 70), linewidth=6,  display=display.pane)
-plot(ema20,                   "EMA 20",    color=color.new(C_AMBER, 0),  linewidth=2)
-plot(show_glow ? ema200 : na, "EMA200 G3", color=color.new(C_BRAND, 88), linewidth=16, display=display.pane)
-plot(show_glow ? ema200 : na, "EMA200 G2", color=color.new(C_BRAND, 68), linewidth=8,  display=display.pane)
-plot(ema200,                  "EMA 200",   color=color.new(C_BRAND, 0),  linewidth=3)
+plot(show_glow ? ema20  : na, "EMA20 haze",  color=color.new(C_AMBER, 85), linewidth=4, display=display.pane)
+plot(ema20,                   "EMA 20",      color=color.new(C_AMBER, 10), linewidth=1)
+plot(show_glow ? ema200 : na, "EMA200 haze", color=color.new(C_BRAND, 82), linewidth=6, display=display.pane)
+plot(ema200,                  "EMA 200",     color=color.new(C_BRAND, 5),  linewidth=2)
 
 // ══════════════════════════════════════════════════════════════════════
 // LIQUIDITY SWEEP DETECTION
@@ -577,22 +578,22 @@ bear_liq = high > swing_high and close < swing_high  // wick above recent high, 
 // ══════════════════════════════════════════════════════════════════════
 // BACKGROUND
 // ══════════════════════════════════════════════════════════════════════
-bgcolor(show_bg and uptrend   ? color.new(C_BULL,  96) : na, title="Uptrend BG")
-bgcolor(show_bg and downtrend ? color.new(C_BEAR,  96) : na, title="Downtrend BG")
-bgcolor(show_bg and sideways  ? color.new(C_BRAND, 97) : na, title="Range BG")
+bgcolor(show_bg and uptrend   ? color.new(C_BULL,  98) : na, title="Uptrend BG")
+bgcolor(show_bg and downtrend ? color.new(C_BEAR,  98) : na, title="Downtrend BG")
+bgcolor(show_bg and sideways  ? color.new(C_BRAND, 98) : na, title="Range BG")
 
 // ══════════════════════════════════════════════════════════════════════
 // ENTRY CANDLE BOX
 // ══════════════════════════════════════════════════════════════════════
 if show_box and buy_sig
-    box.new(bar_index, high + atr * 0.15, bar_index, low - atr * 0.15,
-            border_color=color.new(C_BULL, 0), bgcolor=color.new(C_BULL, 80),
-            border_width=2, xloc=xloc.bar_index)
+    box.new(bar_index, high + atr * 0.12, bar_index, low - atr * 0.12,
+            border_color=color.new(C_BULL, 15), bgcolor=color.new(C_BULL, 88),
+            border_width=1, xloc=xloc.bar_index)
 
 if show_box and sell_sig
-    box.new(bar_index, high + atr * 0.15, bar_index, low - atr * 0.15,
-            border_color=color.new(C_BEAR, 0), bgcolor=color.new(C_BEAR, 80),
-            border_width=2, xloc=xloc.bar_index)
+    box.new(bar_index, high + atr * 0.12, bar_index, low - atr * 0.12,
+            border_color=color.new(C_BEAR, 15), bgcolor=color.new(C_BEAR, 88),
+            border_width=1, xloc=xloc.bar_index)
 
 // Signals take priority; liquidity sweeps highlight vivid pink-purple
 barcolor(buy_sig                ? color.new(C_BULL, 20) :
