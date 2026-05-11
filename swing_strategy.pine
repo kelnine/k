@@ -89,8 +89,8 @@ ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  grou
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
 show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
              tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
-bos_lb     = input.int(10,    "BOS Pivot Lookback",   minval=3, maxval=25,   group=G_ZONE,
-             tooltip="Bars each side to confirm a swing pivot for BOS/CHoCH. 10 = reactive, 15 = major swings only.")
+bos_lb     = input.int(20,    "BOS Pivot Lookback",   minval=5, maxval=50,   group=G_ZONE,
+             tooltip="Bars each side for BOS/CHoCH swing detection. 20 = major swings only (recommended). Lower = more signals.")
 show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE)
 pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
@@ -466,16 +466,19 @@ swg_l = ta.lowest(low,  bos_lb)[1]
 bull_brk = ta.crossover(close, swg_h)
 bear_brk = ta.crossunder(close, swg_l)
 
-var int bos_dir = 0   // 1 = last break bullish, -1 = bearish
+var int bos_dir     = 0   // 1 = last break bullish, -1 = bearish
+var int bos_any_bar = na  // cooldown: minimum bos_lb bars between any label
 
-bos_bull   = bull_brk and bos_dir >= 0
-choch_bull = bull_brk and bos_dir <  0
-bos_bear   = bear_brk and bos_dir <= 0
-choch_bear = bear_brk and bos_dir >  0
+bos_cd = na(bos_any_bar) or bar_index - bos_any_bar >= bos_lb
 
-if bull_brk
+bos_bull   = bull_brk and bos_cd and bos_dir >= 0
+choch_bull = bull_brk and bos_cd and bos_dir <  0
+bos_bear   = bear_brk and bos_cd and bos_dir <= 0
+choch_bear = bear_brk and bos_cd and bos_dir >  0
+
+if bull_brk and bos_cd
     bos_dir := 1
-if bear_brk
+if bear_brk and bos_cd
     bos_dir := -1
 
 // EQH / EQL — consecutive equal pivots within 0.1%
@@ -507,6 +510,7 @@ if show_bos
         box.new(bar_index - bos_lb, swg_h + _bh, bar_index - bos_lb + 5, swg_h - _bh,
                 border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_any_bar := bar_index
     if bos_bear or choch_bear
         _lbl = bos_bear ? "BOS" : "CHoCH"
         _col = bos_bear ? C_BRAND : C_BEAR
@@ -515,6 +519,7 @@ if show_bos
         box.new(bar_index - bos_lb, swg_l + _bh, bar_index - bos_lb + 5, swg_l - _bh,
                 border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        bos_any_bar := bar_index
 
 // ══════════════════════════════════════════════════════════════════════
 // PREMIUM / DISCOUNT / EQUILIBRIUM
