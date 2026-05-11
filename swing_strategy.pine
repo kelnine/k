@@ -89,7 +89,7 @@ ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  grou
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
 show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
              tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
-show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE)
+show_pd    = input.bool(false, "Show Premium/Discount",    group=G_ZONE)
 pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
 G_SCAN = "── Mini Scanner (optional) ──"
@@ -355,19 +355,19 @@ if show_zones and barstate.islast
     box.delete(dz_box2)
     if sz1_ok
         sz_box1 := box.new(sz_bar1, sz_top1, bar_index + zone_ext, sz_bot1,
-                           border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
+                           border_color=color.new(C_BEAR, 65), bgcolor=color.new(C_BEAR, 96),
                            border_width=1, xloc=xloc.bar_index)
     if sz2_ok
         sz_box2 := box.new(sz_bar2, sz_top2, bar_index + zone_ext, sz_bot2,
-                           border_color=color.new(C_BEAR, 60), bgcolor=color.new(C_BEAR, 95),
+                           border_color=color.new(C_BEAR, 78), bgcolor=color.new(C_BEAR, 97),
                            border_width=1, xloc=xloc.bar_index)
     if dz1_ok
         dz_box1 := box.new(dz_bar1, dz_top1, bar_index + zone_ext, dz_bot1,
-                           border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
+                           border_color=color.new(C_BULL, 65), bgcolor=color.new(C_BULL, 96),
                            border_width=1, xloc=xloc.bar_index)
     if dz2_ok
         dz_box2 := box.new(dz_bar2, dz_top2, bar_index + zone_ext, dz_bot2,
-                           border_color=color.new(C_BULL, 60), bgcolor=color.new(C_BULL, 95),
+                           border_color=color.new(C_BULL, 78), bgcolor=color.new(C_BULL, 97),
                            border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
@@ -537,7 +537,7 @@ if show_pd and barstate.islast
                              color=color.new(C_BULL, 88), textcolor=color.new(C_BULL, 20),
                              size=size.tiny)
 
-plot(show_pd ? pd_mid : na, "Equilibrium", color=color.new(C_BRAND, 55), linewidth=1, style=plot.style_circles)
+plot(show_pd ? pd_mid : na, "Equilibrium", color=color.new(C_BRAND, 70), linewidth=1, style=plot.style_circles)
 
 // ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
@@ -620,13 +620,13 @@ if show_liqd and barstate.islast
     label.delete(liq_sl_lbl)
     label.delete(liq_wh_lbl)
     if not na(liq_sl_bar)
-        liq_sl_lbl := label.new(liq_sl_bar, liq_sl_y, "Strong Low",
-                                xloc=xloc.bar_index, style=label.style_none,
-                                textcolor=C_LIQD, size=size.tiny)
+        liq_sl_lbl := label.new(liq_sl_bar, liq_sl_y, "S.Low",
+                                xloc=xloc.bar_index, style=label.style_label_up,
+                                color=color.new(C_LIQD, 80), textcolor=C_LIQD, size=size.tiny)
     if not na(liq_wh_bar)
-        liq_wh_lbl := label.new(liq_wh_bar, liq_wh_y, "Weak High",
-                                xloc=xloc.bar_index, style=label.style_none,
-                                textcolor=C_LIQD, size=size.tiny)
+        liq_wh_lbl := label.new(liq_wh_bar, liq_wh_y, "W.High",
+                                xloc=xloc.bar_index, style=label.style_label_down,
+                                color=color.new(C_LIQD, 80), textcolor=C_LIQD, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════
 // SIGNAL LABELS  —  compact, no FutureFi text on each
