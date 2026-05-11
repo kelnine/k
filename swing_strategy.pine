@@ -454,76 +454,114 @@ if show_ob and barstate.islast
                            text_halign=text.align_left, text_valign=text.align_top)
 
 // ══════════════════════════════════════════════════════════════════════
-// BOS + CHoCH — rolling-window crossover (fires exactly once per break)
-// EQH / EQL   — pivot-based equal highs/lows
+// BOS + CHoCH  —  LuxAlgo pivot-state approach (two tiers)
+// Internal: size 5, dashed  |  Swing: size bos_lb, solid
+// EQH / EQL: pivot-based, ATR threshold, dotted connector
 // ══════════════════════════════════════════════════════════════════════
 
-// Rolling swing reference (excludes current bar so we detect the cross)
-swg_h = ta.highest(high, bos_lb)[1]
-swg_l = ta.lowest(low,  bos_lb)[1]
+// Pivot state UDT — each level fires at most once (crossed flag)
+type PivotState
+    float level   = na
+    bool  crossed = false
+    int   bar_i   = na
 
-// ta.crossover fires on the FIRST bar where close exceeds the level — no "used" tracking needed
-bull_brk = ta.crossover(close, swg_h)
-bear_brk = ta.crossunder(close, swg_l)
+// Leg detector: returns -1 when swing high confirmed, 1 when swing low confirmed
+f_leg(int sz) =>
+    var int lg = 0
+    if high[sz] > ta.highest(sz)
+        lg := -1
+    else if low[sz] < ta.lowest(sz)
+        lg := 1
+    lg
 
-var int bos_dir     = 0   // 1 = last break bullish, -1 = bearish
-var int bos_any_bar = na  // cooldown: minimum bos_lb bars between any label
+int_lg = f_leg(5)
+swg_lg = f_leg(bos_lb)
 
-bos_cd = na(bos_any_bar) or bar_index - bos_any_bar >= bos_lb
+// One high/low state per tier
+var PivotState i_ph = PivotState.new()
+var PivotState i_pl = PivotState.new()
+var PivotState s_ph = PivotState.new()
+var PivotState s_pl = PivotState.new()
 
-bos_bull   = bull_brk and bos_cd and bos_dir >= 0
-choch_bull = bull_brk and bos_cd and bos_dir <  0
-bos_bear   = bear_brk and bos_cd and bos_dir <= 0
-choch_bear = bear_brk and bos_cd and bos_dir >  0
+var int i_trend = 0   // 1 = bullish, -1 = bearish
+var int s_trend = 0
 
-if bull_brk and bos_cd
-    bos_dir := 1
-if bear_brk and bos_cd
-    bos_dir := -1
+// Register new pivots on leg change
+if ta.change(int_lg) == -1
+    i_ph := PivotState.new(high[5], false, bar_index - 5)
+if ta.change(int_lg) == 1
+    i_pl := PivotState.new(low[5],  false, bar_index - 5)
+if ta.change(swg_lg) == -1
+    s_ph := PivotState.new(high[bos_lb], false, bar_index - bos_lb)
+if ta.change(swg_lg) == 1
+    s_pl := PivotState.new(low[bos_lb],  false, bar_index - bos_lb)
 
-// EQH / EQL — consecutive equal pivots within 0.1%
-bos_ph_e = ta.pivothigh(high, bos_lb, bos_lb)
-bos_pl_e = ta.pivotlow(low,   bos_lb, bos_lb)
-var float bos_prev_ph = na
-var float bos_prev_pl = na
-
-if not na(bos_ph_e)
-    if show_bos and not na(bos_prev_ph) and math.abs(bos_ph_e - bos_prev_ph) <= bos_prev_ph * 0.001
-        label.new(bar_index - bos_lb, bos_ph_e, "EQH",
-                  xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
-    bos_prev_ph := bos_ph_e
-
-if not na(bos_pl_e)
-    if show_bos and not na(bos_prev_pl) and math.abs(bos_pl_e - bos_prev_pl) <= bos_prev_pl * 0.001
-        label.new(bar_index - bos_lb, bos_pl_e, "EQL",
-                  xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
-    bos_prev_pl := bos_pl_e
-
-_bh = atr * 0.10
+// Line from pivot bar to break bar + label at midpoint
+f_bos(PivotState p, string lbl, color col, bool dashed) =>
+    line.new(p.bar_i, p.level, bar_index, p.level,
+             color=col, style=dashed ? line.style_dashed : line.style_solid,
+             width=1, xloc=xloc.bar_index)
+    label.new(math.round(0.5 * (p.bar_i + bar_index)), p.level, lbl,
+              xloc=xloc.bar_index, style=label.style_none,
+              textcolor=col, size=size.tiny)
 
 if show_bos
-    if bos_bull or choch_bull
-        _lbl  = bos_bull ? "BOS" : "CHoCH"
-        _col  = bos_bull ? C_BRAND : C_BULL
-        // Find the actual swing high bar (not a fixed offset)
-        _ph_bar = bar_index - 1 + ta.highestbars(high, bos_lb + 1)[1]
-        line.new(_ph_bar, swg_h, bar_index + 2, swg_h,
-                 color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
-        label.new(bar_index + 2, swg_h, " " + _lbl,
-                  xloc=xloc.bar_index, style=label.style_none,
-                  textcolor=_col, size=size.tiny)
-        bos_any_bar := bar_index
-    if bos_bear or choch_bear
-        _lbl  = bos_bear ? "BOS" : "CHoCH"
-        _col  = bos_bear ? C_BRAND : C_BEAR
-        // Find the actual swing low bar
-        _pl_bar = bar_index - 1 + ta.lowestbars(low, bos_lb + 1)[1]
-        line.new(_pl_bar, swg_l, bar_index + 2, swg_l,
-                 color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
-        label.new(bar_index + 2, swg_l, " " + _lbl,
-                  xloc=xloc.bar_index, style=label.style_none,
-                  textcolor=_col, size=size.tiny)
-        bos_any_bar := bar_index
+    // Internal structure (dashed, fires on size-5 swings)
+    if not na(i_ph.level) and ta.crossover(close, i_ph.level) and not i_ph.crossed
+        _tag = i_trend == -1 ? "CHoCH" : "BOS"
+        _col = i_trend == -1 ? C_BULL  : C_BRAND
+        f_bos(i_ph, _tag, _col, true)
+        i_ph.crossed := true
+        i_trend      := 1
+    if not na(i_pl.level) and ta.crossunder(close, i_pl.level) and not i_pl.crossed
+        _tag = i_trend == 1  ? "CHoCH" : "BOS"
+        _col = i_trend == 1  ? C_BEAR  : C_BRAND
+        f_bos(i_pl, _tag, _col, true)
+        i_pl.crossed := true
+        i_trend      := -1
+    // Swing structure (solid, fires on size bos_lb swings)
+    if not na(s_ph.level) and ta.crossover(close, s_ph.level) and not s_ph.crossed
+        _tag = s_trend == -1 ? "CHoCH" : "BOS"
+        _col = s_trend == -1 ? C_BULL  : C_BRAND
+        f_bos(s_ph, _tag, _col, false)
+        s_ph.crossed := true
+        s_trend      := 1
+    if not na(s_pl.level) and ta.crossunder(close, s_pl.level) and not s_pl.crossed
+        _tag = s_trend == 1  ? "CHoCH" : "BOS"
+        _col = s_trend == 1  ? C_BEAR  : C_BRAND
+        f_bos(s_pl, _tag, _col, false)
+        s_pl.crossed := true
+        s_trend      := -1
+
+// EQH / EQL — consecutive equal pivots within 0.1×ATR, dotted connector
+bos_ph_e = ta.pivothigh(high, bos_lb, bos_lb)
+bos_pl_e = ta.pivotlow(low,   bos_lb, bos_lb)
+var float bos_prev_ph     = na
+var float bos_prev_pl     = na
+var int   bos_prev_ph_bar = na
+var int   bos_prev_pl_bar = na
+
+if not na(bos_ph_e)
+    if show_bos and not na(bos_prev_ph) and math.abs(bos_ph_e - bos_prev_ph) < 0.1 * atr
+        _b = bar_index - bos_lb
+        line.new(bos_prev_ph_bar, bos_ph_e, _b, bos_ph_e,
+                 color=color.new(C_BRAND, 40), style=line.style_dotted, width=1, xloc=xloc.bar_index)
+        label.new(_b, bos_ph_e, "EQH",
+                  xloc=xloc.bar_index, style=label.style_label_down,
+                  color=color.new(C_BRAND, 80), textcolor=C_BRAND, size=size.tiny)
+    bos_prev_ph     := bos_ph_e
+    bos_prev_ph_bar := bar_index - bos_lb
+
+if not na(bos_pl_e)
+    if show_bos and not na(bos_prev_pl) and math.abs(bos_pl_e - bos_prev_pl) < 0.1 * atr
+        _b = bar_index - bos_lb
+        line.new(bos_prev_pl_bar, bos_pl_e, _b, bos_pl_e,
+                 color=color.new(C_BRAND, 40), style=line.style_dotted, width=1, xloc=xloc.bar_index)
+        label.new(_b, bos_pl_e, "EQL",
+                  xloc=xloc.bar_index, style=label.style_label_up,
+                  color=color.new(C_BRAND, 80), textcolor=C_BRAND, size=size.tiny)
+    bos_prev_pl     := bos_pl_e
+    bos_prev_pl_bar := bar_index - bos_lb
 
 // ══════════════════════════════════════════════════════════════════════
 // PREMIUM / DISCOUNT / EQUILIBRIUM
