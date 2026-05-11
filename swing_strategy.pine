@@ -61,6 +61,8 @@ line_ext    = input.int(30,    "Line Length (bars)",  minval=5,              gro
 
 show_bg    = input.bool(true,  "Trend Background",             group=G_DISP)
 show_glow  = input.bool(false, "EMA Neon Glow",                group=G_DISP)
+show_siglbl= input.bool(true,  "Show Signal Labels",           group=G_DISP,
+             tooltip="Toggle the LONG/SHORT labels on all signals. Turn off to declutter old signals.")
 show_box   = input.bool(true,  "Entry Candle Box",             group=G_DISP)
 show_liqd  = input.bool(true,  "Liquidity Sweep Highlight",    group=G_DISP,
              tooltip="Highlights purple when price wicks through a recent swing high/low then closes back inside — a stop hunt / liquidity grab")
@@ -614,10 +616,8 @@ sell_tp2    = ta.lowest(low,   tp2_lb)
 // ══════════════════════════════════════════════════════════════════════
 // EMA SUBTLE GLOW  (single soft haze layer — removed outer bloom ring)
 // ══════════════════════════════════════════════════════════════════════
-plot(show_glow ? ema20  : na, "EMA20 haze",  color=color.new(C_AMBER, 88), linewidth=4, display=display.pane)
-plot(ema20,                   "EMA 20",      color=color.new(C_AMBER, 45), linewidth=1)
-plot(show_glow ? ema200 : na, "EMA200 haze", color=color.new(C_BRAND, 85), linewidth=6, display=display.pane)
-plot(ema200,                  "EMA 200",     color=color.new(C_BRAND, 35), linewidth=1)
+plot(ema20,  "EMA 20",      color=color.new(C_AMBER, show_glow ? 10 : 45), linewidth=show_glow ? 3 : 1)
+plot(ema200, "EMA 200",    color=color.new(C_BRAND, show_glow ? 5  : 35), linewidth=show_glow ? 4 : 1)
 
 // ══════════════════════════════════════════════════════════════════════
 // LIQUIDITY SWEEP DETECTION
@@ -687,7 +687,7 @@ if show_liqd and barstate.islast
 // ══════════════════════════════════════════════════════════════════════
 // SIGNAL LABELS  —  compact, no FutureFi text on each
 // ══════════════════════════════════════════════════════════════════════
-if buy_sig
+if show_siglbl and buy_sig
     label.new(bar_index, na,
               "▲ LONG" + f_stars(bull_q) + "\n" + str.tostring(close, format.mintick),
               xloc=xloc.bar_index, yloc=yloc.belowbar,
@@ -697,7 +697,7 @@ if buy_sig
               size=sig_sz,
               textalign=text.align_center)
 
-if sell_sig
+if show_siglbl and sell_sig
     label.new(bar_index, na,
               "▼ SHORT" + f_stars(bear_q) + "\n" + str.tostring(close, format.mintick),
               xloc=xloc.bar_index, yloc=yloc.abovebar,
@@ -713,24 +713,18 @@ if sell_sig
 // Most recent signal: full-color labeled lines extending to current bar
 // ══════════════════════════════════════════════════════════════════════
 
-// ── Historical lines (all signals) — faint labeled lines ──
+// ── Historical lines (past signals) — faint lines only, no labels ──
 if show_sltp and buy_sig
     _hr = bar_index + line_ext
     line.new(bar_index, buy_sl,  _hr, buy_sl,  color=color.new(C_SL,    60), style=line.style_dashed, width=1, xloc=xloc.bar_index)
     line.new(bar_index, close,   _hr, close,   color=color.new(C_BRAND, 60), style=line.style_solid,  width=1, xloc=xloc.bar_index)
     line.new(bar_index, buy_tp1, _hr, buy_tp1, color=color.new(C_TP1,   60), style=line.style_dashed, width=1, xloc=xloc.bar_index)
-    label.new(_hr, buy_sl,  " SL",    xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_SL,    60), textcolor=color.new(color.white, 60), size=size.tiny)
-    label.new(_hr, close,   " ENTRY", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_BRAND, 60), textcolor=color.new(color.white, 60), size=size.tiny)
-    label.new(_hr, buy_tp1, " TP1",   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_TP1,   60), textcolor=color.new(C_DARK,      60), size=size.tiny)
 
 if show_sltp and sell_sig
     _hr = bar_index + line_ext
     line.new(bar_index, sell_sl,  _hr, sell_sl,  color=color.new(C_SL,    60), style=line.style_dashed, width=1, xloc=xloc.bar_index)
     line.new(bar_index, close,    _hr, close,    color=color.new(C_BRAND, 60), style=line.style_solid,  width=1, xloc=xloc.bar_index)
     line.new(bar_index, sell_tp1, _hr, sell_tp1, color=color.new(C_TP1,   60), style=line.style_dashed, width=1, xloc=xloc.bar_index)
-    label.new(_hr, sell_sl,  " SL",    xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_SL,    60), textcolor=color.new(color.white, 60), size=size.tiny)
-    label.new(_hr, close,    " ENTRY", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_BRAND, 60), textcolor=color.new(color.white, 60), size=size.tiny)
-    label.new(_hr, sell_tp1, " TP1",   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(C_TP1,   60), textcolor=color.new(C_DARK,      60), size=size.tiny)
 
 // ── Track most recent signal for the labeled live set ──
 var float _sig_entry = na
