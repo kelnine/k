@@ -84,6 +84,12 @@ show_zones = input.bool(true,  "Show S&D Zones",           group=G_ZONE)
 zone_lb    = input.int(15,     "Zone Pivot Lookback",  minval=5, maxval=30, group=G_ZONE,
              tooltip="Higher = only major swing zones shown. 15 is ideal on 15m.")
 zone_ext   = input.int(50,     "Zone Extension (bars)", minval=10,          group=G_ZONE)
+show_ob    = input.bool(true,  "Show Order Blocks",        group=G_ZONE,
+             tooltip="Draws the candle body at each swing pivot — the last order placed before price moved away")
+ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  group=G_ZONE)
+show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE,
+             tooltip="Labels price as Premium (above midpoint) or Discount (below midpoint) of the recent range")
+pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
 G_SCAN = "── Mini Scanner (optional) ──"
 show_scan    = input.bool(false, "Show Mini Scanner",     group=G_SCAN)
@@ -362,6 +368,109 @@ if show_zones and barstate.islast
         dz_box2 := box.new(dz_bar2, dz_top2, bar_index + zone_ext, dz_bot2,
                            border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 92),
                            border_width=1, xloc=xloc.bar_index)
+
+// ══════════════════════════════════════════════════════════════════════
+// ORDER BLOCKS  (candle body at swing pivot — last order before the move)
+// Bullish OB = body of the candle at pivot low  (demand)
+// Bearish OB = body of the candle at pivot high (supply)
+// ══════════════════════════════════════════════════════════════════════
+ph_ob = ta.pivothigh(high, ob_lb, ob_lb)
+pl_ob = ta.pivotlow(low,   ob_lb, ob_lb)
+
+var float bol_top1 = na
+var float bol_bot1 = na
+var int   bol_bar1 = na
+var float bol_top2 = na
+var float bol_bot2 = na
+var int   bol_bar2 = na
+var float bor_top1 = na
+var float bor_bot1 = na
+var int   bor_bar1 = na
+var float bor_top2 = na
+var float bor_bot2 = na
+var int   bor_bar2 = na
+
+if not na(pl_ob)
+    bol_top2 := bol_top1
+    bol_bot2 := bol_bot1
+    bol_bar2 := bol_bar1
+    bol_top1 := math.max(open[ob_lb], close[ob_lb])
+    bol_bot1 := math.min(open[ob_lb], close[ob_lb])
+    bol_bar1 := bar_index - ob_lb
+
+if not na(ph_ob)
+    bor_top2 := bor_top1
+    bor_bot2 := bor_bot1
+    bor_bar2 := bor_bar1
+    bor_top1 := math.max(open[ob_lb], close[ob_lb])
+    bor_bot1 := math.min(open[ob_lb], close[ob_lb])
+    bor_bar1 := bar_index - ob_lb
+
+// OB is mitigated once price closes inside or through it
+bol1_ok = not na(bol_bar1) and close > bol_bot1
+bol2_ok = not na(bol_bar2) and close > bol_bot2
+bor1_ok = not na(bor_bar1) and close < bor_top1
+bor2_ok = not na(bor_bar2) and close < bor_top2
+
+var box bol_box1 = na
+var box bol_box2 = na
+var box bor_box1 = na
+var box bor_box2 = na
+
+if show_ob and barstate.islast
+    box.delete(bol_box1)
+    box.delete(bol_box2)
+    box.delete(bor_box1)
+    box.delete(bor_box2)
+    if bol1_ok
+        bol_box1 := box.new(bol_bar1, bol_top1, bar_index + zone_ext, bol_bot1,
+                            border_color=color.new(C_BULL, 10), bgcolor=color.new(C_BULL, 78),
+                            border_width=1, xloc=xloc.bar_index)
+    if bol2_ok
+        bol_box2 := box.new(bol_bar2, bol_top2, bar_index + zone_ext, bol_bot2,
+                            border_color=color.new(C_BULL, 35), bgcolor=color.new(C_BULL, 87),
+                            border_width=1, xloc=xloc.bar_index)
+    if bor1_ok
+        bor_box1 := box.new(bor_bar1, bor_top1, bar_index + zone_ext, bor_bot1,
+                            border_color=color.new(C_BEAR, 10), bgcolor=color.new(C_BEAR, 78),
+                            border_width=1, xloc=xloc.bar_index)
+    if bor2_ok
+        bor_box2 := box.new(bor_bar2, bor_top2, bar_index + zone_ext, bor_bot2,
+                            border_color=color.new(C_BEAR, 35), bgcolor=color.new(C_BEAR, 87),
+                            border_width=1, xloc=xloc.bar_index)
+
+// ══════════════════════════════════════════════════════════════════════
+// PREMIUM / DISCOUNT / EQUILIBRIUM
+// ══════════════════════════════════════════════════════════════════════
+pd_hi  = ta.highest(high, pd_lb)
+pd_lo  = ta.lowest(low,   pd_lb)
+pd_mid = (pd_hi + pd_lo) / 2.0
+
+var label pd_lbl_eq   = na
+var label pd_lbl_prem = na
+var label pd_lbl_disc = na
+
+if show_pd and barstate.islast
+    label.delete(pd_lbl_eq)
+    label.delete(pd_lbl_prem)
+    label.delete(pd_lbl_disc)
+    pd_lbl_eq   := label.new(bar_index + 2, pd_mid,
+                             "Equilibrium", xloc=xloc.bar_index,
+                             style=label.style_label_left,
+                             color=color.new(C_BRAND, 85), textcolor=color.new(C_BRAND, 20),
+                             size=size.tiny)
+    pd_lbl_prem := label.new(bar_index + 2, pd_hi - (pd_hi - pd_mid) * 0.25,
+                             "Premium", xloc=xloc.bar_index,
+                             style=label.style_label_left,
+                             color=color.new(C_BEAR, 88), textcolor=color.new(C_BEAR, 20),
+                             size=size.tiny)
+    pd_lbl_disc := label.new(bar_index + 2, pd_lo + (pd_mid - pd_lo) * 0.25,
+                             "Discount", xloc=xloc.bar_index,
+                             style=label.style_label_left,
+                             color=color.new(C_BULL, 88), textcolor=color.new(C_BULL, 20),
+                             size=size.tiny)
+
+plot(show_pd ? pd_mid : na, "Equilibrium", color=color.new(C_BRAND, 55), linewidth=1, style=plot.style_circles)
 
 // ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
