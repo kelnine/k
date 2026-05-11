@@ -440,25 +440,31 @@ if show_ob and barstate.islast
                            border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
-// BOS + CHoCH  —  uses zone_lb pivots (slower, only major swings)
-// BOS   = break of last major swing in trend direction  (continuation)
-// CHoCH = break of last major swing AGAINST trend       (early reversal)
-// Each level fires once; small dashed box marks the inducement area
+// BOS + CHoCH + EQH/EQL  (zone_lb pivots — major swings only)
+// Small dashed boxes sit AT the pivot, not stretching to the break bar
 // ══════════════════════════════════════════════════════════════════════
 bos_ph = ta.pivothigh(high, zone_lb, zone_lb)
 bos_pl = ta.pivotlow(low,   zone_lb, zone_lb)
 
-var float bos_last_ph  = na
-var float bos_last_pl  = na
+var float bos_last_ph     = na
+var float bos_last_pl     = na
 var int   bos_last_ph_bar = na
 var int   bos_last_pl_bar = na
-var float bos_ph_used  = na
-var float bos_pl_used  = na
+var float bos_ph_used     = na
+var float bos_pl_used     = na
 
+// EQH/EQL: check before updating stored level
 if not na(bos_ph)
+    if show_bos and not na(bos_last_ph) and math.abs(bos_ph - bos_last_ph) <= bos_last_ph * 0.001
+        label.new(bar_index - zone_lb, bos_ph, "EQH",
+                  xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
     bos_last_ph     := bos_ph
     bos_last_ph_bar := bar_index - zone_lb
+
 if not na(bos_pl)
+    if show_bos and not na(bos_last_pl) and math.abs(bos_pl - bos_last_pl) <= bos_last_pl * 0.001
+        label.new(bar_index - zone_lb, bos_pl, "EQL",
+                  xloc=xloc.bar_index, style=label.style_none, textcolor=C_BRAND, size=size.tiny)
     bos_last_pl     := bos_pl
     bos_last_pl_bar := bar_index - zone_lb
 
@@ -472,32 +478,32 @@ if bos_bull or choch_bull
 if bos_bear or choch_bear
     bos_pl_used := bos_last_pl
 
+_bh = atr * 0.12   // half-height of the pivot marker box
+
 if show_bos
-    // BOS label + small dashed box at the broken level
     if bos_bull
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.belowbar,
-                  style=label.style_none, textcolor=C_BULL, size=size.tiny)
-        box.new(bos_last_ph_bar, bos_last_ph + atr * 0.2, bar_index, bos_last_ph,
-                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 93),
+                  style=label.style_none, textcolor=C_BRAND, size=size.tiny)
+        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 8, bos_last_ph - _bh,
+                border_color=color.new(C_BULL, 35), bgcolor=color.new(C_BULL, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
     if bos_bear
         label.new(bar_index, na, "BOS", xloc=xloc.bar_index, yloc=yloc.abovebar,
-                  style=label.style_none, textcolor=C_BEAR, size=size.tiny)
-        box.new(bos_last_pl_bar, bos_last_pl, bar_index, bos_last_pl - atr * 0.2,
-                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 93),
+                  style=label.style_none, textcolor=C_BRAND, size=size.tiny)
+        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 8, bos_last_pl - _bh,
+                border_color=color.new(C_BEAR, 35), bgcolor=color.new(C_BEAR, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
-    // CHoCH label + small dashed box
     if choch_bull
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.belowbar,
-                  style=label.style_none, textcolor=C_BEAR, size=size.tiny)
-        box.new(bos_last_ph_bar, bos_last_ph + atr * 0.2, bar_index, bos_last_ph,
-                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 93),
+                  style=label.style_none, textcolor=C_BULL, size=size.tiny)
+        box.new(bos_last_ph_bar, bos_last_ph + _bh, bos_last_ph_bar + 8, bos_last_ph - _bh,
+                border_color=color.new(C_BULL, 35), bgcolor=color.new(C_BULL, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
     if choch_bear
         label.new(bar_index, na, "CHoCH", xloc=xloc.bar_index, yloc=yloc.abovebar,
-                  style=label.style_none, textcolor=C_BULL, size=size.tiny)
-        box.new(bos_last_pl_bar, bos_last_pl, bar_index, bos_last_pl - atr * 0.2,
-                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 93),
+                  style=label.style_none, textcolor=C_BEAR, size=size.tiny)
+        box.new(bos_last_pl_bar, bos_last_pl + _bh, bos_last_pl_bar + 8, bos_last_pl - _bh,
+                border_color=color.new(C_BEAR, 35), bgcolor=color.new(C_BEAR, 92),
                 border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
