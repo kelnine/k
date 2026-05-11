@@ -87,10 +87,12 @@ zone_ext   = input.int(30,     "Zone Extension (bars)", minval=10,          grou
 show_ob    = input.bool(false, "Show Order Blocks",        group=G_ZONE)
 ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  group=G_ZONE)
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
-show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
-             tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
-bos_lb     = input.int(20,    "BOS Pivot Lookback",   minval=5, maxval=50,   group=G_ZONE,
-             tooltip="Bars each side for BOS/CHoCH swing detection. 20 = major swings only (recommended). Lower = more signals.")
+show_bos     = input.bool(true,  "Show Swing BOS / CHoCH",    group=G_ZONE,
+               tooltip="BOS = Break of Structure (trend continuation). CHoCH = Change of Character (early reversal signal).")
+show_bos_int = input.bool(false, "Show Internal BOS / CHoCH", group=G_ZONE,
+               tooltip="Smaller internal structure (size-5 swings). More signals, more noise. Off by default.")
+bos_lb       = input.int(20,    "BOS Pivot Lookback",   minval=5, maxval=50,   group=G_ZONE,
+               tooltip="Bars each side for swing BOS/CHoCH detection. 20 = major swings only (recommended).")
 show_pd    = input.bool(true,  "Show Premium/Discount",    group=G_ZONE)
 pd_lb      = input.int(100,    "P/D Lookback (bars)",  minval=20,           group=G_ZONE)
 
@@ -505,8 +507,8 @@ f_bos(PivotState p, string lbl, color col, bool dashed) =>
               xloc=xloc.bar_index, style=label.style_none,
               textcolor=col, size=size.tiny)
 
-if show_bos
-    // Internal structure (dashed, fires on size-5 swings)
+// Internal structure (dashed, size-5 swings) — off by default
+if show_bos_int
     if not na(i_ph.level) and ta.crossover(close, i_ph.level) and not i_ph.crossed
         _tag = i_trend == -1 ? "CHoCH" : "BOS"
         _col = i_trend == -1 ? C_BULL  : C_BRAND
@@ -519,7 +521,9 @@ if show_bos
         f_bos(i_pl, _tag, _col, true)
         i_pl.crossed := true
         i_trend      := -1
-    // Swing structure (solid, fires on size bos_lb swings)
+
+// Swing structure (solid, size bos_lb swings)
+if show_bos
     if not na(s_ph.level) and ta.crossover(close, s_ph.level) and not s_ph.crossed
         _tag = s_trend == -1 ? "CHoCH" : "BOS"
         _col = s_trend == -1 ? C_BULL  : C_BRAND
