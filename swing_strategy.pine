@@ -49,11 +49,14 @@ htf_tf     = input.string("60", "HTF Period (minutes)",
              options=["30","60","120","240"],               group=G_SIG,
              tooltip="1H (60) is ideal when trading on 15m. 4H (240) for stricter bias")
 
-rr_tp1    = input.float(2.0, "TP1 Risk:Reward",     minval=0.5, step=0.5, group=G_RISK)
-sl_lb     = input.int(10,    "SL Lookback (bars)",  minval=3,              group=G_RISK)
-tp2_lb    = input.int(50,    "TP2 Lookback (bars)", minval=10,             group=G_RISK)
-show_sltp = input.bool(true, "Show SL / TP Lines",                         group=G_RISK)
-line_ext  = input.int(30,    "Line Length (bars)",  minval=5,              group=G_RISK)
+rr_tp1      = input.float(2.0, "TP1 Risk:Reward",     minval=0.5, step=0.5, group=G_RISK)
+sl_lb       = input.int(10,    "SL Lookback (bars)",  minval=3,              group=G_RISK)
+tp2_lb      = input.int(50,    "TP2 Lookback (bars)", minval=10,             group=G_RISK)
+use_atr_sl  = input.bool(false, "ATR-Based SL/TP",                           group=G_RISK,
+              tooltip="Uses ATR × multiplier for SL instead of pivot lookback — adapts to current volatility")
+atr_sl_mult = input.float(1.5, "SL ATR Multiplier",  minval=0.5, step=0.25, group=G_RISK)
+show_sltp   = input.bool(true, "Show SL / TP Lines",                         group=G_RISK)
+line_ext    = input.int(30,    "Line Length (bars)",  minval=5,              group=G_RISK)
 
 show_bg    = input.bool(true,  "Trend Background",    group=G_DISP)
 show_glow  = input.bool(true,  "EMA Neon Glow",       group=G_DISP)
@@ -234,6 +237,23 @@ rsi_bull = rsi > rsi_mid and rsi > rsi[2] and rsi < rsi_ob
 rsi_bear = rsi < rsi_mid and rsi < rsi[2] and rsi > rsi_os
 
 // ══════════════════════════════════════════════════════════════════════
+// SIGNAL QUALITY SCORE  (★ ★★ ★★★)
+// Counts bonus confirmations beyond the minimum signal requirements
+// ══════════════════════════════════════════════════════════════════════
+bull_q = (rsi > rsi_mid + 7         ? 1 : 0) +   // strong RSI momentum
+         (volume > avg_vol * 1.2    ? 1 : 0) +   // volume surge
+         (hh_hl                     ? 1 : 0) +   // confirmed structure
+         (htf_uptrend               ? 1 : 0)     // HTF aligned
+
+bear_q = (rsi < rsi_mid - 7         ? 1 : 0) +
+         (volume > avg_vol * 1.2    ? 1 : 0) +
+         (lh_ll                     ? 1 : 0) +
+         (htf_dntrend               ? 1 : 0)
+
+f_stars(n) =>
+    n >= 4 ? " ★★★" : n >= 2 ? " ★★" : " ★"
+
+// ══════════════════════════════════════════════════════════════════════
 // DIRECTION LOCK  +  MASTER COOLDOWN
 // ══════════════════════════════════════════════════════════════════════
 var int sig_dir      = 0
@@ -265,14 +285,16 @@ if sell_sig
 // ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
 // ══════════════════════════════════════════════════════════════════════
-buy_sl    = ta.lowest(low,   sl_lb)
-sell_sl   = ta.highest(high, sl_lb)
-buy_risk  = close - buy_sl
-sell_risk = sell_sl - close
-buy_tp1   = close + buy_risk  * rr_tp1
-sell_tp1  = close - sell_risk * rr_tp1
-buy_tp2   = ta.highest(high, tp2_lb)
-sell_tp2  = ta.lowest(low,   tp2_lb)
+piv_buy_sl  = ta.lowest(low,   sl_lb)
+piv_sell_sl = ta.highest(high, sl_lb)
+buy_sl      = use_atr_sl ? close - atr * atr_sl_mult : piv_buy_sl
+sell_sl     = use_atr_sl ? close + atr * atr_sl_mult : piv_sell_sl
+buy_risk    = close - buy_sl
+sell_risk   = sell_sl - close
+buy_tp1     = close + buy_risk  * rr_tp1
+sell_tp1    = close - sell_risk * rr_tp1
+buy_tp2     = ta.highest(high, tp2_lb)
+sell_tp2    = ta.lowest(low,   tp2_lb)
 
 // ══════════════════════════════════════════════════════════════════════
 // EMA NEON GLOW
@@ -311,7 +333,7 @@ barcolor(buy_sig ? color.new(C_BULL, 20) : sell_sig ? color.new(C_BEAR, 20) : na
 // ══════════════════════════════════════════════════════════════════════
 if buy_sig
     label.new(bar_index, na,
-              "▲ LONG\n" + str.tostring(close, format.mintick),
+              "▲ LONG" + f_stars(bull_q) + "\n" + str.tostring(close, format.mintick),
               xloc=xloc.bar_index, yloc=yloc.belowbar,
               style=label.style_label_up,
               color=color.new(C_BULL, 10),
@@ -321,7 +343,7 @@ if buy_sig
 
 if sell_sig
     label.new(bar_index, na,
-              "▼ SHORT\n" + str.tostring(close, format.mintick),
+              "▼ SHORT" + f_stars(bear_q) + "\n" + str.tostring(close, format.mintick),
               xloc=xloc.bar_index, yloc=yloc.abovebar,
               style=label.style_label_down,
               color=color.new(C_BEAR, 10),
@@ -464,10 +486,11 @@ if show_tbl and barstate.islast
 
     // ── SIGNAL ──
     sg = buy_sig ? C_BULL : sell_sig ? C_BEAR : C_BRAND
+    sig_txt = buy_sig  ? "◈ LONG" + f_stars(bull_q) + "  ▲" :
+              sell_sig ? "◈ SHORT" + f_stars(bear_q) + "  ▼" : "SCANNING..."
     table.cell(t, 0, 7, "Signal",
                text_color=C_TEXT, text_size=tbl_sz, bgcolor=color.new(C_PANEL, 10))
-    table.cell(t, 1, 7,
-               buy_sig ? "◈  LONG  ▲" : sell_sig ? "◈  SHORT  ▼" : "SCANNING...",
+    table.cell(t, 1, 7, sig_txt,
                text_color=sg, text_size=tbl_sz,
                bgcolor=color.new(sg, buy_sig or sell_sig ? 60 : 88))
 
