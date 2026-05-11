@@ -769,7 +769,7 @@ if show_sltp and barstate.islast and not na(_sig_bar) and bar_index - _sig_bar <
     label.delete(_lb_tp1)
     label.delete(_lb_tp2)
 
-    r = bar_index + line_ext
+    r = _sig_bar + line_ext
 
     _ln_sl    := line.new(_sig_bar, _sig_sl,    r, _sig_sl,
                           color=color.new(C_SL,    10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
