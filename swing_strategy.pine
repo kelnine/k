@@ -505,20 +505,22 @@ if show_bos
     if bos_bull or choch_bull
         _lbl = bos_bull ? "BOS" : "CHoCH"
         _col = bos_bull ? C_BRAND : C_BULL
-        label.new(bar_index, na, _lbl, xloc=xloc.bar_index, yloc=yloc.belowbar,
-                  style=label.style_none, textcolor=_col, size=size.tiny)
-        box.new(bar_index - bos_lb, swg_h + _bh, bar_index - bos_lb + 5, swg_h - _bh,
-                border_color=color.new(C_BULL, 40), bgcolor=color.new(C_BULL, 92),
-                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        // Dashed line from pivot bar to break bar at swing high level
+        line.new(bar_index - bos_lb, swg_h, bar_index, swg_h,
+                 color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
+        label.new(bar_index, swg_h, _lbl,
+                  xloc=xloc.bar_index, style=label.style_none,
+                  textcolor=_col, size=size.tiny)
         bos_any_bar := bar_index
     if bos_bear or choch_bear
         _lbl = bos_bear ? "BOS" : "CHoCH"
         _col = bos_bear ? C_BRAND : C_BEAR
-        label.new(bar_index, na, _lbl, xloc=xloc.bar_index, yloc=yloc.abovebar,
-                  style=label.style_none, textcolor=_col, size=size.tiny)
-        box.new(bar_index - bos_lb, swg_l + _bh, bar_index - bos_lb + 5, swg_l - _bh,
-                border_color=color.new(C_BEAR, 40), bgcolor=color.new(C_BEAR, 92),
-                border_style=line.style_dashed, border_width=1, xloc=xloc.bar_index)
+        // Dashed line from pivot bar to break bar at swing low level
+        line.new(bar_index - bos_lb, swg_l, bar_index, swg_l,
+                 color=_col, style=line.style_dashed, width=1, xloc=xloc.bar_index)
+        label.new(bar_index, swg_l, _lbl,
+                  xloc=xloc.bar_index, style=label.style_none,
+                  textcolor=_col, size=size.tiny)
         bos_any_bar := bar_index
 
 // ══════════════════════════════════════════════════════════════════════
