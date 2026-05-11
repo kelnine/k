@@ -371,27 +371,73 @@ if show_zones and barstate.islast
                            border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
-// ORDER BLOCKS  (drawn at pivot confirmation — visible historically)
-// Body of the candle that formed each swing pivot
+// ORDER BLOCKS  —  2 most recent of each type, subtle accent style
+// Auto-dismissed when price closes through the zone
 // ══════════════════════════════════════════════════════════════════════
 ph_ob = ta.pivothigh(high, ob_lb, ob_lb)
 pl_ob = ta.pivotlow(low,   ob_lb, ob_lb)
 
-if show_ob and not na(pl_ob)
-    ob_t = math.max(open[ob_lb], close[ob_lb])
-    ob_b = math.min(open[ob_lb], close[ob_lb])
-    if ob_t - ob_b > syminfo.mintick
-        box.new(bar_index - ob_lb, ob_t, bar_index - ob_lb + ob_ext, ob_b,
-                border_color=color.new(C_BULL, 5), bgcolor=color.new(C_BULL, 70),
-                border_width=1, xloc=xloc.bar_index)
+var float bol_t1 = na
+var float bol_b1 = na
+var int   bol_x1 = na
+var float bol_t2 = na
+var float bol_b2 = na
+var int   bol_x2 = na
+var float bor_t1 = na
+var float bor_b1 = na
+var int   bor_x1 = na
+var float bor_t2 = na
+var float bor_b2 = na
+var int   bor_x2 = na
 
-if show_ob and not na(ph_ob)
-    ob_t = math.max(open[ob_lb], close[ob_lb])
-    ob_b = math.min(open[ob_lb], close[ob_lb])
-    if ob_t - ob_b > syminfo.mintick
-        box.new(bar_index - ob_lb, ob_t, bar_index - ob_lb + ob_ext, ob_b,
-                border_color=color.new(C_BEAR, 5), bgcolor=color.new(C_BEAR, 70),
-                border_width=1, xloc=xloc.bar_index)
+if not na(pl_ob)
+    bol_t2 := bol_t1
+    bol_b2 := bol_b1
+    bol_x2 := bol_x1
+    bol_t1 := math.max(open[ob_lb], close[ob_lb])
+    bol_b1 := math.min(open[ob_lb], close[ob_lb])
+    bol_x1 := bar_index - ob_lb
+
+if not na(ph_ob)
+    bor_t2 := bor_t1
+    bor_b2 := bor_b1
+    bor_x2 := bor_x1
+    bor_t1 := math.max(open[ob_lb], close[ob_lb])
+    bor_b1 := math.min(open[ob_lb], close[ob_lb])
+    bor_x1 := bar_index - ob_lb
+
+bol1_v = not na(bol_x1) and close > bol_b1 and bol_t1 - bol_b1 > syminfo.mintick
+bol2_v = not na(bol_x2) and close > bol_b2 and bol_t2 - bol_b2 > syminfo.mintick
+bor1_v = not na(bor_x1) and close < bor_t1 and bor_t1 - bor_b1 > syminfo.mintick
+bor2_v = not na(bor_x2) and close < bor_t2 and bor_t2 - bor_b2 > syminfo.mintick
+
+var box ob_box1 = na
+var box ob_box2 = na
+var box ob_box3 = na
+var box ob_box4 = na
+
+if show_ob and barstate.islast
+    box.delete(ob_box1)
+    box.delete(ob_box2)
+    box.delete(ob_box3)
+    box.delete(ob_box4)
+    r = bar_index + ob_ext
+    if bol1_v
+        ob_box1 := box.new(bol_x1, bol_t1, r, bol_b1,
+                           border_color=color.new(C_BULL, 25), bgcolor=color.new(C_BULL, 90),
+                           border_width=1, xloc=xloc.bar_index)
+    if bol2_v
+        ob_box2 := box.new(bol_x2, bol_t2, r, bol_b2,
+                           border_color=color.new(C_BULL, 50), bgcolor=color.new(C_BULL, 94),
+                           border_width=1, xloc=xloc.bar_index)
+    if bor1_v
+        ob_box3 := box.new(bor_x1, bor_t1, r, bor_b1,
+                           border_color=color.new(C_BEAR, 25), bgcolor=color.new(C_BEAR, 90),
+                           border_width=1, xloc=xloc.bar_index)
+    if bor2_v
+        ob_box4 := box.new(bor_x2, bor_t2, r, bor_b2,
+                           border_color=color.new(C_BEAR, 50), bgcolor=color.new(C_BEAR, 94),
+                           border_width=1, xloc=xloc.bar_index)
 
 // ══════════════════════════════════════════════════════════════════════
 // BOS  (Break of Structure) + CHoCH (Change of Character)
@@ -578,9 +624,25 @@ if sell_sig
               textalign=text.align_center)
 
 // ══════════════════════════════════════════════════════════════════════
-// SL / ENTRY / TP LINES  —  only the MOST RECENT signal shown at a time
-// Redrawn on barstate.islast so lines always extend to the current bar
+// SL / ENTRY / TP LINES
+// Historical signals: short subtle lines (no labels) — see performance over time
+// Most recent signal: full-color labeled lines extending to current bar
 // ══════════════════════════════════════════════════════════════════════
+
+// ── Historical lines (all signals) ──
+if show_sltp and buy_sig
+    _hr = bar_index + 10
+    line.new(bar_index, buy_sl,  _hr, buy_sl,  color=color.new(C_SL,    52), style=line.style_dashed, width=1)
+    line.new(bar_index, close,   _hr, close,   color=color.new(C_BRAND, 52), style=line.style_solid,  width=1)
+    line.new(bar_index, buy_tp1, _hr, buy_tp1, color=color.new(C_TP1,   52), style=line.style_dashed, width=1)
+
+if show_sltp and sell_sig
+    _hr = bar_index + 10
+    line.new(bar_index, sell_sl,  _hr, sell_sl,  color=color.new(C_SL,    52), style=line.style_dashed, width=1)
+    line.new(bar_index, close,    _hr, close,    color=color.new(C_BRAND, 52), style=line.style_solid,  width=1)
+    line.new(bar_index, sell_tp1, _hr, sell_tp1, color=color.new(C_TP1,   52), style=line.style_dashed, width=1)
+
+// ── Track most recent signal for the labeled live set ──
 var float _sig_entry = na
 var float _sig_sl    = na
 var float _sig_tp1   = na
@@ -636,7 +698,7 @@ if show_sltp and barstate.islast and not na(_sig_bar)
     _ln_tp1   := line.new(_sig_bar, _sig_tp1,   r, _sig_tp1,
                           color=color.new(C_TP1,   10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
     _lb_tp1   := label.new(r, _sig_tp1,   " TP1",   xloc=xloc.bar_index,
-                           style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK,        size=size.tiny)
+                           style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK, size=size.tiny)
 
     tp2_valid = _sig_bull ? _sig_tp2 > _sig_tp1 : _sig_tp2 < _sig_tp1
     if tp2_valid
