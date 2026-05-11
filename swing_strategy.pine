@@ -299,21 +299,33 @@ if sell_sig
 ph_z = ta.pivothigh(high, zone_lb, zone_lb)
 pl_z = ta.pivotlow(low,  zone_lb, zone_lb)
 
-var float sz_top1 = na, var float sz_bot1 = na, var int sz_bar1 = na
-var float sz_top2 = na, var float sz_bot2 = na, var int sz_bar2 = na
-var float dz_top1 = na, var float dz_bot1 = na, var int dz_bar1 = na
-var float dz_top2 = na, var float dz_bot2 = na, var int dz_bar2 = na
+var float sz_top1 = na
+var float sz_bot1 = na
+var int   sz_bar1 = na
+var float sz_top2 = na
+var float sz_bot2 = na
+var int   sz_bar2 = na
+var float dz_top1 = na
+var float dz_bot1 = na
+var int   dz_bar1 = na
+var float dz_top2 = na
+var float dz_bot2 = na
+var int   dz_bar2 = na
 
-zone_min = atr * 0.15   // minimum zone height so thin-body pivots still show
+zone_min = atr * 0.15
 
 if not na(ph_z)
-    sz_top2 := sz_top1;  sz_bot2 := sz_bot1;  sz_bar2 := sz_bar1
+    sz_top2 := sz_top1
+    sz_bot2 := sz_bot1
+    sz_bar2 := sz_bar1
     sz_top1 := ph_z
     sz_bot1 := math.min(math.max(close[zone_lb], open[zone_lb]), ph_z - zone_min)
     sz_bar1 := bar_index - zone_lb
 
 if not na(pl_z)
-    dz_top2 := dz_top1;  dz_bot2 := dz_bot1;  dz_bar2 := dz_bar1
+    dz_top2 := dz_top1
+    dz_bot2 := dz_bot1
+    dz_bar2 := dz_bar1
     dz_bot1 := pl_z
     dz_top1 := math.max(math.min(close[zone_lb], open[zone_lb]), pl_z + zone_min)
     dz_bar1 := bar_index - zone_lb
@@ -324,12 +336,16 @@ sz2_ok = not na(sz_bar2) and not (close > sz_top2)
 dz1_ok = not na(dz_bar1) and not (close < dz_bot1)
 dz2_ok = not na(dz_bar2) and not (close < dz_bot2)
 
-var box sz_box1 = na, var box sz_box2 = na
-var box dz_box1 = na, var box dz_box2 = na
+var box sz_box1 = na
+var box sz_box2 = na
+var box dz_box1 = na
+var box dz_box2 = na
 
 if show_zones and barstate.islast
-    box.delete(sz_box1);  box.delete(sz_box2)
-    box.delete(dz_box1);  box.delete(dz_box2)
+    box.delete(sz_box1)
+    box.delete(sz_box2)
+    box.delete(dz_box1)
+    box.delete(dz_box2)
     if sz1_ok
         sz_box1 := box.new(sz_bar1, sz_top1, bar_index + zone_ext, sz_bot1,
                            border_color=color.new(C_BEAR, 20), bgcolor=color.new(C_BEAR, 88),
