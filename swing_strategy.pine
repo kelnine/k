@@ -758,6 +758,10 @@ var label _lb_sl    = na
 var label _lb_entry = na
 var label _lb_tp1   = na
 var label _lb_tp2   = na
+var label _lb_sl_l    = na
+var label _lb_entry_l = na
+var label _lb_tp1_l   = na
+var label _lb_tp2_l   = na
 
 if show_sltp and barstate.islast and not na(_sig_bar) and bar_index - _sig_bar <= 100
     line.delete(_ln_sl)
@@ -768,28 +772,40 @@ if show_sltp and barstate.islast and not na(_sig_bar) and bar_index - _sig_bar <
     label.delete(_lb_entry)
     label.delete(_lb_tp1)
     label.delete(_lb_tp2)
+    label.delete(_lb_sl_l)
+    label.delete(_lb_entry_l)
+    label.delete(_lb_tp1_l)
+    label.delete(_lb_tp2_l)
 
     r = bar_index + line_ext
 
     _ln_sl    := line.new(_sig_bar, _sig_sl,    r, _sig_sl,
                           color=color.new(C_SL,    10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
+    _lb_sl_l  := label.new(_sig_bar, _sig_sl,    "SL ",    xloc=xloc.bar_index,
+                           style=label.style_label_right, color=color.new(C_SL,    10), textcolor=color.white, size=size.tiny)
     _lb_sl    := label.new(r, _sig_sl,    " SL",    xloc=xloc.bar_index,
                            style=label.style_label_left, color=color.new(C_SL,    10), textcolor=color.white, size=size.tiny)
     _ln_entry := line.new(_sig_bar, _sig_entry, r, _sig_entry,
                           color=color.new(C_BRAND, 10), style=line.style_solid,  width=1, xloc=xloc.bar_index)
+    _lb_entry_l := label.new(_sig_bar, _sig_entry, "ENTRY ", xloc=xloc.bar_index,
+                           style=label.style_label_right, color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
     _lb_entry := label.new(r, _sig_entry, " ENTRY", xloc=xloc.bar_index,
                            style=label.style_label_left, color=color.new(C_BRAND, 10), textcolor=color.white, size=size.tiny)
     _ln_tp1   := line.new(_sig_bar, _sig_tp1,   r, _sig_tp1,
                           color=color.new(C_TP1,   10), style=line.style_dashed, width=1, xloc=xloc.bar_index)
+    _lb_tp1_l := label.new(_sig_bar, _sig_tp1,   "TP1 ",   xloc=xloc.bar_index,
+                           style=label.style_label_right, color=color.new(C_TP1,   10), textcolor=C_DARK, size=size.tiny)
     _lb_tp1   := label.new(r, _sig_tp1,   " TP1",   xloc=xloc.bar_index,
                            style=label.style_label_left, color=color.new(C_TP1,   10), textcolor=C_DARK, size=size.tiny)
 
     tp2_valid = _sig_bull ? _sig_tp2 > _sig_tp1 : _sig_tp2 < _sig_tp1
     if tp2_valid
-        _ln_tp2 := line.new(_sig_bar, _sig_tp2, r, _sig_tp2,
-                            color=color.new(C_TP2, 20), style=line.style_dotted, width=1, xloc=xloc.bar_index)
-        _lb_tp2 := label.new(r, _sig_tp2, " TP2", xloc=xloc.bar_index,
-                             style=label.style_label_left, color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+        _ln_tp2   := line.new(_sig_bar, _sig_tp2, r, _sig_tp2,
+                              color=color.new(C_TP2, 20), style=line.style_dotted, width=1, xloc=xloc.bar_index)
+        _lb_tp2_l := label.new(_sig_bar, _sig_tp2, "TP2 ", xloc=xloc.bar_index,
+                               style=label.style_label_right, color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
+        _lb_tp2   := label.new(r, _sig_tp2, " TP2", xloc=xloc.bar_index,
+                               style=label.style_label_left, color=color.new(C_TP2, 20), textcolor=C_DARK, size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════
 // FUTUREFI DASHBOARD
