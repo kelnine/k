@@ -424,20 +424,32 @@ if show_ob and barstate.islast
     r = bar_index + ob_ext
     if bol1_v
         ob_box1 := box.new(bol_x1, bol_t1, r, bol_b1,
-                           border_color=color.new(C_BULL, 25), bgcolor=color.new(C_BULL, 90),
-                           border_width=1, xloc=xloc.bar_index)
+                           border_color=color.new(C_BULL, 5), bgcolor=color.new(C_BULL, 80),
+                           border_width=1, xloc=xloc.bar_index,
+                           text="OB", text_size=size.tiny,
+                           text_color=color.new(C_BULL, 5),
+                           text_halign=text.align_left, text_valign=text.align_top)
     if bol2_v
         ob_box2 := box.new(bol_x2, bol_t2, r, bol_b2,
-                           border_color=color.new(C_BULL, 50), bgcolor=color.new(C_BULL, 94),
-                           border_width=1, xloc=xloc.bar_index)
+                           border_color=color.new(C_BULL, 30), bgcolor=color.new(C_BULL, 88),
+                           border_width=1, xloc=xloc.bar_index,
+                           text="OB", text_size=size.tiny,
+                           text_color=color.new(C_BULL, 30),
+                           text_halign=text.align_left, text_valign=text.align_top)
     if bor1_v
         ob_box3 := box.new(bor_x1, bor_t1, r, bor_b1,
-                           border_color=color.new(C_BEAR, 25), bgcolor=color.new(C_BEAR, 90),
-                           border_width=1, xloc=xloc.bar_index)
+                           border_color=color.new(C_BEAR, 5), bgcolor=color.new(C_BEAR, 80),
+                           border_width=1, xloc=xloc.bar_index,
+                           text="OB", text_size=size.tiny,
+                           text_color=color.new(C_BEAR, 5),
+                           text_halign=text.align_left, text_valign=text.align_top)
     if bor2_v
         ob_box4 := box.new(bor_x2, bor_t2, r, bor_b2,
-                           border_color=color.new(C_BEAR, 50), bgcolor=color.new(C_BEAR, 94),
-                           border_width=1, xloc=xloc.bar_index)
+                           border_color=color.new(C_BEAR, 30), bgcolor=color.new(C_BEAR, 88),
+                           border_width=1, xloc=xloc.bar_index,
+                           text="OB", text_size=size.tiny,
+                           text_color=color.new(C_BEAR, 30),
+                           text_halign=text.align_left, text_valign=text.align_top)
 
 // ══════════════════════════════════════════════════════════════════════
 // BOS + CHoCH + EQH/EQL  (zone_lb pivots — major swings only)
@@ -469,10 +481,10 @@ if not na(bos_pl)
     bos_last_pl     := bos_pl
     bos_last_pl_bar := bar_index - zone_lb
 
-bos_bull   = not na(bos_last_ph) and close > bos_last_ph and bos_last_ph != bos_ph_used and uptrend
-choch_bull = not na(bos_last_ph) and close > bos_last_ph and bos_last_ph != bos_ph_used and downtrend
-bos_bear   = not na(bos_last_pl) and close < bos_last_pl and bos_last_pl != bos_pl_used and downtrend
-choch_bear = not na(bos_last_pl) and close < bos_last_pl and bos_last_pl != bos_pl_used and uptrend
+bos_bull   = not na(bos_last_ph) and close > bos_last_ph * 1.001 and bos_last_ph != bos_ph_used and hh_hl
+choch_bull = not na(bos_last_ph) and close > bos_last_ph * 1.001 and bos_last_ph != bos_ph_used and lh_ll
+bos_bear   = not na(bos_last_pl) and close < bos_last_pl * 0.999 and bos_last_pl != bos_pl_used and lh_ll
+choch_bear = not na(bos_last_pl) and close < bos_last_pl * 0.999 and bos_last_pl != bos_pl_used and hh_hl
 
 if bos_bull or choch_bull
     bos_ph_used := bos_last_ph
@@ -480,7 +492,7 @@ if bos_bear or choch_bear
     bos_pl_used := bos_last_pl
 
 _bh = atr * 0.10   // half-height of the pivot marker box
-bos_cd_ok = na(bos_last_any_bar) or bar_index - bos_last_any_bar >= 10
+bos_cd_ok = na(bos_last_any_bar) or bar_index - bos_last_any_bar >= 20
 
 if show_bos and bos_cd_ok
     if bos_bull
