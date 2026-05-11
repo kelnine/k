@@ -16,6 +16,7 @@ C_DARK   = color.rgb(8,   12,  22)
 C_PANEL  = color.rgb(14,  20,  40)
 C_TEXT   = color.rgb(210, 215, 230)
 C_DIM    = color.rgb(70,  80,  100)
+C_LIQD   = color.rgb(147, 51,  234)   // Purple — engulfing liquidity
 
 // ══════════════════════════════════════════════════════════════════════
 // INPUTS
@@ -58,10 +59,12 @@ atr_sl_mult = input.float(1.5, "SL ATR Multiplier",  minval=0.5, step=0.25, grou
 show_sltp   = input.bool(true, "Show SL / TP Lines",                         group=G_RISK)
 line_ext    = input.int(30,    "Line Length (bars)",  minval=5,              group=G_RISK)
 
-show_bg    = input.bool(true,  "Trend Background",    group=G_DISP)
-show_glow  = input.bool(true,  "EMA Neon Glow",       group=G_DISP)
-show_box   = input.bool(true,  "Entry Candle Box",    group=G_DISP)
-show_tbl   = input.bool(true,  "FutureFi Dashboard",  group=G_DISP)
+show_bg    = input.bool(true,  "Trend Background",             group=G_DISP)
+show_glow  = input.bool(true,  "EMA Neon Glow",                group=G_DISP)
+show_box   = input.bool(true,  "Entry Candle Box",             group=G_DISP)
+show_liqd  = input.bool(true,  "Engulf Liquidity Highlight",   group=G_DISP,
+             tooltip="Highlights engulfing candles purple — marks liquidity sweeps even without a full signal")
+show_tbl   = input.bool(true,  "FutureFi Dashboard",           group=G_DISP)
 
 tbl_pos_str  = input.string("Top Right", "Dashboard Position",
                options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"],
@@ -73,6 +76,12 @@ tbl_sz_str   = input.string("Tiny", "Dashboard Text Size",
 sig_lbl_sz_str = input.string("Small", "Signal Label Size",
                  options=["Tiny","Small","Normal"],
                  group=G_DISP)
+
+G_ZONE = "── Supply & Demand Zones ──"
+show_zones = input.bool(true,  "Show S&D Zones",           group=G_ZONE)
+zone_lb    = input.int(15,     "Zone Pivot Lookback",  minval=5, maxval=30, group=G_ZONE,
+             tooltip="Higher = only major swing zones shown. 15 is ideal on 15m.")
+zone_ext   = input.int(50,     "Zone Extension (bars)", minval=10,          group=G_ZONE)
 
 G_SCAN = "── Mini Scanner (optional) ──"
 show_scan    = input.bool(false, "Show Mini Scanner",     group=G_SCAN)
@@ -283,6 +292,60 @@ if sell_sig
     sig_dir      := -1
 
 // ══════════════════════════════════════════════════════════════════════
+// SUPPLY & DEMAND ZONES  (2 supply + 2 demand, auto-dismiss on break)
+// ══════════════════════════════════════════════════════════════════════
+ph_z = ta.pivothigh(high, zone_lb, zone_lb)
+pl_z = ta.pivotlow(low,  zone_lb, zone_lb)
+
+var float sz_top1 = na, var float sz_bot1 = na, var int sz_bar1 = na
+var float sz_top2 = na, var float sz_bot2 = na, var int sz_bar2 = na
+var float dz_top1 = na, var float dz_bot1 = na, var int dz_bar1 = na
+var float dz_top2 = na, var float dz_bot2 = na, var int dz_bar2 = na
+
+zone_min = atr * 0.15   // minimum zone height so thin-body pivots still show
+
+if not na(ph_z)
+    sz_top2 := sz_top1;  sz_bot2 := sz_bot1;  sz_bar2 := sz_bar1
+    sz_top1 := ph_z
+    sz_bot1 := math.min(math.max(close[zone_lb], open[zone_lb]), ph_z - zone_min)
+    sz_bar1 := bar_index - zone_lb
+
+if not na(pl_z)
+    dz_top2 := dz_top1;  dz_bot2 := dz_bot1;  dz_bar2 := dz_bar1
+    dz_bot1 := pl_z
+    dz_top1 := math.max(math.min(close[zone_lb], open[zone_lb]), pl_z + zone_min)
+    dz_bar1 := bar_index - zone_lb
+
+// Zone is broken when price closes through it
+sz1_ok = not na(sz_bar1) and not (close > sz_top1)
+sz2_ok = not na(sz_bar2) and not (close > sz_top2)
+dz1_ok = not na(dz_bar1) and not (close < dz_bot1)
+dz2_ok = not na(dz_bar2) and not (close < dz_bot2)
+
+var box sz_box1 = na, var box sz_box2 = na
+var box dz_box1 = na, var box dz_box2 = na
+
+if show_zones and barstate.islast
+    box.delete(sz_box1);  box.delete(sz_box2)
+    box.delete(dz_box1);  box.delete(dz_box2)
+    if sz1_ok
+        sz_box1 := box.new(sz_bar1, sz_top1, bar_index + zone_ext, sz_bot1,
+                           border_color=color.new(C_BEAR, 20), bgcolor=color.new(C_BEAR, 88),
+                           border_width=1, xloc=xloc.bar_index)
+    if sz2_ok
+        sz_box2 := box.new(sz_bar2, sz_top2, bar_index + zone_ext, sz_bot2,
+                           border_color=color.new(C_BEAR, 45), bgcolor=color.new(C_BEAR, 92),
+                           border_width=1, xloc=xloc.bar_index)
+    if dz1_ok
+        dz_box1 := box.new(dz_bar1, dz_top1, bar_index + zone_ext, dz_bot1,
+                           border_color=color.new(C_BULL, 20), bgcolor=color.new(C_BULL, 88),
+                           border_width=1, xloc=xloc.bar_index)
+    if dz2_ok
+        dz_box2 := box.new(dz_bar2, dz_top2, bar_index + zone_ext, dz_bot2,
+                           border_color=color.new(C_BULL, 45), bgcolor=color.new(C_BULL, 92),
+                           border_width=1, xloc=xloc.bar_index)
+
+// ══════════════════════════════════════════════════════════════════════
 // SL / TP LEVELS
 // ══════════════════════════════════════════════════════════════════════
 piv_buy_sl  = ta.lowest(low,   sl_lb)
@@ -326,7 +389,10 @@ if show_box and sell_sig
             border_color=color.new(C_BEAR, 0), bgcolor=color.new(C_BEAR, 80),
             border_width=2, xloc=xloc.bar_index)
 
-barcolor(buy_sig ? color.new(C_BULL, 20) : sell_sig ? color.new(C_BEAR, 20) : na)
+// Signals take priority; standalone engulfing candles get purple liquidity highlight
+barcolor(buy_sig                              ? color.new(C_BULL, 20) :
+         sell_sig                             ? color.new(C_BEAR, 20) :
+         show_liqd and (bull_engulf or bear_engulf) ? color.new(C_LIQD, 25) : na)
 
 // ══════════════════════════════════════════════════════════════════════
 // SIGNAL LABELS  —  compact, no FutureFi text on each
