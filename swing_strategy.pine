@@ -60,7 +60,7 @@ show_sltp   = input.bool(true, "Show SL / TP Lines",                         gro
 line_ext    = input.int(30,    "Line Length (bars)",  minval=5,              group=G_RISK)
 
 show_bg    = input.bool(true,  "Trend Background",             group=G_DISP)
-show_glow  = input.bool(true,  "EMA Neon Glow",                group=G_DISP)
+show_glow  = input.bool(false, "EMA Neon Glow",                group=G_DISP)
 show_box   = input.bool(true,  "Entry Candle Box",             group=G_DISP)
 show_liqd  = input.bool(true,  "Liquidity Sweep Highlight",    group=G_DISP,
              tooltip="Highlights purple when price wicks through a recent swing high/low then closes back inside — a stop hunt / liquidity grab")
@@ -84,7 +84,7 @@ show_zones = input.bool(true,  "Show S&D Zones",           group=G_ZONE)
 zone_lb    = input.int(15,     "Zone Pivot Lookback",  minval=5, maxval=30, group=G_ZONE,
              tooltip="Higher = only major swing zones shown. 15 is ideal on 15m.")
 zone_ext   = input.int(30,     "Zone Extension (bars)", minval=10,          group=G_ZONE)
-show_ob    = input.bool(true,  "Show Order Blocks",        group=G_ZONE)
+show_ob    = input.bool(false, "Show Order Blocks",        group=G_ZONE)
 ob_lb      = input.int(5,      "OB Pivot Lookback",   minval=2, maxval=20,  group=G_ZONE)
 ob_ext     = input.int(12,     "OB Extension (bars)", minval=3,             group=G_ZONE)
 show_bos   = input.bool(true,  "Show BOS / CHoCH",         group=G_ZONE,
@@ -568,10 +568,10 @@ sell_tp2    = ta.lowest(low,   tp2_lb)
 // ══════════════════════════════════════════════════════════════════════
 // EMA SUBTLE GLOW  (single soft haze layer — removed outer bloom ring)
 // ══════════════════════════════════════════════════════════════════════
-plot(show_glow ? ema20  : na, "EMA20 haze",  color=color.new(C_AMBER, 85), linewidth=4, display=display.pane)
-plot(ema20,                   "EMA 20",      color=color.new(C_AMBER, 10), linewidth=1)
-plot(show_glow ? ema200 : na, "EMA200 haze", color=color.new(C_BRAND, 82), linewidth=6, display=display.pane)
-plot(ema200,                  "EMA 200",     color=color.new(C_BRAND, 5),  linewidth=2)
+plot(show_glow ? ema20  : na, "EMA20 haze",  color=color.new(C_AMBER, 88), linewidth=4, display=display.pane)
+plot(ema20,                   "EMA 20",      color=color.new(C_AMBER, 45), linewidth=1)
+plot(show_glow ? ema200 : na, "EMA200 haze", color=color.new(C_BRAND, 85), linewidth=6, display=display.pane)
+plot(ema200,                  "EMA 200",     color=color.new(C_BRAND, 35), linewidth=1)
 
 // ══════════════════════════════════════════════════════════════════════
 // LIQUIDITY SWEEP DETECTION
@@ -713,7 +713,7 @@ var label _lb_entry = na
 var label _lb_tp1   = na
 var label _lb_tp2   = na
 
-if show_sltp and barstate.islast and not na(_sig_bar)
+if show_sltp and barstate.islast and not na(_sig_bar) and bar_index - _sig_bar <= 100
     line.delete(_ln_sl)
     line.delete(_ln_entry)
     line.delete(_ln_tp1)
