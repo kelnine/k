@@ -6,29 +6,27 @@ const freeTier = [
   "AI Tutor (10 messages/day)",
   "Progress tracking & XP system",
   "Basic market concepts",
-  "Community Discord access",
+  "Learn entirely at your own pace",
 ];
 
 const proTier = [
   "All 102 lessons (beginner + intermediate + advanced)",
   "All quizzes with detailed explanations",
   "Unlimited AI Tutor access",
-  "Weekly live Q&A with traders",
   "Trade journal template (Google Sheets)",
   "Real-time signal alerts (Telegram)",
   "Downloadable cheat sheets & checklists",
-  "Priority support",
+  "Email support",
 ];
 
 const eliteTier = [
   "Everything in Pro",
-  "1-on-1 monthly strategy session (30 min)",
   "Custom indicator pack (TradingView)",
-  "Private Discord with professional traders",
   "Exclusive backtesting walkthroughs",
   "Portfolio review framework",
   "Tax optimization guide",
   "Early access to new courses",
+  "Advanced AI Tutor with deeper analysis",
 ];
 
 const upsells = [
@@ -43,14 +41,7 @@ const upsells = [
     icon: "📱",
     title: "Signal Alert Service",
     price: "$29/mo",
-    desc: "Daily high-probability setups delivered to Telegram with entry, stop, and target.",
-    tag: "Add-on",
-  },
-  {
-    icon: "👥",
-    title: "InvestIQ Community",
-    price: "$19/mo",
-    desc: "Active Discord community with daily trade discussions, chart sharing, and accountability.",
+    desc: "Daily high-probability setups delivered straight to you with entry, stop, and target.",
     tag: "Add-on",
   },
   {
@@ -58,6 +49,13 @@ const upsells = [
     title: "Complete Trading Psychology Course",
     price: "$79",
     desc: "Deep-dive 6-hour course covering peak performance, journaling, and identity-based trading.",
+    tag: "One-time",
+  },
+  {
+    icon: "📋",
+    title: "Ultimate Risk Management Toolkit",
+    price: "$39",
+    desc: "Position size calculator, drawdown tracker, trade log spreadsheet — everything in one download.",
     tag: "One-time",
   },
 ];
@@ -196,7 +194,7 @@ export default function PricingPage() {
                   ["Real trade examples", "✅", "⚠️", "⚠️", "❌"],
                   ["Risk-first approach", "✅", "❌", "❌", "❌"],
                   ["Regular updates", "✅", "✅", "❌", "⚠️"],
-                  ["Community access", "✅", "❌", "⚠️", "⚠️"],
+                  ["Self-paced, solo learning", "✅", "✅", "✅", "⚠️"],
                   ["Affordable price", "✅ $19/mo", "✅ Free", "✅ One-time", "⚠️ Varies"],
                 ].map(([feature, ...cols]) => (
                   <tr key={feature}>
