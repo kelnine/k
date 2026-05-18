@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Trading Bot Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+# paper | live  (live requires explicit Hyperliquid enable + env vars)
+mode: paper
+
+paper_trading:
+  starting_balance: 10000.0
+  slippage_bps: 5            # basis points applied on every fill
+
+symbols:
+  - BTC-PERP
+  - ETH-PERP
+
+timeframe: "15m"
+
+# ── Strategy ─────────────────────────────────────────────────────────────────
+strategy:
+  ema_periods: [9, 21, 50, 200]
+  rsi_period: 14
+  rsi_overbought: 70
+  rsi_oversold: 30
+  adx_period: 14
+  adx_threshold: 25          # minimum ADX to confirm trend
+  volume_spike_multiplier: 2.0
+  min_signal_score: 4        # minimum confluence score to take a trade
+  sl_atr_multiplier: 1.5
+  tp1_atr_multiplier: 2.0
+  tp2_atr_multiplier: 3.5
+  swing_window: 5            # bars each side for swing high/low detection
+  structure_lookback: 50     # bars to scan for BOS/CHoCH/OB/FVG
+
+# ── Risk ─────────────────────────────────────────────────────────────────────
+risk:
+  max_daily_loss_pct: 3.0    # % of account; kill switch triggers at limit
+  max_trade_size_pct: 2.0    # % of account risked per trade
+  max_leverage: 10
+  max_open_positions: 3
+  stop_loss_required: true
+  kill_switch: false         # set true to halt all new trades immediately
+  no_trade_mode: false       # set true for observation-only mode
+
+# ── Execution ─────────────────────────────────────────────────────────────────
+execution:
+  hyperliquid:
+    enabled: false           # NEVER set true without private key + explicit intent
+    testnet: true
+    slippage_tolerance: 0.001
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+alerts:
+  telegram:
+    enabled: false
+    token_env: "TELEGRAM_BOT_TOKEN"
+    chat_id_env: "TELEGRAM_CHAT_ID"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level: INFO
+  file: logs/bot.log
+  trade_history_csv: logs/trade_history.csv
+  dashboard_json: logs/dashboard.json
