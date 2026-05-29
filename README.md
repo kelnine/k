@@ -1,6 +1,6 @@
 # Rebellio Market — Automated TradingView Strategy
 
-A Pine Script v5 strategy that automates the trading system taught across
+A Pine Script v6 strategy that automates the trading system taught across
 [@RebellioMarket](https://x.com/RebellioMarket)'s X posts, so you can **see
 every signal on your chart, backtest it, and wire it to a broker** for true
 automation.
