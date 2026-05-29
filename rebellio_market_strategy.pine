@@ -175,13 +175,13 @@ if goLong and longRisk > 0 and canTrade and strategy.position_size == 0
     tradesToday += 1
     if showLabels
         longLbl := label.new(
-             x          = bar_index,
-             y          = low,
-             text       = "▲ LONG\nSL " + str.tostring(longStop,  format.mintick) + "\nTP " + str.tostring(longTP, format.mintick),
-             style      = label.style_label_up,
-             color      = color.new(color.green, 20),
-             text_color = color.white,
-             size       = size.small)
+             x         = bar_index,
+             y         = low,
+             text      = "▲ LONG\nSL " + str.tostring(longStop,  format.mintick) + "\nTP " + str.tostring(longTP, format.mintick),
+             style     = label.style_label_up,
+             color     = color.new(color.green, 20),
+             textcolor = color.white,
+             size      = size.small)
 
 if goShort and shortRisk > 0 and canTrade and strategy.position_size == 0
     strategy.entry(id = "Short", direction = strategy.short, qty = shortQty)
@@ -189,13 +189,13 @@ if goShort and shortRisk > 0 and canTrade and strategy.position_size == 0
     tradesToday += 1
     if showLabels
         shortLbl := label.new(
-             x          = bar_index,
-             y          = high,
-             text       = "▼ SHORT\nSL " + str.tostring(shortStop, format.mintick) + "\nTP " + str.tostring(shortTP, format.mintick),
-             style      = label.style_label_down,
-             color      = color.new(color.red, 20),
-             text_color = color.white,
-             size       = size.small)
+             x         = bar_index,
+             y         = high,
+             text      = "▼ SHORT\nSL " + str.tostring(shortStop, format.mintick) + "\nTP " + str.tostring(shortTP, format.mintick),
+             style     = label.style_label_down,
+             color     = color.new(color.red, 20),
+             textcolor = color.white,
+             size      = size.small)
 
 // ---------------------------------------------------------------------
 //  PLOTS
