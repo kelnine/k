@@ -239,35 +239,35 @@ if showTable and barstate.islast
                      ? strategy.wintrades / strategy.closedtrades * 100.0
                      : 0.0
 
-    table.cell(table = statsTable, column = 0, row = 0, text = "REBELLIO AUTO",
+    table.cell(table_id = statsTable, column = 0, row = 0, text = "REBELLIO AUTO",
                bgcolor = color.navy, text_color = color.white, text_size = size.normal)
-    table.cell(table = statsTable, column = 1, row = 0, text = isDayMode ? "DAY/VWAP" : "SWING",
+    table.cell(table_id = statsTable, column = 1, row = 0, text = isDayMode ? "DAY/VWAP" : "SWING",
                bgcolor = color.navy, text_color = color.yellow, text_size = size.normal)
 
-    table.cell(table = statsTable, column = 0, row = 1, text = "Equity",    text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 1,
+    table.cell(table_id = statsTable, column = 0, row = 1, text = "Equity",    text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 1,
                text  = "$" + str.tostring(strategy.equity, "#.##"),         text_size = size.small)
 
-    table.cell(table = statsTable, column = 0, row = 2, text = "Net Profit", text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 2,
+    table.cell(table_id = statsTable, column = 0, row = 2, text = "Net Profit", text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 2,
                text       = "$" + str.tostring(strategy.netprofit, "#.##"),
                text_color = strategy.netprofit >= 0 ? color.green : color.red,
                text_size  = size.small)
 
-    table.cell(table = statsTable, column = 0, row = 3, text = "Win Rate",  text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 3,
+    table.cell(table_id = statsTable, column = 0, row = 3, text = "Win Rate",  text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 3,
                text  = str.tostring(winRate, "#.#") + "%",                  text_size = size.small)
 
-    table.cell(table = statsTable, column = 0, row = 4, text = "Trades",    text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 4,
+    table.cell(table_id = statsTable, column = 0, row = 4, text = "Trades",    text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 4,
                text  = str.tostring(strategy.closedtrades),                 text_size = size.small)
 
-    table.cell(table = statsTable, column = 0, row = 5, text = "Trades Today", text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 5,
+    table.cell(table_id = statsTable, column = 0, row = 5, text = "Trades Today", text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 5,
                text  = str.tostring(tradesToday) + " / " + str.tostring(maxTrades), text_size = size.small)
 
-    table.cell(table = statsTable, column = 0, row = 6, text = "Day P&L",   text_size = size.small)
-    table.cell(table = statsTable, column = 1, row = 6,
+    table.cell(table_id = statsTable, column = 0, row = 6, text = "Day P&L",   text_size = size.small)
+    table.cell(table_id = statsTable, column = 1, row = 6,
                text       = str.tostring(dayPnLPct, "#.#") + "%",
                text_color = dayPnLPct >= 0 ? color.green : color.red,
                text_size  = size.small)
