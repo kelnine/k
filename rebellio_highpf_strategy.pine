@@ -137,9 +137,6 @@ if showTbl and barstate.islast
                  ? strategy.wintrades / strategy.closedtrades * 100.0
                  : 0.0
 
-    color pfColor = not na(pf) and pf >= 2.0 ? color.green :
-                    not na(pf) and pf >= 1.5 ? color.yellow : color.red
-
     // Header
     table.cell(table_id = tbl, column = 0, row = 0, text = "HIGH PF SYSTEM",
                bgcolor = color.navy, text_color = color.white,  text_size = size.normal)
@@ -152,7 +149,8 @@ if showTbl and barstate.islast
                bgcolor = color.new(color.navy, 60), text_size = size.small)
     table.cell(table_id = tbl, column = 1, row = 1,
                text       = na(pf) ? "N/A" : str.tostring(pf, "#.##"),
-               text_color = pfColor, text_size = size.small)
+               text_color = na(pf) ? color.gray : pf >= 2.0 ? color.green : pf >= 1.5 ? color.yellow : color.red,
+               text_size  = size.small)
 
     table.cell(table_id = tbl, column = 0, row = 2, text = "Net Profit",  text_size = size.small)
     table.cell(table_id = tbl, column = 1, row = 2,
