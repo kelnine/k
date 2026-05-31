@@ -679,11 +679,11 @@ if sniper_short
 
 // ── Strategy orders ───────────────────────────────────────────────────
 if sniper_long and strat_long
-    strategy.entry("Long", strategy.long, qty_percent=strat_size)
+    strategy.entry("Long", strategy.long, qty=(strategy.equity * strat_size / 100) / close)
     strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp, comment_profit="TP", comment_loss="SL")
 
 if sniper_short and strat_short
-    strategy.entry("Short", strategy.short, qty_percent=strat_size)
+    strategy.entry("Short", strategy.short, qty=(strategy.equity * strat_size / 100) / close)
     strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp, comment_profit="TP", comment_loss="SL")
 
 // ══════════════════════════════════════════════════════════════════════
