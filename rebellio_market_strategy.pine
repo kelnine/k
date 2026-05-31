@@ -1,70 +1,48 @@
-// ===========================================================================
-// REBELLIO MARKET - AUTOMATED STRATEGY (Pine Script v6)
-// Encodes the trading system from @RebellioMarket X posts.
-//
-// Two modes (toggle in settings):
-//   1) DAY TRADE (VWAP)   - intraday VWAP pullback / break & retest
-//   2) SWING (4H EMA+RSI) - 200/20 EMA trend pullback + RSI confirm
-//
-// Risk engine: 2% risk/trade, 1:2 R:R min, max trades/day + daily loss limit.
-//
-// HOW TO USE:
-//   - Pine Editor -> paste -> Add to chart
-//   - Day mode: 1m-5m chart. Swing mode: 4H chart.
-//   - Strategy Tester tab -> backtest results
-//   - For automation: Alert -> "alert() function calls only" -> webhook URL
-//
-// NOTE: Educational tool. No strategy is guaranteed profitable.
-// ===========================================================================
-
 //@version=6
-strategy(title                   = "Rebellio Market - Auto Strategy",
-         overlay                 = true,
-         initial_capital         = 1000,
-         default_qty_type        = strategy.fixed,
-         default_qty_value       = 1,
-         pyramiding              = 0,
-         calc_on_every_tick      = false,
-         process_orders_on_close = true,
-         commission_type         = strategy.commission.percent,
-         commission_value        = 0.0)
+// Rebellio Market - Auto Strategy
+// Encodes @RebellioMarket trading system | Day Trade (VWAP) or Swing (4H EMA+RSI)
+// Day mode: 1m-5m chart | Swing mode: 4H chart | Strategy Tester tab for backtest
 
-// ---------------------------------------------------------------------------
+strategy("Rebellio Market - Auto Strategy",
+     overlay                 = true,
+     initial_capital         = 1000,
+     default_qty_type        = strategy.fixed,
+     default_qty_value       = 1,
+     pyramiding              = 0,
+     calc_on_every_tick      = false,
+     process_orders_on_close = true,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.0)
+
+// ============================================================
 // INPUTS
-// ---------------------------------------------------------------------------
-string grpMode  = "Mode"
-string mode     = input.string(defval  = "Day Trade (VWAP)",
-                               title   = "Trading Mode",
-                               options = ["Day Trade (VWAP)", "Swing (4H EMA+RSI)"],
-                               group   = grpMode)
-bool allowShort = input.bool(defval = true, title = "Allow Short Trades", group = grpMode)
+// ============================================================
+string mode     = input.string("Day Trade (VWAP)", "Mode",
+                     options = ["Day Trade (VWAP)", "Swing (4H EMA+RSI)"], group = "Mode")
+bool allowShort = input.bool(true, "Allow Shorts", group = "Mode")
 
-string grpRisk  = "Risk Management"
-float riskPct   = input.float(defval = 2.0, title = "Risk per Trade (%)",          minval = 0.1, step = 0.1, group = grpRisk)
-float rrTarget  = input.float(defval = 2.0, title = "Reward/Risk (TP multiple)",   minval = 1.0, step = 0.5, group = grpRisk)
-int   maxTrades = input.int  (defval = 3,   title = "Max Trades / Day (day mode)", minval = 1,               group = grpRisk)
-float dailyLoss = input.float(defval = 4.0, title = "Daily Loss Limit (%) - stop", minval = 0.5, step = 0.5, group = grpRisk)
+float riskPct   = input.float(2.0, "Risk per Trade (%)",    minval = 0.1, step = 0.1, group = "Risk")
+float rrTarget  = input.float(2.0, "Reward/Risk multiple",  minval = 1.0, step = 0.5, group = "Risk")
+int   maxTrades = input.int  (3,   "Max Trades/Day",        minval = 1,               group = "Risk")
+float dailyLoss = input.float(4.0, "Daily Loss Limit (%)",  minval = 0.5, step = 0.5, group = "Risk")
 
-string grpInd   = "Indicators"
-int emaFast     = input.int(defval = 9,   title = "EMA Fast",           group = grpInd)
-int emaMid      = input.int(defval = 20,  title = "EMA Mid (pullback)", group = grpInd)
-int emaSlow     = input.int(defval = 200, title = "EMA Slow (trend)",   group = grpInd)
-int rsiLen      = input.int(defval = 14,  title = "RSI Length",         group = grpInd)
-int rsiThresh   = input.int(defval = 50,  title = "RSI Threshold",      group = grpInd)
-int volLen      = input.int(defval = 20,  title = "Volume MA Length",   group = grpInd)
+int emaFast   = input.int(9,   "EMA Fast",     group = "Indicators")
+int emaMid    = input.int(20,  "EMA Mid",      group = "Indicators")
+int emaSlow   = input.int(200, "EMA Slow",     group = "Indicators")
+int rsiLen    = input.int(14,  "RSI Length",   group = "Indicators")
+int rsiThresh = input.int(50,  "RSI Threshold",group = "Indicators")
+int volLen    = input.int(20,  "Volume MA",    group = "Indicators")
 
-string grpFilt      = "Filters"
-bool useIndexFilter = input.bool  (defval = false,      title = "Require SPY Uptrend Filter", group = grpFilt)
-string indexSym     = input.symbol(defval = "AMEX:SPY", title = "Index Symbol",               group = grpFilt)
+bool   useIdxFilter = input.bool  (false,      "SPY Uptrend Filter", group = "Filters")
+string idxSym       = input.symbol("AMEX:SPY", "Index Symbol",       group = "Filters")
 
-string grpViz   = "Visuals"
-bool showInd    = input.bool(defval = true, title = "Show Indicators",         group = grpViz)
-bool showLabels = input.bool(defval = true, title = "Show Entry/SL/TP Labels", group = grpViz)
-bool showTable  = input.bool(defval = true, title = "Show Stats Table",         group = grpViz)
+bool showInd    = input.bool(true, "Show Indicators",    group = "Visuals")
+bool showLabels = input.bool(true, "Show Labels",        group = "Visuals")
+bool showTable  = input.bool(true, "Show Stats Table",   group = "Visuals")
 
-// ---------------------------------------------------------------------------
-// CORE INDICATORS
-// ---------------------------------------------------------------------------
+// ============================================================
+// INDICATORS
+// ============================================================
 float ema9   = ta.ema(close, emaFast)
 float ema20  = ta.ema(close, emaMid)
 float ema200 = ta.ema(close, emaSlow)
@@ -77,199 +55,144 @@ bool  vwapOk = not na(myVwap)
 bool isDayMode   = mode == "Day Trade (VWAP)"
 bool isSwingMode = mode == "Swing (4H EMA+RSI)"
 
-// Optional index trend filter
-float idxClose = request.security(symbol = indexSym, timeframe = timeframe.period, expression = close)
-float idxEma   = request.security(symbol = indexSym, timeframe = timeframe.period, expression = ta.ema(close, emaMid))
-bool  idxUp    = not na(idxClose) and not na(idxEma) and idxClose > idxEma
-bool  idxDn    = not na(idxClose) and not na(idxEma) and idxClose < idxEma
-bool  idxOk    = not useIndexFilter or idxUp
-bool  idxOkS   = not useIndexFilter or idxDn
+float idxClose = request.security(symbol = idxSym, timeframe = timeframe.period, expression = close)
+float idxEma   = request.security(symbol = idxSym, timeframe = timeframe.period, expression = ta.ema(close, emaMid))
+bool  idxOk    = not useIdxFilter or (not na(idxClose) and not na(idxEma) and idxClose > idxEma)
+bool  idxOkS   = not useIdxFilter or (not na(idxClose) and not na(idxEma) and idxClose < idxEma)
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // CANDLE PATTERNS
-// ---------------------------------------------------------------------------
+// ============================================================
 float bodyHi    = math.max(open, close)
 float bodyLo    = math.min(open, close)
+float bodySize  = bodyHi - bodyLo
 float rng       = high - low
-float lowerWick = bodyLo - low
-float upperWick = high - bodyHi
 
 bool bullEngulf = close > open and close[1] < open[1] and close > open[1] and open <= close[1]
 bool bearEngulf = close < open and close[1] > open[1] and close < open[1] and open >= close[1]
-bool hammer     = rng > 0 and lowerWick > (bodyHi - bodyLo) * 1.5 and close > open
-bool shootStar  = rng > 0 and upperWick > (bodyHi - bodyLo) * 1.5 and close < open
+bool hammer     = rng > 0 and (bodyLo - low)  > bodySize * 1.5 and close > open
+bool shootStar  = rng > 0 and (high - bodyHi) > bodySize * 1.5 and close < open
 bool bullReject = bullEngulf or hammer
 bool bearReject = bearEngulf or shootStar
 
-// ---------------------------------------------------------------------------
-// ENTRY CONDITIONS
-// ---------------------------------------------------------------------------
-bool dayLong  = isDayMode and vwapOk and close > myVwap and close > ema9 and ema9 > ema20 and volExp and idxOk
-bool dayShort = isDayMode and vwapOk and allowShort and close < myVwap and close < ema9 and ema9 < ema20 and volExp and idxOkS
+// ============================================================
+// SIGNALS
+// ============================================================
+bool dayLong  = isDayMode and vwapOk and close > myVwap and ema9 > ema20 and volExp and idxOk
+bool dayShort = isDayMode and vwapOk and allowShort and close < myVwap and ema9 < ema20 and volExp and idxOkS
 
-bool pulledBackLong  = low  <= ema20 * 1.005 and close > ema20
-bool pulledBackShort = high >= ema20 * 0.995 and close < ema20
-bool swingLong  = isSwingMode and close > ema200 and pulledBackLong  and bullReject and myRsi > rsiThresh                and idxOk
-bool swingShort = isSwingMode and allowShort and close < ema200 and pulledBackShort and bearReject and myRsi < (100 - rsiThresh) and idxOkS
+bool pbLong   = low  <= ema20 * 1.005 and close > ema20
+bool pbShort  = high >= ema20 * 0.995 and close < ema20
+bool swingLong  = isSwingMode and close > ema200 and pbLong  and bullReject and myRsi > rsiThresh           and idxOk
+bool swingShort = isSwingMode and allowShort and close < ema200 and pbShort and bearReject and myRsi < (100 - rsiThresh) and idxOkS
 
 bool goLong  = dayLong  or swingLong
 bool goShort = dayShort or swingShort
 
-// ---------------------------------------------------------------------------
-// STOP & TARGET
-// ---------------------------------------------------------------------------
-float swingLow  = ta.lowest (low,  5)
-float swingHigh = ta.highest(high, 5)
+// ============================================================
+// STOPS, TARGETS & SIZING
+// ============================================================
+float sLow  = ta.lowest (low,  5)
+float sHigh = ta.highest(high, 5)
 
-float longStop  = isDayMode ? math.min(myVwap, swingLow)  : swingLow
-float shortStop = isDayMode ? math.max(myVwap, swingHigh) : swingHigh
-
+float longStop  = isDayMode ? math.min(myVwap, sLow)  : sLow
+float shortStop = isDayMode ? math.max(myVwap, sHigh) : sHigh
 float longRisk  = close - longStop
 float shortRisk = shortStop - close
 float longTP    = close + longRisk  * rrTarget
 float shortTP   = close - shortRisk * rrTarget
 
-// ---------------------------------------------------------------------------
-// POSITION SIZING
-// ---------------------------------------------------------------------------
 float riskCash = strategy.equity * (riskPct / 100.0)
 float longQty  = longRisk  > 0 ? riskCash / longRisk  : 0.0
 float shortQty = shortRisk > 0 ? riskCash / shortRisk : 0.0
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // DAILY GUARDRAILS
-// ---------------------------------------------------------------------------
+// ============================================================
 var int   tradesToday = 0
 var float dayStartEq  = strategy.equity
 
-bool newDay = na(time("D")[1]) or time("D") != time("D")[1]
-if newDay
+if na(time("D")[1]) or time("D") != time("D")[1]
     tradesToday := 0
     dayStartEq  := strategy.equity
 
-float dayPnLPct     = dayStartEq > 0 ? (strategy.equity - dayStartEq) / dayStartEq * 100.0 : 0.0
-bool  underTradeCap = not isDayMode or tradesToday < maxTrades
-bool  underLossCap  = not isDayMode or dayPnLPct > -dailyLoss
-bool  canTrade      = underTradeCap and underLossCap
+float dayPnLPct = dayStartEq > 0 ? (strategy.equity - dayStartEq) / dayStartEq * 100.0 : 0.0
+bool  canTrade  = (not isDayMode or tradesToday < maxTrades) and
+                  (not isDayMode or dayPnLPct > -dailyLoss)
 
-// ---------------------------------------------------------------------------
-// PERSISTENT LABELS (2 objects reused - avoids 500-label cap)
-// ---------------------------------------------------------------------------
+// ============================================================
+// EXECUTE
+// ============================================================
 var label longLbl  = na
 var label shortLbl = na
 
-// ---------------------------------------------------------------------------
-// EXECUTE
-// ---------------------------------------------------------------------------
 if goLong and longRisk > 0 and canTrade and strategy.position_size == 0
-    strategy.entry(id = "Long", direction = strategy.long, qty = longQty)
-    strategy.exit(id = "Long Exit", from_entry = "Long", stop = longStop, limit = longTP)
+    strategy.entry(id = "Long",  direction = strategy.long,  qty = longQty)
+    strategy.exit (id = "LX",    from_entry = "Long",  stop = longStop,  limit = longTP)
     tradesToday += 1
     if showLabels
-        longLbl := label.new(
-             x         = bar_index,
-             y         = low,
-             text      = "LONG\nSL " + str.tostring(longStop, format.mintick) + "\nTP " + str.tostring(longTP, format.mintick),
-             style     = label.style_label_up,
-             color     = color.new(color.green, 20),
-             textcolor = color.white,
-             size      = size.small)
+        longLbl := label.new(bar_index, low,
+             "LONG\nSL " + str.tostring(longStop,  format.mintick) +
+             "\nTP "     + str.tostring(longTP,    format.mintick),
+             style = label.style_label_up, color = color.new(color.green, 20),
+             textcolor = color.white, size = size.small)
 
 if goShort and shortRisk > 0 and canTrade and strategy.position_size == 0
     strategy.entry(id = "Short", direction = strategy.short, qty = shortQty)
-    strategy.exit(id = "Short Exit", from_entry = "Short", stop = shortStop, limit = shortTP)
+    strategy.exit (id = "SX",    from_entry = "Short", stop = shortStop, limit = shortTP)
     tradesToday += 1
     if showLabels
-        shortLbl := label.new(
-             x         = bar_index,
-             y         = high,
-             text      = "SHORT\nSL " + str.tostring(shortStop, format.mintick) + "\nTP " + str.tostring(shortTP, format.mintick),
-             style     = label.style_label_down,
-             color     = color.new(color.red, 20),
-             textcolor = color.white,
-             size      = size.small)
+        shortLbl := label.new(bar_index, high,
+             "SHORT\nSL " + str.tostring(shortStop, format.mintick) +
+             "\nTP "      + str.tostring(shortTP,   format.mintick),
+             style = label.style_label_down, color = color.new(color.red, 20),
+             textcolor = color.white, size = size.small)
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // PLOTS
-// ---------------------------------------------------------------------------
-plot(series    = showInd and isDayMode   ? myVwap : na, title = "VWAP",    color = color.orange,  linewidth = 2)
-plot(series    = showInd                 ? ema9   : na, title = "EMA 9",   color = color.aqua)
-plot(series    = showInd                 ? ema20  : na, title = "EMA 20",  color = color.yellow)
-plot(series    = showInd and isSwingMode ? ema200 : na, title = "EMA 200", color = color.fuchsia, linewidth = 2)
+// ============================================================
+plot(showInd and isDayMode   ? myVwap : na, "VWAP",    color.orange,  linewidth = 2)
+plot(showInd                 ? ema9   : na, "EMA 9",   color.aqua)
+plot(showInd                 ? ema20  : na, "EMA 20",  color.yellow)
+plot(showInd and isSwingMode ? ema200 : na, "EMA 200", color.fuchsia, linewidth = 2)
 
-plotshape(series   = goLong  and canTrade,
-          title    = "Buy Signal",
-          style    = shape.triangleup,
-          location = location.belowbar,
-          color    = color.green,
-          size     = size.tiny)
+plotshape(goLong  and canTrade, "Buy",  shape.triangleup,   location.belowbar, color.green, size = size.tiny)
+plotshape(goShort and canTrade, "Sell", shape.triangledown, location.abovebar, color.red,   size = size.tiny)
 
-plotshape(series   = goShort and canTrade,
-          title    = "Sell Signal",
-          style    = shape.triangledown,
-          location = location.abovebar,
-          color    = color.red,
-          size     = size.tiny)
-
-// ---------------------------------------------------------------------------
-// ALERTS (webhook JSON)
-// ---------------------------------------------------------------------------
+// ============================================================
+// ALERTS  (Alert -> "alert() function calls only" -> webhook URL)
+// ============================================================
 if goLong and longRisk > 0 and canTrade and strategy.position_size == 0
-    alert(message = '{"action":"buy","symbol":"'  + syminfo.ticker +
-                    '","qty":'                    + str.tostring(longQty,   "#.##") +
-                    ',"stop":'                    + str.tostring(longStop,  format.mintick) +
-                    ',"target":'                  + str.tostring(longTP,    format.mintick) + '}',
-          freq    = alert.freq_once_per_bar_close)
+    alert('{"action":"buy","symbol":"'  + syminfo.ticker + '","qty":' + str.tostring(longQty,  "#.##") +
+          ',"stop":'  + str.tostring(longStop,  format.mintick) +
+          ',"target":' + str.tostring(longTP,   format.mintick) + '}', alert.freq_once_per_bar_close)
 
 if goShort and shortRisk > 0 and canTrade and strategy.position_size == 0
-    alert(message = '{"action":"sell","symbol":"' + syminfo.ticker +
-                    '","qty":'                    + str.tostring(shortQty,  "#.##") +
-                    ',"stop":'                    + str.tostring(shortStop, format.mintick) +
-                    ',"target":'                  + str.tostring(shortTP,   format.mintick) + '}',
-          freq    = alert.freq_once_per_bar_close)
+    alert('{"action":"sell","symbol":"' + syminfo.ticker + '","qty":' + str.tostring(shortQty, "#.##") +
+          ',"stop":'  + str.tostring(shortStop, format.mintick) +
+          ',"target":' + str.tostring(shortTP,  format.mintick) + '}', alert.freq_once_per_bar_close)
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // STATS TABLE
-// ---------------------------------------------------------------------------
-var table statsTable = table.new(position     = position.top_right,
-                                 columns      = 2,
-                                 rows         = 7,
-                                 border_width = 1)
+// ============================================================
+var table tbl = table.new(position.top_right, 2, 7, border_width = 1)
 
 if showTable and barstate.islast
-    float winRate = strategy.closedtrades > 0
-                     ? strategy.wintrades / strategy.closedtrades * 100.0
-                     : 0.0
+    float wr = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : 0.0
 
-    table.cell(table_id = statsTable, column = 0, row = 0, text = "REBELLIO AUTO",
-               bgcolor = color.navy, text_color = color.white, text_size = size.normal)
-    table.cell(table_id = statsTable, column = 1, row = 0, text = isDayMode ? "DAY/VWAP" : "SWING",
-               bgcolor = color.navy, text_color = color.yellow, text_size = size.normal)
-
-    table.cell(table_id = statsTable, column = 0, row = 1, text = "Equity",      text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 1,
-               text     = "$" + str.tostring(strategy.equity, "#.##"),            text_size = size.small)
-
-    table.cell(table_id = statsTable, column = 0, row = 2, text = "Net Profit",   text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 2,
-               text       = "$" + str.tostring(strategy.netprofit, "#.##"),
-               text_color = strategy.netprofit >= 0 ? color.green : color.red,
-               text_size  = size.small)
-
-    table.cell(table_id = statsTable, column = 0, row = 3, text = "Win Rate",     text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 3,
-               text     = str.tostring(winRate, "#.#") + "%",                     text_size = size.small)
-
-    table.cell(table_id = statsTable, column = 0, row = 4, text = "Trades",       text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 4,
-               text     = str.tostring(strategy.closedtrades),                    text_size = size.small)
-
-    table.cell(table_id = statsTable, column = 0, row = 5, text = "Today",        text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 5,
-               text     = str.tostring(tradesToday) + "/" + str.tostring(maxTrades), text_size = size.small)
-
-    table.cell(table_id = statsTable, column = 0, row = 6, text = "Day P&L",      text_size = size.small)
-    table.cell(table_id = statsTable, column = 1, row = 6,
-               text       = str.tostring(dayPnLPct, "#.#") + "%",
-               text_color = dayPnLPct >= 0 ? color.green : color.red,
-               text_size  = size.small)
+    table.cell(table_id = tbl, column = 0, row = 0, text = "REBELLIO",       bgcolor = color.navy, text_color = color.white,  text_size = size.normal)
+    table.cell(table_id = tbl, column = 1, row = 0, text = isDayMode ? "DAY" : "SWING", bgcolor = color.navy, text_color = color.yellow, text_size = size.normal)
+    table.cell(table_id = tbl, column = 0, row = 1, text = "Equity",         text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 1, text = "$" + str.tostring(strategy.equity,    "#.##"), text_size = size.small)
+    table.cell(table_id = tbl, column = 0, row = 2, text = "Net P&L",        text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 2, text = "$" + str.tostring(strategy.netprofit, "#.##"),
+               text_color = strategy.netprofit >= 0 ? color.green : color.red, text_size = size.small)
+    table.cell(table_id = tbl, column = 0, row = 3, text = "Win Rate",       text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 3, text = str.tostring(wr,  "#.#") + "%", text_size = size.small)
+    table.cell(table_id = tbl, column = 0, row = 4, text = "Trades",         text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 4, text = str.tostring(strategy.closedtrades),   text_size = size.small)
+    table.cell(table_id = tbl, column = 0, row = 5, text = "Today",          text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 5, text = str.tostring(tradesToday) + "/" + str.tostring(maxTrades), text_size = size.small)
+    table.cell(table_id = tbl, column = 0, row = 6, text = "Day P&L",        text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 6, text = str.tostring(dayPnLPct, "#.#") + "%",
+               text_color = dayPnLPct >= 0 ? color.green : color.red, text_size = size.small)
