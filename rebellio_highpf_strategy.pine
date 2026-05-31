@@ -127,16 +127,12 @@ plotshape(goShort, "Sell", shape.triangledown, location.abovebar, color.red,  si
 // ============================================================
 // STATS TABLE  (Profit Factor highlighted)
 // ============================================================
+float pf = strategy.grossloss < 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : float(na)
+float wr = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : 0.0
+
 var table tbl = table.new(position.top_right, 2, 8, border_width = 1)
 
 if showTbl and barstate.islast
-    float pf = strategy.grossloss < 0
-                 ? strategy.grossprofit / math.abs(strategy.grossloss)
-                 : na
-    float wr = strategy.closedtrades > 0
-                 ? strategy.wintrades / strategy.closedtrades * 100.0
-                 : 0.0
-
     // Header
     table.cell(table_id = tbl, column = 0, row = 0, text = "HIGH PF SYSTEM",
                bgcolor = color.navy, text_color = color.white,  text_size = size.normal)
