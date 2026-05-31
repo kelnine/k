@@ -1,0 +1,313 @@
+//@version=6
+// =============================================================================
+// FutureFi — BOS + Trend Funded Account Framework
+// Multi-timeframe: 1H bias  →  15M setup confirmation  →  5M BOS + retest entry
+//
+// Tuning profile: "Balance both" — partial take-profit at ~1.5R with a 2.5R
+// runner and an automatic move to break-even, aiming for a healthy win rate
+// while keeping a strong reward:risk.
+//
+// HOW TO USE
+//   1. Open the chart on your ENTRY timeframe (5M recommended).
+//   2. The 1H bias and 15M confirmation are pulled automatically — you do not
+//      need to switch charts.
+//   3. Open the "Strategy Tester" tab to read Net Profit, Win Rate, Profit
+//      Factor and the trade list.
+//
+// Framework concept by @Kelnine0. This is an educational backtesting tool,
+// not financial advice. Always forward-test on a demo before risking capital.
+// =============================================================================
+
+strategy(
+     title              = "FutureFi — BOS + Trend Framework",
+     shorttitle         = "FutureFi BOS+Trend",
+     overlay            = true,
+     pyramiding         = 0,
+     initial_capital    = 5000,
+     default_qty_type   = strategy.fixed,
+     default_qty_value  = 1,
+     commission_type    = strategy.commission.percent,
+     commission_value   = 0.02,
+     slippage           = 1,
+     calc_on_every_tick = false,
+     process_orders_on_close = true)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+grpTF   = "Timeframes (the 3 steps)"
+htfTF   = input.timeframe("60", "Step 1 · 1H Bias TF",          group = grpTF)
+mtfTF   = input.timeframe("15", "Step 2 · 15M Confirmation TF",  group = grpTF)
+// Step 3 (entry) = the chart's own timeframe — open it on 5M.
+
+grpEMA  = "Trend (EMA stack)"
+emaFastLen = input.int(50,  "Fast EMA", minval = 1, group = grpEMA)
+emaSlowLen = input.int(200, "Slow EMA", minval = 1, group = grpEMA)
+requireStack = input.bool(true, "Require clean EMA stack (50 vs 200)", group = grpEMA,
+     tooltip = "Bull = fast EMA above slow EMA, Bear = fast below slow. Filters choppy ranges.")
+
+grpBOS  = "Break of Structure (BOS) + retest"
+pivotLen   = input.int(5, "Swing pivot lookback", minval = 2, group = grpBOS,
+     tooltip = "Bars on each side used to confirm a swing high/low. Higher = stronger, fewer structures.")
+retestMult = input.float(0.50, "Retest tolerance (× ATR)", minval = 0.0, step = 0.05, group = grpBOS,
+     tooltip = "How close price must return to the broken level to count as a valid retest entry.")
+bosExpiry  = input.int(12, "BOS retest window (bars)", minval = 1, group = grpBOS,
+     tooltip = "If price does not retest within this many bars, the setup is cancelled (no chasing).")
+
+grpPB   = "Step 2 · 15M pullback"
+requirePullback = input.bool(true, "Require a pullback into the 50 EMA zone", group = grpPB)
+pullbackLook    = input.int(6, "Pullback lookback (15M bars)", minval = 1, group = grpPB)
+pullbackTol     = input.float(0.25, "Pullback depth (× ATR)", minval = 0.0, step = 0.05, group = grpPB)
+
+grpRISK = "Risk & money management (Golden Rule)"
+accountSize      = input.float(5000, "Account size ($)",            group = grpRISK)
+riskDollars      = input.float(30,   "Risk per trade ($)",          group = grpRISK,
+     tooltip = "Golden Rule: $25–$40 on a $5k account. Position size is computed from this and the stop distance.")
+maxTradesPerDay  = input.int(2, "Max trades per day",  minval = 1, group = grpRISK)
+maxDailyLoss     = input.float(80,  "Max daily loss ($)",  group = grpRISK,
+     tooltip = "Stop taking trades for the rest of the day once realised+open loss hits this.")
+maxAccountLoss   = input.float(400, "Max total drawdown lockout ($)", group = grpRISK,
+     tooltip = "Protect starting capital: stop trading entirely if equity falls this far below the account size.")
+blockSubFiveMin  = input.bool(true, "Block timeframes below 5M (NEVER trade 1-minute)", group = grpRISK)
+
+grpEXIT = "Targets & stop (Balance profile)"
+slBufferMult = input.float(0.5, "Stop buffer beyond structure (× ATR)", minval = 0.0, step = 0.05, group = grpEXIT)
+tp1RR        = input.float(1.5, "TP1 reward:risk", minval = 0.1, step = 0.1, group = grpEXIT)
+tp2RR        = input.float(2.5, "TP2 reward:risk (runner)", minval = 0.1, step = 0.1, group = grpEXIT)
+tp1Pct       = input.float(50,  "TP1 size (% of position)", minval = 0, maxval = 100, group = grpEXIT)
+moveToBE     = input.bool(true, "Move stop to break-even after TP1", group = grpEXIT)
+
+grpSESS = "Session filter (optional)"
+useSession = input.bool(false, "Restrict to a trading session", group = grpSESS)
+sess       = input.session("0800-1700", "Session", group = grpSESS)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMA STACK (chart / entry timeframe)
+// ─────────────────────────────────────────────────────────────────────────────
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atr     = ta.atr(14)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 1 · 1H BIAS  (price vs 50 & 200 EMA)
+// ─────────────────────────────────────────────────────────────────────────────
+htfBiasFn() =>
+    ef = ta.ema(close, emaFastLen)
+    es = ta.ema(close, emaSlowLen)
+    bull = close > ef and close > es and (not requireStack or ef > es)
+    bear = close < ef and close < es and (not requireStack or ef < es)
+    [bull, bear]
+
+[htfBull, htfBear] = request.security(syminfo.tickerid, htfTF, htfBiasFn(),
+     lookahead = barmerge.lookahead_off)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 2 · 15M SETUP CONFIRMATION  (trend hold + pullback + no opposite BOS)
+// ─────────────────────────────────────────────────────────────────────────────
+mtfSetupFn() =>
+    ef = ta.ema(close, emaFastLen)
+    es = ta.ema(close, emaSlowLen)
+    a  = ta.atr(14)
+    bull = close > es and (not requireStack or ef > es)
+    bear = close < es and (not requireStack or ef < es)
+    // Pullback: price recently traded into the fast-EMA zone
+    pbBull = ta.lowest(low,  pullbackLook) <= ef + pullbackTol * a
+    pbBear = ta.highest(high, pullbackLook) >= ef - pullbackTol * a
+    [bull, bear, pbBull, pbBear]
+
+[mtfBull, mtfBear, mtfPbBull, mtfPbBear] = request.security(syminfo.tickerid, mtfTF, mtfSetupFn(),
+     lookahead = barmerge.lookahead_off)
+
+setupBull = mtfBull and (not requirePullback or mtfPbBull)
+setupBear = mtfBear and (not requirePullback or mtfPbBear)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 3 · 5M BOS DETECTION (chart timeframe swings)
+// ─────────────────────────────────────────────────────────────────────────────
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+bosUp   = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+bosDown = not na(lastSwingLow)  and close < lastSwingLow  and close[1] >= lastSwingLow
+
+// Track an active setup waiting for its retest entry
+var float bosLevel       = na
+var int   bosDir         = 0      // 1 = long setup, -1 = short setup
+var int   bosBarsWaiting = 0
+var float protSwing      = na     // protective swing for the stop
+
+awaiting = bosDir != 0
+
+// Arm a long setup: aligned 1H bias + 15M confirmation + bullish BOS on 5M
+if bosUp and htfBull and setupBull
+    bosLevel := lastSwingHigh
+    bosDir := 1
+    bosBarsWaiting := 0
+    protSwing := lastSwingLow
+// Arm a short setup
+else if bosDown and htfBear and setupBear
+    bosLevel := lastSwingLow
+    bosDir := -1
+    bosBarsWaiting := 0
+    protSwing := lastSwingHigh
+
+// Cancel a counter-trend break while waiting (no fighting the trend)
+if awaiting and bosDir == 1 and bosDown
+    bosDir := 0
+if awaiting and bosDir == -1 and bosUp
+    bosDir := 0
+
+// Expire the setup if the retest never comes
+if awaiting
+    bosBarsWaiting += 1
+    if bosBarsWaiting > bosExpiry
+        bosDir := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RETEST ENTRY TRIGGERS
+// ─────────────────────────────────────────────────────────────────────────────
+tol = retestMult * atr
+longRetest  = bosDir == 1  and low  <= bosLevel + tol and close > bosLevel and htfBull
+shortRetest = bosDir == -1 and high >= bosLevel - tol and close < bosLevel and htfBear
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRADE-MANAGEMENT GUARDS (Golden Rule)
+// ─────────────────────────────────────────────────────────────────────────────
+newDay = ta.change(time("1D")) != 0
+
+var int   tradesToday    = 0
+var float dayStartEquity = na
+if newDay
+    tradesToday := 0
+    dayStartEquity := strategy.equity
+if na(dayStartEquity)
+    dayStartEquity := strategy.equity
+
+dayPnL    = strategy.equity - dayStartEquity
+lockedDay = dayPnL <= -maxDailyLoss
+lockedAcc = strategy.equity <= (accountSize - maxAccountLoss)
+
+// "NEVER trade 1-minute" — block sub-5-minute charts
+tfSeconds = timeframe.in_seconds(timeframe.period)
+tfTooSmall = blockSubFiveMin and tfSeconds < timeframe.in_seconds("5")
+
+inSession = not useSession or not na(time(timeframe.period, sess))
+
+canTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and
+           not lockedDay and not lockedAcc and not tfTooSmall and inSession and barstate.isconfirmed
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POSITION STATE
+// ─────────────────────────────────────────────────────────────────────────────
+var float entryPrice = na
+var float stopPrice  = na
+var float tp1Price   = na
+var float tp2Price   = na
+var bool  tp1Done    = false
+
+// ENTER LONG
+if canTrade and longRetest
+    risk  = math.max(bosLevel - protSwing + slBufferMult * atr, atr * 0.5)
+    eP    = close
+    sP    = eP - risk
+    qty   = riskDollars / risk
+    strategy.entry("Long", strategy.long, qty = qty)
+    entryPrice := eP
+    stopPrice  := sP
+    tp1Price   := eP + risk * tp1RR
+    tp2Price   := eP + risk * tp2RR
+    tp1Done    := false
+    tradesToday += 1
+    bosDir := 0
+
+// ENTER SHORT
+if canTrade and shortRetest
+    risk  = math.max(protSwing - bosLevel + slBufferMult * atr, atr * 0.5)
+    eP    = close
+    sP    = eP + risk
+    qty   = riskDollars / risk
+    strategy.entry("Short", strategy.short, qty = qty)
+    entryPrice := eP
+    stopPrice  := sP
+    tp1Price   := eP - risk * tp1RR
+    tp2Price   := eP - risk * tp2RR
+    tp1Done    := false
+    tradesToday += 1
+    bosDir := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXITS — partial at TP1, runner at TP2, optional break-even after TP1
+// ─────────────────────────────────────────────────────────────────────────────
+if strategy.position_size > 0
+    if high >= tp1Price
+        tp1Done := true
+    curStop = (tp1Done and moveToBE) ? math.max(stopPrice, entryPrice) : stopPrice
+    strategy.exit("L-TP1", from_entry = "Long", qty_percent = tp1Pct, limit = tp1Price, stop = stopPrice)
+    strategy.exit("L-TP2", from_entry = "Long", limit = tp2Price, stop = curStop)
+
+if strategy.position_size < 0
+    if low <= tp1Price
+        tp1Done := true
+    curStop = (tp1Done and moveToBE) ? math.min(stopPrice, entryPrice) : stopPrice
+    strategy.exit("S-TP1", from_entry = "Short", qty_percent = tp1Pct, limit = tp1Price, stop = stopPrice)
+    strategy.exit("S-TP2", from_entry = "Short", limit = tp2Price, stop = curStop)
+
+if strategy.position_size == 0
+    entryPrice := na
+    stopPrice  := na
+    tp1Price   := na
+    tp2Price   := na
+    tp1Done    := false
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTS
+// ─────────────────────────────────────────────────────────────────────────────
+plot(emaFast, "EMA 50",  color = color.new(color.orange, 0), linewidth = 1)
+plot(emaSlow, "EMA 200", color = color.new(color.blue,   0), linewidth = 2)
+
+plotshape(bosUp,   "BOS Up",   shape.triangleup,   location.belowbar, color.new(color.green, 0), size = size.tiny)
+plotshape(bosDown, "BOS Down", shape.triangledown, location.abovebar, color.new(color.red,   0), size = size.tiny)
+
+bgcolor(htfBull ? color.new(color.green, 92) : htfBear ? color.new(color.red, 92) : na, title = "1H bias tint")
+
+plot(strategy.position_size != 0 ? entryPrice : na, "Entry", color.gray,            style = plot.style_linebr)
+plot(strategy.position_size != 0 ? stopPrice  : na, "Stop",  color.red,             style = plot.style_linebr)
+plot(strategy.position_size != 0 ? tp1Price   : na, "TP1",   color.new(color.lime, 0), style = plot.style_linebr)
+plot(strategy.position_size != 0 ? tp2Price   : na, "TP2",   color.new(color.teal, 0), style = plot.style_linebr)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DASHBOARD
+// ─────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 7, border_width = 1)
+if barstate.islast
+    biasTxt = htfBull ? "BULL ▲" : htfBear ? "BEAR ▼" : "NONE —"
+    biasCol = htfBull ? color.green : htfBear ? color.red : color.gray
+    table.cell(dash, 0, 0, "FutureFi BOS + Trend", text_color = color.white, bgcolor = color.new(color.blue, 0), text_size = size.small)
+    table.cell(dash, 1, 0, "", bgcolor = color.new(color.blue, 0))
+    table.cell(dash, 0, 1, "1H bias",      text_color = color.white)
+    table.cell(dash, 1, 1, biasTxt,        text_color = biasCol)
+    table.cell(dash, 0, 2, "15M setup",    text_color = color.white)
+    table.cell(dash, 1, 2, setupBull ? "Long-ready" : setupBear ? "Short-ready" : "—", text_color = color.white)
+    table.cell(dash, 0, 3, "Awaiting retest", text_color = color.white)
+    table.cell(dash, 1, 3, bosDir == 1 ? "Long" : bosDir == -1 ? "Short" : "—", text_color = color.white)
+    table.cell(dash, 0, 4, "Trades today", text_color = color.white)
+    table.cell(dash, 1, 4, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay), text_color = color.white)
+    table.cell(dash, 0, 5, "Day P/L",      text_color = color.white)
+    table.cell(dash, 1, 5, "$" + str.tostring(dayPnL, "#.##"), text_color = dayPnL >= 0 ? color.green : color.red)
+    table.cell(dash, 0, 6, "Status",       text_color = color.white)
+    statusTxt = lockedAcc ? "ACCT LOCK" : lockedDay ? "DAY LOCK" : tfTooSmall ? "TF<5M BLOCKED" : "TRADING"
+    statusCol = (lockedAcc or lockedDay or tfTooSmall) ? color.red : color.green
+    table.cell(dash, 1, 6, statusTxt, text_color = statusCol)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(longRetest,  "Long retest entry",  "FutureFi: LONG retest entry on {{ticker}} {{interval}}")
+alertcondition(shortRetest, "Short retest entry", "FutureFi: SHORT retest entry on {{ticker}} {{interval}}")
