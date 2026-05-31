@@ -1,11 +1,20 @@
 // © Smart Money Suite v4 [AlgoAlpha]
 //@version=6
 // max counts: boxes≤63, lines≤10, labels≤58 at user max settings
-indicator("Smart Money Suite v4 [AlgoAlpha]", overlay=true, max_boxes_count=70, max_lines_count=10, max_labels_count=60)
+strategy("Smart Money Suite v4 [AlgoAlpha]", overlay=true, max_boxes_count=70, max_lines_count=10, max_labels_count=60,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     initial_capital=10000, currency=currency.USD,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     slippage=1, pyramiding=0)
 
 // ══════════════════════════════════════════════════════════════════════
 //  CORE LAYER
 // ══════════════════════════════════════════════════════════════════════
+var GE = "Strategy"
+strat_long  = input.bool(true,  "Enable Long Entries",   group=GE)
+strat_short = input.bool(true,  "Enable Short Entries",  group=GE)
+strat_size  = input.float(10.0, "Position Size (%)",     minval=0.1, maxval=100, step=0.5, group=GE)
+
 var GC = "Core (Execution)"
 ema_on      = input.bool(true,  "Show EMA 50 / 200",     group=GC)
 sniper_on   = input.bool(true,  "Sniper Mode",           group=GC)
@@ -633,7 +642,13 @@ setup_short_rdy = sniper_bear >= sniper_min
 setup_str = setup_long_rdy ? "LONG " + str.tostring(sniper_bull) + "/4" : setup_short_rdy ? "SHORT " + str.tostring(sniper_bear) + "/4" : "WAIT"
 setup_col = setup_long_rdy  ? col_bull : setup_short_rdy ? col_bear : color.new(#718096, 0)
 
-// Entry / SL / TP labels (replaced on each new signal)
+// ── Pre-compute SL / TP prices ───────────────────────────────────────
+long_sl  = (not na(lsl) ? lsl : low)  - atr_val * 0.5
+long_tp  = close + 2.0 * (close - long_sl)
+short_sl = (not na(lsh) ? lsh : high) + atr_val * 0.5
+short_tp = close - 2.0 * (short_sl - close)
+
+// ── Entry / SL / TP chart labels ─────────────────────────────────────
 var label entry_lbl = na
 var line  sl_line   = na
 var line  tp_line   = na
@@ -642,29 +657,34 @@ if sniper_long
     label.delete(entry_lbl)
     line.delete(sl_line)
     line.delete(tp_line)
-    sl_p = (not na(lsl) ? lsl : low) - atr_val * 0.5
-    tp_p = close + 2.0 * (close - sl_p)
     entry_lbl := label.new(bar_index, low - atr_val * 0.6,
-         "▲ LONG\nSL " + str.tostring(sl_p, "#.####") + "\nTP " + str.tostring(tp_p, "#.####"),
+         "▲ LONG\nSL " + str.tostring(long_sl, "#.####") + "\nTP " + str.tostring(long_tp, "#.####"),
          style=label.style_label_up, color=color.new(col_bull, 45), textcolor=col_bull, size=size.small)
-    sl_line := line.new(bar_index, sl_p, bar_index + 1, sl_p,
+    sl_line := line.new(bar_index, long_sl, bar_index + 1, long_sl,
          extend=extend.right, color=color.new(col_bear, 55), width=1, style=line.style_dotted)
-    tp_line := line.new(bar_index, tp_p, bar_index + 1, tp_p,
+    tp_line := line.new(bar_index, long_tp, bar_index + 1, long_tp,
          extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
 
 if sniper_short
     label.delete(entry_lbl)
     line.delete(sl_line)
     line.delete(tp_line)
-    sl_p = (not na(lsh) ? lsh : high) + atr_val * 0.5
-    tp_p = close - 2.0 * (sl_p - close)
     entry_lbl := label.new(bar_index, high + atr_val * 0.6,
-         "▼ SHORT\nSL " + str.tostring(sl_p, "#.####") + "\nTP " + str.tostring(tp_p, "#.####"),
+         "▼ SHORT\nSL " + str.tostring(short_sl, "#.####") + "\nTP " + str.tostring(short_tp, "#.####"),
          style=label.style_label_down, color=color.new(col_bear, 45), textcolor=col_bear, size=size.small)
-    sl_line := line.new(bar_index, sl_p, bar_index + 1, sl_p,
+    sl_line := line.new(bar_index, short_sl, bar_index + 1, short_sl,
          extend=extend.right, color=color.new(col_bear, 55), width=1, style=line.style_dotted)
-    tp_line := line.new(bar_index, tp_p, bar_index + 1, tp_p,
+    tp_line := line.new(bar_index, short_tp, bar_index + 1, short_tp,
          extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
+
+// ── Strategy orders ───────────────────────────────────────────────────
+if sniper_long and strat_long
+    strategy.entry("Long", strategy.long, qty_percent=strat_size)
+    strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp, comment_profit="TP", comment_loss="SL")
+
+if sniper_short and strat_short
+    strategy.entry("Short", strategy.short, qty_percent=strat_size)
+    strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp, comment_profit="TP", comment_loss="SL")
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER
