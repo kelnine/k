@@ -678,17 +678,13 @@ if sniper_short
          extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
 
 // ── Strategy orders ───────────────────────────────────────────────────
-if sniper_long and strat_long
-    _lqty = (strategy.equity * strat_size / 100) / close
-    if _lqty > 0
-        strategy.entry("Long", strategy.long, qty=_lqty)
-        strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp, comment_profit="TP", comment_loss="SL")
+if sniper_long and strat_long and strategy.equity > 0 and close > 0
+    strategy.entry("Long", strategy.long, qty=strategy.equity * strat_size / 100 / close)
+    strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp, comment_profit="TP", comment_loss="SL")
 
-if sniper_short and strat_short
-    _sqty = (strategy.equity * strat_size / 100) / close
-    if _sqty > 0
-        strategy.entry("Short", strategy.short, qty=_sqty)
-        strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp, comment_profit="TP", comment_loss="SL")
+if sniper_short and strat_short and strategy.equity > 0 and close > 0
+    strategy.entry("Short", strategy.short, qty=strategy.equity * strat_size / 100 / close)
+    strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp, comment_profit="TP", comment_loss="SL")
 
 // ══════════════════════════════════════════════════════════════════════
 //  SCANNER
