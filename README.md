@@ -1,83 +1,79 @@
-# FutureFi — BOS + Trend Funded Account Framework (Pine Script v6)
+# BOS + Trend — Multi-Timeframe Strategy (Pine Script v6)
 
-A backtestable TradingView strategy that codifies the **FutureFi "BOS + Trend"**
-discretionary playbook (concept by [@Kelnine0](https://twitter.com/Kelnine0))
-into mechanical, multi-timeframe rules.
+A fully backtestable TradingView **strategy** (`strategy()`, not an indicator)
+that trades a Break-of-Structure + trend-following model across three timeframes:
 
-Tuned with a **balanced profile**: a partial take-profit at **1.5R**, a **2.5R
-runner**, and an automatic move to **break-even** after the first target — built
-to keep a healthy win rate while still reaching for a strong reward:risk.
-
-> ⚠️ Educational backtesting tool, not financial advice. Past performance does
-> not guarantee future results. Forward-test on a demo account first.
-
----
-
-## The three steps (exactly as in the framework)
-
-| Step | Timeframe | Job | How it's coded |
-|------|-----------|-----|----------------|
-| **1. Bias**         | 1H  | Direction | Price above/below **50 & 200 EMA** (optional clean EMA stack). Bull or Bear only. |
-| **2. Confirmation** | 15M | Setup | Trend holds the EMAs **and** a **pullback** into the 50-EMA zone occurred. |
+| Step | TF | Job | How it's coded |
+|------|----|-----|----------------|
+| **1. Bias**         | 1H  | Direction | Price above **EMA 50 & EMA 200** = bullish; below both = bearish. Optional clean EMA stack. |
+| **2. Confirmation** | 15M | Setup | Trend holds the EMAs **and** a **pullback** into the fast-EMA zone occurred. |
 | **3. Entry**        | 5M  | Trigger | A **Break of Structure (BOS)** in the trend direction, then a **retest** of the broken level. |
 
-You only ever open the chart on the **5M entry timeframe** — the 1H bias and 15M
-confirmation are pulled automatically with `request.security`.
+Open the chart on your **5M entry timeframe** — the 1H bias and 15M confirmation
+are pulled automatically.
 
-## The Golden Rule (risk) — all enforced in code
+> ⚠️ Educational backtesting tool, not financial advice. Forward-test on a demo
+> account before risking real capital.
 
-- **Risk per trade:** fixed dollar risk ($25–$40 on a $5k account). Position
-  size is computed from the stop distance, so every trade risks the same amount.
-- **Max 2 trades per day** (configurable).
-- **Daily loss lockout** — stops trading for the day once the daily loss limit hits.
-- **Account drawdown lockout** — protects starting capital; stops entirely if
-  equity falls too far below the account size.
-- **NEVER trade 1-minute** — sub-5-minute timeframes are blocked.
+## Account-size neutral
 
-## "Do not trade if…" — handled automatically
+No fixed account size or money amounts. Position size is computed from a
+**risk-per-trade %** input and the stop distance:
 
-- **No 1H bias** → no setup is armed.
-- **Counter-trend BOS** → ignored; an opposite break while waiting cancels the setup.
-- **Entering without a retest** → entries only fire on the retest trigger.
-- **Reverse trading** → `pyramiding = 0`, one position at a time.
+```
+quantity = (equity × risk%) ÷ stop distance
+```
 
----
+Change `initial_capital` in the Strategy properties to anything you like — the
+risk model scales automatically.
+
+## Trade rules
+
+- **Long** after bullish BOS + pullback/retest + 1H bias confirmed.
+- **Short** after bearish BOS + pullback/retest + 1H bias confirmed.
+- **No counter-trend trades** — opposite breaks cancel a pending setup; one
+  position at a time (`pyramiding = 0`).
+- **Anti-overtrading:** optional **cooldown** between trades and optional
+  **max trades per day**. Setups also **expire** if the retest never comes.
+
+## Risk management
+
+- Stop loss from **recent swing** *or* **ATR** (selectable), with a buffer.
+- **TP1 at 1R, TP2 at 2R, optional runner at 3R** (all R-multiples adjustable).
+- Scale-out percentages per target.
+- **Break-even** move after TP1 (toggle).
+- **ATR trailing stop** (toggle).
+
+## Visuals (all toggleable)
+
+- EMA 50 & EMA 200.
+- BOS labels (▲ / ▼).
+- Entry labels (LONG / SHORT).
+- SL / TP1 / TP2 / TP3 lines.
+- 1H bias background tint.
+
+## Backtest dashboard
+
+Top-right panel: total trades, win rate, profit factor, net profit, max
+drawdown, average trade, current bias (Bullish / Bearish / Neutral) and any
+pending setup.
+
+## No repainting / no lookahead
+
+- Higher/lower-timeframe data is read through a **confirmed-bar wrapper** with
+  `lookahead = barmerge.lookahead_off`.
+- BOS uses **confirmed swing pivots**; orders process on bar close.
 
 ## Install
 
-1. Open **TradingView → Pine Editor**.
-2. Paste the contents of [`FutureFi_BOS_Trend.pine`](./FutureFi_BOS_Trend.pine).
-3. Click **Add to chart**.
-4. Set the chart to your **5M entry timeframe**.
-5. Open the **Strategy Tester** tab to read Net Profit, **Win Rate**, Profit
-   Factor and the trade list.
+1. TradingView → **Pine Editor** → paste [`FutureFi_BOS_Trend.pine`](./FutureFi_BOS_Trend.pine).
+2. **Add to chart**, set the chart to **5M**.
+3. Open **Strategy Tester** to read the stats; tune inputs and re-run.
 
-## On-chart dashboard
+### Tuning: win rate vs profit target
 
-A panel (top-right) shows live 1H bias, 15M setup state, whether a retest is
-pending, trades used today, day P/L, and the trading/lockout status.
+- More winners → lower `TP1 (R)` toward ~1.0 and keep break-even on.
+- Bigger targets → raise the runner `TP3 (R)` to 3R+ and shrink `TP1 size (%)`.
+- Fewer/cleaner trades → raise `Swing pivot lookback`, keep EMA stack + pullback on.
 
-## Key settings to tune
-
-| Setting | Default | Effect |
-|---------|---------|--------|
-| `TP1 reward:risk` | 1.5 | Lower → more winners, smaller gains. Higher → bigger but rarer. |
-| `TP2 reward:risk (runner)` | 2.5 | The runner target. |
-| `TP1 size (%)` | 50 | How much is banked at TP1 vs left to run. |
-| `Move stop to break-even after TP1` | on | Cuts give-back on runners (boosts win rate). |
-| `Swing pivot lookback` | 5 | Higher = stronger, fewer BOS signals. |
-| `Retest tolerance (× ATR)` | 0.5 | How close price must return to the broken level. |
-| `Require clean EMA stack` | on | Filters chop; turn off for more trades. |
-| `Require a pullback` | on | Core to the framework; off = more (lower-quality) entries. |
-
-> **Win rate vs profit target:** to push the win rate higher, drop `TP1 reward:risk`
-> toward 1.0 and keep break-even on. To chase bigger targets, raise the runner to
-> 3R+ and reduce the TP1 size. Re-run the Strategy Tester after each change and
-> let the numbers decide.
-
-## Important notes
-
-- Built for assets where TradingView provides aligned 1H/15M/5M data (forex,
-  crypto, indices/futures).
-- BOS uses confirmed swing pivots, so the entry timeframe does **not** repaint;
-  always confirm results in the Strategy Tester before going live.
+Let the Strategy Tester numbers decide after each change.
