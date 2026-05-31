@@ -1,0 +1,177 @@
+//@version=6
+// Rebellio - High Profit Factor Strategy
+// Logic: Donchian breakout in trend direction (EMA50 > EMA200)
+//        filtered by ADX strength and volume expansion.
+//        Exits: fixed ATR stop + 3:1 ATR target set at entry.
+// Best on: Daily or 4H chart | Stocks, crypto, futures
+
+strategy("Rebellio - High PF",
+     overlay                 = true,
+     initial_capital         = 10000,
+     default_qty_type        = strategy.percent_of_equity,
+     default_qty_value       = 10,
+     pyramiding              = 0,
+     calc_on_every_tick      = false,
+     process_orders_on_close = true,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.1)
+
+// ============================================================
+// INPUTS
+// ============================================================
+int   emaFastLen = input.int  (50,   "EMA Fast",          group = "Trend",   minval = 5)
+int   emaSlowLen = input.int  (200,  "EMA Slow",          group = "Trend",   minval = 10)
+int   brkLen     = input.int  (20,   "Breakout Period",   group = "Trend",   minval = 5)
+
+int   adxLen     = input.int  (14,   "ADX Length",        group = "Filters", minval = 5)
+int   adxMin     = input.int  (20,   "Min ADX",           group = "Filters", minval = 5)
+int   rsiLen     = input.int  (14,   "RSI Length",        group = "Filters", minval = 5)
+int   volLen     = input.int  (20,   "Volume MA",         group = "Filters", minval = 5)
+float volMult    = input.float(1.3,  "Volume Mult",       group = "Filters", minval = 1.0, step = 0.1)
+
+int   atrLen     = input.int  (14,   "ATR Length",        group = "Risk",    minval = 1)
+float stopMult   = input.float(2.0,  "Stop  (x ATR)",     group = "Risk",    minval = 0.5, step = 0.5)
+float tpMult     = input.float(6.0,  "Target (x ATR)",    group = "Risk",    minval = 1.0, step = 0.5)
+bool  allowShort = input.bool (true, "Allow Shorts",      group = "Risk")
+
+bool  showInd    = input.bool (true, "Show Indicators",   group = "Visuals")
+bool  showLbls   = input.bool (true, "Show Labels",       group = "Visuals")
+bool  showTbl    = input.bool (true, "Show Stats Table",  group = "Visuals")
+
+// ============================================================
+// INDICATORS
+// ============================================================
+float emaFast  = ta.ema(close, emaFastLen)
+float emaSlow  = ta.ema(close, emaSlowLen)
+float atrVal   = ta.atr(atrLen)
+float volAvg   = ta.sma(volume, volLen)
+float myRsi    = ta.rsi(close, rsiLen)
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+
+// Use prior bar's high/low for breakout to avoid lookahead
+float brkHigh  = ta.highest(high[1], brkLen)
+float brkLow   = ta.lowest (low[1],  brkLen)
+
+// ============================================================
+// CONDITIONS
+// ============================================================
+bool bullTrend = emaFast > emaSlow and close > emaFast
+bool bearTrend = emaFast < emaSlow and close < emaFast
+bool trending  = adxVal > adxMin
+bool volOk     = volume > volAvg * volMult
+
+bool goLong  = bullTrend and trending and volOk
+               and close > brkHigh and myRsi < 75
+
+bool goShort = bearTrend and trending and volOk and allowShort
+               and close < brkLow  and myRsi > 25
+
+// ============================================================
+// EXECUTE  (stop + target locked in at entry via ATR)
+// ============================================================
+var float stopLine = na
+var float tpLine   = na
+var label entryLbl = na
+
+if goLong and strategy.position_size == 0
+    float sl = close - atrVal * stopMult
+    float tp = close + atrVal * tpMult
+    stopLine := sl
+    tpLine   := tp
+    strategy.entry("Long",  strategy.long)
+    strategy.exit ("LX",    "Long",  stop = sl, limit = tp)
+    if showLbls
+        entryLbl := label.new(bar_index, low,
+             "LONG  SL:" + str.tostring(sl, format.mintick) +
+             "  TP:"     + str.tostring(tp, format.mintick),
+             style    = label.style_label_up,
+             color    = color.new(color.teal, 15),
+             textcolor = color.white,
+             size     = size.small)
+
+if goShort and strategy.position_size == 0
+    float sl = close + atrVal * stopMult
+    float tp = close - atrVal * tpMult
+    stopLine := sl
+    tpLine   := tp
+    strategy.entry("Short", strategy.short)
+    strategy.exit ("SX",    "Short", stop = sl, limit = tp)
+    if showLbls
+        entryLbl := label.new(bar_index, high,
+             "SHORT  SL:" + str.tostring(sl, format.mintick) +
+             "  TP:"      + str.tostring(tp, format.mintick),
+             style    = label.style_label_down,
+             color    = color.new(color.red, 15),
+             textcolor = color.white,
+             size     = size.small)
+
+// Clear plot lines when flat
+if strategy.position_size == 0
+    stopLine := na
+    tpLine   := na
+
+// ============================================================
+// PLOTS
+// ============================================================
+plot(showInd ? emaFast : na, "EMA Fast", color.orange,  linewidth = 1)
+plot(showInd ? emaSlow : na, "EMA Slow", color.fuchsia, linewidth = 2)
+plot(showInd ? brkHigh : na, "Brk High", color.new(color.green, 55), style = plot.style_stepline)
+plot(showInd ? brkLow  : na, "Brk Low",  color.new(color.red,   55), style = plot.style_stepline)
+
+plot(stopLine, "Stop",   color.red,               linewidth = 1, style = plot.style_linebr)
+plot(tpLine,   "Target", color.new(color.lime, 0), linewidth = 1, style = plot.style_linebr)
+
+plotshape(goLong,  "Buy",  shape.triangleup,   location.belowbar, color.teal, size = size.small)
+plotshape(goShort, "Sell", shape.triangledown, location.abovebar, color.red,  size = size.small)
+
+// ============================================================
+// STATS TABLE  (Profit Factor highlighted)
+// ============================================================
+float pf = strategy.grossloss < 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : float(na)
+float wr = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : 0.0
+
+var table tbl = table.new(position.top_right, 2, 8, border_width = 1)
+
+if showTbl and barstate.islast
+    // Header
+    table.cell(table_id = tbl, column = 0, row = 0, text = "HIGH PF SYSTEM",
+               bgcolor = color.navy, text_color = color.white,  text_size = size.normal)
+    table.cell(table_id = tbl, column = 1, row = 0,
+               text    = str.tostring(stopMult, "#.#") + ":" + str.tostring(tpMult, "#.#") + " ATR",
+               bgcolor = color.navy, text_color = color.yellow, text_size = size.normal)
+
+    // Profit Factor (most important stat - highlighted)
+    table.cell(table_id = tbl, column = 0, row = 1, text = "Profit Factor",
+               bgcolor = color.new(color.navy, 60), text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 1,
+               text       = na(pf) ? "N/A" : str.tostring(pf, "#.##"),
+               text_color = na(pf) ? color.gray : pf >= 2.0 ? color.green : pf >= 1.5 ? color.yellow : color.red,
+               text_size  = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 2, text = "Net Profit",  text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 2,
+               text       = "$" + str.tostring(strategy.netprofit, "#.##"),
+               text_color = strategy.netprofit >= 0 ? color.green : color.red, text_size = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 3, text = "Win Rate",    text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 3,
+               text = str.tostring(wr, "#.#") + "%",                      text_size = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 4, text = "Trades",      text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 4,
+               text = str.tostring(strategy.closedtrades),                 text_size = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 5, text = "Gross Profit", text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 5,
+               text       = "$" + str.tostring(strategy.grossprofit, "#.##"),
+               text_color = color.green,                                   text_size = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 6, text = "Gross Loss",  text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 6,
+               text       = "$" + str.tostring(strategy.grossloss, "#.##"),
+               text_color = color.red,                                     text_size = size.small)
+
+    table.cell(table_id = tbl, column = 0, row = 7, text = "Max DD",      text_size = size.small)
+    table.cell(table_id = tbl, column = 1, row = 7,
+               text       = "$" + str.tostring(strategy.max_drawdown, "#.##"),
+               text_color = color.orange,                                  text_size = size.small)
