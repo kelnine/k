@@ -313,11 +313,11 @@ if sell_sig
 // ── Strategy orders ──────────────────────────────────────────────────
 if buy_sig
     strategy.entry("Long",  strategy.long,  comment="FF Long")
-    strategy.exit ("Long X", "Long",  stop=buy_sl,  limit=buy_tp1,  comment="Exit")
+    strategy.exit ("Long X", "Long",  stop=buy_sl,  limit=buy_tp1)
 
 if sell_sig
     strategy.entry("Short", strategy.short, comment="FF Short")
-    strategy.exit ("Short X", "Short", stop=sell_sl, limit=sell_tp1, comment="Exit")
+    strategy.exit ("Short X", "Short", stop=sell_sl, limit=sell_tp1)
 
 // ══════════════════════════════════════════════════════════════════════
 // SUPPLY & DEMAND ZONES  (2 supply + 2 demand, auto-dismiss on break)
@@ -485,10 +485,10 @@ type PivotState
 // Leg detector: 0 = bearish leg (pivot high confirmed), 1 = bullish leg (pivot low confirmed)
 f_leg(int sz) =>
     var int lg = 0
-    if high[sz] > ta.highest(high, sz)
-        lg := 0   // bearish leg start = pivot high just confirmed
-    else if low[sz] < ta.lowest(low, sz)
-        lg := 1   // bullish leg start = pivot low just confirmed
+    if not na(ta.pivothigh(high, sz, sz))
+        lg := 0
+    else if not na(ta.pivotlow(low, sz, sz))
+        lg := 1
     lg
 
 int_lg = f_leg(5)
