@@ -313,19 +313,11 @@ if sell_sig
 // ── Strategy orders ──────────────────────────────────────────────────
 if buy_sig
     strategy.entry("Long",  strategy.long,  comment="FF Long")
-    strategy.exit ("Long X", "Long",
-                  stop    = buy_sl,
-                  limit   = buy_tp1,
-                  comment_loss   = "SL",
-                  comment_profit = "TP1")
+    strategy.exit ("Long X", "Long",  stop=buy_sl,  limit=buy_tp1,  comment="Exit")
 
 if sell_sig
     strategy.entry("Short", strategy.short, comment="FF Short")
-    strategy.exit ("Short X", "Short",
-                  stop    = sell_sl,
-                  limit   = sell_tp1,
-                  comment_loss   = "SL",
-                  comment_profit = "TP1")
+    strategy.exit ("Short X", "Short", stop=sell_sl, limit=sell_tp1, comment="Exit")
 
 // ══════════════════════════════════════════════════════════════════════
 // SUPPLY & DEMAND ZONES  (2 supply + 2 demand, auto-dismiss on break)
@@ -493,9 +485,9 @@ type PivotState
 // Leg detector: 0 = bearish leg (pivot high confirmed), 1 = bullish leg (pivot low confirmed)
 f_leg(int sz) =>
     var int lg = 0
-    if high[sz] > ta.highest(sz)
+    if high[sz] > ta.highest(high, sz)
         lg := 0   // bearish leg start = pivot high just confirmed
-    else if low[sz] < ta.lowest(sz)
+    else if low[sz] < ta.lowest(low, sz)
         lg := 1   // bullish leg start = pivot low just confirmed
     lg
 
@@ -530,15 +522,21 @@ f_bos(PivotState p, string lbl, color col, bool dashed) =>
               xloc=xloc.bar_index, style=label.style_none,
               textcolor=col, size=size.tiny)
 
+// Crossover/under must be computed at main scope (not inside conditionals) in v6
+i_ph_xo = ta.crossover (close, i_ph.level)
+i_pl_xu = ta.crossunder(close, i_pl.level)
+s_ph_xo = ta.crossover (close, s_ph.level)
+s_pl_xu = ta.crossunder(close, s_pl.level)
+
 // Internal structure (dashed, size-5 swings) — off by default
 if show_bos_int
-    if not na(i_ph.level) and ta.crossover(close, i_ph.level) and not i_ph.crossed
+    if not na(i_ph.level) and i_ph_xo and not i_ph.crossed
         _tag = i_trend == -1 ? "CHoCH" : "BOS"
         _col = i_trend == -1 ? C_BULL  : C_BRAND
         f_bos(i_ph, _tag, _col, true)
         i_ph.crossed := true
         i_trend      := 1
-    if not na(i_pl.level) and ta.crossunder(close, i_pl.level) and not i_pl.crossed
+    if not na(i_pl.level) and i_pl_xu and not i_pl.crossed
         _tag = i_trend == 1  ? "CHoCH" : "BOS"
         _col = i_trend == 1  ? C_BEAR  : C_BRAND
         f_bos(i_pl, _tag, _col, true)
@@ -547,13 +545,13 @@ if show_bos_int
 
 // Swing structure (solid, size bos_lb swings)
 if show_bos
-    if not na(s_ph.level) and ta.crossover(close, s_ph.level) and not s_ph.crossed
+    if not na(s_ph.level) and s_ph_xo and not s_ph.crossed
         _tag = s_trend == -1 ? "CHoCH" : "BOS"
         _col = s_trend == -1 ? C_BULL  : C_BRAND
         f_bos(s_ph, _tag, _col, false)
         s_ph.crossed := true
         s_trend      := 1
-    if not na(s_pl.level) and ta.crossunder(close, s_pl.level) and not s_pl.crossed
+    if not na(s_pl.level) and s_pl_xu and not s_pl.crossed
         _tag = s_trend == 1  ? "CHoCH" : "BOS"
         _col = s_trend == 1  ? C_BEAR  : C_BRAND
         f_bos(s_pl, _tag, _col, false)
