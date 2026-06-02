@@ -1,0 +1,476 @@
+//@version=6
+// =====================================================================================
+// FutureFi Profit Factor Hybrid Strategy
+// -------------------------------------------------------------------------------------
+// Core model : HTF Trend + Liquidity Sweep + Breakout/Retest + SMC (CHoCH/BOS) + FVG/OB
+// Goal       : High PROFIT FACTOR with realistic win rate, clean entries, low drawdown.
+//              Positive expectancy and 1:2+ RR are prioritized over fake high win-rate.
+// Markets    : Crypto, Forex, Gold, Indices.  Charts: 5m / 15m / 1H / 4H.
+// Repaint    : Non-repainting. HTF requested with lookahead OFF, orders processed on
+//              close, confirmed pivots only (no future-looking structure for entries).
+// =====================================================================================
+strategy(title               = "FutureFi Profit Factor Hybrid Strategy",
+         shorttitle          = "FutureFi PF Hybrid",
+         overlay             = true,
+         pyramiding          = 0,
+         initial_capital     = 10000,
+         default_qty_type    = strategy.fixed,
+         default_qty_value   = 1,
+         commission_type     = strategy.commission.percent,
+         commission_value    = 0.04,
+         slippage            = 2,
+         process_orders_on_close = true,
+         calc_on_every_tick  = false,
+         max_lines_count     = 100,
+         max_labels_count    = 100,
+         max_boxes_count     = 100)
+
+// =====================================================================================
+// 1. INPUTS
+// =====================================================================================
+// ---- Higher Timeframe Bias ----------------------------------------------------------
+gHTF       = "Higher Timeframe Bias"
+useHtfBias = input.bool(true,  "Use HTF Trend Bias",            group = gHTF)
+htfMode    = input.string("Auto", "HTF Mode", options = ["Auto", "Manual"], group = gHTF)
+htfManual  = input.timeframe("60", "Manual HTF",               group = gHTF)
+
+// ---- EMA Trend Filter ---------------------------------------------------------------
+gEMA       = "EMA Trend Filter"
+emaFastLen = input.int(9,   "EMA Fast (momentum)",  minval = 1, group = gEMA)
+emaMedLen  = input.int(21,  "EMA Medium (momentum)",minval = 1, group = gEMA)
+emaSlowLen = input.int(50,  "EMA Slow (bias)",      minval = 1, group = gEMA)
+emaTrendLen= input.int(200, "EMA Trend (bias)",     minval = 1, group = gEMA)
+useEma9_21 = input.bool(true, "Use EMA 9/21 momentum confirmation", group = gEMA)
+
+// ---- RSI ----------------------------------------------------------------------------
+gRSI         = "RSI"
+useRsiFilter = input.bool(true, "Use RSI filter",        group = gRSI)
+rsiLen       = input.int(14, "RSI Length", minval = 2,   group = gRSI)
+rsiLongLvl   = input.float(50, "RSI Long threshold",     group = gRSI)
+rsiShortLvl  = input.float(50, "RSI Short threshold",    group = gRSI)
+
+// ---- Structure / SMC ----------------------------------------------------------------
+gSMC            = "Structure / SMC"
+swingLen        = input.int(5, "Swing pivot lookback (L/R)", minval = 1, group = gSMC)
+useChochBos     = input.bool(true,  "Require CHoCH / BOS confirmation",   group = gSMC)
+useBreakoutRtst = input.bool(true,  "Require Breakout / Retest confirm",  group = gSMC)
+useFVG          = input.bool(false, "Require FVG retest confirmation",    group = gSMC)
+useOB           = input.bool(false, "Require Order Block retest confirm", group = gSMC)
+sweepValidBars  = input.int(10, "Sweep stays valid for N bars",   minval = 1, group = gSMC)
+structValidBars = input.int(10, "Structure stays valid for N bars",minval = 1, group = gSMC)
+
+// ---- Filters ------------------------------------------------------------------------
+gFLT         = "Filters"
+useAdx       = input.bool(true,  "ADX trend-strength filter",  group = gFLT)
+adxLen       = input.int(14, "ADX Length", minval = 1,         group = gFLT)
+adxThresh    = input.float(20, "ADX minimum",                  group = gFLT)
+useVolFilter = input.bool(false, "Volume spike filter",        group = gFLT)
+volLen       = input.int(20, "Volume MA length", minval = 1,   group = gFLT)
+volMult      = input.float(1.5, "Volume spike multiplier",     group = gFLT)
+useAtrFilter = input.bool(false, "ATR volatility filter (expanding)", group = gFLT)
+atrFiltLen   = input.int(14, "ATR filter length", minval = 1,  group = gFLT)
+atrFiltMult  = input.float(1.0, "ATR > avg ATR x",             group = gFLT)
+avoidChop    = input.bool(true,  "Avoid choppy conditions",    group = gFLT)
+chopAtrMult  = input.float(0.25, "Chop: EMA spread < ATR x",   group = gFLT)
+useSession   = input.bool(false, "Session filter",             group = gFLT)
+sessionInput = input.session("0000-2359", "Allowed session",   group = gFLT)
+cleanMode    = input.bool(false, "Clean Mode (hide extra visuals)", group = gFLT)
+
+// ---- Risk Management ----------------------------------------------------------------
+gRISK        = "Risk Management"
+slMode       = input.string("ATR (Volatility)", "Stop-loss mode", options = ["ATR (Volatility)", "Swing High/Low"], group = gRISK)
+atrSlLen     = input.int(14, "ATR length (SL)", minval = 1,    group = gRISK)
+atrSlMult    = input.float(1.5, "ATR SL multiplier",          group = gRISK)
+slBufferMult = input.float(0.10,"Swing SL buffer (ATR x)",    group = gRISK)
+tp1R         = input.float(1.0, "TP1 (R multiple)",           group = gRISK)
+tp2R         = input.float(2.0, "TP2 (R multiple)",           group = gRISK)
+tp3R         = input.float(3.0, "TP3 (R multiple)",           group = gRISK)
+finalTpR     = input.float(2.0, "Final/runner target (R)",    group = gRISK)
+useTp1       = input.bool(true,  "Scale out at TP1",          group = gRISK)
+tp1Pct       = input.float(50, "TP1 close %", minval = 1, maxval = 99, group = gRISK)
+useTp2       = input.bool(false, "Scale out at TP2",          group = gRISK)
+tp2Pct       = input.float(25, "TP2 close %", minval = 1, maxval = 99, group = gRISK)
+useBreakeven = input.bool(true,  "Move SL to break-even after BE trigger", group = gRISK)
+beTriggerR   = input.float(1.0, "Break-even trigger (R)",     group = gRISK)
+riskPerTrade = input.float(1.0, "Risk per trade (% equity)",  minval = 0.1, group = gRISK)
+maxTradesDay = input.int(3, "Max trades per day", minval = 1, group = gRISK)
+cooldownBars = input.int(3, "Cooldown bars after a close", minval = 0, group = gRISK)
+
+// ---- Visuals ------------------------------------------------------------------------
+gVIS        = "Visuals"
+showEmas    = input.bool(true,  "Show EMAs",                  group = gVIS)
+showSignals = input.bool(true,  "Show LONG / SHORT labels",   group = gVIS)
+showLevels  = input.bool(true,  "Show Entry / SL / TP lines", group = gVIS)
+showSweep   = input.bool(true,  "Show liquidity sweep labels",group = gVIS)
+showBreak   = input.bool(true,  "Show breakout / retest labels", group = gVIS)
+showChoch   = input.bool(true,  "Show CHoCH / BOS labels",    group = gVIS)
+showFvgBox  = input.bool(false, "Show FVG zones",             group = gVIS)
+showObBox   = input.bool(false, "Show Order Block zones",     group = gVIS)
+showDash    = input.bool(true,  "Show backtest dashboard",    group = gVIS)
+
+// =====================================================================================
+// 2. HIGHER TIMEFRAME RESOLUTION (Auto: 1H for 5m/15m, 4H for 1H, step-up otherwise)
+// =====================================================================================
+tfSec      = timeframe.in_seconds(timeframe.period)
+autoHtfStr = tfSec <= 900    ? "60" :
+             tfSec <= 3600   ? "240" :
+             tfSec <= 14400  ? "D" : "W"
+htfTf      = htfMode == "Auto" ? autoHtfStr : htfManual
+
+[htfClose, htfEmaSlow, htfEmaTrend] = request.security(syminfo.tickerid, htfTf,
+     [close, ta.ema(close, emaSlowLen), ta.ema(close, emaTrendLen)],
+     lookahead = barmerge.lookahead_off)
+
+htfBull = not na(htfEmaTrend) and htfClose > htfEmaTrend and htfEmaSlow > htfEmaTrend
+htfBear = not na(htfEmaTrend) and htfClose < htfEmaTrend and htfEmaSlow < htfEmaTrend
+
+// =====================================================================================
+// 3. INDICATORS
+// =====================================================================================
+emaFast  = ta.ema(close, emaFastLen)
+emaMed   = ta.ema(close, emaMedLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+emaTrend = ta.ema(close, emaTrendLen)
+
+rsiVal   = ta.rsi(close, rsiLen)
+atrVal   = ta.atr(atrSlLen)
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+
+volMa    = ta.sma(volume, volLen)
+atrFilt  = ta.atr(atrFiltLen)
+atrFiltMa= ta.sma(atrFilt, atrFiltLen)
+
+bullClose = close > open
+bearClose = close < open
+
+// =====================================================================================
+// 4. SWING STRUCTURE (confirmed pivots only -> non-repainting)
+// =====================================================================================
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low,  swingLen, swingLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow  := pl
+
+// ---- CHoCH / BOS (fires only on the confirmed break bar) ----------------------------
+var int structDir = 0
+bool chochBull = false
+bool chochBear = false
+bool bosBull   = false
+bool bosBear   = false
+
+brokeHigh = not na(lastSwingHigh) and ta.crossover(close, lastSwingHigh)
+brokeLow  = not na(lastSwingLow)  and ta.crossunder(close, lastSwingLow)
+
+if brokeHigh
+    chochBull := structDir == -1
+    bosBull   := structDir == 1
+    structDir := 1
+if brokeLow
+    chochBear := structDir == 1
+    bosBear   := structDir == -1
+    structDir := -1
+
+// ---- Breakout & Retest --------------------------------------------------------------
+var float brkLevelL = na
+var bool  brkArmedL = false
+var float brkLevelS = na
+var bool  brkArmedS = false
+
+if brokeHigh
+    brkLevelL := lastSwingHigh
+    brkArmedL := true
+if brokeLow
+    brkLevelS := lastSwingLow
+    brkArmedS := true
+
+retestLong  = brkArmedL and not na(brkLevelL) and low  <= brkLevelL and close > brkLevelL and bullClose
+retestShort = brkArmedS and not na(brkLevelS) and high >= brkLevelS and close < brkLevelS and bearClose
+if retestLong
+    brkArmedL := false
+if retestShort
+    brkArmedS := false
+
+// =====================================================================================
+// 5. LIQUIDITY SWEEPS (wick beyond swing then close back inside)
+// =====================================================================================
+sweepLow  = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow
+sweepHigh = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+// =====================================================================================
+// 6. FVG / ORDER BLOCK (optional confirmations)
+// =====================================================================================
+fvgBull = not na(high[2]) and low  > high[2] and bullClose
+fvgBear = not na(low[2])  and high < low[2]  and bearClose
+
+var float fvgBullTop = na
+var float fvgBullBot = na
+var float fvgBearTop = na
+var float fvgBearBot = na
+if fvgBull
+    fvgBullTop := low
+    fvgBullBot := high[2]
+if fvgBear
+    fvgBearTop := low[2]
+    fvgBearBot := high
+
+fvgBullRetest = not na(fvgBullBot) and low  <= fvgBullTop and close > fvgBullBot and bullClose
+fvgBearRetest = not na(fvgBearTop) and high >= fvgBearBot and close < fvgBearTop and bearClose
+
+var float obBullTop = na
+var float obBullBot = na
+var float obBearTop = na
+var float obBearBot = na
+if bearClose
+    obBullTop := high
+    obBullBot := low
+if bullClose
+    obBearTop := high
+    obBearBot := low
+
+obBullRetest = not na(obBullBot) and low  <= obBullTop and close > obBullBot and bullClose
+obBearRetest = not na(obBearTop) and high >= obBearBot and close < obBearTop and bearClose
+
+// =====================================================================================
+// 7. TREND BIAS
+// =====================================================================================
+ltfBull    = close > emaSlow and close > emaTrend
+ltfBear    = close < emaSlow and close < emaTrend
+emaMomBull = (not useEma9_21) or emaFast > emaMed
+emaMomBear = (not useEma9_21) or emaFast < emaMed
+htfBullOk  = (not useHtfBias) or htfBull
+htfBearOk  = (not useHtfBias) or htfBear
+
+trendBull  = ltfBull and emaMomBull and htfBullOk
+trendBear  = ltfBear and emaMomBear and htfBearOk
+
+// =====================================================================================
+// 8. FILTERS
+// =====================================================================================
+adxOk  = (not useAdx)       or adxVal > adxThresh
+volOk  = (not useVolFilter) or (not na(volMa) and volume > volMa * volMult)
+atrOk  = (not useAtrFilter) or (not na(atrFiltMa) and atrFilt > atrFiltMa * atrFiltMult)
+
+emaSpread = math.abs(emaFast - emaSlow)
+choppy    = emaSpread < atrVal * chopAtrMult
+notChop   = (not avoidChop) or (not choppy)
+
+sessTime = time(timeframe.period, sessionInput)
+inSession= (not useSession) or not na(sessTime)
+
+// =====================================================================================
+// 9. RSI GATES & RECENT-EVENT WINDOWS
+// =====================================================================================
+rsiLongOk  = (not useRsiFilter) or rsiVal > rsiLongLvl  or ta.crossover(rsiVal, rsiLongLvl)
+rsiShortOk = (not useRsiFilter) or rsiVal < rsiShortLvl or ta.crossunder(rsiVal, rsiShortLvl)
+
+var int barsSinceSweepL = 100000
+var int barsSinceSweepS = 100000
+barsSinceSweepL := sweepLow  ? 0 : barsSinceSweepL + 1
+barsSinceSweepS := sweepHigh ? 0 : barsSinceSweepS + 1
+sweepRecentL = barsSinceSweepL <= sweepValidBars
+sweepRecentS = barsSinceSweepS <= sweepValidBars
+
+structEventL = (useChochBos and (chochBull or bosBull)) or (useBreakoutRtst and retestLong)
+structEventS = (useChochBos and (chochBear or bosBear)) or (useBreakoutRtst and retestShort)
+
+var int barsSinceStructL = 100000
+var int barsSinceStructS = 100000
+barsSinceStructL := structEventL ? 0 : barsSinceStructL + 1
+barsSinceStructS := structEventS ? 0 : barsSinceStructS + 1
+structRecentL = (not (useChochBos or useBreakoutRtst)) or barsSinceStructL <= structValidBars
+structRecentS = (not (useChochBos or useBreakoutRtst)) or barsSinceStructS <= structValidBars
+
+fvgOkL = (not useFVG) or fvgBullRetest
+fvgOkS = (not useFVG) or fvgBearRetest
+obOkL  = (not useOB)  or obBullRetest
+obOkS  = (not useOB)  or obBearRetest
+
+// =====================================================================================
+// 10. SETUP & SCORE
+// =====================================================================================
+longSetup  = trendBull and sweepRecentL and bullClose and structRecentL and rsiLongOk  and fvgOkL and obOkL
+shortSetup = trendBear and sweepRecentS and bearClose and structRecentS and rsiShortOk and fvgOkS and obOkS
+
+filtersOk  = adxOk and volOk and atrOk and notChop and inSession
+
+longScore  = (trendBull?1:0) + (sweepRecentL?1:0) + (bullClose?1:0) + (structRecentL?1:0) + (rsiLongOk?1:0)  + (filtersOk?1:0)
+shortScore = (trendBear?1:0) + (sweepRecentS?1:0) + (bearClose?1:0) + (structRecentS?1:0) + (rsiShortOk?1:0) + (filtersOk?1:0)
+
+// =====================================================================================
+// 11. TRADE GOVERNANCE (max trades/day, cooldown)
+// =====================================================================================
+var int tradesToday = 0
+dc = ta.change(time("D"))
+if not na(dc) and dc != 0
+    tradesToday := 0
+
+var int lastExitBar = na
+tradeClosedNow = strategy.closedtrades > nz(strategy.closedtrades[1])
+if tradeClosedNow
+    lastExitBar := bar_index
+
+cooldownOk = na(lastExitBar) or (bar_index - lastExitBar) >= cooldownBars
+maxTradesOk= tradesToday < maxTradesDay
+
+allReady = not na(emaTrend) and not na(emaSlow) and not na(rsiVal) and not na(atrVal) and not na(adxVal) and ((not useHtfBias) or not na(htfEmaTrend))
+flat     = strategy.position_size == 0
+
+longEntry  = allReady and flat and longSetup  and filtersOk and maxTradesOk and cooldownOk
+shortEntry = allReady and flat and shortSetup and filtersOk and maxTradesOk and cooldownOk and not longEntry
+
+// =====================================================================================
+// 12. RISK LEVELS & ENTRIES
+// =====================================================================================
+var float entryPx = na
+var float slPx    = na
+var float riskPx  = na
+var float tp1Px   = na
+var float tp2Px   = na
+var float tp3Px   = na
+var float finalPx = na
+var float bePx    = na
+var float curStop = na
+
+if longEntry
+    entryPx := close
+    slAtrL  = close - atrVal * atrSlMult
+    slSwL   = not na(lastSwingLow) ? math.min(lastSwingLow, low) - atrVal * slBufferMult : slAtrL
+    slPx    := slMode == "ATR (Volatility)" ? slAtrL : slSwL
+    riskPx  := math.max(close - slPx, syminfo.mintick)
+    slPx    := close - riskPx
+    tp1Px   := close + riskPx * tp1R
+    tp2Px   := close + riskPx * tp2R
+    tp3Px   := close + riskPx * tp3R
+    finalPx := close + riskPx * finalTpR
+    bePx    := close + riskPx * beTriggerR
+    curStop := slPx
+    qty     = (strategy.equity * riskPerTrade / 100.0) / riskPx
+    strategy.entry("Long", strategy.long, qty = qty)
+    tradesToday := tradesToday + 1
+
+if shortEntry
+    entryPx := close
+    slAtrS  = close + atrVal * atrSlMult
+    slSwS   = not na(lastSwingHigh) ? math.max(lastSwingHigh, high) + atrVal * slBufferMult : slAtrS
+    slPx    := slMode == "ATR (Volatility)" ? slAtrS : slSwS
+    riskPx  := math.max(slPx - close, syminfo.mintick)
+    slPx    := close + riskPx
+    tp1Px   := close - riskPx * tp1R
+    tp2Px   := close - riskPx * tp2R
+    tp3Px   := close - riskPx * tp3R
+    finalPx := close - riskPx * finalTpR
+    bePx    := close - riskPx * beTriggerR
+    curStop := slPx
+    qty     = (strategy.equity * riskPerTrade / 100.0) / riskPx
+    strategy.entry("Short", strategy.short, qty = qty)
+    tradesToday := tradesToday + 1
+
+// =====================================================================================
+// 13. EXIT MANAGEMENT (partial TPs, runner, break-even)
+// =====================================================================================
+if strategy.position_size > 0 or longEntry
+    if useBreakeven and high >= bePx
+        curStop := math.max(curStop, entryPx)
+    if useTp1
+        strategy.exit("L-TP1", from_entry = "Long", qty_percent = tp1Pct, limit = tp1Px, stop = curStop)
+    if useTp2
+        strategy.exit("L-TP2", from_entry = "Long", qty_percent = tp2Pct, limit = tp2Px, stop = curStop)
+    strategy.exit("L-Final", from_entry = "Long", limit = finalPx, stop = curStop)
+
+if strategy.position_size < 0 or shortEntry
+    if useBreakeven and low <= bePx
+        curStop := math.min(curStop, entryPx)
+    if useTp1
+        strategy.exit("S-TP1", from_entry = "Short", qty_percent = tp1Pct, limit = tp1Px, stop = curStop)
+    if useTp2
+        strategy.exit("S-TP2", from_entry = "Short", qty_percent = tp2Pct, limit = tp2Px, stop = curStop)
+    strategy.exit("S-Final", from_entry = "Short", limit = finalPx, stop = curStop)
+
+// =====================================================================================
+// 14. VISUALS
+// =====================================================================================
+plot(showEmas and useEma9_21 ? emaFast : na, "EMA 9",  color = color.new(color.yellow, 0))
+plot(showEmas and useEma9_21 ? emaMed  : na, "EMA 21", color = color.new(color.orange, 0))
+plot(showEmas ? emaSlow  : na, "EMA 50",  color = color.new(color.blue, 0))
+plot(showEmas ? emaTrend : na, "EMA 200", color = color.new(color.red, 0), linewidth = 2)
+
+cLong  = color.new(#089981, 0)
+cShort = color.new(#f23645, 0)
+
+plotshape(showSignals and longEntry,  "LONG",  shape.triangleup,   location.belowbar, cLong,  text = "LONG",  textcolor = color.white, size = size.tiny)
+plotshape(showSignals and shortEntry, "SHORT", shape.triangledown, location.abovebar, cShort, text = "SHORT", textcolor = color.white, size = size.tiny)
+
+inPos = strategy.position_size != 0
+plot(showLevels and inPos ? entryPx : na, "Entry", color = color.new(color.gray, 0),  style = plot.style_linebr)
+plot(showLevels and inPos ? slPx    : na, "SL",    color = color.new(color.red, 0),   style = plot.style_linebr)
+plot(showLevels and inPos ? tp1Px   : na, "TP1",   color = color.new(color.teal, 30), style = plot.style_linebr)
+plot(showLevels and inPos ? tp2Px   : na, "TP2",   color = color.new(color.teal, 15), style = plot.style_linebr)
+plot(showLevels and inPos ? tp3Px   : na, "TP3",   color = color.new(color.teal, 0),  style = plot.style_linebr)
+
+plotshape(showSweep and not cleanMode and sweepLow,  "Sweep Low",  shape.cross, location.belowbar, color.new(color.aqua, 0),   text = "Sweep", textcolor = color.aqua,   size = size.tiny)
+plotshape(showSweep and not cleanMode and sweepHigh, "Sweep High", shape.cross, location.abovebar, color.new(color.fuchsia, 0),text = "Sweep", textcolor = color.fuchsia,size = size.tiny)
+
+plotshape(showBreak and not cleanMode and retestLong,  "Retest Long",  shape.diamond, location.belowbar, color.new(color.green, 0), text = "RT", textcolor = color.green, size = size.tiny)
+plotshape(showBreak and not cleanMode and retestShort, "Retest Short", shape.diamond, location.abovebar, color.new(color.red, 0),   text = "RT", textcolor = color.red,   size = size.tiny)
+
+plotshape(showChoch and not cleanMode and chochBull, "CHoCH Up",   shape.labelup,   location.belowbar, color.new(color.green, 0), text = "CHoCH", textcolor = color.white, size = size.tiny)
+plotshape(showChoch and not cleanMode and chochBear, "CHoCH Down", shape.labeldown, location.abovebar, color.new(color.red, 0),   text = "CHoCH", textcolor = color.white, size = size.tiny)
+plotshape(showChoch and not cleanMode and bosBull,   "BOS Up",     shape.triangleup,   location.belowbar, color.new(color.olive, 0), text = "BOS", textcolor = color.olive, size = size.tiny)
+plotshape(showChoch and not cleanMode and bosBear,   "BOS Down",   shape.triangledown, location.abovebar, color.new(color.maroon, 0),text = "BOS", textcolor = color.maroon,size = size.tiny)
+
+if showFvgBox and not cleanMode and fvgBull
+    box.new(bar_index - 2, low, bar_index, high[2], border_color = color.new(color.green, 100), bgcolor = color.new(color.green, 85))
+if showFvgBox and not cleanMode and fvgBear
+    box.new(bar_index - 2, low[2], bar_index, high, border_color = color.new(color.red, 100), bgcolor = color.new(color.red, 85))
+
+if showObBox and not cleanMode and bosBull and not na(obBullBot)
+    box.new(bar_index, obBullTop, bar_index + 3, obBullBot, border_color = color.new(color.green, 50), bgcolor = color.new(color.green, 90))
+if showObBox and not cleanMode and bosBear and not na(obBearBot)
+    box.new(bar_index, obBearTop, bar_index + 3, obBearBot, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 90))
+
+// =====================================================================================
+// 15. BACKTEST DASHBOARD
+// =====================================================================================
+var table dash = table.new(position.top_right, 2, 14, border_width = 1, frame_color = color.new(color.gray, 50), frame_width = 1)
+
+f_cell(_r, _label, _val, _txtcol) =>
+    table.cell(dash, 0, _r, _label, text_size = size.small, text_color = color.new(color.gray, 0),  text_halign = text.align_left,  bgcolor = color.new(color.black, 80))
+    table.cell(dash, 1, _r, _val,   text_size = size.small, text_color = _txtcol,                    text_halign = text.align_right, bgcolor = color.new(color.black, 80))
+
+if showDash and barstate.islast
+    totTrades = strategy.closedtrades
+    winT      = strategy.wintrades
+    lossT     = strategy.losstrades
+    winRate   = totTrades > 0 ? winT / totTrades * 100.0 : 0.0
+    pf        = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : 0.0
+    netP      = strategy.netprofit
+    maxDD     = strategy.max_drawdown
+    maxDDpct  = strategy.initial_capital > 0 ? maxDD / strategy.initial_capital * 100.0 : 0.0
+    avgWin    = winT  > 0 ? strategy.grossprofit / winT  : 0.0
+    avgLoss   = lossT > 0 ? strategy.grossloss   / lossT : 0.0
+    avgRR     = avgLoss > 0 ? avgWin / avgLoss : 0.0
+    biasTxt   = trendBull ? "BULLISH" : trendBear ? "BEARISH" : "NEUTRAL / MIXED"
+    biasCol   = trendBull ? cLong : trendBear ? cShort : color.new(color.gray, 0)
+    setupTxt  = longEntry ? "LONG SIGNAL" : shortEntry ? "SHORT SIGNAL" : longSetup ? "Long forming" : shortSetup ? "Short forming" : trendBull ? "Bullish - waiting" : trendBear ? "Bearish - waiting" : "No setup"
+    pfCol     = pf >= 1.5 ? cLong : pf >= 1.0 ? color.new(color.orange, 0) : cShort
+
+    table.cell(dash, 0, 0, "FutureFi PF Hybrid", text_size = size.small, text_color = color.white, text_halign = text.align_center, bgcolor = color.new(color.blue, 30))
+    table.cell(dash, 1, 0, htfTf + " HTF",        text_size = size.small, text_color = color.white, text_halign = text.align_center, bgcolor = color.new(color.blue, 30))
+    f_cell(1,  "Win Rate %",     str.tostring(winRate, "#.##") + " %",  winRate >= 40 ? cLong : color.new(color.orange, 0))
+    f_cell(2,  "Profit Factor",  str.tostring(pf, "#.##"),              pfCol)
+    f_cell(3,  "Net Profit",     str.tostring(netP, "#.##"),            netP >= 0 ? cLong : cShort)
+    f_cell(4,  "Max Drawdown",   str.tostring(maxDD, "#.##") + " (" + str.tostring(maxDDpct, "#.#") + "%)", cShort)
+    f_cell(5,  "Total Trades",   str.tostring(totTrades),               color.new(color.gray, 0))
+    f_cell(6,  "Winning Trades", str.tostring(winT),                    cLong)
+    f_cell(7,  "Losing Trades",  str.tostring(lossT),                   cShort)
+    f_cell(8,  "Average RR",     str.tostring(avgRR, "#.##") + " R",     avgRR >= 1.5 ? cLong : color.new(color.orange, 0))
+    f_cell(9,  "Trend Bias",     biasTxt,                                biasCol)
+    f_cell(10, "Setup Status",   setupTxt,                               color.new(color.white, 0))
+    f_cell(11, "Long Score",     str.tostring(longScore)  + " / 6",      longScore  >= 5 ? cLong  : color.new(color.gray, 0))
+    f_cell(12, "Short Score",    str.tostring(shortScore) + " / 6",      shortScore >= 5 ? cShort : color.new(color.gray, 0))
+    f_cell(13, "Position",       inPos ? (strategy.position_size > 0 ? "LONG" : "SHORT") : "FLAT", inPos ? (strategy.position_size > 0 ? cLong : cShort) : color.new(color.gray, 0))
