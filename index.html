@@ -3,69 +3,231 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Live Charts — TradingView</title>
+<title>DeepChart Live — real data + custom overlays on one chart</title>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #0a0a0c; overflow: hidden;
+  html, body { margin: 0; height: 100%; background: #08080b; overflow: hidden;
     font: 13px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #cfd2dc; }
   #app { display: flex; flex-direction: column; height: 100vh; }
-  header { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-    background: #0a0a0c; border-bottom: 1px solid #161620; }
-  .title { font-weight: 700; letter-spacing: .3px; }
-  .title b { color: #1fd35a; }
+  header { display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+    background: #0a0a0c; border-bottom: 1px solid #161620; flex-wrap: wrap; }
+  select.pill, .pill { background: #14141a; border: 1px solid #25252f; border-radius: 6px;
+    padding: 6px 9px; color: #cfd2dc; font-size: 12px; -webkit-appearance: none; appearance: none; }
+  select.pill.sym { color: #1fd35a; font-weight: 600; }
+  label.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+    background: #14141a; border: 1px solid #25252f; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  label.tog input { accent-color: #18e3e3; margin: 0; }
   .spacer { flex: 1; }
-  a.pill { text-decoration: none; background: #14141a; border: 1px solid #25252f;
-    border-radius: 6px; padding: 6px 11px; color: #cfd2dc; font-size: 12px; }
-  a.pill b { color: #18e3e3; }
-  #chart { flex: 1; min-height: 0; position: relative; }
-  .tradingview-widget-container, .tradingview-widget-container__widget { height: 100%; width: 100%; }
-  .note { padding: 6px 12px; font-size: 11px; color: #6b6f7d; background: #0a0a0c;
-    border-top: 1px solid #161620; }
-  .note b { color: #1fd35a; }
+  .title { font-weight: 700; }
+  .title b { color: #1fd35a; }
+  a.lnk { color: #18e3e3; text-decoration: none; font-size: 12px; padding: 5px 7px; }
+  #wrap { flex: 1; min-height: 0; position: relative; }
+  #chart { position: absolute; inset: 0; }
+  #status { position: absolute; left: 10px; top: 8px; z-index: 5; font-size: 11px; color: #6b6f7d;
+    background: rgba(8,8,11,.7); padding: 3px 7px; border-radius: 5px; pointer-events: none; }
+  #err { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; color: #b9bdc9; font-size: 13px; line-height: 1.6; }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <span class="title">Live Charts — real <b>TradingView</b> data</span>
+    <select class="pill sym" id="symSel"></select>
+    <select class="pill" id="tfSel"></select>
+    <label class="tog"><input type="checkbox" id="tV6" checked>V6</label>
+    <label class="tog"><input type="checkbox" id="tBub" checked>Big trades</label>
+    <label class="tog"><input type="checkbox" id="tVol" checked>Volume</label>
     <div class="spacer"></div>
-    <a class="pill" href="deepchart-demo.html">↗ <b>DeepChart</b> demo</a>
+    <a class="lnk" href="tradingview.html">All pairs ↗</a>
+    <a class="lnk" href="deepchart-demo.html">Demo ↗</a>
   </header>
-  <div id="chart">
-    <!-- TradingView official Advanced Chart widget: real data, every pair, every timeframe -->
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript"
-        src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-      {
-        "autosize": true,
-        "symbol": "BINANCE:BTCUSDT",
-        "interval": "1",
-        "timezone": "Etc/UTC",
-        "theme": "dark",
-        "style": "1",
-        "locale": "en",
-        "withdateranges": true,
-        "hide_side_toolbar": false,
-        "allow_symbol_change": true,
-        "details": true,
-        "hotlist": true,
-        "calendar": false,
-        "studies": [
-          "STD;Volume",
-          "STD;VWAP",
-          "STD;MACD"
-        ],
-        "support_host": "https://www.tradingview.com"
-      }
-      </script>
-    </div>
-  </div>
-  <div class="note">
-    Tap the symbol (top-left of the chart) to search <b>any</b> pair — stocks, futures, forex, crypto.
-    Real data &amp; all timeframes. To add the custom <b>V6</b> Pine indicator, open this symbol on
-    tradingview.com and paste <b>v6-indicator.pine</b> into the Pine Editor (custom scripts can't run in an embed).
+  <div id="wrap">
+    <div id="chart"></div>
+    <div id="status">connecting…</div>
+    <div id="err"></div>
   </div>
 </div>
+
+<script src="https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+// ----------------------------------------------------------------------------
+// Live crypto chart (Coinbase public data) rendered with TradingView's
+// Lightweight Charts, with custom overlays ON THE SAME CHART:
+//   - candles (+ live updates)        - volume histogram
+//   - V6 WaveTrend oscillator pane     - buy/sell signal markers on candles
+//   - big-trade "bubble" markers
+// Coinbase is used because Binance is geo-blocked in the US.
+// ----------------------------------------------------------------------------
+const LWC = window.LightweightCharts;
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), errEl = $('err');
+
+const SYMBOLS = ['BTC-USD','ETH-USD','SOL-USD','XRP-USD','DOGE-USD','AVAX-USD','LINK-USD','LTC-USD'];
+const TF = { '1m':60, '5m':300, '15m':900, '1h':3600, '6h':21600, '1D':86400 };
+let symbol = 'BTC-USD', gran = 300;
+
+for (const s of SYMBOLS) { const o=document.createElement('option'); o.value=o.textContent=s; $('symSel').appendChild(o); }
+for (const k of Object.keys(TF)) { const o=document.createElement('option'); o.value=k; o.textContent=k; $('tfSel').appendChild(o); }
+$('symSel').value = symbol; $('tfSel').value = '5m';
+
+// --- chart + series ---------------------------------------------------------
+const chart = LWC.createChart($('chart'), {
+  layout: { background: { color: '#08080b' }, textColor: '#9aa0ad', attributionLogo: false },
+  grid: { vertLines: { color: '#121218' }, horzLines: { color: '#121218' } },
+  rightPriceScale: { borderColor: '#1d1d26' },
+  timeScale: { borderColor: '#1d1d26', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: LWC.CrosshairMode.Normal },
+});
+
+const candle = chart.addSeries(LWC.CandlestickSeries, {
+  upColor: '#1fd35a', downColor: '#b026ff',
+  wickUpColor: '#1fd35a', wickDownColor: '#b026ff', borderVisible: false,
+});
+const vol = chart.addSeries(LWC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
+chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+// WaveTrend pane (pane index 1)
+const wt1S = chart.addSeries(LWC.LineSeries, { color: '#18e3e3', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, 1);
+const wt2S = chart.addSeries(LWC.LineSeries, { color: '#b026ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, 1);
+const wtH  = chart.addSeries(LWC.HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, 1);
+try { chart.panes()[0].setStretchFactor(3); chart.panes()[1].setStretchFactor(1); } catch (e) {}
+
+let candleMarkers = null;
+function setMarkers(arr) {
+  if (candleMarkers) candleMarkers.setMarkers(arr);
+  else candleMarkers = LWC.createSeriesMarkers(candle, arr);
+}
+
+// --- indicators -------------------------------------------------------------
+function ema(a, n) { const k = 2/(n+1); let e = a[0]; return a.map(v => (e = v*k + e*(1-k))); }
+function sma(a, n) { return a.map((_, i) => { let s=0,c=0; for (let j=Math.max(0,i-n+1);j<=i;j++){s+=a[j];c++;} return s/c; }); }
+function waveTrend(bars) {
+  const src = bars.map(b => (b.high + b.low + b.close) / 3);
+  const esa = ema(src, 10);
+  const de = ema(src.map((v,i)=>Math.abs(v-esa[i])), 10);
+  const ci = src.map((v,i)=>(v-esa[i])/(0.015*(de[i]||1e-9)));
+  const wt1 = ema(ci, 21), wt2 = sma(wt1, 4);
+  return { wt1, wt2 };
+}
+
+// --- data state -------------------------------------------------------------
+let bars = [];           // {time, open, high, low, close, volume}
+let bubbleMarkers = [];  // big-trade prints
+let ws = null;
+
+function rebuildOverlays() {
+  // V6
+  if ($('tV6').checked && bars.length > 25) {
+    const { wt1, wt2 } = waveTrend(bars);
+    wt1S.setData(bars.map((b,i)=>({ time: b.time, value: wt1[i] })));
+    wt2S.setData(bars.map((b,i)=>({ time: b.time, value: wt2[i] })));
+    wtH.setData(bars.map((b,i)=>{ const d = wt1[i]-wt2[i]; return { time:b.time, value:d, color: d>=0?'rgba(24,227,227,.5)':'rgba(176,38,255,.5)' }; }));
+    // signal markers: cross in OB/OS zones
+    const sig = [];
+    for (let i = 1; i < bars.length; i++) {
+      const cu = wt1[i-1] <= wt2[i-1] && wt1[i] > wt2[i];
+      const cd = wt1[i-1] >= wt2[i-1] && wt1[i] < wt2[i];
+      if (cu && wt2[i] < -45) sig.push({ time: bars[i].time, position:'belowBar', color:'#18e3e3', shape:'arrowUp', text:'Buy' });
+      if (cd && wt2[i] >  45) sig.push({ time: bars[i].time, position:'aboveBar', color:'#ec3ad6', shape:'arrowDown', text:'Sell' });
+    }
+    window.__sig = sig;
+  } else {
+    wt1S.setData([]); wt2S.setData([]); wtH.setData([]); window.__sig = [];
+  }
+  applyMarkers();
+}
+function applyMarkers() {
+  let all = (window.__sig || []).slice();
+  if ($('tBub').checked) all = all.concat(bubbleMarkers);
+  all.sort((a,b)=>a.time-b.time);
+  setMarkers(all);
+}
+function applyVolVisible() { vol.applyOptions({ visible: $('tVol').checked }); }
+
+// --- load history + live feed ----------------------------------------------
+async function load() {
+  errEl.style.display = 'none';
+  statusEl.textContent = 'loading ' + symbol + '…';
+  if (ws) { try { ws.close(); } catch(e){} ws = null; }
+  bars = []; bubbleMarkers = [];
+  try {
+    const url = `https://api.exchange.coinbase.com/products/${symbol}/candles?granularity=${gran}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const raw = await r.json();                    // [ time, low, high, open, close, volume ]
+    bars = raw.map(c => ({ time:c[0], low:c[1], high:c[2], open:c[3], close:c[4], volume:c[5] }))
+              .sort((a,b)=>a.time-b.time);
+    candle.setData(bars);
+    vol.setData(bars.map(b => ({ time:b.time, value:b.volume, color: b.close>=b.open?'rgba(31,211,90,.5)':'rgba(176,38,255,.5)' })));
+    rebuildOverlays();
+    chart.timeScale().fitContent();
+    statusEl.textContent = symbol + ' · live';
+    openFeed();
+  } catch (e) {
+    showError(e);
+  }
+}
+
+function openFeed() {
+  try {
+    ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
+    ws.onopen = () => ws.send(JSON.stringify({ type:'subscribe', product_ids:[symbol], channels:['matches'] }));
+    ws.onmessage = ev => {
+      const m = JSON.parse(ev.data);
+      if ((m.type !== 'match' && m.type !== 'last_match') || m.product_id !== symbol) return;
+      const price = +m.price, size = +m.size;
+      const t = Math.floor(Date.parse(m.time) / 1000);
+      const bucket = t - (t % gran);
+      let last = bars[bars.length - 1];
+      if (!last || bucket > last.time) {
+        last = { time: bucket, open: price, high: price, low: price, close: price, volume: size };
+        bars.push(last);
+      } else {
+        last.high = Math.max(last.high, price); last.low = Math.min(last.low, price);
+        last.close = price; last.volume += size;
+      }
+      candle.update(last);
+      vol.update({ time: last.time, value: last.volume, color: last.close>=last.open?'rgba(31,211,90,.5)':'rgba(176,38,255,.5)' });
+      // big trade -> bubble marker (threshold scales with price so it's meaningful per coin)
+      const notional = price * size;
+      if (notional > bigThreshold()) {
+        bubbleMarkers.push({ time: bucket, position: m.side==='buy'?'belowBar':'aboveBar',
+          color: m.side==='buy'?'#18e3e3':'#ec3ad6', shape:'circle',
+          text: (size>=1?size.toFixed(1):size.toFixed(2)) });
+        if (bubbleMarkers.length > 120) bubbleMarkers.shift();
+        applyMarkers();
+      }
+      throttleV6();
+    };
+    ws.onerror = () => { statusEl.textContent = symbol + ' · history only (live feed blocked)'; };
+  } catch (e) { /* history still shows */ }
+}
+function bigThreshold() {                 // ~ notional USD to count as a "big trade"
+  return { 60:60000, 300:120000, 900:250000, 3600:600000, 21600:1500000, 86400:3000000 }[gran] || 150000;
+}
+
+let v6Timer = null;
+function throttleV6() { if (v6Timer) return; v6Timer = setTimeout(() => { v6Timer=null; rebuildOverlays(); }, 1500); }
+
+function showError(e) {
+  statusEl.textContent = '';
+  errEl.style.display = 'flex';
+  errEl.innerHTML = `Couldn't load live data for <b>${symbol}</b> (${e.message}).<br>` +
+    `The Coinbase public feed may be blocked on this network.<br>` +
+    `Try another pair, or open the <a class="lnk" href="tradingview.html">all-pairs TradingView chart</a> ` +
+    `or the <a class="lnk" href="deepchart-demo.html">synthetic demo</a>.`;
+}
+
+// --- wiring -----------------------------------------------------------------
+$('symSel').addEventListener('change', e => { symbol = e.target.value; load(); });
+$('tfSel').addEventListener('change', e => { gran = TF[e.target.value]; load(); });
+$('tV6').addEventListener('change', rebuildOverlays);
+$('tBub').addEventListener('change', applyMarkers);
+$('tVol').addEventListener('change', applyVolVisible);
+new ResizeObserver(() => chart.applyOptions({})).observe($('chart'));
+
+if (!LWC) { showError(new Error('chart library failed to load')); }
+else load();
+</script>
 </body>
 </html>
