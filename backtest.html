@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V6 Backtester</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #08080b; color: #cfd2dc; overflow: hidden;
+    font: 13px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  .bar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 7px 10px;
+    background: #0a0a0c; border-bottom: 1px solid #161620; }
+  select, input { background: #14141a; border: 1px solid #25252f; border-radius: 6px;
+    color: #cfd2dc; font-size: 12px; padding: 5px 7px; -webkit-appearance: none; appearance: none; }
+  input[type=number] { width: 56px; }
+  label.f { display: inline-flex; align-items: center; gap: 4px; color: #8b90a0; font-size: 11px; }
+  button#run { background: #1fd35a; color: #000; font-weight: 700; border: 0; border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  #body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+  .card { background: #0d0d11; border: 1px solid #1b1b24; border-radius: 8px; padding: 9px 10px; }
+  .card .k { color: #6b6f7d; font-size: 10.5px; text-transform: uppercase; letter-spacing: .3px; }
+  .card .v { font-size: 17px; font-weight: 700; margin-top: 2px; }
+  .pos { color: #1fd35a; } .neg { color: #ec3ad6; } .mut { color: #cfd2dc; }
+  #eq { width: 100%; height: 200px; background: #0d0d11; border: 1px solid #1b1b24; border-radius: 8px; display: block; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11.5px; }
+  th, td { text-align: right; padding: 5px 6px; border-bottom: 1px solid #15151c; white-space: nowrap; }
+  th { color: #6b6f7d; font-weight: 600; position: sticky; top: 0; background: #08080b; }
+  td.l, th.l { text-align: left; }
+  #msg { color: #8b90a0; padding: 6px 2px; font-size: 12px; }
+  .long { color: #18e3e3; } .short { color: #ec3ad6; }
+  .hd { color: #6b6f7d; font-size: 11px; margin: 4px 2px 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar">
+    <select id="sym"></select>
+    <select id="tf"></select>
+    <label class="f">bars <input type="number" id="bars" value="1000" min="200" max="3000"></label>
+    <select id="dir"><option>Long & Short</option><option>Long only</option><option>Short only</option></select>
+    <select id="mode"><option>Reversal (OB/OS)</option><option>Trend pullback</option></select>
+    <label class="f">SL×ATR <input type="number" id="sl" value="2" step="0.1"></label>
+    <label class="f">TP×ATR <input type="number" id="tp" value="3" step="0.1"></label>
+    <select id="sizing"><option value="risk">Risk 1%/trade</option><option value="equity">10% equity</option></select>
+    <button id="run">▶ Run backtest</button>
+  </div>
+  <div id="body">
+    <div id="msg">Pick settings and tap “Run backtest”. Uses real Coinbase history.</div>
+    <div class="cards" id="cards" style="display:none"></div>
+    <canvas id="eq" style="display:none"></canvas>
+    <div id="tradesWrap" style="display:none">
+      <div class="hd">Trades (most recent first)</div>
+      <table id="tt"><thead><tr>
+        <th class="l">#</th><th class="l">Side</th><th>Entry</th><th>Exit</th><th>Reason</th><th>R</th><th>P&amp;L</th><th>Equity</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ----------------------------------------------------------------------------
+// V6 WaveTrend strategy backtester — real Coinbase history, browser-side sim.
+// Mirrors v6-strategy.pine: WaveTrend signals + ATR stop/target + opposite-
+// signal exit, with risk-% or equity-% position sizing and commissions.
+// ----------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const SYMBOLS = ['BTC-USD','ETH-USD','SOL-USD','XRP-USD','DOGE-USD','AVAX-USD','LINK-USD','LTC-USD'];
+const TF = { '1m':60, '5m':300, '15m':900, '1h':3600, '6h':21600, '1D':86400 };
+for (const s of SYMBOLS){ const o=document.createElement('option'); o.value=o.textContent=s; $('sym').appendChild(o); }
+for (const k of Object.keys(TF)){ const o=document.createElement('option'); o.value=k; o.textContent=k; $('tf').appendChild(o); }
+$('tf').value = '1h';
+
+const COMMISSION = 0.0005;   // 0.05% per side
+const OB = 60, OSv = -60, PULL = 20, ATRLEN = 14, AVG = 21, CHAN = 10, SIGL = 4;
+
+// indicators -----------------------------------------------------------------
+const ema = (a,n)=>{ const k=2/(n+1); let e=a[0]; return a.map(v=>(e=v*k+e*(1-k))); };
+const sma = (a,n)=>a.map((_,i)=>{ let s=0,c=0; for(let j=Math.max(0,i-n+1);j<=i;j++){s+=a[j];c++;} return s/c; });
+function atrArr(bars,n){
+  const tr = bars.map((b,i)=> i? Math.max(b.high-b.low, Math.abs(b.high-bars[i-1].close), Math.abs(b.low-bars[i-1].close)) : b.high-b.low);
+  const out=[]; let r=tr[0];                                  // Wilder RMA
+  for(let i=0;i<tr.length;i++){ r = i? (r*(n-1)+tr[i])/n : tr[i]; out.push(r); }
+  return out;
+}
+function waveTrend(bars){
+  const src = bars.map(b=>(b.high+b.low+b.close)/3);
+  const esa = ema(src,CHAN);
+  const de  = ema(src.map((v,i)=>Math.abs(v-esa[i])),CHAN);
+  const ci  = src.map((v,i)=>(v-esa[i])/(0.015*(de[i]||1e-9)));
+  const wt1 = ema(ci,AVG), wt2 = sma(wt1,SIGL);
+  return { wt1, wt2 };
+}
+
+// fetch paginated history ----------------------------------------------------
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+async function fetchCandles(sym, gran, need){
+  let all=[], end=Math.floor(Date.now()/1000), guard=0;
+  while (all.length < need && guard++ < 15){
+    const start = end - 300*gran;
+    const url = `https://api.exchange.coinbase.com/products/${sym}/candles?granularity=${gran}`+
+                `&start=${new Date(start*1000).toISOString()}&end=${new Date(end*1000).toISOString()}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const raw = await r.json();
+    if (!raw.length) break;
+    all = raw.concat(all);
+    end = start;
+    await sleep(140);
+  }
+  const map = new Map();
+  for (const c of all) map.set(c[0], { time:c[0], low:c[1], high:c[2], open:c[3], close:c[4], volume:c[5] });
+  return [...map.values()].sort((a,b)=>a.time-b.time);
+}
+
+// simulate -------------------------------------------------------------------
+function backtest(bars, opt){
+  const { wt1, wt2 } = waveTrend(bars);
+  const atr = atrArr(bars, ATRLEN);
+  const trend = opt.mode === 'Trend pullback';
+  const sig = bars.map((_,i)=>{
+    if (i<1) return {buy:false,sell:false};
+    const cu = wt1[i-1]<=wt2[i-1] && wt1[i]>wt2[i];
+    const cd = wt1[i-1]>=wt2[i-1] && wt1[i]<wt2[i];
+    const buy  = cu && (trend ? wt2[i] <= -PULL : wt2[i] <= OSv);
+    const sell = cd && (trend ? wt2[i] >=  PULL : wt2[i] >= OB);
+    return { buy, sell };
+  });
+  const allowL = opt.dir !== 'Short only', allowS = opt.dir !== 'Long only';
+
+  let eq = 10000;
+  const startEq = eq;
+  const trades = [], curve = [{ t: bars[ATRLEN].time, eq }];
+  let pos = null;
+
+  const sizeQty = (price, a) => {
+    if (opt.sizing === 'risk'){ const risk = eq*0.01, dist = a*opt.sl || price*0.005;
+      let q = risk/dist; if (q*price > eq*5) q = eq*5/price; return q; }
+    return (eq*0.10)/price;     // 10% equity notional
+  };
+  const closeTrade = (exit, idx, reason) => {
+    const gross = pos.qty*(exit-pos.entry)*(pos.side==='long'?1:-1);
+    const fees = (pos.qty*pos.entry + pos.qty*exit)*COMMISSION;
+    const pnl = gross - fees;
+    eq += pnl;
+    trades.push({ side:pos.side, entry:pos.entry, exit, reason, pnl,
+      r: pnl/(pos.riskAmt||1), eq });
+    curve.push({ t: bars[idx].time, eq });
+    pos = null;
+  };
+
+  for (let i = ATRLEN+1; i < bars.length; i++){
+    // intrabar stop/target on bars after entry (stop checked first = conservative)
+    if (pos && i > pos.idx){
+      const b = bars[i];
+      if (pos.side==='long'){
+        if (b.low  <= pos.stop)   closeTrade(pos.stop,   i, 'stop');
+        else if (b.high>= pos.target) closeTrade(pos.target, i, 'target');
+      } else {
+        if (b.high >= pos.stop)   closeTrade(pos.stop,   i, 'stop');
+        else if (b.low <= pos.target) closeTrade(pos.target, i, 'target');
+      }
+    }
+    const s = sig[i], price = bars[i].close, a = atr[i];
+    // opposite-signal exit
+    if (pos){
+      if (pos.side==='long'  && s.sell) closeTrade(price, i, 'opp');
+      else if (pos.side==='short' && s.buy)  closeTrade(price, i, 'opp');
+    }
+    // entries (allow stop-and-reverse same bar)
+    if (!pos){
+      if (s.buy && allowL){
+        const stop = price - a*opt.sl, target = price + a*opt.tp;
+        pos = { side:'long', entry:price, stop, target, qty:sizeQty(price,a), riskAmt:eq*0.01, idx:i, t:bars[i].time };
+      } else if (s.sell && allowS){
+        const stop = price + a*opt.sl, target = price - a*opt.tp;
+        pos = { side:'short', entry:price, stop, target, qty:sizeQty(price,a), riskAmt:eq*0.01, idx:i, t:bars[i].time };
+      }
+    }
+  }
+  if (pos) closeTrade(bars[bars.length-1].close, bars.length-1, 'end');
+
+  // stats
+  const wins = trades.filter(t=>t.pnl>0), losses = trades.filter(t=>t.pnl<=0);
+  const gp = wins.reduce((a,t)=>a+t.pnl,0), gl = -losses.reduce((a,t)=>a+t.pnl,0);
+  let peak=-Infinity, maxDD=0;
+  for (const c of curve){ peak=Math.max(peak,c.eq); maxDD=Math.max(maxDD,(peak-c.eq)/peak); }
+  return {
+    bars: bars.length, from: bars[0].time, to: bars[bars.length-1].time,
+    trades, curve, eqEnd: eq,
+    netPct: (eq/startEq-1)*100,
+    nTrades: trades.length, winRate: trades.length? wins.length/trades.length*100 : 0,
+    pf: gl>0 ? gp/gl : (gp>0? Infinity : 0),
+    maxDD: maxDD*100,
+    avgR: trades.length ? trades.reduce((a,t)=>a+t.r,0)/trades.length : 0,
+  };
+}
+
+// render ---------------------------------------------------------------------
+function fmtUsd(v){ return (v<0?'-':'')+'$'+Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0}); }
+function sgn(v){ return v>=0?'pos':'neg'; }
+function render(R){
+  $('msg').textContent = `${R.nTrades} trades over ${R.bars} bars · ` +
+    `${new Date(R.from*1000).toLocaleDateString()} → ${new Date(R.to*1000).toLocaleDateString()}`;
+  const cards = [
+    ['Net return', (R.netPct>=0?'+':'')+R.netPct.toFixed(1)+'%', sgn(R.netPct)],
+    ['End equity', fmtUsd(R.eqEnd), sgn(R.eqEnd-10000)],
+    ['Win rate', R.winRate.toFixed(0)+'%', R.winRate>=50?'pos':'mut'],
+    ['Profit factor', R.pf===Infinity?'∞':R.pf.toFixed(2), R.pf>=1?'pos':'neg'],
+    ['Max drawdown', '-'+R.maxDD.toFixed(1)+'%', 'neg'],
+    ['Avg R / trade', (R.avgR>=0?'+':'')+R.avgR.toFixed(2)+'R', sgn(R.avgR)],
+  ];
+  $('cards').innerHTML = cards.map(([k,v,c])=>`<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join('');
+  $('cards').style.display='grid';
+  drawEquity(R.curve);
+  $('eq').style.display='block';
+  const tb = $('tt').querySelector('tbody');
+  tb.innerHTML = R.trades.slice().reverse().slice(0,60).map((t,i)=>{
+    const n = R.trades.length - i;
+    return `<tr><td class="l">${n}</td><td class="l ${t.side}">${t.side}</td>`+
+      `<td>${t.entry.toFixed(2)}</td><td>${t.exit.toFixed(2)}</td><td>${t.reason}</td>`+
+      `<td class="${sgn(t.r)}">${(t.r>=0?'+':'')+t.r.toFixed(2)}</td>`+
+      `<td class="${sgn(t.pnl)}">${fmtUsd(t.pnl)}</td><td>${fmtUsd(t.eq)}</td></tr>`;
+  }).join('');
+  $('tradesWrap').style.display='block';
+}
+function drawEquity(curve){
+  const cv=$('eq'), dpr=Math.max(1,devicePixelRatio||1);
+  const w=cv.clientWidth, h=200; cv.width=w*dpr; cv.height=h*dpr;
+  const x=cv.getContext('2d'); x.setTransform(dpr,0,0,dpr,0,0); x.clearRect(0,0,w,h);
+  const ys=curve.map(c=>c.eq); let lo=Math.min(...ys), hi=Math.max(...ys); if(lo===hi){lo-=1;hi+=1;}
+  const px=i=>10+i/(curve.length-1)*(w-20), py=v=>10+(hi-v)/(hi-lo)*(h-20);
+  // baseline at starting equity
+  x.strokeStyle='#2a2a34'; x.setLineDash([4,4]); x.beginPath(); x.moveTo(10,py(10000)); x.lineTo(w-10,py(10000)); x.stroke(); x.setLineDash([]);
+  // equity line + fill
+  x.beginPath(); curve.forEach((c,i)=> i?x.lineTo(px(i),py(c.eq)):x.moveTo(px(i),py(c.eq)));
+  const up = curve[curve.length-1].eq >= 10000;
+  x.lineTo(px(curve.length-1),py(lo)); x.lineTo(px(0),py(lo)); x.closePath();
+  x.fillStyle = up?'rgba(31,211,90,.12)':'rgba(236,58,214,.12)'; x.fill();
+  x.beginPath(); curve.forEach((c,i)=> i?x.lineTo(px(i),py(c.eq)):x.moveTo(px(i),py(c.eq)));
+  x.strokeStyle = up?'#1fd35a':'#ec3ad6'; x.lineWidth=2; x.stroke();
+}
+
+async function run(){
+  const sym=$('sym').value, gran=TF[$('tf').value], need=Math.min(3000,Math.max(200,+$('bars').value||1000));
+  $('run').disabled=true; $('msg').textContent='Fetching '+sym+' history…';
+  $('cards').style.display='none'; $('eq').style.display='none'; $('tradesWrap').style.display='none';
+  try {
+    const bars = await fetchCandles(sym, gran, need);
+    if (bars.length < 60) throw new Error('not enough data ('+bars.length+' bars)');
+    const R = backtest(bars, { dir:$('dir').value, mode:$('mode').value,
+      sl:+$('sl').value||2, tp:+$('tp').value||3, sizing:$('sizing').value });
+    render(R);
+  } catch(e){
+    $('msg').textContent = 'Could not run: '+e.message+'. The Coinbase feed may be blocked on this network — try another network or pair.';
+  } finally { $('run').disabled=false; }
+}
+$('run').addEventListener('click', run);
+</script>
+</body>
+</html>
