@@ -1,0 +1,55 @@
+//@version=6
+// =============================================================================
+// V6 WaveTrend — momentum oscillator with overbought/oversold cross signals
+// Paste into TradingView's Pine Editor (chart -> Pine Editor -> paste -> "Add to
+// chart"). Opens in its own pane below price.
+// =============================================================================
+indicator("V6 WaveTrend", shorttitle="V6", overlay=false, timeframe="", timeframe_gaps=true)
+
+// ---- inputs -----------------------------------------------------------------
+chanLen  = input.int(10,  "Channel length",  minval=1, group="WaveTrend")
+avgLen   = input.int(21,  "Average length",  minval=1, group="WaveTrend")
+sigLen   = input.int(4,   "Signal length",   minval=1, group="WaveTrend")
+src      = input.source(hlc3, "Source", group="WaveTrend")
+obLevel  = input.int(60,  "Overbought", group="Levels")
+osLevel  = input.int(-60, "Oversold",   group="Levels")
+showFill = input.bool(true, "Shade fast/signal", group="Style")
+showDots = input.bool(true, "Cross dots in OB/OS zones", group="Style")
+
+// ---- WaveTrend calculation --------------------------------------------------
+esa = ta.ema(src, chanLen)
+de  = ta.ema(math.abs(src - esa), chanLen)
+ci  = (src - esa) / (0.015 * de)
+wt1 = ta.ema(ci, avgLen)        // fast line
+wt2 = ta.sma(wt1, sigLen)       // signal line
+diff = wt1 - wt2
+
+// ---- levels -----------------------------------------------------------------
+hline(0,        "Zero",        color=color.new(color.gray, 40), linestyle=hline.style_dotted)
+obL = hline(obLevel, "Overbought", color=color.new(color.gray, 65), linestyle=hline.style_dashed)
+osL = hline(osLevel, "Oversold",   color=color.new(color.gray, 65), linestyle=hline.style_dashed)
+hline(0, display=display.none)
+fill(obL, osL, color=color.new(color.gray, 96))
+
+// ---- plots ------------------------------------------------------------------
+cyan   = #18e3e3
+purple = #b026ff
+p1 = plot(wt1, "WT fast",   color=cyan,   linewidth=2)
+p2 = plot(wt2, "WT signal", color=purple, linewidth=1)
+fill(p1, p2, color = showFill ? color.new(diff >= 0 ? cyan : purple, 82) : na)
+
+// histogram of the wt1/wt2 spread (momentum strength)
+plot(diff, "Momentum", color=color.new(diff >= 0 ? cyan : purple, 35), style=plot.style_columns)
+
+// ---- signals: crosses inside the extreme zones ------------------------------
+buySig  = ta.crossover(wt1, wt2)  and wt2 <= osLevel
+sellSig = ta.crossunder(wt1, wt2) and wt2 >= obLevel
+
+plotshape(showDots and buySig  ? wt2 : na, "Buy cross",  shape.circle, location.absolute, color=cyan,   size=size.small)
+plotshape(showDots and sellSig ? wt2 : na, "Sell cross", shape.circle, location.absolute, color=#ec3ad6, size=size.small)
+
+barcolor(buySig ? cyan : sellSig ? #ec3ad6 : na)
+
+// ---- alerts -----------------------------------------------------------------
+alertcondition(buySig,  title="V6 Buy",  message="V6 WaveTrend: oversold buy cross on {{ticker}} ({{interval}})")
+alertcondition(sellSig, title="V6 Sell", message="V6 WaveTrend: overbought sell cross on {{ticker}} ({{interval}})")

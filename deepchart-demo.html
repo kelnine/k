@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>DeepChart Clone — Order Flow Visualization</title>
+<style>
+  :root {
+    --bg: #000; --panel: #0a0a0c; --grid: #161620;
+    --text: #cfd2dc; --muted: #6b6f7d;
+    --buy: #1fd35a; --sell: #b026ff; --neutral: #1e2146;
+    --bubbleBuy: #18e3e3; --bubbleSell: #ec3ad6; --line: #2bdc6a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; background: var(--panel);
+    border-bottom: 1px solid var(--grid); flex-wrap: wrap;
+  }
+  select.pill, .pill {
+    background: #14141a; border: 1px solid #25252f; border-radius: 6px;
+    padding: 6px 10px; color: var(--text); font-size: 12px; cursor: pointer;
+    -webkit-appearance: none; appearance: none;
+  }
+  select.pill.sym { color: var(--buy); font-weight: 600; }
+  .seg { display: flex; border: 1px solid #25252f; border-radius: 6px; overflow: hidden; }
+  .seg button {
+    background: #14141a; color: var(--muted); border: 0;
+    padding: 6px 12px; cursor: pointer; font-size: 12px;
+  }
+  .seg button.active { background: var(--buy); color: #000; font-weight: 600; }
+  .spacer { flex: 1; }
+  .title { font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+  .title b { color: var(--buy); }
+  #stage { position: relative; flex: 1; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .legend {
+    position: absolute; left: 10px; bottom: 10px;
+    background: rgba(10,10,14,.82); border: 1px solid var(--grid);
+    border-radius: 8px; padding: 7px 9px; font-size: 10.5px; color: var(--muted);
+    backdrop-filter: blur(4px); pointer-events: none;
+  }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .hint {
+    position: absolute; left: 10px; top: 8px; right: 10px; color: var(--muted);
+    font-size: 10.5px; pointer-events: none; text-shadow: 0 0 6px #000, 0 0 6px #000;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <select class="pill sym" id="symSel"></select>
+    <span class="pill">10D · BT</span>
+    <select class="pill" id="tfSel"></select>
+    <div class="seg" id="viewSeg">
+      <button data-view="footprint" class="active">Deep Print</button>
+      <button data-view="bubbles">Big Trades</button>
+      <button data-view="v6">V6</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="title">This is <b>DeepChart</b>.</span>
+    <span class="pill" id="regen">↻ New data</span>
+  </header>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+
+<script>
+// ----------------------------------------------------------------------------
+// DeepChart clone — synthetic order-flow data + canvas rendering.
+// Views: Deep Print (footprint), Big Trades (bubbles), V6 (WaveTrend oscillator).
+// Symbol + timeframe selectors regenerate coherent data per instrument.
+// Zero dependencies.
+// ----------------------------------------------------------------------------
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hint = document.getElementById('hint');
+const legend = document.getElementById('legend');
+const symSel = document.getElementById('symSel');
+const tfSel = document.getElementById('tfSel');
+
+// instrument table: base price, tick size, decimals, per-bar volatility ------
+const INSTRUMENTS = {
+  'ES-202606':  { base: 5300,   tick: 0.25,   dec: 2, vol: 1.1  },
+  'NQ-202606':  { base: 18500,  tick: 0.25,   dec: 2, vol: 4.5  },
+  'BTC-USD':    { base: 67000,  tick: 1,      dec: 0, vol: 110  },
+  'ETH-USD':    { base: 3500,   tick: 0.5,    dec: 1, vol: 8    },
+  'SOL-USD':    { base: 168,    tick: 0.01,   dec: 2, vol: 0.9  },
+  'EUR/USD':    { base: 1.0850, tick: 0.0001, dec: 4, vol: 0.0006 },
+  'GC-202608':  { base: 2350,   tick: 0.10,   dec: 1, vol: 3    },
+  'CL-202607':  { base: 78.50,  tick: 0.01,   dec: 2, vol: 0.16 },
+};
+// timeframe -> volatility multiplier (higher TF = bigger swings) -------------
+const TIMEFRAMES = {
+  '1 Minute': 0.5, '5 Minute': 1, '15 Minute': 1.8,
+  '1 Hour': 3.4, '4 Hour': 6, '1 Day': 11,
+};
+
+let symbol = 'ES-202606';
+let timeframe = '1 Minute';
+let view = 'footprint';
+
+// populate selectors
+for (const k of Object.keys(INSTRUMENTS)) {
+  const o = document.createElement('option'); o.value = o.textContent = k; symSel.appendChild(o);
+}
+for (const k of Object.keys(TIMEFRAMES)) {
+  const o = document.createElement('option'); o.value = o.textContent = k; tfSel.appendChild(o);
+}
+symSel.value = symbol; tfSel.value = timeframe;
+
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+let W = 0, H = 0;
+
+// --- RNG --------------------------------------------------------------------
+function makeRng(seed) {
+  let s = seed >>> 0 || 1;
+  return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+let rng = makeRng((Math.random() * 1e9) | 0);
+const randn = () => { let x = 0; for (let i = 0; i < 6; i++) x += rng(); return (x - 3) / 1.5; };
+
+// --- data generation --------------------------------------------------------
+function genBars(n) {
+  const inst = INSTRUMENTS[symbol];
+  const step = inst.vol * TIMEFRAMES[timeframe];   // effective per-bar move
+  const bars = [];
+  let price = inst.base, cumDelta = 0;
+  for (let i = 0; i < n; i++) {
+    const drift = (Math.sin(i / 7) * 0.6 + randn() * 1.1) * step;
+    const open = price;
+    const close = open + drift;
+    const hi = Math.max(open, close) + Math.abs(randn()) * step * 0.8 + inst.tick;
+    const lo = Math.min(open, close) - Math.abs(randn()) * step * 0.8 - inst.tick;
+    price = close;
+
+    // split bar range into a readable number of price-level cells
+    let nLv = Math.round((hi - lo) / inst.tick);
+    nLv = Math.max(5, Math.min(48, nLv));
+    const dp = (hi - lo) / nLv;
+    const levels = [];
+    for (let k = 0; k <= nLv; k++) {
+      const lp = lo + k * dp;
+      const dist = Math.abs(lp - close) / (step + dp);
+      const intensity = Math.exp(-dist * dist * 0.8);
+      const base = 4 + intensity * 60;
+      const bias = close > open ? 0.6 : 0.4;
+      const ask = Math.round(base * bias + Math.abs(randn()) * 6);
+      const bid = Math.round(base * (1 - bias) + Math.abs(randn()) * 6);
+      levels.push({ price: lp, bid, ask, delta: ask - bid });
+    }
+    const barDelta = levels.reduce((a, l) => a + l.delta, 0);
+    const vol = levels.reduce((a, l) => a + l.bid + l.ask, 0);
+    cumDelta += barDelta;
+    bars.push({ i, open, close, hi, lo, levels, delta: barDelta, vol, cumDelta });
+  }
+  return bars;
+}
+
+function genPrints(line) {
+  const prints = [];
+  for (let i = 1; i < line.length - 1; i++) {
+    if (rng() > 0.32) continue;
+    const up = line[i] >= line[i - 1];
+    prints.push({ i, price: line[i], side: up ? 'buy' : 'sell', size: 30 + (Math.abs(randn()) * 900 | 0) });
+  }
+  return prints;
+}
+
+// WaveTrend ("V6"-style) oscillator from closes ------------------------------
+function ema(arr, len) {
+  const k = 2 / (len + 1); let e = arr[0]; const out = [];
+  for (const v of arr) { e = v * k + e * (1 - k); out.push(e); } return out;
+}
+function sma(arr, len) {
+  return arr.map((_, i) => {
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - len + 1); j <= i; j++) { s += arr[j]; c++; }
+    return s / c;
+  });
+}
+function genWaveTrend(closes) {
+  const esa = ema(closes, 10);
+  const dd = ema(closes.map((v, i) => Math.abs(v - esa[i])), 10);
+  const ci = closes.map((v, i) => (v - esa[i]) / (0.015 * (dd[i] || 1e-9)));
+  const wt1 = ema(ci, 21);
+  const wt2 = sma(wt1, 4);
+  const dots = [];
+  for (let i = 1; i < wt1.length; i++) {
+    const crossUp = wt1[i - 1] <= wt2[i - 1] && wt1[i] > wt2[i];
+    const crossDn = wt1[i - 1] >= wt2[i - 1] && wt1[i] < wt2[i];
+    if (crossUp && wt2[i] < -45) dots.push({ i, v: wt2[i], side: 'buy' });
+    if (crossDn && wt2[i] > 45) dots.push({ i, v: wt2[i], side: 'sell' });
+  }
+  return { wt1, wt2, dots };
+}
+
+let bars, line, prints, markers, wave;
+function regen() {
+  rng = makeRng((Math.random() * 1e9) | 0);
+  bars = genBars(46);
+  line = bars.map(b => b.close);
+  prints = genPrints(line);
+  let hiIdx = 0, loIdx = 0;
+  line.forEach((p, i) => { if (p > line[hiIdx]) hiIdx = i; if (p < line[loIdx]) loIdx = i; });
+  markers = [
+    { i: hiIdx, type: 'sell', size: 500, ticks: 25 },
+    { i: loIdx, type: 'buy', size: 500, ticks: 15 },
+  ];
+  wave = genWaveTrend(line);
+  draw();
+}
+
+// --- rendering helpers ------------------------------------------------------
+function resize() {
+  const r = cv.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  draw();
+}
+function fmt(p) { return p.toFixed(INSTRUMENTS[symbol].dec); }
+function priceExtent(pad = 0.04) {
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { lo = Math.min(lo, b.lo); hi = Math.max(hi, b.hi); }
+  const span = hi - lo || 1; return { lo: lo - span * pad, hi: hi + span * pad };
+}
+const C_BUY = [31, 211, 90], C_SELL = [176, 38, 255], C_NEU = [30, 33, 70];
+function lerp(a, b, t) { return a.map((c, i) => Math.round(c + (b[i] - c) * t)); }
+function deltaColor(delta, maxAbs) {
+  const t = Math.min(1, Math.abs(delta) / (maxAbs || 1));
+  const [r, g, b] = lerp(C_NEU, delta >= 0 ? C_BUY : C_SELL, 0.25 + t * 0.75);
+  return `rgb(${r},${g},${b})`;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  if (view === 'footprint') drawFootprint();
+  else if (view === 'bubbles') drawBubbles();
+  else drawV6();
+}
+
+// ---- Deep Print ------------------------------------------------------------
+function drawFootprint() {
+  const padL = 8, padR = 66, padT = 44;
+  const chartH = H * 0.6;
+  const { lo, hi } = priceExtent();
+  const y = p => padT + (hi - p) / (hi - lo) * (chartH - padT);
+  const slot = (W - padL - padR) / bars.length;
+  const cellH = Math.max(7, (chartH - padT) / 72);
+
+  ctx.strokeStyle = '#3a3a44'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+  const yRef = y(hi - (hi - lo) * 0.05);
+  ctx.beginPath(); ctx.moveTo(padL, yRef); ctx.lineTo(W - padR, yRef); ctx.stroke();
+  ctx.setLineDash([]);
+
+  let maxAbs = 1;
+  for (const b of bars) for (const l of b.levels) maxAbs = Math.max(maxAbs, Math.abs(l.delta));
+
+  ctx.font = '9px ui-monospace, Menlo, monospace';
+  ctx.textBaseline = 'middle';
+  for (const b of bars) {
+    const cx = padL + b.i * slot + slot / 2;
+    const bw = Math.min(slot * 0.82, 54);
+    ctx.strokeStyle = b.close >= b.open ? 'rgba(31,211,90,.5)' : 'rgba(176,38,255,.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, y(b.hi)); ctx.lineTo(cx, y(b.lo)); ctx.stroke();
+    for (const l of b.levels) {
+      const yy = y(l.price);
+      ctx.fillStyle = deltaColor(l.delta, maxAbs);
+      ctx.fillRect(cx - bw / 2, yy - cellH / 2, bw, cellH - 1);
+      ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeRect(cx - bw / 2, yy - cellH / 2, bw, cellH - 1);
+      if (cellH >= 9 && bw > 20) { ctx.fillStyle = '#e9ecf5'; ctx.textAlign = 'center'; ctx.fillText(l.delta, cx, yy); }
+    }
+  }
+
+  ctx.fillStyle = '#6b6f7d'; ctx.textAlign = 'left';
+  for (let k = 0; k <= 5; k++) { const p = lo + (hi - lo) * k / 5; ctx.fillText(fmt(p), W - padR + 6, y(p)); }
+
+  // lower panel: cumulative delta line + volume histogram
+  const panelT = chartH + 18, panelH = H - panelT - 12;
+  const cds = bars.map(b => b.cumDelta);
+  const cdLo = Math.min(...cds), cdHi = Math.max(...cds);
+  const cy = v => panelT + (cdHi - v) / ((cdHi - cdLo) || 1) * (panelH * 0.55);
+  const volMax = Math.max(...bars.map(b => b.vol));
+  const volBase = H - 12, volH = panelH * 0.4;
+  for (const b of bars) {
+    const cx = padL + b.i * slot + slot / 2, bw = Math.min(slot * 0.5, 16);
+    const h = b.vol / volMax * volH;
+    ctx.fillStyle = b.delta >= 0 ? 'rgba(24,227,227,.85)' : 'rgba(236,58,214,.85)';
+    ctx.fillRect(cx - bw / 2, volBase - h, bw, h);
+  }
+  ctx.strokeStyle = '#2bdc6a'; ctx.lineWidth = 2; ctx.beginPath();
+  bars.forEach((b, i) => { const cx = padL + b.i * slot + slot / 2; i ? ctx.lineTo(cx, cy(b.cumDelta)) : ctx.moveTo(cx, cy(b.cumDelta)); });
+  ctx.stroke();
+
+  hint.textContent = `${symbol} · ${timeframe} — cells = price levels, number = bid/ask delta`;
+  legend.innerHTML = legendRows([
+    ['var(--buy)', 'Buy-dominant level (+Δ)'],
+    ['var(--sell)', 'Sell-dominant level (−Δ)'],
+    ['var(--neutral)', 'Balanced'],
+    ['#2bdc6a', 'Cumulative delta'],
+  ]);
+}
+
+// ---- Big Trades ------------------------------------------------------------
+function drawBubbles() {
+  const padL = 12, padR = 12, padT = 70, padB = 90;
+  const lo = Math.min(...line), hi = Math.max(...line), span = (hi - lo) || 1;
+  const x = i => padL + i / (line.length - 1) * (W - padL - padR);
+  const y = p => padT + (hi - p) / span * (H - padT - padB);
+
+  ctx.strokeStyle = '#3a3a44'; ctx.setLineDash([3, 5]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, H - padB + 30); ctx.lineTo(W - padR, H - padB + 30); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = '#2bdc6a'; ctx.lineWidth = 2; ctx.beginPath();
+  line.forEach((p, i) => { i ? ctx.lineTo(x(i), y(p)) : ctx.moveTo(x(i), y(p)); });
+  ctx.stroke();
+
+  const maxSz = Math.max(...prints.map(p => p.size), 1);
+  for (const pr of prints) {
+    const r = 4 + Math.sqrt(pr.size / maxSz) * 26, cx = x(pr.i), cyp = y(pr.price);
+    const col = pr.side === 'buy' ? '24,227,227' : '236,58,214';
+    const g = ctx.createRadialGradient(cx, cyp, 1, cx, cyp, r);
+    g.addColorStop(0, `rgba(${col},.95)`); g.addColorStop(1, `rgba(${col},.12)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cyp, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.textAlign = 'center'; ctx.font = '600 18px ui-monospace, Menlo, monospace';
+  for (const m of markers) {
+    const cx = x(m.i), cyp = y(line[m.i]);
+    if (m.type === 'sell') {
+      const ty = cyp - 60;
+      ctx.strokeStyle = 'rgba(255,60,60,.45)'; ctx.beginPath(); ctx.moveTo(cx, cyp); ctx.lineTo(cx, ty); ctx.stroke();
+      ctx.fillStyle = '#ff2e2e'; tri(cx, ty, 22, false);
+      ctx.fillStyle = '#fff'; ctx.fillText(`${m.size} (${m.ticks})`, cx, ty - 34);
+    } else {
+      const ty = cyp + 60;
+      ctx.strokeStyle = 'rgba(40,210,90,.45)'; ctx.beginPath(); ctx.moveTo(cx, cyp); ctx.lineTo(cx, ty); ctx.stroke();
+      ctx.fillStyle = '#22cc44'; tri(cx, ty, 22, true);
+      ctx.fillStyle = '#fff'; ctx.fillText(`${m.size} (${m.ticks})`, cx, ty + 38);
+    }
+  }
+  hint.textContent = `${symbol} · ${timeframe} — bubbles = big prints sized by volume · ▲▼ entries`;
+  legend.innerHTML = legendRows([
+    ['var(--bubbleBuy)', 'Aggressive buy print'],
+    ['var(--bubbleSell)', 'Aggressive sell print'],
+    ['#22cc44', 'Long entry (size · ticks)'],
+    ['#ff2e2e', 'Short entry (size · ticks)'],
+  ]);
+}
+
+// ---- V6 (WaveTrend momentum oscillator) ------------------------------------
+function drawV6() {
+  const padL = 12, padR = 12, padT = 44, padB = 24;
+  const { wt1, wt2, dots } = wave;
+  const all = wt1.concat(wt2);
+  let lo = Math.min(-70, ...all), hi = Math.max(70, ...all);
+  const x = i => padL + i / (wt1.length - 1) * (W - padL - padR);
+  const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+
+  // overbought / oversold bands
+  ctx.fillStyle = 'rgba(176,38,255,.08)'; ctx.fillRect(padL, y(hi), W - padL - padR, y(53) - y(hi));
+  ctx.fillStyle = 'rgba(31,211,90,.08)'; ctx.fillRect(padL, y(-53), W - padL - padR, y(lo) - y(-53));
+  ctx.strokeStyle = '#2a2a34'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+  for (const lv of [60, 0, -60]) { ctx.beginPath(); ctx.moveTo(padL, y(lv)); ctx.lineTo(W - padR, y(lv)); ctx.stroke(); }
+  ctx.setLineDash([]);
+
+  // filled area between wt1 and wt2
+  ctx.beginPath();
+  wt1.forEach((v, i) => { i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)); });
+  for (let i = wt2.length - 1; i >= 0; i--) ctx.lineTo(x(i), y(wt2[i]));
+  ctx.closePath(); ctx.fillStyle = 'rgba(24,227,227,.18)'; ctx.fill();
+
+  // wt2 (back line) then wt1 (front line)
+  ctx.strokeStyle = 'rgba(176,38,255,.65)'; ctx.lineWidth = 1.6; ctx.beginPath();
+  wt2.forEach((v, i) => { i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)); }); ctx.stroke();
+  ctx.strokeStyle = '#18e3e3'; ctx.lineWidth = 2.2; ctx.beginPath();
+  wt1.forEach((v, i) => { i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)); }); ctx.stroke();
+
+  // cross dots in OB/OS zones
+  for (const d of dots) {
+    const cx = x(d.i), cyp = y(d.v), col = d.side === 'buy' ? '24,227,227' : '236,58,214';
+    const g = ctx.createRadialGradient(cx, cyp, 1, cx, cyp, 11);
+    g.addColorStop(0, `rgba(${col},1)`); g.addColorStop(1, `rgba(${col},.1)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cyp, 8, 0, Math.PI * 2); ctx.fill();
+  }
+
+  hint.textContent = `${symbol} · ${timeframe} — V6 WaveTrend: cyan = fast, purple = signal · dots = OB/OS crosses`;
+  legend.innerHTML = legendRows([
+    ['#18e3e3', 'WaveTrend fast (wt1)'],
+    ['var(--sell)', 'Signal (wt2)'],
+    ['var(--bubbleBuy)', 'Oversold buy cross'],
+    ['var(--bubbleSell)', 'Overbought sell cross'],
+  ]);
+}
+
+function legendRows(rows) {
+  return rows.map(([c, t]) => `<div class="row"><span class="sw" style="background:${c}"></span>${t}</div>`).join('');
+}
+function tri(cx, cy, s, up) {
+  ctx.beginPath();
+  if (up) { ctx.moveTo(cx, cy); ctx.lineTo(cx - s, cy + s * 1.2); ctx.lineTo(cx + s, cy + s * 1.2); }
+  else { ctx.moveTo(cx, cy); ctx.lineTo(cx - s, cy - s * 1.2); ctx.lineTo(cx + s, cy - s * 1.2); }
+  ctx.closePath(); ctx.fill();
+}
+
+// --- wiring -----------------------------------------------------------------
+document.getElementById('viewSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  view = btn.dataset.view;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b === btn));
+  draw();
+});
+symSel.addEventListener('change', () => { symbol = symSel.value; regen(); });
+tfSel.addEventListener('change', () => { timeframe = tfSel.value; regen(); });
+document.getElementById('regen').addEventListener('click', regen);
+window.addEventListener('resize', resize);
+
+regen();
+resize();
+</script>
+</body>
+</html>
