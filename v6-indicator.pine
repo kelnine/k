@@ -13,8 +13,9 @@ sigLen   = input.int(4,   "Signal length",   minval=1, group="WaveTrend")
 src      = input.source(hlc3, "Source", group="WaveTrend")
 obLevel  = input.int(60,  "Overbought", group="Levels")
 osLevel  = input.int(-60, "Oversold",   group="Levels")
-showFill = input.bool(true, "Shade fast/signal", group="Style")
-showDots = input.bool(true, "Cross dots in OB/OS zones", group="Style")
+showFill    = input.bool(true,  "Shade fast/signal",            group="Style")
+showDots    = input.bool(false, "Cross dots in oscillator pane", group="Style")
+mainSignals = input.bool(true,  "Signals on price chart",        group="Style")
 
 // ---- WaveTrend calculation --------------------------------------------------
 esa = ta.ema(src, chanLen)
@@ -45,8 +46,13 @@ plot(diff, "Momentum", color=color.new(diff >= 0 ? cyan : purple, 35), style=plo
 buySig  = ta.crossover(wt1, wt2)  and wt2 <= osLevel
 sellSig = ta.crossunder(wt1, wt2) and wt2 >= obLevel
 
+// dots inside this oscillator pane (optional)
 plotshape(showDots and buySig  ? wt2 : na, "Buy cross",  shape.circle, location.absolute, color=cyan,   size=size.small)
 plotshape(showDots and sellSig ? wt2 : na, "Sell cross", shape.circle, location.absolute, color=#ec3ad6, size=size.small)
+
+// signals on the MAIN price chart (force_overlay puts them on the candles)
+plotshape(mainSignals and buySig,  "Buy signal",  shape.triangleup,   location.belowbar, color=cyan,    size=size.small, text="Buy",  textcolor=cyan,    force_overlay=true)
+plotshape(mainSignals and sellSig, "Sell signal", shape.triangledown, location.abovebar, color=#ec3ad6, size=size.small, text="Sell", textcolor=#ec3ad6, force_overlay=true)
 
 barcolor(buySig ? cyan : sellSig ? #ec3ad6 : na)
 
