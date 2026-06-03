@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepChart Clone — Order Flow Visualization</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #0a0a0c;
+    --grid: #161620;
+    --text: #cfd2dc;
+    --muted: #6b6f7d;
+    --buy: #1fd35a;       /* green  - buy / bid dominant */
+    --sell: #b026ff;      /* purple - sell / ask dominant */
+    --neutral: #2b2f55;   /* dark blue - balanced        */
+    --bubbleBuy: #18e3e3; /* cyan   */
+    --bubbleSell: #ec3ad6;/* magenta*/
+    --line: #2bdc6a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--panel);
+    border-bottom: 1px solid var(--grid);
+    flex-wrap: wrap;
+  }
+  .pill {
+    background: #14141a; border: 1px solid #25252f;
+    border-radius: 6px; padding: 5px 10px; color: var(--text);
+    font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .pill.sym { color: var(--buy); font-weight: 600; cursor: default; }
+  .seg { display: flex; border: 1px solid #25252f; border-radius: 6px; overflow: hidden; }
+  .seg button {
+    background: #14141a; color: var(--muted); border: 0;
+    padding: 6px 14px; cursor: pointer; font-size: 12px;
+  }
+  .seg button.active { background: var(--buy); color: #000; font-weight: 600; }
+  .spacer { flex: 1; }
+  .title { font-weight: 700; letter-spacing: .3px; }
+  .title b { color: var(--buy); }
+
+  #stage { position: relative; flex: 1; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .legend {
+    position: absolute; left: 12px; bottom: 12px;
+    background: rgba(10,10,14,.78); border: 1px solid var(--grid);
+    border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--muted);
+    backdrop-filter: blur(4px);
+  }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .sw { width: 11px; height: 11px; border-radius: 2px; }
+  .hint { position: absolute; right: 12px; top: 10px; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="pill sym">ES-202606 ▾</span>
+    <span class="pill">10D · BT</span>
+    <span class="pill">1 Minute ▾</span>
+    <div class="seg" id="viewSeg">
+      <button data-view="footprint" class="active">Deep Print</button>
+      <button data-view="bubbles">Big Trades</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="title">This is <b>DeepChart</b>.</span>
+    <span class="pill" id="regen">↻ New data</span>
+  </header>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+
+<script>
+// ----------------------------------------------------------------------------
+// DeepChart clone — synthetic order-flow data + canvas rendering
+// Two views: a footprint ("Deep Print") chart and a big-trades bubble overlay.
+// Zero dependencies. Open this file in any browser.
+// ----------------------------------------------------------------------------
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hint = document.getElementById('hint');
+const legend = document.getElementById('legend');
+
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+let W = 0, H = 0;
+let view = 'footprint';
+
+// --- deterministic-ish RNG so "New data" gives fresh but coherent series ----
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
+}
+let rng = makeRng((Math.random() * 1e9) | 0);
+const randn = () => {           // approx normal via sum of uniforms
+  let x = 0; for (let i = 0; i < 6; i++) x += rng();
+  return (x - 3) / 1.5;
+};
+
+const TICK = 0.25;              // ES tick size
+
+// --- generate a price walk + per-bar footprint of bid/ask volume -------------
+function genBars(n) {
+  const bars = [];
+  let price = 5300;
+  let cumDelta = 0;
+  for (let i = 0; i < n; i++) {
+    const drift = Math.sin(i / 7) * 0.6 + randn() * 1.1;
+    const open = price;
+    const close = +(open + drift).toFixed(2);
+    const hi = Math.max(open, close) + Math.abs(randn()) * 0.8 + 0.25;
+    const lo = Math.min(open, close) - Math.abs(randn()) * 0.8 - 0.25;
+    price = close;
+
+    // build price levels from lo..hi on the tick grid, each with bid/ask volume
+    const levels = [];
+    const top = Math.round(hi / TICK) * TICK;
+    const bot = Math.round(lo / TICK) * TICK;
+    const nLv = Math.max(2, Math.round((top - bot) / TICK) + 1);
+    for (let k = 0; k < nLv; k++) {
+      const lp = +(bot + k * TICK).toFixed(2);
+      // volume concentrates toward the close (value area)
+      const dist = Math.abs(lp - close);
+      const intensity = Math.exp(-dist * dist / 1.4);
+      const base = 4 + intensity * 60;
+      const bias = (close > open ? 0.6 : 0.4);  // buy bias on up bars
+      const ask = Math.round(base * bias + Math.abs(randn()) * 6);  // aggressive buys
+      const bid = Math.round(base * (1 - bias) + Math.abs(randn()) * 6); // aggressive sells
+      levels.push({ price: lp, bid, ask, delta: ask - bid });
+    }
+    const barDelta = levels.reduce((a, l) => a + l.delta, 0);
+    const vol = levels.reduce((a, l) => a + l.bid + l.ask, 0);
+    cumDelta += barDelta;
+    bars.push({ i, open, close, hi: top, lo: bot, levels, delta: barDelta, vol, cumDelta });
+  }
+  return bars;
+}
+
+// --- generate big-trade prints for the bubble view ---------------------------
+function genPrints(line) {
+  const prints = [];
+  for (let i = 1; i < line.length - 1; i++) {
+    if (rng() > 0.32) continue;
+    const up = line[i] >= line[i - 1];
+    prints.push({
+      i,
+      price: line[i],
+      side: up ? 'buy' : 'sell',
+      size: 30 + Math.abs(randn()) * 900 | 0,   // contracts
+    });
+  }
+  return prints;
+}
+
+let bars, line, prints, markers;
+function regen() {
+  rng = makeRng((Math.random() * 1e9) | 0);
+  bars = genBars(46);
+  line = bars.map(b => b.close);
+  prints = genPrints(line);
+  // two trade markers: a short near the top, a long near the bottom
+  let hiIdx = 0, loIdx = 0;
+  line.forEach((p, i) => { if (p > line[hiIdx]) hiIdx = i; if (p < line[loIdx]) loIdx = i; });
+  markers = [
+    { i: hiIdx, type: 'sell', size: 500, ticks: 25 },
+    { i: loIdx, type: 'buy', size: 500, ticks: 15 },
+  ];
+  draw();
+}
+
+// ----------------------------------------------------------------------------
+// Rendering
+// ----------------------------------------------------------------------------
+function resize() {
+  const r = cv.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  draw();
+}
+
+function priceExtent(pad = 0.04) {
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { lo = Math.min(lo, b.lo); hi = Math.max(hi, b.hi); }
+  const span = hi - lo || 1;
+  return { lo: lo - span * pad, hi: hi + span * pad };
+}
+
+function lerpColor(a, b, t) {
+  return a.map((c, i) => Math.round(c + (b[i] - c) * t));
+}
+const C_BUY = [31, 211, 90], C_SELL = [176, 38, 255], C_NEU = [30, 33, 70];
+function deltaColor(delta, maxAbs) {
+  const t = Math.min(1, Math.abs(delta) / (maxAbs || 1));
+  const target = delta >= 0 ? C_BUY : C_SELL;
+  const [r, g, b] = lerpColor(C_NEU, target, 0.25 + t * 0.75);
+  return `rgb(${r},${g},${b})`;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  if (view === 'footprint') drawFootprint();
+  else drawBubbles();
+}
+
+// ---- Deep Print (footprint) -------------------------------------------------
+function drawFootprint() {
+  const padL = 8, padR = 64, padT = 16;
+  const chartH = H * 0.6;
+  const { lo, hi } = priceExtent();
+  const y = p => padT + (hi - p) / (hi - lo) * (chartH - padT);
+  const slot = (W - padL - padR) / bars.length;
+  const cellH = Math.max(8, (chartH - padT) / 70);
+
+  // dashed reference line near the high (like the screenshot)
+  ctx.strokeStyle = '#3a3a44'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, y(hi - (hi - lo) * 0.05)); ctx.lineTo(W - padR, y(hi - (hi - lo) * 0.05)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  let maxAbs = 1;
+  for (const b of bars) for (const l of b.levels) maxAbs = Math.max(maxAbs, Math.abs(l.delta));
+
+  ctx.font = '9px ui-monospace, Menlo, monospace';
+  ctx.textBaseline = 'middle';
+
+  for (const b of bars) {
+    const cx = padL + b.i * slot + slot / 2;
+    const bw = Math.min(slot * 0.82, 54);
+
+    // candle wick through the cluster
+    ctx.strokeStyle = b.close >= b.open ? 'rgba(31,211,90,.5)' : 'rgba(176,38,255,.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, y(b.hi)); ctx.lineTo(cx, y(b.lo)); ctx.stroke();
+
+    // each price level = a cell with delta-colored fill + the delta number
+    for (const l of b.levels) {
+      const yy = y(l.price);
+      ctx.fillStyle = deltaColor(l.delta, maxAbs);
+      ctx.fillRect(cx - bw / 2, yy - cellH / 2, bw, cellH - 1);
+      ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeRect(cx - bw / 2, yy - cellH / 2, bw, cellH - 1);
+      if (cellH >= 9 && bw > 20) {
+        ctx.fillStyle = '#e9ecf5';
+        ctx.textAlign = 'center';
+        ctx.fillText(l.delta, cx, yy);
+      }
+    }
+  }
+
+  // price axis (right)
+  ctx.fillStyle = 'var(--muted)'; ctx.fillStyle = '#6b6f7d';
+  ctx.textAlign = 'left';
+  for (let k = 0; k <= 6; k++) {
+    const p = lo + (hi - lo) * k / 6;
+    const yy = y(p);
+    ctx.fillText(p.toFixed(2), W - padR + 6, yy);
+  }
+
+  // ---- lower panel: cumulative delta line + volume histogram ----------------
+  const panelT = chartH + 18;
+  const panelH = H - panelT - 12;
+  const cds = bars.map(b => b.cumDelta);
+  const cdLo = Math.min(...cds), cdHi = Math.max(...cds);
+  const cy = v => panelT + (cdHi - v) / ((cdHi - cdLo) || 1) * (panelH * 0.55);
+
+  // volume bars (bottom of panel)
+  const volMax = Math.max(...bars.map(b => b.vol));
+  const volBase = H - 12;
+  const volH = panelH * 0.4;
+  for (const b of bars) {
+    const cx = padL + b.i * slot + slot / 2;
+    const bw = Math.min(slot * 0.5, 16);
+    const h = b.vol / volMax * volH;
+    ctx.fillStyle = b.delta >= 0 ? 'rgba(24,227,227,.85)' : 'rgba(236,58,214,.85)';
+    ctx.fillRect(cx - bw / 2, volBase - h, bw, h);
+  }
+
+  // cumulative delta line
+  ctx.strokeStyle = 'var(--line)'; ctx.strokeStyle = '#2bdc6a';
+  ctx.lineWidth = 2; ctx.beginPath();
+  bars.forEach((b, i) => {
+    const cx = padL + b.i * slot + slot / 2;
+    if (i === 0) ctx.moveTo(cx, cy(b.cumDelta)); else ctx.lineTo(cx, cy(b.cumDelta));
+  });
+  ctx.stroke();
+
+  hint.textContent = 'Cells = price levels · number = bid/ask delta · green buy, purple sell';
+  legend.innerHTML = `
+    <div class="row"><span class="sw" style="background:var(--buy)"></span>Buy-dominant level (+Δ)</div>
+    <div class="row"><span class="sw" style="background:var(--sell)"></span>Sell-dominant level (−Δ)</div>
+    <div class="row"><span class="sw" style="background:var(--neutral)"></span>Balanced</div>
+    <div class="row"><span class="sw" style="background:#2bdc6a"></span>Cumulative delta</div>`;
+}
+
+// ---- Big Trades (bubble overlay) -------------------------------------------
+function drawBubbles() {
+  const padL = 12, padR = 12, padT = 70, padB = 90;
+  const lo = Math.min(...line), hi = Math.max(...line);
+  const span = (hi - lo) || 1;
+  const x = i => padL + i / (line.length - 1) * (W - padL - padR);
+  const y = p => padT + (hi - p) / span * (H - padT - padB);
+
+  // dashed baseline near the bottom
+  ctx.strokeStyle = '#3a3a44'; ctx.setLineDash([3, 5]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, H - padB + 30); ctx.lineTo(W - padR, H - padB + 30); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // price line
+  ctx.strokeStyle = '#2bdc6a'; ctx.lineWidth = 2; ctx.beginPath();
+  line.forEach((p, i) => { i ? ctx.lineTo(x(i), y(p)) : ctx.moveTo(x(i), y(p)); });
+  ctx.stroke();
+
+  // bubbles sized by trade volume
+  let maxSz = Math.max(...prints.map(p => p.size), 1);
+  for (const pr of prints) {
+    const r = 4 + Math.sqrt(pr.size / maxSz) * 26;
+    const cx = x(pr.i), cyp = y(pr.price);
+    const col = pr.side === 'buy' ? '24,227,227' : '236,58,214';
+    const g = ctx.createRadialGradient(cx, cyp, 1, cx, cyp, r);
+    g.addColorStop(0, `rgba(${col},.95)`);
+    g.addColorStop(1, `rgba(${col},.12)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cyp, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // entry/exit markers with labels
+  ctx.textAlign = 'center';
+  ctx.font = '600 18px ui-monospace, Menlo, monospace';
+  for (const m of markers) {
+    const cx = x(m.i), cyp = y(line[m.i]);
+    if (m.type === 'sell') {
+      // red down triangle above
+      const ty = cyp - 60;
+      ctx.strokeStyle = 'rgba(255,60,60,.45)';
+      ctx.beginPath(); ctx.moveTo(cx, cyp); ctx.lineTo(cx, ty); ctx.stroke();
+      ctx.fillStyle = '#ff2e2e';
+      tri(cx, ty, 22, false);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`${m.size} (${m.ticks})`, cx, ty - 34);
+    } else {
+      // green up triangle below
+      const ty = cyp + 60;
+      ctx.strokeStyle = 'rgba(40,210,90,.45)';
+      ctx.beginPath(); ctx.moveTo(cx, cyp); ctx.lineTo(cx, ty); ctx.stroke();
+      ctx.fillStyle = '#22cc44';
+      tri(cx, ty, 22, true);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`${m.size} (${m.ticks})`, cx, ty + 38);
+    }
+  }
+
+  hint.textContent = 'Bubbles = big prints sized by volume · cyan buy, magenta sell · ▲▼ entries/exits';
+  legend.innerHTML = `
+    <div class="row"><span class="sw" style="background:var(--bubbleBuy)"></span>Aggressive buy print</div>
+    <div class="row"><span class="sw" style="background:var(--bubbleSell)"></span>Aggressive sell print</div>
+    <div class="row"><span class="sw" style="background:#22cc44"></span>Long entry (size + ticks)</div>
+    <div class="row"><span class="sw" style="background:#ff2e2e"></span>Short entry (size + ticks)</div>`;
+}
+
+function tri(cx, cy, s, up) {
+  ctx.beginPath();
+  if (up) { ctx.moveTo(cx, cy); ctx.lineTo(cx - s, cy + s * 1.2); ctx.lineTo(cx + s, cy + s * 1.2); }
+  else { ctx.moveTo(cx, cy); ctx.lineTo(cx - s, cy - s * 1.2); ctx.lineTo(cx + s, cy - s * 1.2); }
+  ctx.closePath(); ctx.fill();
+}
+
+// ----------------------------------------------------------------------------
+document.getElementById('viewSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  view = btn.dataset.view;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle('active', b === btn));
+  draw();
+});
+document.getElementById('regen').addEventListener('click', regen);
+window.addEventListener('resize', resize);
+
+regen();
+resize();
+</script>
+</body>
+</html>
