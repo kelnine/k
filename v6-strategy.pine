@@ -1,0 +1,104 @@
+//@version=6
+// =============================================================================
+// V6 WaveTrend STRATEGY — auto entries + exits ("evacuate") with alerts.
+//
+//   Indicator (v6-indicator.pine) = draws signals only.
+//   Strategy  (this file)         = enters on signals, exits on stop / target /
+//                                   opposite signal, and emits alert messages
+//                                   you can webhook to a broker/bot for auto-
+//                                   execution. TradingView alone does NOT place
+//                                   real trades — a broker/webhook does that.
+//
+//   USE AT YOUR OWN RISK. Backtest + paper trade first. Not financial advice.
+// =============================================================================
+strategy("V6 WaveTrend Strategy", shorttitle="V6 Strat", overlay=true,
+     default_qty_type   = strategy.percent_of_equity, default_qty_value = 10,
+     initial_capital    = 10000,
+     commission_type    = strategy.commission.percent, commission_value = 0.05,
+     pyramiding         = 0,
+     process_orders_on_close = true,
+     calc_on_every_tick = false)
+
+// ---- signal engine (identical to the V6 indicator) --------------------------
+chanLen  = input.int(10,  "Channel length",  minval=1, group="WaveTrend")
+avgLen   = input.int(21,  "Average length",  minval=1, group="WaveTrend")
+sigLen   = input.int(4,   "Signal length",   minval=1, group="WaveTrend")
+src      = input.source(hlc3, "Source", group="WaveTrend")
+obLevel  = input.int(60,  "Overbought", group="Signals")
+osLevel  = input.int(-60, "Oversold",   group="Signals")
+sigMode  = input.string("Reversal (OB/OS)", "Signal mode", options=["Trend pullback", "Reversal (OB/OS)"], group="Signals")
+pullDepth= input.int(20,  "Pullback depth (trend mode)", minval=0, group="Signals")
+
+// higher-timeframe trend filter
+useHtf   = input.bool(false, "Filter by higher-timeframe trend", group="HTF bias")
+htf      = input.timeframe("240", "Higher timeframe", group="HTF bias")
+biasLen  = input.int(50,  "HTF EMA length", minval=1, group="HTF bias")
+
+// trade management
+dir      = input.string("Long & Short", "Trade direction", options=["Long & Short", "Long only", "Short only"], group="Trades")
+exitOpp  = input.bool(true,  "Exit on opposite signal", group="Trades")
+useSL    = input.bool(true,  "Use stop loss",   group="Risk")
+useTP    = input.bool(true,  "Use take profit", group="Risk")
+atrLen   = input.int(14,   "ATR length",    minval=1, group="Risk")
+slMult   = input.float(2.0,"Stop  = ATR ×", minval=0.1, step=0.1, group="Risk")
+tpMult   = input.float(3.0,"Target = ATR ×",minval=0.1, step=0.1, group="Risk")
+useTime  = input.bool(false, "Limit to a date range", group="Backtest window")
+fromDate = input.time(timestamp("01 Jan 2024"), "From", group="Backtest window")
+toDate   = input.time(timestamp("01 Jan 2099"), "To",   group="Backtest window")
+
+// ---- WaveTrend --------------------------------------------------------------
+esa = ta.ema(src, chanLen)
+de  = ta.ema(math.abs(src - esa), chanLen)
+ci  = (src - esa) / (0.015 * de)
+wt1 = ta.ema(ci, avgLen)
+wt2 = ta.sma(wt1, sigLen)
+
+crossUp = ta.crossover(wt1, wt2)
+crossDn = ta.crossunder(wt1, wt2)
+isTrend = sigMode == "Trend pullback"
+rawBuy  = crossUp and (isTrend ? wt2 <= -pullDepth : wt2 <= osLevel)
+rawSell = crossDn and (isTrend ? wt2 >=  pullDepth : wt2 >= obLevel)
+
+htfClose = request.security(syminfo.tickerid, htf, close,                 lookahead=barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htf, ta.ema(close, biasLen), lookahead=barmerge.lookahead_off)
+bull = htfClose > htfEma
+bear = htfClose < htfEma
+
+buySig  = rawBuy  and (not useHtf or bull)
+sellSig = rawSell and (not useHtf or bear)
+
+allowLong  = dir != "Short only"
+allowShort = dir != "Long only"
+inWindow   = not useTime or (time >= fromDate and time <= toDate)
+atr = ta.atr(atrLen)
+
+// ---- entries ----------------------------------------------------------------
+if inWindow and buySig and allowLong
+    strategy.entry("Long",  strategy.long,  alert_message = "BUY "  + syminfo.ticker)
+if inWindow and sellSig and allowShort
+    strategy.entry("Short", strategy.short, alert_message = "SELL " + syminfo.ticker)
+
+// ---- evacuate: exit on opposite signal --------------------------------------
+if exitOpp
+    if sellSig and strategy.position_size > 0
+        strategy.close("Long",  alert_message = "CLOSE LONG "  + syminfo.ticker)
+    if buySig and strategy.position_size < 0
+        strategy.close("Short", alert_message = "CLOSE SHORT " + syminfo.ticker)
+
+// ---- evacuate: protective stop loss + take profit ---------------------------
+avg = strategy.position_avg_price
+longStop  = avg - atr * slMult
+longTP    = avg + atr * tpMult
+shortStop = avg + atr * slMult
+shortTP   = avg - atr * tpMult
+if strategy.position_size > 0
+    strategy.exit("L-exit", from_entry="Long",  stop = useSL ? longStop : na,  limit = useTP ? longTP : na,  alert_message = "EXIT LONG "  + syminfo.ticker)
+if strategy.position_size < 0
+    strategy.exit("S-exit", from_entry="Short", stop = useSL ? shortStop : na, limit = useTP ? shortTP : na, alert_message = "EXIT SHORT " + syminfo.ticker)
+
+// ---- visuals ----------------------------------------------------------------
+plotshape(buySig  and allowLong,  "Buy",  shape.triangleup,   location.belowbar, color=#18e3e3, text="Buy",  textcolor=#18e3e3, size=size.small)
+plotshape(sellSig and allowShort, "Sell", shape.triangledown, location.abovebar, color=#ec3ad6, text="Sell", textcolor=#ec3ad6, size=size.small)
+plot(strategy.position_size > 0 ? longStop  : strategy.position_size < 0 ? shortStop : na, "Stop",   color=color.new(#ec3ad6, 30), style=plot.style_linebr)
+plot(strategy.position_size > 0 ? longTP    : strategy.position_size < 0 ? shortTP   : na, "Target", color=color.new(#18e3e3, 30), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? avg : na, "Entry", color=color.new(color.gray, 20), style=plot.style_linebr)
