@@ -17,6 +17,12 @@ showFill    = input.bool(true,  "Shade fast/signal",            group="Style")
 showDots    = input.bool(false, "Cross dots in oscillator pane", group="Style")
 mainSignals = input.bool(true,  "Signals on price chart",        group="Style")
 
+// higher-timeframe trend filter (align signals with your SMC bias)
+useHtf  = input.bool(true,  "Filter signals by higher-timeframe trend", group="HTF bias")
+htf     = input.timeframe("240", "Higher timeframe",        group="HTF bias")
+biasLen = input.int(50,    "HTF EMA length",  minval=1,     group="HTF bias")
+showBg  = input.bool(true, "Shade pane by HTF bias",        group="HTF bias")
+
 // ---- WaveTrend calculation --------------------------------------------------
 esa = ta.ema(src, chanLen)
 de  = ta.ema(math.abs(src - esa), chanLen)
@@ -42,9 +48,21 @@ fill(p1, p2, color = showFill ? color.new(diff >= 0 ? cyan : purple, 82) : na)
 // histogram of the wt1/wt2 spread (momentum strength)
 plot(diff, "Momentum", color=color.new(diff >= 0 ? cyan : purple, 35), style=plot.style_columns)
 
-// ---- signals: crosses inside the extreme zones ------------------------------
-buySig  = ta.crossover(wt1, wt2)  and wt2 <= osLevel
-sellSig = ta.crossunder(wt1, wt2) and wt2 >= obLevel
+// ---- higher-timeframe bias --------------------------------------------------
+// HTF trend = HTF close above/below its EMA (no repaint: lookahead off + last
+// confirmed HTF value). bullBias gates Buys, bearBias gates Sells.
+htfClose = request.security(syminfo.tickerid, htf, close,                 lookahead=barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htf, ta.ema(close, biasLen), lookahead=barmerge.lookahead_off)
+bullBias = htfClose > htfEma
+bearBias = htfClose < htfEma
+
+bgcolor(showBg and useHtf ? (bullBias ? color.new(cyan, 92) : bearBias ? color.new(purple, 92) : na) : na, title="HTF bias")
+
+// ---- signals: crosses inside the extreme zones, aligned with HTF bias -------
+rawBuy  = ta.crossover(wt1, wt2)  and wt2 <= osLevel
+rawSell = ta.crossunder(wt1, wt2) and wt2 >= obLevel
+buySig  = rawBuy  and (not useHtf or bullBias)
+sellSig = rawSell and (not useHtf or bearBias)
 
 // dots inside this oscillator pane (optional)
 plotshape(showDots and buySig  ? wt2 : na, "Buy cross",  shape.circle, location.absolute, color=cyan,   size=size.small)
@@ -57,5 +75,5 @@ plotshape(mainSignals and sellSig, "Sell signal", shape.triangledown, location.a
 barcolor(buySig ? cyan : sellSig ? #ec3ad6 : na)
 
 // ---- alerts -----------------------------------------------------------------
-alertcondition(buySig,  title="V6 Buy",  message="V6 WaveTrend: oversold buy cross on {{ticker}} ({{interval}})")
-alertcondition(sellSig, title="V6 Sell", message="V6 WaveTrend: overbought sell cross on {{ticker}} ({{interval}})")
+alertcondition(buySig,  title="V6 Buy",  message="V6 WaveTrend: HTF-aligned buy on {{ticker}} ({{interval}})")
+alertcondition(sellSig, title="V6 Sell", message="V6 WaveTrend: HTF-aligned sell on {{ticker}} ({{interval}})")
