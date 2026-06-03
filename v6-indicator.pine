@@ -11,8 +11,10 @@ chanLen  = input.int(10,  "Channel length",  minval=1, group="WaveTrend")
 avgLen   = input.int(21,  "Average length",  minval=1, group="WaveTrend")
 sigLen   = input.int(4,   "Signal length",   minval=1, group="WaveTrend")
 src      = input.source(hlc3, "Source", group="WaveTrend")
-obLevel  = input.int(60,  "Overbought", group="Levels")
-osLevel  = input.int(-60, "Oversold",   group="Levels")
+obLevel  = input.int(53,  "Overbought", group="Levels")
+osLevel  = input.int(-53, "Oversold",   group="Levels")
+sigMode  = input.string("Trend pullback", "Signal mode", options=["Trend pullback", "Reversal (OB/OS)"], group="Signals")
+pullDepth= input.int(20,  "Pullback depth (trend mode)", minval=0, tooltip="A Buy needs the signal line below −this (dip) before crossing up; Sell above +this. Lower = more signals.", group="Signals")
 showFill    = input.bool(true,  "Shade fast/signal",            group="Style")
 showDots    = input.bool(false, "Cross dots in oscillator pane", group="Style")
 mainSignals = input.bool(true,  "Signals on price chart",        group="Style")
@@ -58,9 +60,16 @@ bearBias = htfClose < htfEma
 
 bgcolor(showBg and useHtf ? (bullBias ? color.new(cyan, 92) : bearBias ? color.new(purple, 92) : na) : na, title="HTF bias")
 
-// ---- signals: crosses inside the extreme zones, aligned with HTF bias -------
-rawBuy  = ta.crossover(wt1, wt2)  and wt2 <= osLevel
-rawSell = ta.crossunder(wt1, wt2) and wt2 >= obLevel
+// ---- signals ----------------------------------------------------------------
+// Trend pullback (default): a momentum cross on a SHALLOW dip in the HTF
+//   direction -> buy dips in uptrends, sell rallies in downtrends. Fires often.
+// Reversal: the original deep OB/OS cross. Fires rarely, catches turns.
+crossUp = ta.crossover(wt1, wt2)
+crossDn = ta.crossunder(wt1, wt2)
+isTrend = sigMode == "Trend pullback"
+
+rawBuy  = crossUp and (isTrend ? wt2 <= -pullDepth : wt2 <= osLevel)
+rawSell = crossDn and (isTrend ? wt2 >=  pullDepth : wt2 >= obLevel)
 buySig  = rawBuy  and (not useHtf or bullBias)
 sellSig = rawSell and (not useHtf or bearBias)
 
