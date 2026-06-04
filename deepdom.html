@@ -104,13 +104,14 @@ function gen(){
     }
     field.push(col);
   }
-  // stop runs: wick beyond recent extreme then close back inside (liquidity sweep)
-  stops = [];
+  // stop runs: wick beyond recent extreme then close back inside (liquidity
+  // sweep). Cooldown so markers don't stack on consecutive bars.
+  stops = []; let lastH=-99, lastL=-99;
   for (let i=8;i<N;i++){
     const ph = Math.max(...bars.slice(i-8,i).map(b=>b.hi));
     const pl = Math.min(...bars.slice(i-8,i).map(b=>b.lo));
-    if (bars[i].hi > ph+0.25 && bars[i].c < ph) stops.push({ t:i, price:bars[i].hi, side:'high' });
-    if (bars[i].lo < pl-0.25 && bars[i].c > pl) stops.push({ t:i, price:bars[i].lo, side:'low' });
+    if (bars[i].hi > ph+0.4 && bars[i].c < ph && i-lastH>5){ stops.push({ t:i, price:bars[i].hi, side:'high' }); lastH=i; }
+    if (bars[i].lo < pl-0.4 && bars[i].c > pl && i-lastL>5){ stops.push({ t:i, price:bars[i].lo, side:'low'  }); lastL=i; }
   }
   // volume profile by row
   vp = new Float32Array(ROWS);
@@ -164,16 +165,18 @@ function draw(){
   bars.forEach((b,i)=>{ const xx=x(i)+cw/2, yy=yPrice(b.c); i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
   ctx.stroke();
 
-  // stop-run markers
+  // stop-run markers — small triangles (no text) so it stays clean
   if ($('tStop').checked){
     for (const s of stops){
-      const xx=x(s.t)+cw/2, yy=yPrice(s.price);
-      const col = s.side==='high' ? '236,58,214' : '24,227,227';
-      const g=ctx.createRadialGradient(xx,yy,1,xx,yy,9);
-      g.addColorStop(0,`rgba(${col},1)`); g.addColorStop(1,`rgba(${col},.05)`);
-      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(xx,yy,7,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle=`rgb(${col})`; ctx.font='8px ui-monospace,monospace'; ctx.textAlign='center';
-      ctx.fillText('stop run', xx, yy + (s.side==='high'?-12:12));
+      const xx=x(s.t)+cw/2, yy=yPrice(s.price), up=s.side==='low';
+      const col = up ? '24,227,227' : '236,58,214', off = up ? 7 : -7;
+      const g=ctx.createRadialGradient(xx,yy+off,1,xx,yy+off,7);
+      g.addColorStop(0,`rgba(${col},.9)`); g.addColorStop(1,`rgba(${col},0)`);
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(xx,yy+off,5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgb(${col})`; ctx.beginPath();
+      if (up){ ctx.moveTo(xx,yy+3); ctx.lineTo(xx-4,yy+10); ctx.lineTo(xx+4,yy+10); }
+      else   { ctx.moveTo(xx,yy-3); ctx.lineTo(xx-4,yy-10); ctx.lineTo(xx+4,yy-10); }
+      ctx.closePath(); ctx.fill();
     }
   }
 

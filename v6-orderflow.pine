@@ -18,14 +18,18 @@ orange = #ffa03c
 gold   = #ffcd46
 
 // ---- inputs -----------------------------------------------------------------
-swLen    = input.int(8,   "Stop-run swing lookback", minval=2, group="Stop runs")
+swLen    = input.int(10,  "Stop-run swing lookback", minval=2, group="Stop runs")
+swMinAtr = input.float(0.15,"Min sweep size × ATR", minval=0, step=0.05, group="Stop runs")
+cdBars   = input.int(6,   "Cooldown bars (declutter)", minval=0, group="Stop runs")
 showStop = input.bool(true,"Show stop runs", group="Stop runs")
+stopLbl  = input.bool(false,"Use text labels (else arrows)", group="Stop runs")
 
 absMult  = input.float(1.8,"Absorption volume × avg", minval=1, step=0.1, group="Absorption / order blocks")
 absRange = input.float(0.6,"Max body vs range (small bar)", minval=0.1, maxval=1, step=0.05, group="Absorption / order blocks")
 volLen   = input.int(20,  "Volume average length", minval=1, group="Absorption / order blocks")
 showAbs  = input.bool(true,"Show absorption blocks", group="Absorption / order blocks")
-keepAbs  = input.int(8,   "Max blocks kept", minval=1, group="Absorption / order blocks")
+keepAbs  = input.int(5,   "Max blocks kept", minval=1, group="Absorption / order blocks")
+absExt   = input.int(6,   "Block extend (bars)", minval=0, group="Absorption / order blocks")
 
 showVP   = input.bool(true,"Show volume profile", group="Volume profile")
 vpLook   = input.int(150, "Profile lookback bars", minval=20, group="Volume profile")
@@ -33,19 +37,30 @@ vpRows   = input.int(24,  "Profile rows", minval=8, maxval=50, group="Volume pro
 vpWidth  = input.int(30,  "Profile width (bars)", minval=5, group="Volume profile")
 
 // ---- stop runs (liquidity sweeps) -------------------------------------------
+atr14     = ta.atr(14)
 priorHigh = ta.highest(high, swLen)[1]
 priorLow  = ta.lowest(low,  swLen)[1]
-sweepHigh = high > priorHigh and close < priorHigh        // ran buy stops, rejected
-sweepLow  = low  < priorLow  and close > priorLow         // ran sell stops, rejected
+sweepHigh = high > priorHigh + atr14 * swMinAtr and close < priorHigh   // ran buy stops, rejected
+sweepLow  = low  < priorLow  - atr14 * swMinAtr and close > priorLow     // ran sell stops, rejected
 
-if showStop and sweepHigh
-    label.new(bar_index, high, "stop run", style=label.style_label_down, color=color.new(magenta, 20), textcolor=color.white, size=size.tiny)
-if showStop and sweepLow
-    label.new(bar_index, low, "stop run", style=label.style_label_up, color=color.new(cyan, 20), textcolor=color.black, size=size.tiny)
+var int lastHi = -1000
+var int lastLo = -1000
+fireHi = showStop and sweepHigh and (bar_index - lastHi > cdBars)
+fireLo = showStop and sweepLow  and (bar_index - lastLo > cdBars)
+if fireHi
+    lastHi := bar_index
+    if stopLbl
+        label.new(bar_index, high, "stop run", style=label.style_label_down, color=color.new(magenta, 20), textcolor=color.white, size=size.tiny)
+if fireLo
+    lastLo := bar_index
+    if stopLbl
+        label.new(bar_index, low, "stop run", style=label.style_label_up, color=color.new(cyan, 20), textcolor=color.black, size=size.tiny)
+plotshape(fireHi and not stopLbl, "Stop run high", shape.triangledown, location.abovebar, color=magenta, size=size.tiny)
+plotshape(fireLo and not stopLbl, "Stop run low",  shape.triangleup,   location.belowbar, color=cyan,    size=size.tiny)
 
 // ---- absorption / order blocks ----------------------------------------------
 // big volume but the bar barely moved -> aggressive orders were absorbed by
-// resting liquidity. Mark the bar's range as a zone.
+// resting liquidity. Mark a compact zone; newest few are kept so it stays clean.
 avgVol   = ta.sma(volume, volLen)
 rng      = high - low
 body     = math.abs(close - open)
@@ -53,15 +68,11 @@ absorbed = volume > avgVol * absMult and rng > 0 and (body / rng) < absRange
 
 var box[] blocks = array.new<box>()
 if showAbs and absorbed
-    c = close >= open ? color.new(cyan, 78) : color.new(magenta, 78)
-    b = box.new(bar_index, high, bar_index + 1, low, border_color=color.new(orange, 30), bgcolor=c)
+    c = close >= open ? color.new(cyan, 86) : color.new(magenta, 86)
+    b = box.new(bar_index - 1, high, bar_index + absExt, low, border_color=color.new(orange, 45), border_width=1, bgcolor=c)
     array.push(blocks, b)
     if array.size(blocks) > keepAbs
         box.delete(array.shift(blocks))
-// extend the most recent blocks to the right so they act like S/R zones
-if barstate.islast and array.size(blocks) > 0
-    for i = 0 to array.size(blocks) - 1
-        box.set_right(array.get(blocks, i), bar_index + 3)
 
 // ---- volume profile (lookback) ----------------------------------------------
 if showVP and barstate.islast
