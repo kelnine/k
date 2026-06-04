@@ -41,6 +41,7 @@
     <div class="seg" id="viewSeg">
       <button data-v="ov" class="active">Live + overlays</button>
       <button data-v="all">All pairs</button>
+      <button data-v="dom">DeepDom</button>
       <button data-v="bt">Backtest</button>
       <button data-v="demo">Demo</button>
     </div>
@@ -59,6 +60,7 @@
       <div id="err"></div>
     </div>
     <div class="pane hidden" id="allPane"><iframe id="allFrame" data-src="tradingview.html"></iframe></div>
+    <div class="pane hidden" id="domPane"><iframe id="domFrame" data-src="deepdom.html"></iframe></div>
     <div class="pane hidden" id="btPane"><iframe id="btFrame" data-src="backtest.html"></iframe></div>
     <div class="pane hidden" id="demoPane"><iframe id="demoFrame" data-src="deepchart-demo.html"></iframe></div>
   </div>
@@ -243,7 +245,7 @@ $('tBub').addEventListener('change', applyMarkers);
 $('tVol').addEventListener('change', applyVolVisible);
 
 // --- view switcher (everything on one page; no navigating away) -------------
-const PANES = { ov: 'ovPane', all: 'allPane', bt: 'btPane', demo: 'demoPane' };
+const PANES = { ov: 'ovPane', all: 'allPane', dom: 'domPane', bt: 'btPane', demo: 'demoPane' };
 $('viewSeg').addEventListener('click', e => {
   const btn = e.target.closest('button'); if (!btn) return;
   const v = btn.dataset.v;
@@ -252,6 +254,7 @@ $('viewSeg').addEventListener('click', e => {
   $('ovControls').style.display = v === 'ov' ? 'inline-flex' : 'none';
   // lazy-load iframes the first time their tab is opened
   if (v === 'all') lazyFrame('allFrame');
+  if (v === 'dom') lazyFrame('domFrame');
   if (v === 'bt') lazyFrame('btFrame');
   if (v === 'demo') lazyFrame('demoFrame');
 });

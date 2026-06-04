@@ -1,0 +1,95 @@
+//@version=6
+// =============================================================================
+// V6 OrderFlow — DeepDom-inspired tools from price/volume only.
+//
+//   TradingView's Pine has NO access to order-book / MBO data, so the real
+//   DeepDom "Iceberg Detector" and live liquidity heatmap are impossible here.
+//   These are the closest PRICE-ACTION PROXIES:
+//     - Stop runs   = liquidity sweeps (wick beyond a swing, close back inside)
+//     - Absorption  = high-volume + small-range bars -> order-block zones
+//     - Volume Profile (lookback) with POC + value-area high/low
+//   Add as an overlay. Pair it with the V6 oscillator/strategy.
+// =============================================================================
+indicator("V6 OrderFlow", shorttitle="V6 OF", overlay=true, max_boxes_count=300, max_lines_count=300, max_labels_count=300)
+
+cyan   = #18e3e3
+magenta= #ec3ad6
+orange = #ffa03c
+gold   = #ffcd46
+
+// ---- inputs -----------------------------------------------------------------
+swLen    = input.int(8,   "Stop-run swing lookback", minval=2, group="Stop runs")
+showStop = input.bool(true,"Show stop runs", group="Stop runs")
+
+absMult  = input.float(1.8,"Absorption volume × avg", minval=1, step=0.1, group="Absorption / order blocks")
+absRange = input.float(0.6,"Max body vs range (small bar)", minval=0.1, maxval=1, step=0.05, group="Absorption / order blocks")
+volLen   = input.int(20,  "Volume average length", minval=1, group="Absorption / order blocks")
+showAbs  = input.bool(true,"Show absorption blocks", group="Absorption / order blocks")
+keepAbs  = input.int(8,   "Max blocks kept", minval=1, group="Absorption / order blocks")
+
+showVP   = input.bool(true,"Show volume profile", group="Volume profile")
+vpLook   = input.int(150, "Profile lookback bars", minval=20, group="Volume profile")
+vpRows   = input.int(24,  "Profile rows", minval=8, maxval=50, group="Volume profile")
+vpWidth  = input.int(30,  "Profile width (bars)", minval=5, group="Volume profile")
+
+// ---- stop runs (liquidity sweeps) -------------------------------------------
+priorHigh = ta.highest(high, swLen)[1]
+priorLow  = ta.lowest(low,  swLen)[1]
+sweepHigh = high > priorHigh and close < priorHigh        // ran buy stops, rejected
+sweepLow  = low  < priorLow  and close > priorLow         // ran sell stops, rejected
+
+if showStop and sweepHigh
+    label.new(bar_index, high, "stop run", style=label.style_label_down, color=color.new(magenta, 20), textcolor=color.white, size=size.tiny)
+if showStop and sweepLow
+    label.new(bar_index, low, "stop run", style=label.style_label_up, color=color.new(cyan, 20), textcolor=color.black, size=size.tiny)
+
+// ---- absorption / order blocks ----------------------------------------------
+// big volume but the bar barely moved -> aggressive orders were absorbed by
+// resting liquidity. Mark the bar's range as a zone.
+avgVol   = ta.sma(volume, volLen)
+rng      = high - low
+body     = math.abs(close - open)
+absorbed = volume > avgVol * absMult and rng > 0 and (body / rng) < absRange
+
+var box[] blocks = array.new<box>()
+if showAbs and absorbed
+    c = close >= open ? color.new(cyan, 78) : color.new(magenta, 78)
+    b = box.new(bar_index, high, bar_index + 1, low, border_color=color.new(orange, 30), bgcolor=c)
+    array.push(blocks, b)
+    if array.size(blocks) > keepAbs
+        box.delete(array.shift(blocks))
+// extend the most recent blocks to the right so they act like S/R zones
+if barstate.islast and array.size(blocks) > 0
+    for i = 0 to array.size(blocks) - 1
+        box.set_right(array.get(blocks, i), bar_index + 3)
+
+// ---- volume profile (lookback) ----------------------------------------------
+if showVP and barstate.islast
+    float hi = ta.highest(high, vpLook)
+    float lo = ta.lowest(low,  vpLook)
+    float step = (hi - lo) / vpRows
+    if step > 0
+        var float[] buckets = array.new<float>(vpRows, 0.0)
+        for r = 0 to vpRows - 1
+            array.set(buckets, r, 0.0)
+        for i = 0 to vpLook - 1
+            int r = math.min(vpRows - 1, math.max(0, int((close[i] - lo) / step)))
+            array.set(buckets, r, array.get(buckets, r) + volume[i])
+        float maxV = array.max(buckets)
+        int   poc  = array.indexof(buckets, maxV)
+        // draw rows as boxes anchored to the right edge
+        int x0 = bar_index - vpWidth
+        for r = 0 to vpRows - 1
+            float v = array.get(buckets, r)
+            int w = maxV > 0 ? int(v / maxV * vpWidth) : 0
+            float yT = lo + (r + 1) * step
+            float yB = lo + r * step
+            col = r == poc ? color.new(gold, 25) : color.new(color.teal, 70)
+            box.new(bar_index - w, yT, bar_index, yB, border_width=0, bgcolor=col)
+        line.new(x0, lo + (poc + 0.5) * step, bar_index, lo + (poc + 0.5) * step, color=gold, style=line.style_dashed, width=1)
+        label.new(bar_index, lo + (poc + 0.5) * step, " POC", style=label.style_none, textcolor=gold, size=size.small)
+
+// ---- alerts -----------------------------------------------------------------
+alertcondition(sweepHigh, "Stop run high", "Stop run (buy-side sweep) on {{ticker}} {{interval}}")
+alertcondition(sweepLow,  "Stop run low",  "Stop run (sell-side sweep) on {{ticker}} {{interval}}")
+alertcondition(absorbed,  "Absorption",    "Absorption / order block on {{ticker}} {{interval}}")
