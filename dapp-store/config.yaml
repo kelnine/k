@@ -1,0 +1,77 @@
+# Solana dApp Store publishing config for Merge48.
+# Used with the publishing CLI: npx @solana-mobile/dapp-store-cli
+# Docs: https://docs.solanamobile.com/dapp-publishing/intro
+#
+# Before submitting:
+#   1. Fill in publisher name/website/emails below.
+#   2. Replace the placeholder screenshots in ./media with real device captures
+#      (the bundled ones are mock renders of the UI).
+#   3. Build a signed release APK and place it at ./files/app-release.apk.
+#   4. The empty address fields are populated automatically by the CLI
+#      (create publisher / create app / create release).
+
+publisher:
+  name: ''
+  website: https://github.com/kelnine/k
+  email: kelnine015@gmail.com
+  support_email: kelnine015@gmail.com
+
+app:
+  name: Merge48
+  address: ''
+  android_package: com.kelnine.merge48
+  urls:
+    license_url: https://github.com/kelnine/k/blob/main/LICENSE
+    copyright_url: https://github.com/kelnine/k/blob/main/LICENSE
+    privacy_policy_url: https://github.com/kelnine/k/blob/main/PRIVACY.md
+    website: https://github.com/kelnine/k
+  media:
+    - purpose: icon
+      uri: ./media/icon-512.png
+
+release:
+  address: ''
+  media:
+    - purpose: icon
+      uri: ./media/icon-512.png
+    - purpose: banner
+      uri: ./media/banner.png
+    - purpose: screenshot
+      uri: ./media/screenshot-1.png
+    - purpose: screenshot
+      uri: ./media/screenshot-2.png
+    - purpose: screenshot
+      uri: ./media/screenshot-3.png
+    - purpose: screenshot
+      uri: ./media/screenshot-4.png
+  files:
+    - purpose: install
+      uri: ./files/app-release.apk
+  catalog:
+    en-US:
+      name: Merge48
+      short_description: Swipe, merge, and chase the 2048 tile.
+      long_description: >-
+        Merge48 is a fast, polished take on the classic 2048 merge puzzle,
+        built natively for Solana Mobile. Swipe to slide tiles across the
+        board; when two tiles with the same number touch, they merge into
+        one. Chain merges to climb from 2 all the way to 2048 and beyond.
+
+        Connect your Solana wallet with one tap via Mobile Wallet Adapter
+        and cryptographically sign your high score to prove it's yours.
+        No accounts, no ads, no tracking - just the game.
+      new_in_version: First release - core 2048 gameplay, best-score tracking, and wallet score signing.
+      saga_features: One-tap wallet connection and score signing via Mobile Wallet Adapter with the device seed vault.
+  android_details:
+    locales:
+      - en-US
+
+solana_mobile_dapp_publisher_portal:
+  google_store_package: ''
+  testing_instructions: >-
+    Launch the app and swipe in any direction on the board to merge tiles.
+    Tap "Connect Wallet" to authorize via Mobile Wallet Adapter (any MWA
+    wallet, e.g. Phantom or Solflare). Play until the board locks up, then
+    tap "Sign score with wallet" on the game-over screen to sign the score
+    attestation message. No login or funds are required; signing is a
+    message signature only, no transaction is submitted.

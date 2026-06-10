@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Back tile, Solana purple -->
+    <path
+        android:fillColor="#9945FF"
+        android:pathData="M30,30 h32 a8,8 0 0 1 8,8 v32 a8,8 0 0 1 -8,8 h-32 a8,8 0 0 1 -8,-8 v-32 a8,8 0 0 1 8,-8 z" />
+    <!-- Front tile, Solana green, offset to suggest a merge -->
+    <path
+        android:fillColor="#14F195"
+        android:pathData="M46,46 h32 a8,8 0 0 1 8,8 v32 a8,8 0 0 1 -8,8 h-32 a8,8 0 0 1 -8,-8 v-32 a8,8 0 0 1 8,-8 z" />
+    <!-- Overlap accent -->
+    <path
+        android:fillColor="#0E0B1A"
+        android:fillAlpha="0.25"
+        android:pathData="M46,46 h24 v24 h-24 z" />
+</vector>
