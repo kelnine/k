@@ -1,0 +1,163 @@
+//@version=5
+// ─────────────────────────────────────────────────────────────────────────────
+// Volume Profile Strategy [VPP]
+//
+// Backtestable strategy built on a rolling volume profile (POC / VAH / VAL).
+// Two playbooks, switchable or auto-selected by regime (ADX):
+//
+//   MEAN REVERSION (ranging markets)
+//     • Long : price re-enters value from below VAL  → target POC
+//     • Short: price gets rejected back under VAH    → target POC
+//
+//   BREAKOUT (trending markets)
+//     • Long : volume-confirmed close above VAH → target VAH + value-area width
+//     • Short: volume-confirmed close below VAL → target VAL − value-area width
+//
+// Risk: ATR-based stop, profile-derived targets, optional EMA trend filter,
+// optional time stop. Costs (commission + slippage) are modeled by default.
+// ─────────────────────────────────────────────────────────────────────────────
+strategy("Volume Profile Strategy [VPP]", "VPP Strat", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     slippage = 2, process_orders_on_close = true,
+     max_lines_count = 500, max_labels_count = 500)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grpProf  = "Profile"
+lookback = input.int(150, "Lookback (bars)", minval = 20, maxval = 400, group = grpProf)
+rows     = input.int(30,  "Profile rows",    minval = 10, maxval = 80,  group = grpProf)
+vaPct    = input.float(70.0, "Value Area %", minval = 50, maxval = 95,  group = grpProf)
+
+grpMode = "Playbook"
+mode      = input.string("Adaptive", "Mode", options = ["Adaptive", "Mean Reversion", "Breakout"], group = grpMode)
+adxLen    = input.int(14,  "ADX length (Adaptive)",    minval = 5,  group = grpMode)
+adxThresh = input.float(23, "ADX trend threshold",     minval = 10, group = grpMode)
+
+grpFilt   = "Filters"
+useTrend  = input.bool(true, "EMA trend filter (longs above / shorts below)", group = grpFilt)
+trendLen  = input.int(200,   "Trend EMA length",       minval = 10, group = grpFilt)
+volLen    = input.int(20,    "Volume MA length",       minval = 5,  group = grpFilt)
+volMult   = input.float(1.5, "Breakout volume multiple", minval = 1.0, step = 0.1, group = grpFilt)
+allowLong  = input.bool(true, "Allow longs",  group = grpFilt)
+allowShort = input.bool(true, "Allow shorts", group = grpFilt)
+
+grpRisk  = "Risk"
+atrLen   = input.int(14,    "ATR length",          minval = 1, group = grpRisk)
+stopMult = input.float(2.0, "Stop = ATR ×",        minval = 0.5, step = 0.25, group = grpRisk)
+useTimeStop = input.bool(true, "Time stop",        group = grpRisk)
+maxBarsHeld = input.int(40, "Max bars in trade",   minval = 5, group = grpRisk)
+
+grpDate   = "Backtest window"
+useWindow = input.bool(false, "Limit date range", group = grpDate)
+startTime = input.time(timestamp("1 Jan 2020 00:00 +0000"), "Start", group = grpDate)
+endTime   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "End",   group = grpDate)
+inWindow  = not useWindow or (time >= startTime and time <= endTime)
+
+// ── Profile engine ───────────────────────────────────────────────────────────
+profHigh = ta.highest(high, lookback)
+profLow  = ta.lowest(low,  lookback)
+rowH     = (profHigh - profLow) / rows
+
+volRows = array.new_float(rows, 0.0)
+if rowH > 0
+    for i = 0 to lookback - 1
+        bh = high[i]
+        bl = low[i]
+        bv = nz(volume[i])
+        topIdx = math.min(rows - 1, math.max(0, math.floor((bh - profLow) / rowH)))
+        botIdx = math.min(rows - 1, math.max(0, math.floor((bl - profLow) / rowH)))
+        volPer = bv / (topIdx - botIdx + 1)
+        for j = botIdx to topIdx
+            array.set(volRows, j, array.get(volRows, j) + volPer)
+
+pocIdx = 0
+maxVol = 0.0
+for j = 0 to rows - 1
+    v = array.get(volRows, j)
+    if v > maxVol
+        maxVol := v
+        pocIdx := j
+
+totalVol = array.sum(volRows)
+vaVol    = maxVol
+upIdx    = pocIdx + 1
+dnIdx    = pocIdx - 1
+while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
+    upV = upIdx < rows ? array.get(volRows, upIdx) : -1.0
+    dnV = dnIdx >= 0   ? array.get(volRows, dnIdx) : -1.0
+    if upV >= dnV
+        vaVol += upV
+        upIdx += 1
+    else
+        vaVol += dnV
+        dnIdx += 1
+
+poc = rowH > 0 ? profLow + (pocIdx + 0.5) * rowH : close
+vah = rowH > 0 ? profLow + upIdx * rowH          : close
+val = rowH > 0 ? profLow + (dnIdx + 1) * rowH    : close
+vaW = vah - val
+
+// ── Regime & filters ─────────────────────────────────────────────────────────
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+trending = mode == "Breakout" or (mode == "Adaptive" and adx > adxThresh)
+ranging  = mode == "Mean Reversion" or (mode == "Adaptive" and adx <= adxThresh)
+
+trendEma   = ta.ema(close, trendLen)
+trendOkL   = not useTrend or close > trendEma
+trendOkS   = not useTrend or close < trendEma
+volConfirm = volume > ta.sma(volume, volLen) * volMult
+atr        = ta.atr(atrLen)
+
+// ── Signals ──────────────────────────────────────────────────────────────────
+longRev  = ranging  and ta.crossover(close,  val) and trendOkL
+shortRev = ranging  and ta.crossunder(close, vah) and trendOkS
+longBrk  = trending and ta.crossover(close,  vah) and volConfirm and trendOkL
+shortBrk = trending and ta.crossunder(close, val) and volConfirm and trendOkS
+
+// Sanity: reversion targets must still be on the right side at entry
+longRev  := longRev  and poc > close
+shortRev := shortRev and poc < close
+
+// ── Orders ───────────────────────────────────────────────────────────────────
+var float longStop    = na
+var float longTarget  = na
+var float shortStop   = na
+var float shortTarget = na
+
+flat = strategy.position_size == 0
+
+if inWindow and allowLong and flat and (longRev or longBrk) and barstate.isconfirmed
+    longStop   := close - atr * stopMult
+    longTarget := longBrk ? vah + vaW : poc
+    strategy.entry("L", strategy.long, comment = longBrk ? "Breakout L" : "Revert L")
+
+if inWindow and allowShort and flat and (shortRev or shortBrk) and barstate.isconfirmed
+    shortStop   := close + atr * stopMult
+    shortTarget := shortBrk ? val - vaW : poc
+    strategy.entry("S", strategy.short, comment = shortBrk ? "Breakout S" : "Revert S")
+
+if strategy.position_size > 0
+    strategy.exit("Lx", "L", stop = longStop, limit = longTarget)
+if strategy.position_size < 0
+    strategy.exit("Sx", "S", stop = shortStop, limit = shortTarget)
+
+// Time stop: stale trades give back edge — cut them
+if useTimeStop and strategy.opentrades > 0
+    barsHeld = bar_index - strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
+    if barsHeld >= maxBarsHeld
+        strategy.close_all(comment = "Time stop")
+
+if not inWindow and strategy.position_size != 0
+    strategy.close_all(comment = "Window end")
+
+// ── Visuals ──────────────────────────────────────────────────────────────────
+pPoc = plot(poc, "POC", color.new(#ff9800, 20), 2, plot.style_steplinebr)
+pVah = plot(vah, "VAH", color.new(#2962ff, 45), 1, plot.style_steplinebr)
+pVal = plot(val, "VAL", color.new(#2962ff, 45), 1, plot.style_steplinebr)
+fill(pVah, pVal, color = color.new(#2962ff, 92), title = "Value area")
+plot(useTrend ? trendEma : na, "Trend EMA", color.new(#787b86, 50))
+
+plotshape(longRev or longBrk,   "Long setup",  shape.triangleup,   location.belowbar, color.new(#26a69a, 0), size = size.small)
+plotshape(shortRev or shortBrk, "Short setup", shape.triangledown, location.abovebar, color.new(#ef5350, 0), size = size.small)
+bgcolor(trending ? color.new(#26a69a, 96) : na, title = "Trending regime")

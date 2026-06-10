@@ -1,0 +1,229 @@
+//@version=5
+// ─────────────────────────────────────────────────────────────────────────────
+// Volume Profile Pro [Predictive]
+//
+// Rolling volume profile with:
+//   • POC (Point of Control), VAH / VAL (Value Area High / Low)
+//   • Buy/Sell delta-colored profile histogram
+//   • HVN / LVN detection (high/low volume nodes)
+//   • Directional bias engine that projects the most probable price target
+//   • Signal markers + alerts (breakouts, value-area bounces/rejections)
+//
+// Concept: markets auction around high-volume acceptance zones. Price is
+// drawn toward HVNs/POC (magnets) and travels quickly through LVNs (vacuums).
+// The forecast combines price location vs. value, order-flow delta, and trend
+// to estimate the next likely destination. Probabilistic, not a crystal ball.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Volume Profile Pro [Predictive]", "VPP", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grpProf  = "Profile"
+lookback = input.int(200, "Lookback (bars)",        minval = 20, maxval = 500, group = grpProf)
+rows     = input.int(40,  "Profile rows",           minval = 10, maxval = 100, group = grpProf)
+vaPct    = input.float(70.0, "Value Area %",        minval = 50, maxval = 95,  group = grpProf)
+profWidth= input.int(60,  "Profile max width (bars)", minval = 10, maxval = 200, group = grpProf)
+
+grpShow    = "Display"
+showProf   = input.bool(true,  "Show profile histogram",    group = grpShow)
+showDelta  = input.bool(true,  "Color profile by buy/sell delta", group = grpShow)
+showLevels = input.bool(true,  "Show POC / VAH / VAL lines", group = grpShow)
+showHist   = input.bool(true,  "Plot historical POC/VAH/VAL series", group = grpShow)
+showNodes  = input.bool(true,  "Mark HVN / LVN levels",      group = grpShow)
+showFcast  = input.bool(true,  "Show forecast panel",        group = grpShow)
+showSigs   = input.bool(true,  "Show signal markers",        group = grpShow)
+
+grpSig   = "Signals"
+volLen   = input.int(20,    "Volume MA length",      minval = 5,   group = grpSig)
+volMult  = input.float(1.5, "Volume spike multiple", minval = 1.0, step = 0.1, group = grpSig)
+emaFast  = input.int(21,    "Fast trend EMA",        minval = 2,   group = grpSig)
+emaSlow  = input.int(50,    "Slow trend EMA",        minval = 5,   group = grpSig)
+
+grpCol  = "Colors"
+colVA   = input.color(color.new(#2962ff, 55), "Value area rows",  group = grpCol)
+colOut  = input.color(color.new(#787b86, 75), "Outside-VA rows",  group = grpCol)
+colBuy  = input.color(color.new(#26a69a, 55), "Buy-dominant rows",  group = grpCol)
+colSell = input.color(color.new(#ef5350, 55), "Sell-dominant rows", group = grpCol)
+colPoc  = input.color(#ff9800, "POC line", group = grpCol)
+colVAln = input.color(#2962ff, "VAH/VAL lines", group = grpCol)
+
+// ── Profile engine (runs every bar so levels/alerts work historically) ──────
+profHigh = ta.highest(high, lookback)
+profLow  = ta.lowest(low,  lookback)
+rowH     = (profHigh - profLow) / rows
+
+volRows   = array.new_float(rows, 0.0)
+deltaRows = array.new_float(rows, 0.0)
+
+if rowH > 0
+    for i = 0 to lookback - 1
+        bh = high[i]
+        bl = low[i]
+        bv = nz(volume[i])
+        sgn = close[i] >= open[i] ? 1.0 : -1.0
+        topIdx = math.min(rows - 1, math.max(0, math.floor((bh - profLow) / rowH)))
+        botIdx = math.min(rows - 1, math.max(0, math.floor((bl - profLow) / rowH)))
+        span   = topIdx - botIdx + 1
+        volPer = bv / span
+        for j = botIdx to topIdx
+            array.set(volRows,   j, array.get(volRows,   j) + volPer)
+            array.set(deltaRows, j, array.get(deltaRows, j) + volPer * sgn)
+
+// POC = row with maximum volume
+pocIdx = 0
+maxVol = 0.0
+for j = 0 to rows - 1
+    v = array.get(volRows, j)
+    if v > maxVol
+        maxVol := v
+        pocIdx := j
+
+// Value area: expand from POC toward the heavier side until vaPct reached
+totalVol = array.sum(volRows)
+vaVol    = maxVol
+upIdx    = pocIdx + 1
+dnIdx    = pocIdx - 1
+while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
+    upV = upIdx < rows ? array.get(volRows, upIdx) : -1.0
+    dnV = dnIdx >= 0   ? array.get(volRows, dnIdx) : -1.0
+    if upV >= dnV
+        vaVol += upV
+        upIdx += 1
+    else
+        vaVol += dnV
+        dnIdx += 1
+vaHiIdx = upIdx - 1
+vaLoIdx = dnIdx + 1
+
+poc = rowH > 0 ? profLow + (pocIdx + 0.5) * rowH : close
+vah = rowH > 0 ? profLow + (vaHiIdx + 1) * rowH  : close
+val = rowH > 0 ? profLow + vaLoIdx * rowH        : close
+vaW = vah - val
+
+deltaTotal = array.sum(deltaRows)
+
+// ── Bias / forecast engine ───────────────────────────────────────────────────
+fastMa = ta.ema(close, emaFast)
+slowMa = ta.ema(close, emaSlow)
+volMa  = ta.sma(volume, volLen)
+volSpike = volume > volMa * volMult
+
+bias = 0
+bias += close > poc ? 1 : -1                       // trading above/below acceptance
+bias += deltaTotal > 0 ? 1 : -1                    // net buy vs sell volume in profile
+bias += close > vah ? 1 : close < val ? -1 : 0     // accepted outside value?
+bias += fastMa > slowMa ? 1 : -1                   // trend agreement
+
+// Next HVN in the bias direction = most probable magnet; else VA extension
+f_nextNode(dir) =>
+    found = float(na)
+    if rowH > 0
+        startIdx = math.min(rows - 1, math.max(0, math.floor((close - profLow) / rowH)))
+        j = startIdx + dir
+        while j >= 0 and j < rows and na(found)
+            isHvn = array.get(volRows, j) > maxVol * 0.6
+            if isHvn and math.abs(j - startIdx) > 1
+                found := profLow + (j + 0.5) * rowH
+            j += dir
+    found
+
+target = bias >= 2 ?
+     (close > vah ? vah + vaW : nz(f_nextNode(1),  vah)) :
+     bias <= -2 ?
+     (close < val ? val - vaW : nz(f_nextNode(-1), val)) :
+     poc
+
+biasTxt = bias >= 3 ? "STRONG BULLISH" : bias >= 2 ? "Bullish" :
+     bias <= -3 ? "STRONG BEARISH" : bias <= -2 ? "Bearish" : "Neutral / rotation"
+conf = math.round(math.abs(bias) / 4.0 * 100)
+
+// ── Signals ──────────────────────────────────────────────────────────────────
+breakoutUp  = ta.crossover(close,  vah) and volSpike      // acceptance breakout
+breakdownDn = ta.crossunder(close, val) and volSpike
+bounceLong  = ta.crossover(close,  val) and not volSpike  // re-entry into value
+rejectShort = ta.crossunder(close, vah) and not volSpike
+
+plotshape(showSigs and breakoutUp,  "Breakout Up",   shape.triangleup,   location.belowbar, color.new(#26a69a, 0), size = size.small, text = "BO")
+plotshape(showSigs and breakdownDn, "Breakdown",     shape.triangledown, location.abovebar, color.new(#ef5350, 0), size = size.small, text = "BD")
+plotshape(showSigs and bounceLong,  "Value Bounce",  shape.circle,       location.belowbar, color.new(#26a69a, 30), size = size.tiny, text = "VB")
+plotshape(showSigs and rejectShort, "Value Reject",  shape.circle,       location.abovebar, color.new(#ef5350, 30), size = size.tiny, text = "VR")
+
+alertcondition(breakoutUp,  "VPP: Breakout above VAH",  "Price broke above value area high on a volume spike — continuation likely toward VA extension.")
+alertcondition(breakdownDn, "VPP: Breakdown below VAL", "Price broke below value area low on a volume spike — continuation likely toward VA extension.")
+alertcondition(bounceLong,  "VPP: Re-entry above VAL",  "Price re-entered value from below — rotation toward POC likely.")
+alertcondition(rejectShort, "VPP: Rejection at VAH",    "Price rejected back inside value from above — rotation toward POC likely.")
+alertcondition(ta.cross(close, poc), "VPP: POC cross", "Price crossed the Point of Control.")
+
+// Historical level series (thin steps so you can see how value migrated)
+plot(showHist ? poc : na, "POC series", color.new(colPoc, 35),  1, plot.style_steplinebr)
+plot(showHist ? vah : na, "VAH series", color.new(colVAln, 60), 1, plot.style_steplinebr)
+plot(showHist ? val : na, "VAL series", color.new(colVAln, 60), 1, plot.style_steplinebr)
+
+// ── Drawing (last bar only) ──────────────────────────────────────────────────
+var array<box>  profBoxes = array.new<box>()
+var array<line> nodeLines = array.new<line>()
+var line  pocLn  = na
+var line  vahLn  = na
+var line  valLn  = na
+var label fcastLb = na
+var label pocLb  = na
+
+if barstate.islast and rowH > 0
+    for b in profBoxes
+        box.delete(b)
+    array.clear(profBoxes)
+    for l in nodeLines
+        line.delete(l)
+    array.clear(nodeLines)
+
+    if showProf
+        for j = 0 to rows - 1
+            v = array.get(volRows, j)
+            if v > 0
+                w  = math.max(1, math.round(v / maxVol * profWidth))
+                yb = profLow + j * rowH
+                yt = yb + rowH
+                inVA = j >= vaLoIdx and j <= vaHiIdx
+                d  = array.get(deltaRows, j)
+                rowCol = showDelta ? (d >= 0 ? colBuy : colSell) : (inVA ? colVA : colOut)
+                rowCol := showDelta and not inVA ? color.new(rowCol, 85) : rowCol
+                array.push(profBoxes, box.new(bar_index - w, yt, bar_index, yb,
+                     border_color = na, bgcolor = rowCol))
+
+    if showNodes
+        avgVol = totalVol / rows
+        for j = 1 to rows - 2
+            v  = array.get(volRows, j)
+            vP = array.get(volRows, j - 1)
+            vN = array.get(volRows, j + 1)
+            y  = profLow + (j + 0.5) * rowH
+            if v > vP and v > vN and v > maxVol * 0.75 and j != pocIdx
+                array.push(nodeLines, line.new(bar_index - lookback, y, bar_index, y,
+                     color = color.new(colPoc, 60), style = line.style_dotted))
+            if v < vP and v < vN and v < avgVol * 0.25
+                array.push(nodeLines, line.new(bar_index - lookback, y, bar_index, y,
+                     color = color.new(#787b86, 55), style = line.style_dashed))
+
+    if showLevels
+        line.delete(pocLn)
+        line.delete(vahLn)
+        line.delete(valLn)
+        label.delete(pocLb)
+        pocLn := line.new(bar_index - lookback, poc, bar_index + 10, poc, color = colPoc,  width = 2)
+        vahLn := line.new(bar_index - lookback, vah, bar_index + 10, vah, color = colVAln, width = 1)
+        valLn := line.new(bar_index - lookback, val, bar_index + 10, val, color = colVAln, width = 1)
+        pocLb := label.new(bar_index + 10, poc, "POC " + str.tostring(poc, format.mintick),
+             style = label.style_label_left, color = color.new(colPoc, 80), textcolor = colPoc, size = size.small)
+
+    if showFcast
+        label.delete(fcastLb)
+        fcTxt = "VOLUME PROFILE FORECAST\n" +
+             "Bias: " + biasTxt + "  (" + str.tostring(conf) + "% conviction)\n" +
+             "Projected target: " + str.tostring(target, format.mintick) + "\n" +
+             "VAH " + str.tostring(vah, format.mintick) +
+             "  •  POC " + str.tostring(poc, format.mintick) +
+             "  •  VAL " + str.tostring(val, format.mintick) + "\n" +
+             "Net delta: " + (deltaTotal >= 0 ? "+" : "") + str.tostring(deltaTotal, format.volume)
+        fcCol = bias >= 2 ? color.new(#26a69a, 20) : bias <= -2 ? color.new(#ef5350, 20) : color.new(#787b86, 20)
+        fcastLb := label.new(bar_index + 10, target, fcTxt,
+             style = label.style_label_left, color = fcCol, textcolor = color.white, size = size.normal)
