@@ -30,7 +30,9 @@ grpP = "Proxy settings"
 rsiLen   = input.int(14, "RSI length (crowding proxy)", group = grpP)
 crowdMin = input.float(0.12, "Crowding threshold (|RSI−50|/50)", step = 0.01, group = grpP)
 obvLen   = input.int(55, "OBV baseline EMA length", group = grpP)
-momLen   = input.int(24, "ROC lookback (bars; 24 on 1h ≈ bot's 24h)", group = grpP)
+autoMom  = input.bool(true, "Auto-scale ROC lookback to 24h (any timeframe)", group = grpP)
+momLen   = input.int(24, "Manual ROC lookback (bars, if auto off)", group = grpP)
+cooldown = input.int(4, "Cooldown bars after a trade closes", minval = 0, group = grpP)
 
 // ───────── Confluence score (positive = long, negative = short) ─────────
 clamp(x, lo, hi) => math.max(lo, math.min(hi, x))
@@ -47,15 +49,26 @@ whaleZ = obvSd > 0 ? clamp((ta.obv - obvEma) / obvSd, -1, 1) : 0.0
 whaleComp = whaleZ * whaleW * 0.5              // ±whaleW/2, like the bot's ±0.5 bias
 
 // 3. Momentum, same shape as the bot (change/6, clamped).
-rocV = ta.roc(close, momLen)
+// Auto mode: lookback = however many bars make 24 hours on this chart
+// (24 on 1h, 6 on 4H, 96 on 15m) so it matches the bot's 24h momentum leg.
+tfSec = timeframe.in_seconds(timeframe.period)
+momLenEff = autoMom and tfSec > 0 ? math.max(1, math.round(86400.0 / tfSec)) : momLen
+rocV = ta.roc(close, momLenEff)
 momComp = math.abs(rocV) >= 1.0 ? clamp(rocV / 6, -1, 1) * momW : 0.0
 
 score = fadeComp + whaleComp + momComp
 confidence = math.min(90, 45 + math.abs(score) * 15)   // bot's confidence map
 
 // ───────── Entries ─────────
-longSig  = score >  minScore and strategy.position_size == 0
-shortSig = score < -minScore and strategy.position_size == 0
+// Cooldown stops the instant re-entry chains when the score stays stretched
+// past threshold after a TP/stop — each signal is a fresh setup, not a refill.
+var int lastPosBar = na
+if strategy.position_size != 0
+    lastPosBar := bar_index
+canEnter = strategy.position_size == 0 and (na(lastPosBar) or bar_index - lastPosBar > cooldown)
+
+longSig  = score >  minScore and canEnter
+shortSig = score < -minScore and canEnter
 
 if longSig
     strategy.entry("L", strategy.long)
