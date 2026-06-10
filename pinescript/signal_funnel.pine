@@ -90,16 +90,34 @@ if strategy.position_size < 0
     strategy.exit("S-TP1", "S", qty_percent = 50, limit = avg * (1 - tp1Pct), stop = avg * (1 + stopPct))
     strategy.exit("S-TP2", "S",                   limit = avg * (1 - tp2Pct), stop = avg * (1 + stopPct))
 
-// ───────── Visuals: live SL/TP rails while in a trade ─────────
-inLong  = strategy.position_size > 0
-inShort = strategy.position_size < 0
-slLvl  = inLong ? avg * (1 - stopPct) : inShort ? avg * (1 + stopPct) : na
-tp1Lvl = inLong ? avg * (1 + tp1Pct)  : inShort ? avg * (1 - tp1Pct)  : na
-tp2Lvl = inLong ? avg * (1 + tp2Pct)  : inShort ? avg * (1 - tp2Pct)  : na
-plot(slLvl,  "Stop", color.new(color.red, 30),   2, plot.style_linebr)
-plot(tp1Lvl, "TP1",  color.new(color.green, 50), 1, plot.style_linebr)
-plot(tp2Lvl, "TP2",  color.new(color.green, 20), 2, plot.style_linebr)
-plot(inLong or inShort ? avg : na, "Entry", color.new(color.gray, 30), 1, plot.style_linebr)
+// ───────── Visuals: persistent SL/TP rails ─────────
+// Drawn as real lines (not in-position plots) so they stay visible even when a
+// trade opens and closes within a bar or two — which is why fast-moving tickers
+// previously showed labels but no rails.
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line enLine  = na
+
+justEntered = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justEntered
+    line.delete(slLine), line.delete(tp1Line), line.delete(tp2Line), line.delete(enLine)
+    a = strategy.position_avg_price
+    isLong = strategy.position_size > 0
+    sl  = isLong ? a * (1 - stopPct) : a * (1 + stopPct)
+    t1  = isLong ? a * (1 + tp1Pct)  : a * (1 - tp1Pct)
+    t2  = isLong ? a * (1 + tp2Pct)  : a * (1 - tp2Pct)
+    enLine  := line.new(bar_index, a,  bar_index, a,  color = color.new(color.gray, 20),  width = 1, style = line.style_dashed)
+    slLine  := line.new(bar_index, sl, bar_index, sl, color = color.new(color.red, 0),    width = 2)
+    tp1Line := line.new(bar_index, t1, bar_index, t1, color = color.new(color.green, 40), width = 1)
+    tp2Line := line.new(bar_index, t2, bar_index, t2, color = color.new(color.green, 0),  width = 2)
+
+// Extend the active (or most recent) trade's rails to the current bar.
+if not na(slLine)
+    line.set_x2(slLine,  bar_index)
+    line.set_x2(tp1Line, bar_index)
+    line.set_x2(tp2Line, bar_index)
+    line.set_x2(enLine,  bar_index)
 
 // ───────── Dashboard (the bot's /stats, on-chart) ─────────
 var table tbl = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 20),
