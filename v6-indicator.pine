@@ -1,0 +1,88 @@
+//@version=6
+// =============================================================================
+// V6 WaveTrend — momentum oscillator with overbought/oversold cross signals
+// Paste into TradingView's Pine Editor (chart -> Pine Editor -> paste -> "Add to
+// chart"). Opens in its own pane below price.
+// =============================================================================
+indicator("V6 WaveTrend", shorttitle="V6", overlay=false, timeframe="", timeframe_gaps=true)
+
+// ---- inputs -----------------------------------------------------------------
+chanLen  = input.int(10,  "Channel length",  minval=1, group="WaveTrend")
+avgLen   = input.int(21,  "Average length",  minval=1, group="WaveTrend")
+sigLen   = input.int(4,   "Signal length",   minval=1, group="WaveTrend")
+src      = input.source(hlc3, "Source", group="WaveTrend")
+obLevel  = input.int(60,  "Overbought", group="Levels")
+osLevel  = input.int(-60, "Oversold",   group="Levels")
+sigMode  = input.string("Reversal (OB/OS)", "Signal mode", options=["Trend pullback", "Reversal (OB/OS)"], group="Signals")
+pullDepth= input.int(20,  "Pullback depth (trend mode)", minval=0, tooltip="Trend-pullback mode only: a Buy needs the signal line below −this (dip) before crossing up; Sell above +this. Lower = more signals.", group="Signals")
+showFill    = input.bool(true,  "Shade fast/signal",            group="Style")
+showDots    = input.bool(false, "Cross dots in oscillator pane", group="Style")
+mainSignals = input.bool(true,  "Signals on price chart",        group="Style")
+
+// higher-timeframe trend filter (align signals with your SMC bias)
+useHtf  = input.bool(false, "Filter signals by higher-timeframe trend", group="HTF bias")
+htf     = input.timeframe("240", "Higher timeframe",        group="HTF bias")
+biasLen = input.int(50,    "HTF EMA length",  minval=1,     group="HTF bias")
+showBg  = input.bool(true, "Shade pane by HTF bias",        group="HTF bias")
+
+// ---- WaveTrend calculation --------------------------------------------------
+esa = ta.ema(src, chanLen)
+de  = ta.ema(math.abs(src - esa), chanLen)
+ci  = (src - esa) / (0.015 * de)
+wt1 = ta.ema(ci, avgLen)        // fast line
+wt2 = ta.sma(wt1, sigLen)       // signal line
+diff = wt1 - wt2
+
+// ---- levels -----------------------------------------------------------------
+hline(0,        "Zero",        color=color.new(color.gray, 40), linestyle=hline.style_dotted)
+obL = hline(obLevel, "Overbought", color=color.new(color.gray, 65), linestyle=hline.style_dashed)
+osL = hline(osLevel, "Oversold",   color=color.new(color.gray, 65), linestyle=hline.style_dashed)
+hline(0, display=display.none)
+fill(obL, osL, color=color.new(color.gray, 96))
+
+// ---- plots ------------------------------------------------------------------
+cyan   = #18e3e3
+purple = #b026ff
+p1 = plot(wt1, "WT fast",   color=cyan,   linewidth=2)
+p2 = plot(wt2, "WT signal", color=purple, linewidth=1)
+fill(p1, p2, color = showFill ? color.new(diff >= 0 ? cyan : purple, 82) : na)
+
+// histogram of the wt1/wt2 spread (momentum strength)
+plot(diff, "Momentum", color=color.new(diff >= 0 ? cyan : purple, 35), style=plot.style_columns)
+
+// ---- higher-timeframe bias --------------------------------------------------
+// HTF trend = HTF close above/below its EMA (no repaint: lookahead off + last
+// confirmed HTF value). bullBias gates Buys, bearBias gates Sells.
+htfClose = request.security(syminfo.tickerid, htf, close,                 lookahead=barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htf, ta.ema(close, biasLen), lookahead=barmerge.lookahead_off)
+bullBias = htfClose > htfEma
+bearBias = htfClose < htfEma
+
+bgcolor(showBg and useHtf ? (bullBias ? color.new(cyan, 92) : bearBias ? color.new(purple, 92) : na) : na, title="HTF bias")
+
+// ---- signals ----------------------------------------------------------------
+// Trend pullback (default): a momentum cross on a SHALLOW dip in the HTF
+//   direction -> buy dips in uptrends, sell rallies in downtrends. Fires often.
+// Reversal: the original deep OB/OS cross. Fires rarely, catches turns.
+crossUp = ta.crossover(wt1, wt2)
+crossDn = ta.crossunder(wt1, wt2)
+isTrend = sigMode == "Trend pullback"
+
+rawBuy  = crossUp and (isTrend ? wt2 <= -pullDepth : wt2 <= osLevel)
+rawSell = crossDn and (isTrend ? wt2 >=  pullDepth : wt2 >= obLevel)
+buySig  = rawBuy  and (not useHtf or bullBias)
+sellSig = rawSell and (not useHtf or bearBias)
+
+// dots inside this oscillator pane (optional)
+plotshape(showDots and buySig  ? wt2 : na, "Buy cross",  shape.circle, location.absolute, color=cyan,   size=size.small)
+plotshape(showDots and sellSig ? wt2 : na, "Sell cross", shape.circle, location.absolute, color=#ec3ad6, size=size.small)
+
+// signals on the MAIN price chart (force_overlay puts them on the candles)
+plotshape(mainSignals and buySig,  "Buy signal",  shape.triangleup,   location.belowbar, color=cyan,    size=size.small, text="Buy",  textcolor=cyan,    force_overlay=true)
+plotshape(mainSignals and sellSig, "Sell signal", shape.triangledown, location.abovebar, color=#ec3ad6, size=size.small, text="Sell", textcolor=#ec3ad6, force_overlay=true)
+
+barcolor(buySig ? cyan : sellSig ? #ec3ad6 : na)
+
+// ---- alerts -----------------------------------------------------------------
+alertcondition(buySig,  title="V6 Buy",  message="V6 WaveTrend: HTF-aligned buy on {{ticker}} ({{interval}})")
+alertcondition(sellSig, title="V6 Sell", message="V6 WaveTrend: HTF-aligned sell on {{ticker}} ({{interval}})")

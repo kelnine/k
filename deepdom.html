@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepDom — liquidity heatmap</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #04060a; color: #cfd2dc; overflow: hidden;
+    font: 13px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+    background: #07090e; border-bottom: 1px solid #14161d; flex-wrap: wrap; }
+  .pill { background: #12141b; border: 1px solid #23252f; border-radius: 6px; padding: 6px 9px; font-size: 12px; }
+  .pill.sym { color: #1fd35a; font-weight: 600; }
+  label.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+    background: #12141b; border: 1px solid #23252f; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  label.tog input { accent-color: #ff9a2e; margin: 0; }
+  .title { font-weight: 700; margin-left: auto; }
+  .title b { background: linear-gradient(90deg,#1fd35a,#b026ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #stage { flex: 1; min-height: 0; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .legend { position: absolute; left: 10px; bottom: 10px; background: rgba(4,6,10,.8);
+    border: 1px solid #14161d; border-radius: 8px; padding: 7px 9px; font-size: 10.5px; color: #8b90a0; pointer-events: none; }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .sw { width: 18px; height: 9px; border-radius: 2px; }
+  .note { position: absolute; right: 10px; top: 8px; font-size: 10.5px; color: #6b6f7d; pointer-events: none;
+    text-shadow: 0 0 6px #000; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="pill sym" id="sym">ES-202606</span>
+    <span class="pill" id="tf">1 Min · DOM</span>
+    <label class="tog"><input type="checkbox" id="tIce" checked>Icebergs</label>
+    <label class="tog"><input type="checkbox" id="tStop" checked>Stop runs</label>
+    <label class="tog"><input type="checkbox" id="tVP" checked>Volume profile</label>
+    <span class="pill" id="regen">↻ New</span>
+    <span class="title">Deep<b>Dom</b></span>
+  </header>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="note" id="note"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+<script>
+// ----------------------------------------------------------------------------
+// DeepDom clone — synthetic liquidity heatmap + volume profile + iceberg walls
+// + stop-run (liquidity sweep) markers + a live DOM ladder snapshot.
+// Illustrative (synthetic) data so it renders without an order-book feed.
+// ----------------------------------------------------------------------------
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+let DPR = Math.max(1, devicePixelRatio||1), W=0, H=0;
+
+let rng = mkRng((Math.random()*1e9)|0);
+function mkRng(s){ s=s>>>0||1; return ()=>{ s^=s<<13; s^=s>>>17; s^=s<<5; s>>>=0; return s/4294967296; }; }
+const randn = ()=>{ let x=0; for(let i=0;i<6;i++) x+=rng(); return (x-3)/1.5; };
+
+const N = 132, ROWS = 96, TICK = 0.25;
+let bars, field, walls, stops, vp, pmin, pmax;
+
+function gen(){
+  rng = mkRng((Math.random()*1e9)|0);
+  // price walk
+  bars = []; let p = 6250;
+  for (let i=0;i<N;i++){
+    const o=p, c=+(o+Math.sin(i/9)*0.5+randn()*1.4).toFixed(2);
+    const hi=Math.max(o,c)+Math.abs(randn())*1.1+0.25, lo=Math.min(o,c)-Math.abs(randn())*1.1-0.25;
+    p=c; bars.push({o,c,hi,lo,vol:40+Math.abs(randn())*60});
+  }
+  pmin = Math.min(...bars.map(b=>b.lo)) - 1.5;
+  pmax = Math.max(...bars.map(b=>b.hi)) + 1.5;
+  const row = pr => Math.round((pmax-pr)/(pmax-pmin)*(ROWS-1));
+  const rowPrice = r => pmax - r/(ROWS-1)*(pmax-pmin);
+
+  // resting-liquidity walls (icebergs): persistent big orders over a time span
+  walls = [];
+  for (let k=0;k<7;k++){
+    const r = 6 + (rng()*(ROWS-12)|0);
+    const t0 = (rng()*N*0.6)|0, len = 18 + (rng()*48|0);
+    walls.push({ r, t0, t1: Math.min(N-1, t0+len), strength: 0.7+rng()*0.6,
+      price: rowPrice(r), size: 200 + (rng()*1600|0) });
+  }
+  // build heatmap field[t][r]
+  field = [];
+  for (let t=0;t<N;t++){
+    const col = new Float32Array(ROWS);
+    const pr = bars[t].c, pRow = row(pr);
+    for (let r=0;r<ROWS;r++){
+      const dist = Math.abs(r-pRow);
+      col[r] = 0.10 + Math.exp(-dist*dist/220)*0.28 + rng()*0.06;   // book thins away from price
+    }
+    for (const w of walls){
+      if (t>=w.t0 && t<=w.t1){
+        // wall consumed as price reaches it
+        const reached = Math.abs(rowPrice(w.r)-pr) < 0.6;
+        const decay = reached ? 0.35 : 1;
+        for (let r=w.r-1;r<=w.r+1;r++) if(r>=0&&r<ROWS)
+          col[r] = Math.max(col[r], w.strength*decay*(r===w.r?1:0.6));
+      }
+    }
+    field.push(col);
+  }
+  // stop runs: wick beyond recent extreme then close back inside (liquidity
+  // sweep). Cooldown so markers don't stack on consecutive bars.
+  stops = []; let lastH=-99, lastL=-99;
+  for (let i=8;i<N;i++){
+    const ph = Math.max(...bars.slice(i-8,i).map(b=>b.hi));
+    const pl = Math.min(...bars.slice(i-8,i).map(b=>b.lo));
+    if (bars[i].hi > ph+0.4 && bars[i].c < ph && i-lastH>5){ stops.push({ t:i, price:bars[i].hi, side:'high' }); lastH=i; }
+    if (bars[i].lo < pl-0.4 && bars[i].c > pl && i-lastL>5){ stops.push({ t:i, price:bars[i].lo, side:'low'  }); lastL=i; }
+  }
+  // volume profile by row
+  vp = new Float32Array(ROWS);
+  for (const b of bars){ const r=row(b.c); for(let d=-2;d<=2;d++){ const rr=r+d; if(rr>=0&&rr<ROWS) vp[rr]+=b.vol*Math.exp(-d*d/3); } }
+  draw();
+}
+
+function heat(t){                                   // colormap: black->teal->yellow->orange->red
+  t = Math.max(0,Math.min(1,t));
+  const S = [[0,[1,10,16]],[0.30,[6,70,82]],[0.50,[16,150,150]],[0.66,[90,200,120]],
+             [0.80,[235,205,70]],[0.90,[245,140,45]],[1,[240,45,45]]];
+  for (let i=1;i<S.length;i++) if (t<=S[i][0]){
+    const a=S[i-1][0],b=S[i][0],ca=S[i-1][1],cb=S[i][1],u=(t-a)/(b-a);
+    return ca.map((c,j)=>Math.round(c+(cb[j]-c)*u));
+  }
+  return S[S.length-1][1];
+}
+
+function resize(){ const r=cv.getBoundingClientRect(); W=r.width; H=r.height; cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0); draw(); }
+
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.fillStyle='#04060a'; ctx.fillRect(0,0,W,H);
+  const padR = 118, padL = 4, padT = 6, padB = 6;
+  const gw = W - padL - padR, gh = H - padT - padB;
+  const cw = gw / N, ch = gh / ROWS;
+  const x = t => padL + t*cw, y = r => padT + r*ch;
+  const rowPrice = r => pmax - r/(ROWS-1)*(pmax-pmin);
+  const yPrice = pr => padT + (pmax-pr)/(pmax-pmin)*gh;
+
+  // heatmap
+  for (let t=0;t<N;t++){ const col=field[t];
+    for (let r=0;r<ROWS;r++){ const v=col[r]; if(v<0.06) continue;
+      const [R,G,B]=heat(v); ctx.fillStyle=`rgb(${R},${G},${B})`;
+      ctx.fillRect(x(t), y(r), Math.ceil(cw)+0.5, Math.ceil(ch)+0.5);
+    }
+  }
+
+  // iceberg wall tags
+  if ($('tIce').checked){
+    ctx.font='9px ui-monospace, Menlo, monospace'; ctx.textBaseline='middle';
+    for (const w of walls){ if (w.strength<0.95) continue;
+      const yy=yPrice(w.price);
+      ctx.fillStyle='rgba(255,160,60,.95)'; ctx.fillRect(x(w.t0), yy-1, (w.t1-w.t0)*cw, 2);
+      ctx.fillStyle='#ffcf8a'; ctx.textAlign='left';
+      ctx.fillText('▣ '+w.size, x(w.t0)+3, yy-7);
+    }
+  }
+
+  // price line
+  ctx.strokeStyle='rgba(235,240,255,.9)'; ctx.lineWidth=1.4; ctx.beginPath();
+  bars.forEach((b,i)=>{ const xx=x(i)+cw/2, yy=yPrice(b.c); i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
+  ctx.stroke();
+
+  // stop-run markers — small triangles (no text) so it stays clean
+  if ($('tStop').checked){
+    for (const s of stops){
+      const xx=x(s.t)+cw/2, yy=yPrice(s.price), up=s.side==='low';
+      const col = up ? '24,227,227' : '236,58,214', off = up ? 7 : -7;
+      const g=ctx.createRadialGradient(xx,yy+off,1,xx,yy+off,7);
+      g.addColorStop(0,`rgba(${col},.9)`); g.addColorStop(1,`rgba(${col},0)`);
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(xx,yy+off,5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgb(${col})`; ctx.beginPath();
+      if (up){ ctx.moveTo(xx,yy+3); ctx.lineTo(xx-4,yy+10); ctx.lineTo(xx+4,yy+10); }
+      else   { ctx.moveTo(xx,yy-3); ctx.lineTo(xx-4,yy-10); ctx.lineTo(xx+4,yy-10); }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // volume profile (right strip, before ladder)
+  const vpX = W - padR, vpW = 54;
+  if ($('tVP').checked){
+    const vmax = Math.max(...vp);
+    let poc=0; vp.forEach((v,r)=>{ if(v>vp[poc]) poc=r; });
+    for (let r=0;r<ROWS;r++){ const w=vp[r]/vmax*vpW; const up=rowPrice(r)>=bars[bars.length-1].c;
+      ctx.fillStyle = r===poc ? 'rgba(255,205,70,.95)' : (up?'rgba(176,38,255,.45)':'rgba(31,211,90,.45)');
+      ctx.fillRect(vpX, y(r), w, Math.ceil(ch)); }
+    ctx.strokeStyle='rgba(255,205,70,.9)'; ctx.setLineDash([4,3]); ctx.beginPath();
+    ctx.moveTo(padL, y(poc)+ch/2); ctx.lineTo(vpX, y(poc)+ch/2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='#ffcf8a'; ctx.font='9px ui-monospace,monospace'; ctx.textAlign='left';
+    ctx.fillText('POC', vpX+2, y(poc)-6);
+  }
+
+  // DOM ladder snapshot (far right): resting size at last bar
+  const ladX = W - 60, last = field[N-1], lastP = bars[N-1].c, lastRow = Math.round((pmax-lastP)/(pmax-pmin)*(ROWS-1));
+  ctx.font='9px ui-monospace,monospace'; ctx.textBaseline='middle';
+  for (let r=Math.max(0,lastRow-16); r<Math.min(ROWS,lastRow+16); r++){
+    const yy=y(r)+ch/2, sz=Math.round(last[r]*900), bid=rowPrice(r)<lastP;
+    ctx.fillStyle = bid ? 'rgba(31,211,90,.18)' : 'rgba(236,58,214,.18)';
+    ctx.fillRect(ladX, y(r), 60, Math.ceil(ch));
+    ctx.fillStyle = bid ? '#5ef08a' : '#f06ad6'; ctx.textAlign='left'; ctx.fillText(sz, ladX+4, yy);
+  }
+  ctx.fillStyle='#cfd2dc'; ctx.textAlign='left';
+  for (let k=0;k<=6;k++){ const pr=pmin+(pmax-pmin)*k/6; ctx.fillText(pr.toFixed(2), W-58, yPrice(pr)); }
+
+  $('note').textContent = 'Synthetic order-book heatmap · illustrative';
+  $('legend').innerHTML =
+    `<div class="row"><span class="sw" style="background:linear-gradient(90deg,#0a4652,#10a0a0,#ebd146,#f08c2d,#f02d2d)"></span>Resting liquidity (low → high)</div>`+
+    `<div class="row"><span class="sw" style="background:#ffa03c"></span>Iceberg / absorption wall</div>`+
+    `<div class="row"><span class="sw" style="background:#ec3ad6"></span>Stop run (liquidity sweep)</div>`+
+    `<div class="row"><span class="sw" style="background:#ffcd46"></span>Volume profile · POC</div>`;
+}
+
+$('regen').addEventListener('click', gen);
+['tIce','tStop','tVP'].forEach(id=>$(id).addEventListener('change', draw));
+window.addEventListener('resize', resize);
+gen(); resize();
+</script>
+</body>
+</html>

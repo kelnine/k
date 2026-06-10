@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>All pairs — TradingView</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0a0c; overflow: hidden;
+    font: 13px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #cfd2dc; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    background: #0a0a0c; border-bottom: 1px solid #161620; }
+  .title { font-weight: 700; } .title b { color: #1fd35a; }
+  .spacer { flex: 1; }
+  a.pill { text-decoration: none; background: #14141a; border: 1px solid #25252f;
+    border-radius: 6px; padding: 6px 11px; color: #18e3e3; font-size: 12px; }
+  #chart { flex: 1; min-height: 0; }
+  .tradingview-widget-container, .tradingview-widget-container__widget { height: 100%; width: 100%; }
+  .note { padding: 6px 12px; font-size: 11px; color: #6b6f7d; background: #0a0a0c; border-top: 1px solid #161620; }
+  .note b { color: #1fd35a; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title">All pairs — real <b>TradingView</b> data</span>
+    <div class="spacer"></div>
+    <a class="pill" href="index.html">← Live overlays</a>
+  </header>
+  <div id="chart">
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript"
+        src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+      {
+        "autosize": true, "symbol": "BINANCE:BTCUSDT", "interval": "60",
+        "timezone": "Etc/UTC", "theme": "dark", "style": "1", "locale": "en",
+        "withdateranges": true, "hide_side_toolbar": false, "allow_symbol_change": true,
+        "details": true, "hotlist": true, "calendar": false,
+        "studies": ["STD;Volume","STD;VWAP","STD;MACD"],
+        "support_host": "https://www.tradingview.com"
+      }
+      </script>
+    </div>
+  </div>
+  <div class="note">
+    Tap the symbol (top-left of the chart) to search <b>any</b> pair — stocks, futures, forex, crypto.
+    To run the custom <b>V6</b> Pine indicator, add <b>v6-indicator.pine</b> on tradingview.com
+    (custom scripts can't run inside an embed).
+  </div>
+</div>
+</body>
+</html>
