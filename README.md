@@ -28,14 +28,24 @@ A signal requires **all** of the following confluences:
 7. **RSI window** — RSI confirms direction (>50 for longs) but blocks exhaustion entries (<70).
 8. **Volume spike** — current volume > 1.2× its 20-bar average.
 
+9. **Overextension guard** — the trigger bar's range must be ≤ 1.5× ATR and price ≤ 1× ATR from the fast EMA, so the system never chases climax candles.
+10. **Slope filter** — the slow EMA must actually be rising (longs) / falling (shorts), not flat.
+
 ### Risk engine (strategy)
 
-- **Stop loss:** 1.2 × ATR(14) from entry.
-- **Take profit:** 1.8R (i.e., 1.8× the stop distance) — positive expectancy at ~40%+ win rate before costs.
-- **Break-even:** stop moves to entry once the trade reaches +1R (toggleable).
-- **Optional ATR trailing stop** (2 × ATR) that replaces the fixed TP to ride runners.
+- **Stop loss:** 1.5 × ATR(14) from entry — wide enough to survive 1-min noise.
+- **Scale-out exits:** 50% of the position takes profit at **TP1 (1R)**; the stop on the remainder moves to break-even; the runner targets **TP2 (2.2R)**. This is what produces *consistency*: many trades bank the partial and scratch the rest, while runners pay for the losers.
+- **Optional ATR trailing stop** (2 × ATR) on the runner instead of a fixed TP2.
 - **Guards:** session filter (default 09:30–15:30 New York), max 10 trades/day, 5-bar cooldown after a loss, 3% daily loss cap, forced flat at session end.
 - **Realistic costs baked in:** 0.02% commission + 1 tick slippage per fill. Keep these on — a 1-min backtest without costs is fiction.
+
+### Visuals
+
+Gradient **trend cloud** between the EMAs, compact ▲/▼ signal markers with the
+full trade plan (entry/SL/TP1/TP2) in a **hover tooltip**, shaded **risk/reward
+zone boxes** on each signal, optional trend-colored bars, a live **dashboard**
+(bias, ADX, RSI, volume, VWAP side, session), and the strategy's performance
+table. Everything is toggleable in the *Display* input group.
 
 ## Setup
 
@@ -54,8 +64,31 @@ These defaults are a sane starting point, not magic numbers. Tune in this order:
 | Chopped up by noise | Raise `Min ADX` (18 → 22–25), raise `Volume spike` (1.2 → 1.5) |
 | Stopped out then move goes your way | Raise `Stop loss × ATR` (1.2 → 1.5–2.0) and re-tune the R multiple |
 | Winners reverse before target | Lower the `R multiple` (1.8 → 1.3–1.5) or enable break-even earlier |
-| Strong trending instrument (NQ, BTC) | Enable the **ATR trailing stop** instead of fixed TP |
+| Strong trending instrument (NQ, BTC) | Enable the **ATR trailing stop** instead of fixed TP2 |
 | Crypto / 24h markets | Disable the session filter or set it to the high-volume window |
+
+### Crypto perpetuals (BTC/ETH) starting point
+
+- **Session filter:** either disable it, or restrict to the US/EU overlap
+  (`1300-2100` UTC) where BTC actually trends on the 1-min.
+- **Commission:** set it to your real taker fee (often 0.04–0.06% on perps —
+  *higher* than the 0.02% default; this alone can flip a marginal backtest).
+- **Filters:** ADX 22–25 and volume spike 1.3–1.5 — BTC 1-min has more noise
+  than index futures, so demand stronger confirmation and accept fewer trades.
+- **Exits:** enable the ATR trailing stop on the runner; BTC trends pay best
+  when you let the second half ride.
+
+### If your backtest is negative
+
+1. Check **trade count** — under ~100 trades the result is noise either way.
+2. Check **avg win vs avg loss** — if winners are smaller than losers, widen
+   the stop (1.5 → 2.0 ATR) or raise TP2.
+3. Check **win rate** — below ~35% means the filters aren't selective enough
+   for that instrument: raise ADX and the volume multiplier.
+4. Make sure commission/slippage match your real broker — then *never* tune
+   them down to make results look better.
+5. Try the trailing-stop runner; on trending instruments fixed targets often
+   leave the profit on the table.
 
 After tuning, **walk-forward test**: optimize on one date range, then verify on
 unseen later data. If performance collapses out-of-sample, you've overfit —
