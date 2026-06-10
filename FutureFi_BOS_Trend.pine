@@ -1,0 +1,440 @@
+//@version=6
+// =============================================================================
+// BOS + Trend  ·  Multi-Timeframe Strategy   (Pine Script v6)
+//
+//   Step 1 · 1H   → Higher-timeframe trend / bias   (EMA 50 & EMA 200)
+//   Step 2 · 15M  → Setup confirmation              (trend hold + pullback)
+//   Step 3 · 5M   → Entry                           (Break of Structure + retest)
+//
+// Account-size neutral: position size is derived from a % risk-per-trade input
+// and the stop distance — it scales to any account, no fixed money amounts.
+//
+// Quality filters (all optional): HTF EMA-slope, ADX trend strength, BOS
+// momentum, and an entry-confirmation candle. Account-neutral daily-loss and
+// drawdown lockouts protect the equity curve.
+//
+// No repainting: HTF/MTF data is read with a confirmed-bar wrapper and
+// lookahead is OFF. Structure (BOS) uses confirmed swing pivots, and orders are
+// processed on bar close.
+//
+// Open the chart on your ENTRY timeframe (5M recommended); the 1H bias and 15M
+// confirmation are pulled automatically.
+//
+// Educational backtesting tool — not financial advice. Forward-test on demo.
+// =============================================================================
+
+strategy(
+     title              = "BOS + Trend MTF Strategy",
+     shorttitle         = "BOS+Trend MTF",
+     overlay            = true,
+     pyramiding         = 0,
+     initial_capital    = 10000,
+     default_qty_type   = strategy.fixed,
+     default_qty_value  = 1,
+     commission_type    = strategy.commission.percent,
+     commission_value   = 0.02,
+     slippage           = 1,
+     calc_on_every_tick = false,
+     process_orders_on_close = true,
+     max_labels_count   = 500,
+     max_lines_count    = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+gTF  = "Timeframes"
+htfTF = input.timeframe("60", "Step 1 · Bias TF (1H)",          group = gTF)
+mtfTF = input.timeframe("15", "Step 2 · Confirmation TF (15M)", group = gTF)
+// Step 3 (entry) = the chart's own timeframe — open it on 5M.
+
+gEMA = "Trend / Bias (EMA stack)"
+emaFastLen   = input.int(50,  "Fast EMA", minval = 1, group = gEMA)
+emaSlowLen   = input.int(200, "Slow EMA", minval = 1, group = gEMA)
+requireStack = input.bool(true, "Require clean EMA stack (fast vs slow)", group = gEMA,
+     tooltip = "Bull = fast EMA above slow EMA; Bear = fast below slow. Filters ranges.")
+
+gFILT = "Quality filters"
+useSlope    = input.bool(true, "HTF EMA-slope filter", group = gFILT,
+     tooltip = "Longs only when the 1H fast EMA is rising; shorts only when it is falling.")
+slopeLook   = input.int(3, "Slope lookback (HTF bars)", minval = 1, group = gFILT)
+useADX      = input.bool(true, "ADX trend-strength filter", group = gFILT)
+adxLen      = input.int(14, "ADX/DI length", minval = 1, group = gFILT)
+adxSmooth   = input.int(14, "ADX smoothing", minval = 1, group = gFILT)
+adxMin      = input.float(20, "Minimum ADX", minval = 0, step = 1, group = gFILT,
+     tooltip = "Skip trades when ADX is below this — avoids chop / ranges.")
+useBosMom   = input.bool(true, "BOS momentum filter", group = gFILT)
+bosMinMult  = input.float(0.10, "Min break beyond level (× ATR)", minval = 0.0, step = 0.05, group = gFILT,
+     tooltip = "The breakout close must clear the swing by this much — skips weak, marginal breaks.")
+useEntryConf = input.bool(true, "Entry-confirmation candle", group = gFILT,
+     tooltip = "Require the retest bar to close in the trade direction (bullish for longs).")
+
+gBOS = "Break of Structure + retest"
+pivotLen   = input.int(5, "Swing pivot lookback", minval = 2, group = gBOS,
+     tooltip = "Bars on each side to confirm a swing. Higher = stronger, fewer signals.")
+retestMult = input.float(0.50, "Retest tolerance (× ATR)", minval = 0.0, step = 0.05, group = gBOS,
+     tooltip = "How close price must return to the broken level to count as a retest.")
+bosExpiry  = input.int(12, "Retest window (bars)", minval = 1, group = gBOS,
+     tooltip = "Cancel the setup if no retest happens within this many bars (no chasing).")
+
+gPB = "Step 2 · pullback"
+requirePullback = input.bool(true, "Require a pullback into the fast-EMA zone", group = gPB)
+pullbackLook    = input.int(6, "Pullback lookback (MTF bars)", minval = 1, group = gPB)
+pullbackTol     = input.float(0.25, "Pullback depth (× ATR)", minval = 0.0, step = 0.05, group = gPB)
+
+gRISK = "Risk management"
+riskPct      = input.float(1.0, "Risk per trade (% of equity)", minval = 0.01, step = 0.1, group = gRISK,
+     tooltip = "Account-neutral sizing: quantity = (equity × risk%) ÷ stop distance.")
+slMode       = input.string("Swing", "Stop-loss basis", options = ["Swing", "ATR"], group = gRISK)
+atrLen       = input.int(14, "ATR length", minval = 1, group = gRISK)
+atrSLmult    = input.float(1.5, "ATR stop multiple (ATR mode)", minval = 0.1, step = 0.1, group = gRISK)
+swingBuffer  = input.float(0.5, "Swing stop buffer (× ATR)", minval = 0.0, step = 0.05, group = gRISK)
+
+gGUARD = "Equity guards (account-neutral)"
+useDailyLoss = input.bool(true, "Daily-loss lockout", group = gGUARD)
+maxDailyLoss = input.float(3.0, "Max daily loss (% of equity)", minval = 0.1, step = 0.1, group = gGUARD)
+useDDlock    = input.bool(true, "Max-drawdown lockout", group = gGUARD)
+maxDDpct     = input.float(15.0, "Stop trading below drawdown (%)", minval = 0.1, step = 0.5, group = gGUARD,
+     tooltip = "Halt new entries if equity falls this far below its peak.")
+
+gTRADE = "Trade frequency"
+useMaxTrades  = input.bool(true, "Limit trades per day", group = gTRADE)
+maxTradesDay  = input.int(3, "Max trades per day", minval = 1, group = gTRADE)
+useCooldown   = input.bool(true, "Cooldown between trades", group = gTRADE)
+cooldownBars  = input.int(5, "Cooldown (bars)", minval = 0, group = gTRADE)
+
+gEXIT = "Targets & exits (R-multiples)"
+tp1RR     = input.float(1.0, "TP1 (R)", minval = 0.1, step = 0.1, group = gEXIT)
+tp2RR     = input.float(2.0, "TP2 (R)", minval = 0.1, step = 0.1, group = gEXIT)
+useRunner = input.bool(true, "Use runner (TP3)", group = gEXIT)
+tp3RR     = input.float(3.0, "TP3 / runner (R)", minval = 0.1, step = 0.1, group = gEXIT)
+tp1Pct    = input.float(40, "TP1 size (%)", minval = 0, maxval = 100, group = gEXIT)
+tp2Pct    = input.float(35, "TP2 size (%)", minval = 0, maxval = 100, group = gEXIT,
+     tooltip = "Remainder runs to TP3 when the runner is enabled, otherwise TP2 closes it.")
+useBE     = input.bool(true, "Move stop to break-even after TP1", group = gEXIT)
+useTrail  = input.bool(false, "ATR trailing stop", group = gEXIT)
+trailMult = input.float(2.0, "Trailing ATR multiple", minval = 0.1, step = 0.1, group = gEXIT)
+
+gSESS = "Session filter (optional)"
+useSession = input.bool(false, "Restrict to a session", group = gSESS)
+sess       = input.session("0800-1700", "Session", group = gSESS)
+
+gVIS = "Visuals"
+showEMA     = input.bool(true, "Show EMAs",        group = gVIS)
+showBOS     = input.bool(true, "Show BOS labels",  group = gVIS)
+showEntries = input.bool(true, "Show entry labels", group = gVIS)
+showLines   = input.bool(true, "Show SL / TP lines", group = gVIS)
+showBias    = input.bool(true, "Show bias tint",   group = gVIS)
+showDash    = input.bool(true, "Show dashboard",   group = gVIS)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NON-REPAINTING MULTI-TIMEFRAME HELPER
+// Reads the last CONFIRMED higher-/lower-tf value (no lookahead, no repaint).
+// ─────────────────────────────────────────────────────────────────────────────
+f_secNR(simple string tf, series float src) =>
+    request.security(syminfo.tickerid, tf, src[barstate.isrealtime ? 1 : 0],
+         lookahead = barmerge.lookahead_off)
+
+// Chart-timeframe values
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atr     = ta.atr(atrLen)
+
+// Trend strength (chart TF)
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxSmooth)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 1 · 1H BIAS (+ optional slope)
+// ─────────────────────────────────────────────────────────────────────────────
+htfClose = f_secNR(htfTF, close)
+htfFast  = f_secNR(htfTF, ta.ema(close, emaFastLen))
+htfSlow  = f_secNR(htfTF, ta.ema(close, emaSlowLen))
+htfSlope = f_secNR(htfTF, ta.ema(close, emaFastLen) - ta.ema(close, emaFastLen)[slopeLook])
+
+htfBull = htfClose > htfFast and htfClose > htfSlow and (not requireStack or htfFast > htfSlow)
+htfBear = htfClose < htfFast and htfClose < htfSlow and (not requireStack or htfFast < htfSlow)
+slopeUp = not useSlope or htfSlope > 0
+slopeDn = not useSlope or htfSlope < 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 2 · 15M SETUP CONFIRMATION
+// ─────────────────────────────────────────────────────────────────────────────
+mtfClose   = f_secNR(mtfTF, close)
+mtfFast    = f_secNR(mtfTF, ta.ema(close, emaFastLen))
+mtfSlow    = f_secNR(mtfTF, ta.ema(close, emaSlowLen))
+mtfATR     = f_secNR(mtfTF, ta.atr(atrLen))
+mtfLowest  = f_secNR(mtfTF, ta.lowest(low,  pullbackLook))
+mtfHighest = f_secNR(mtfTF, ta.highest(high, pullbackLook))
+
+mtfBull   = mtfClose > mtfSlow and (not requireStack or mtfFast > mtfSlow)
+mtfBear   = mtfClose < mtfSlow and (not requireStack or mtfFast < mtfSlow)
+mtfPbBull = mtfLowest  <= mtfFast + pullbackTol * mtfATR
+mtfPbBear = mtfHighest >= mtfFast - pullbackTol * mtfATR
+
+setupBull = mtfBull and (not requirePullback or mtfPbBull)
+setupBear = mtfBear and (not requirePullback or mtfPbBear)
+
+// Combined directional filter gates
+adxOK     = not useADX or adxVal >= adxMin
+longGate  = htfBull and setupBull and slopeUp and adxOK
+shortGate = htfBear and setupBear and slopeDn and adxOK
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 3 · BOS DETECTION (confirmed chart-timeframe swings → no repaint)
+// ─────────────────────────────────────────────────────────────────────────────
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+bosMom  = useBosMom ? bosMinMult * atr : 0.0
+bosUp   = not na(lastSwingHigh) and close > lastSwingHigh + bosMom and close[1] <= lastSwingHigh
+bosDown = not na(lastSwingLow)  and close < lastSwingLow  - bosMom and close[1] >= lastSwingLow
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETUP STATE MACHINE — arm on BOS, wait for retest, cancel on invalidation
+// ─────────────────────────────────────────────────────────────────────────────
+var float bosLevel  = na
+var int   bosDir    = 0     // 1 = long pending, -1 = short pending
+var int   bosBars   = 0
+var float protSwing = na    // protective swing used for the stop
+
+if bosUp and longGate
+    bosLevel := lastSwingHigh
+    bosDir   := 1
+    bosBars  := 0
+    protSwing := lastSwingLow
+else if bosDown and shortGate
+    bosLevel := lastSwingLow
+    bosDir   := -1
+    bosBars  := 0
+    protSwing := lastSwingHigh
+
+tolPre = retestMult * atr
+// Counter-trend break OR a decisive close back through the level invalidates it
+if bosDir == 1 and (bosDown or close < bosLevel - tolPre)
+    bosDir := 0
+if bosDir == -1 and (bosUp or close > bosLevel + tolPre)
+    bosDir := 0
+
+// Expire if the retest never arrives
+if bosDir != 0
+    bosBars += 1
+    if bosBars > bosExpiry
+        bosDir := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RETEST TRIGGERS (+ optional confirmation candle)
+// ─────────────────────────────────────────────────────────────────────────────
+tol      = retestMult * atr
+longConf  = not useEntryConf or close > open
+shortConf = not useEntryConf or close < open
+longRetest  = bosDir == 1  and low  <= bosLevel + tol and close > bosLevel and htfBull and longConf
+shortRetest = bosDir == -1 and high >= bosLevel - tol and close < bosLevel and htfBear and shortConf
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EQUITY GUARDS + TRADE-FREQUENCY GUARDS (account-neutral)
+// ─────────────────────────────────────────────────────────────────────────────
+newDay = ta.change(time("1D")) != 0
+var int tradesToday = 0
+var float dayStartEq = na
+if newDay
+    tradesToday := 0
+    dayStartEq := strategy.equity
+if na(dayStartEq)
+    dayStartEq := strategy.equity
+
+var float peakEq = na
+peakEq := na(peakEq) ? strategy.equity : math.max(peakEq, strategy.equity)
+
+dayPnLpct = dayStartEq > 0 ? (strategy.equity - dayStartEq) / dayStartEq * 100.0 : 0.0
+ddPct     = peakEq > 0 ? (strategy.equity - peakEq) / peakEq * 100.0 : 0.0
+lockedDay = useDailyLoss and dayPnLpct <= -maxDailyLoss
+lockedDD  = useDDlock   and ddPct      <= -maxDDpct
+
+var int lastTradeBar = na
+cooldownOK = not useCooldown or na(lastTradeBar) or (bar_index - lastTradeBar) >= cooldownBars
+dayOK      = not useMaxTrades or tradesToday < maxTradesDay
+inSession  = not useSession or not na(time(timeframe.period, sess))
+
+canTrade = strategy.position_size == 0 and barstate.isconfirmed and cooldownOK and dayOK and
+           inSession and not lockedDay and not lockedDD
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POSITION STATE
+// ─────────────────────────────────────────────────────────────────────────────
+var float entryPrice = na
+var float stopPrice  = na
+var float tp1Price   = na
+var float tp2Price   = na
+var float tp3Price   = na
+var bool  tp1Done    = false
+var float trailStop  = na
+
+f_stopDist(bool isLong) =>
+    float d = na
+    if slMode == "ATR"
+        d := atrSLmult * atr
+    else
+        d := isLong ? (close - protSwing) + swingBuffer * atr : (protSwing - close) + swingBuffer * atr
+    math.max(d, atr * 0.5)   // floor so size never blows up on a tiny stop
+
+f_qty(float dist) =>
+    riskCapital = strategy.equity * riskPct / 100.0
+    dist > 0 ? riskCapital / dist : na
+
+remPct = math.max(0.0, 100.0 - tp1Pct - tp2Pct)
+
+// ENTER LONG
+if canTrade and longRetest
+    dist = f_stopDist(true)
+    qty  = f_qty(dist)
+    if not na(qty) and qty > 0
+        strategy.entry("Long", strategy.long, qty = qty)
+        entryPrice := close
+        stopPrice  := close - dist
+        tp1Price   := close + dist * tp1RR
+        tp2Price   := close + dist * tp2RR
+        tp3Price   := close + dist * tp3RR
+        tp1Done    := false
+        trailStop  := na
+        tradesToday  += 1
+        lastTradeBar := bar_index
+        bosDir := 0
+
+// ENTER SHORT
+if canTrade and shortRetest
+    dist = f_stopDist(false)
+    qty  = f_qty(dist)
+    if not na(qty) and qty > 0
+        strategy.entry("Short", strategy.short, qty = qty)
+        entryPrice := close
+        stopPrice  := close + dist
+        tp1Price   := close - dist * tp1RR
+        tp2Price   := close - dist * tp2RR
+        tp3Price   := close - dist * tp3RR
+        tp1Done    := false
+        trailStop  := na
+        tradesToday  += 1
+        lastTradeBar := bar_index
+        bosDir := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXIT MANAGEMENT — scale out, break-even, optional ATR trail
+// ─────────────────────────────────────────────────────────────────────────────
+if strategy.position_size > 0
+    if high >= tp1Price
+        tp1Done := true
+    if useTrail
+        trailStop := na(trailStop) ? close - trailMult * atr : math.max(trailStop, close - trailMult * atr)
+    beStop  = (tp1Done and useBE) ? math.max(stopPrice, entryPrice) : stopPrice
+    curStop = useTrail ? math.max(beStop, nz(trailStop, beStop)) : beStop
+    strategy.exit("L1", from_entry = "Long", qty_percent = tp1Pct, limit = tp1Price, stop = curStop)
+    if useRunner
+        strategy.exit("L2", from_entry = "Long", qty_percent = tp2Pct, limit = tp2Price, stop = curStop)
+        strategy.exit("L3", from_entry = "Long", qty_percent = remPct,  limit = tp3Price, stop = curStop)
+    else
+        strategy.exit("L2", from_entry = "Long", qty_percent = 100 - tp1Pct, limit = tp2Price, stop = curStop)
+
+if strategy.position_size < 0
+    if low <= tp1Price
+        tp1Done := true
+    if useTrail
+        trailStop := na(trailStop) ? close + trailMult * atr : math.min(trailStop, close + trailMult * atr)
+    beStop  = (tp1Done and useBE) ? math.min(stopPrice, entryPrice) : stopPrice
+    curStop = useTrail ? math.min(beStop, nz(trailStop, beStop)) : beStop
+    strategy.exit("S1", from_entry = "Short", qty_percent = tp1Pct, limit = tp1Price, stop = curStop)
+    if useRunner
+        strategy.exit("S2", from_entry = "Short", qty_percent = tp2Pct, limit = tp2Price, stop = curStop)
+        strategy.exit("S3", from_entry = "Short", qty_percent = remPct,  limit = tp3Price, stop = curStop)
+    else
+        strategy.exit("S2", from_entry = "Short", qty_percent = 100 - tp1Pct, limit = tp2Price, stop = curStop)
+
+if strategy.position_size == 0
+    entryPrice := na
+    stopPrice  := na
+    tp1Price   := na
+    tp2Price   := na
+    tp3Price   := na
+    tp1Done    := false
+    trailStop  := na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALS
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showEMA ? emaFast : na, "EMA Fast", color = color.new(color.orange, 0), linewidth = 1)
+plot(showEMA ? emaSlow : na, "EMA Slow", color = color.new(color.blue,   0), linewidth = 2)
+
+if showBOS and bosUp
+    label.new(bar_index, low, "BOS ▲", style = label.style_label_up,
+         color = color.new(color.green, 20), textcolor = color.white, size = size.tiny)
+if showBOS and bosDown
+    label.new(bar_index, high, "BOS ▼", style = label.style_label_down,
+         color = color.new(color.red, 20), textcolor = color.white, size = size.tiny)
+
+if showEntries and longRetest and canTrade
+    label.new(bar_index, low, "LONG", style = label.style_label_up,
+         color = color.new(color.teal, 0), textcolor = color.white, size = size.small)
+if showEntries and shortRetest and canTrade
+    label.new(bar_index, high, "SHORT", style = label.style_label_down,
+         color = color.new(color.maroon, 0), textcolor = color.white, size = size.small)
+
+inPos = strategy.position_size != 0
+plot(showLines and inPos ? entryPrice : na, "Entry", color = color.new(color.gray, 0), style = plot.style_linebr)
+plot(showLines and inPos ? stopPrice  : na, "SL",    color = color.new(color.red,  0), style = plot.style_linebr)
+plot(showLines and inPos ? tp1Price   : na, "TP1",   color = color.new(color.lime, 0), style = plot.style_linebr)
+plot(showLines and inPos ? tp2Price   : na, "TP2",   color = color.new(color.teal, 0), style = plot.style_linebr)
+plot(showLines and inPos and useRunner ? tp3Price : na, "TP3", color = color.new(color.aqua, 0), style = plot.style_linebr)
+
+bgcolor(showBias ? (htfBull ? color.new(color.green, 92) : htfBear ? color.new(color.red, 92) : na) : na, title = "Bias tint")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BACKTEST DASHBOARD
+// ─────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 13, border_width = 1, frame_width = 1, frame_color = color.gray)
+if showDash and barstate.islast
+    closed   = strategy.closedtrades
+    winRate  = closed > 0 ? strategy.wintrades / closed * 100.0 : 0.0
+    pf       = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
+    avgTrade = closed > 0 ? strategy.netprofit / closed : 0.0
+    avgWin   = strategy.wintrades  > 0 ? strategy.grossprofit / strategy.wintrades  : 0.0
+    avgLoss  = strategy.losstrades > 0 ? strategy.grossloss   / strategy.losstrades : 0.0
+    payoff   = avgLoss > 0 ? avgWin / avgLoss : na
+    netPct   = strategy.initial_capital > 0 ? strategy.netprofit / strategy.initial_capital * 100.0 : 0.0
+    biasTxt  = htfBull ? "BULLISH ▲" : htfBear ? "BEARISH ▼" : "NEUTRAL —"
+    biasCol  = htfBull ? color.green : htfBear ? color.red : color.gray
+    statTxt  = lockedDD ? "DD LOCK" : lockedDay ? "DAY LOCK" : not dayOK ? "MAX TRADES" : "ACTIVE"
+    statCol  = (lockedDD or lockedDay or not dayOK) ? color.red : color.green
+
+    f_row(int r, string k, string v, color vc) =>
+        table.cell(dash, 0, r, k, text_color = color.white, text_size = size.small)
+        table.cell(dash, 1, r, v, text_color = vc, text_size = size.small)
+
+    table.cell(dash, 0, 0, "BOS + Trend — Backtest", text_color = color.white, bgcolor = color.new(color.blue, 0), text_size = size.small)
+    table.cell(dash, 1, 0, "", bgcolor = color.new(color.blue, 0))
+    f_row(1,  "Total trades", str.tostring(closed), color.white)
+    f_row(2,  "Win rate",     str.tostring(winRate, "#.#") + " %", winRate >= 50 ? color.green : color.orange)
+    f_row(3,  "Profit factor", na(pf) ? "—" : str.tostring(pf, "#.##"), (na(pf) or pf >= 1) ? color.green : color.red)
+    f_row(4,  "Payoff (W/L)", na(payoff) ? "—" : str.tostring(payoff, "#.##"), color.white)
+    f_row(5,  "Net profit",   str.tostring(strategy.netprofit, "#.##"), strategy.netprofit >= 0 ? color.green : color.red)
+    f_row(6,  "Net %",        str.tostring(netPct, "#.#") + " %", netPct >= 0 ? color.green : color.red)
+    f_row(7,  "Max drawdown", str.tostring(strategy.max_drawdown, "#.##"), color.red)
+    f_row(8,  "Avg trade",    str.tostring(avgTrade, "#.##"), avgTrade >= 0 ? color.green : color.red)
+    f_row(9,  "Open P/L",     str.tostring(strategy.openprofit, "#.##"), strategy.openprofit >= 0 ? color.green : color.red)
+    f_row(10, "ADX",          str.tostring(adxVal, "#.#"), adxVal >= adxMin ? color.green : color.gray)
+    f_row(11, "Current bias", biasTxt, biasCol)
+    f_row(12, "Status",       statTxt, statCol)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(longRetest,  "Long entry",  "BOS+Trend: LONG retest entry {{ticker}} {{interval}}")
+alertcondition(shortRetest, "Short entry", "BOS+Trend: SHORT retest entry {{ticker}} {{interval}}")
+if longRetest and canTrade
+    alert("BOS+Trend LONG entry on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if shortRetest and canTrade
+    alert("BOS+Trend SHORT entry on " + syminfo.ticker, alert.freq_once_per_bar_close)
