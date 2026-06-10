@@ -33,8 +33,24 @@ risk model scales automatically.
 - **Short** after bearish BOS + pullback/retest + 1H bias confirmed.
 - **No counter-trend trades** — opposite breaks cancel a pending setup; one
   position at a time (`pyramiding = 0`).
+- **Failed-break invalidation** — a pending setup is dropped if price closes
+  decisively back through the broken level before the retest.
 - **Anti-overtrading:** optional **cooldown** between trades and optional
   **max trades per day**. Setups also **expire** if the retest never comes.
+
+## Quality filters (all optional, on by default)
+
+- **HTF EMA-slope** — longs only when the 1H fast EMA is rising, shorts only
+  when it is falling.
+- **ADX trend strength** — skip trades when ADX is below a threshold (avoids chop).
+- **BOS momentum** — the breakout must clear the swing by a minimum ATR fraction,
+  filtering weak/marginal breaks.
+- **Entry-confirmation candle** — the retest bar must close in the trade direction.
+
+## Equity guards (account-neutral)
+
+- **Daily-loss lockout** — stop new entries once the day is down X% of equity.
+- **Max-drawdown lockout** — halt entries if equity falls X% below its peak.
 
 ## Risk management
 
@@ -54,9 +70,10 @@ risk model scales automatically.
 
 ## Backtest dashboard
 
-Top-right panel: total trades, win rate, profit factor, net profit, max
-drawdown, average trade, current bias (Bullish / Bearish / Neutral) and any
-pending setup.
+Top-right panel: total trades, win rate, profit factor, payoff ratio (avg
+win / avg loss), net profit, net %, max drawdown, average trade, open P/L,
+live ADX, current bias (Bullish / Bearish / Neutral) and the trading status
+(Active / Day Lock / DD Lock / Max Trades).
 
 ## No repainting / no lookahead
 
