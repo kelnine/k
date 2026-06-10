@@ -68,37 +68,51 @@ absorbed = volume > avgVol * absMult and rng > 0 and (body / rng) < absRange
 
 var box[] blocks = array.new<box>()
 if showAbs and absorbed
-    c = close >= open ? color.new(cyan, 86) : color.new(magenta, 86)
-    b = box.new(bar_index - 1, high, bar_index + absExt, low, border_color=color.new(orange, 45), border_width=1, bgcolor=c)
+    c = close >= open ? color.new(cyan, 80) : color.new(magenta, 80)
+    b = box.new(bar_index - 1, high, bar_index + absExt, low, border_color=color.new(orange, 25), border_width=1, bgcolor=c)
     array.push(blocks, b)
     if array.size(blocks) > keepAbs
         box.delete(array.shift(blocks))
 
 // ---- volume profile (lookback) ----------------------------------------------
+// Drawings are tracked and deleted before each redraw. (The old version leaked
+// boxes every tick until Pine's drawing cap wiped the whole indicator.)
+var box[]  vpBoxes = array.new<box>()
+var line   pocLine = na
+var label  pocLab  = na
+
 if showVP and barstate.islast
+    if array.size(vpBoxes) > 0
+        for i = 0 to array.size(vpBoxes) - 1
+            box.delete(array.get(vpBoxes, i))
+        array.clear(vpBoxes)
+    line.delete(pocLine)
+    label.delete(pocLab)
+
     float hi = ta.highest(high, vpLook)
     float lo = ta.lowest(low,  vpLook)
     float step = (hi - lo) / vpRows
     if step > 0
-        var float[] buckets = array.new<float>(vpRows, 0.0)
-        for r = 0 to vpRows - 1
-            array.set(buckets, r, 0.0)
+        float[] buckets = array.new<float>(vpRows, 0.0)
+        // spread each bar's volume across the rows its range covers
         for i = 0 to vpLook - 1
-            int r = math.min(vpRows - 1, math.max(0, int((close[i] - lo) / step)))
-            array.set(buckets, r, array.get(buckets, r) + volume[i])
+            int rLo = math.min(vpRows - 1, math.max(0, int((low[i]  - lo) / step)))
+            int rHi = math.min(vpRows - 1, math.max(0, int((high[i] - lo) / step)))
+            float share = volume[i] / (rHi - rLo + 1)
+            for r = rLo to rHi
+                array.set(buckets, r, array.get(buckets, r) + share)
         float maxV = array.max(buckets)
         int   poc  = array.indexof(buckets, maxV)
-        // draw rows as boxes anchored to the right edge
-        int x0 = bar_index - vpWidth
         for r = 0 to vpRows - 1
             float v = array.get(buckets, r)
-            int w = maxV > 0 ? int(v / maxV * vpWidth) : 0
+            int w = maxV > 0 ? math.max(1, int(v / maxV * vpWidth)) : 1
             float yT = lo + (r + 1) * step
             float yB = lo + r * step
-            col = r == poc ? color.new(gold, 25) : color.new(color.teal, 70)
-            box.new(bar_index - w, yT, bar_index, yB, border_width=0, bgcolor=col)
-        line.new(x0, lo + (poc + 0.5) * step, bar_index, lo + (poc + 0.5) * step, color=gold, style=line.style_dashed, width=1)
-        label.new(bar_index, lo + (poc + 0.5) * step, " POC", style=label.style_none, textcolor=gold, size=size.small)
+            col = r == poc ? color.new(gold, 20) : color.new(#18e3e3, 72)
+            array.push(vpBoxes, box.new(bar_index - w, yT, bar_index + 1, yB, border_width=0, bgcolor=col))
+        float pocY = lo + (poc + 0.5) * step
+        pocLine := line.new(bar_index - vpLook, pocY, bar_index + 1, pocY, color=gold, style=line.style_dashed, width=1)
+        pocLab  := label.new(bar_index + 2, pocY, "POC", style=label.style_label_left, color=color.new(gold, 80), textcolor=gold, size=size.small)
 
 // ---- alerts -----------------------------------------------------------------
 alertcondition(sweepHigh, "Stop run high", "Stop run (buy-side sweep) on {{ticker}} {{interval}}")
