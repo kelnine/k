@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // Signal Funnel — Confluence strategy (Pine port of bot/strategy.py)
 //
 // The bot scores three legs and fires when conviction is high enough:
