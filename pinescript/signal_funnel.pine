@@ -43,10 +43,13 @@ crowd = (rsiV - 50) / 50                       // −1..+1, + = crowd long
 fadeComp = math.abs(crowd) > crowdMin ? -crowd * fadeW : 0.0
 
 // 2. Whale proxy: OBV vs its EMA, z-scored — volume-backed direction.
-obvEma = ta.ema(ta.obv, obvLen)
-obvSd  = ta.stdev(ta.obv, obvLen)
-whaleZ = obvSd > 0 ? clamp((ta.obv - obvEma) / obvSd, -1, 1) : 0.0
-whaleComp = whaleZ * whaleW * 0.5              // ±whaleW/2, like the bot's ±0.5 bias
+// Some symbols/feeds (e.g. index futures) report na volume; nz() keeps the
+// other two legs alive instead of na-poisoning the whole score.
+obvRaw = ta.cum(math.sign(ta.change(close)) * nz(volume))
+obvEma = ta.ema(obvRaw, obvLen)
+obvSd  = ta.stdev(obvRaw, obvLen)
+whaleZ = obvSd > 0 ? clamp((obvRaw - obvEma) / obvSd, -1, 1) : 0.0
+whaleComp = nz(whaleZ * whaleW * 0.5)          // ±whaleW/2, like the bot's ±0.5 bias
 
 // 3. Momentum, same shape as the bot (change/6, clamped).
 // Auto mode: lookback = however many bars make 24 hours on this chart
@@ -101,7 +104,10 @@ var line enLine  = na
 
 justEntered = strategy.position_size != 0 and strategy.position_size[1] == 0
 if justEntered
-    line.delete(slLine), line.delete(tp1Line), line.delete(tp2Line), line.delete(enLine)
+    line.delete(slLine)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(enLine)
     a = strategy.position_avg_price
     isLong = strategy.position_size > 0
     sl  = isLong ? a * (1 - stopPct) : a * (1 + stopPct)
