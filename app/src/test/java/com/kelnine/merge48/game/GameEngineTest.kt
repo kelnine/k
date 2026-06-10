@@ -118,6 +118,37 @@ class GameEngineTest {
     }
 
     @Test
+    fun `second chance clears the eight smallest tiles`() {
+        val locked = board(
+            2, 4, 2, 4,
+            8, 16, 8, 16,
+            32, 64, 32, 64,
+            128, 256, 128, 256
+        )
+        val revived = GameEngine.secondChance(locked)
+        assertEquals(8, revived.cells.count { it == 0 })
+        // The big tiles survive…
+        assertTrue(revived.cells.containsAll(listOf(32, 64, 128, 256)))
+        // …and every small tile (2s and 4s) is gone.
+        assertTrue(revived.cells.none { it in listOf(2, 4) })
+        assertFalse(GameEngine.isGameOver(revived))
+    }
+
+    @Test
+    fun `second chance on sparse board never empties it completely`() {
+        val sparse = board(
+            512, 1024, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0
+        )
+        val result = GameEngine.secondChance(sparse)
+        // Clearing caps at the number of existing tiles; board stays valid.
+        assertEquals(16, result.cells.size)
+        assertTrue(result.cells.all { it == 0 })
+    }
+
+    @Test
     fun `spawn fills exactly one empty cell with 2 or 4`() {
         val before = Board.empty()
         val after = GameEngine.spawnTile(before, Random(7))

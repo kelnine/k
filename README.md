@@ -5,9 +5,38 @@ Swipe to slide tiles; equal tiles merge. Chase the 2048 tile, then connect your
 Solana wallet via **Mobile Wallet Adapter** and cryptographically sign your
 high score.
 
-- **Stack:** Kotlin · Jetpack Compose · Mobile Wallet Adapter (`clientlib-ktx` 2.1.1)
+- **Stack:** Kotlin · Jetpack Compose · Mobile Wallet Adapter (`clientlib-ktx` 2.1.1) · `web3-solana` + `rpc-core` for payments
 - **Package:** `com.kelnine.merge48` · minSdk 26 · targetSdk 35
 - **No backend, no ads, no tracking** — scores live on-device; wallet signing is local via MWA.
+- **Monetized** with crypto-native in-app purchases paid in SOL directly to your wallet (the dApp Store takes **0% fees**).
+
+## Monetization — IMPORTANT setup
+
+All purchases are plain SOL transfers from the player's wallet **to your
+wallet**, signed and submitted by their wallet app via MWA. Before shipping:
+
+1. Open `app/src/main/java/com/kelnine/merge48/payments/Payments.kt`.
+2. Set `DEV_WALLET_ADDRESS` to your wallet's public address (copy it from
+   Phantom/Solflare). **Until you do, the store buttons show a setup
+   reminder and never charge anyone.**
+3. Optionally swap `RPC_URL` for a dedicated endpoint (Helius/QuickNode free
+   tiers) — the public mainnet RPC is rate-limited.
+
+| Product | Price | What the player gets |
+|---|---|---|
+| Second Chance | 0.005 SOL | On game over: clears the 8 smallest tiles, run continues (consumable — this is the core earner) |
+| Pro Unlock | 0.05 SOL | Permanent Undo button (persisted on-device) |
+| Tip the Dev | 0.01 SOL | Goodwill |
+
+Prices are constants in `Payments.kt` — tune freely. Notes:
+
+- Unlocks are stored in app prefs, so clearing app data forgets a Pro
+  purchase. A v2 could restore it by scanning the buyer's transfer history
+  to your address on-chain.
+- The app unlocks when the wallet returns a transaction signature
+  (submission), without waiting for finalization — a fair UX tradeoff for
+  sub-cent risk. Add a `getSignatureStatuses` confirmation loop if you want
+  stricter behavior.
 
 | | |
 |---|---|
@@ -22,8 +51,10 @@ app/src/main/java/com/kelnine/merge48/
 ├── MainActivity.kt            # ActivityResultSender + Compose entry point
 ├── game/GameEngine.kt         # Pure 2048 logic (unit-tested)
 ├── game/GameViewModel.kt      # Game state + best-score persistence
-├── wallet/WalletViewModel.kt  # MWA connect / disconnect / sign-score
-├── ui/GameScreen.kt           # Board, swipe gestures, game-over overlay
+├── wallet/WalletViewModel.kt  # MWA connect / sign-score / purchases
+├── payments/Payments.kt       # YOUR WALLET ADDRESS + product catalog/prices
+├── payments/SolanaRpc.kt      # Minimal JSON-RPC client (blockhash fetch)
+├── ui/GameScreen.kt           # Board, swipe gestures, store buttons, game-over overlay
 └── ui/theme/Theme.kt          # Solana-flavored dark theme & tile palette
 dapp-store/                    # dApp Store publishing config + media assets
 ```

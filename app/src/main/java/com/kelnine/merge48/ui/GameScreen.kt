@@ -42,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kelnine.merge48.game.Board
 import com.kelnine.merge48.game.Direction
 import com.kelnine.merge48.game.GameViewModel
+import com.kelnine.merge48.payments.Product
 import com.kelnine.merge48.ui.theme.BoardBackground
 import com.kelnine.merge48.ui.theme.EmptyCell
 import com.kelnine.merge48.ui.theme.NightBackground
@@ -59,6 +60,7 @@ private const val SWIPE_THRESHOLD_PX = 60f
 fun GameScreen(
     onConnectWallet: (WalletViewModel) -> Unit,
     onSignScore: (WalletViewModel, Int) -> Unit,
+    onPurchase: (WalletViewModel, Product, () -> Unit) -> Unit,
     gameViewModel: GameViewModel = viewModel(),
     walletViewModel: WalletViewModel = viewModel()
 ) {
@@ -120,6 +122,41 @@ fun GameScreen(
                 }
             }
 
+            if (walletState.connected) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (walletState.proUnlocked) {
+                        OutlinedButton(
+                            onClick = gameViewModel::undo,
+                            enabled = gameState.canUndo,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Undo")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                onPurchase(walletViewModel, Product.PRO_UNLOCK) {}
+                            },
+                            enabled = !walletState.inProgress,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Go Pro · ${Product.PRO_UNLOCK.priceLabel}")
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { onPurchase(walletViewModel, Product.TIP) {} },
+                        enabled = !walletState.inProgress,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Tip · ${Product.TIP.priceLabel}")
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
             Box(contentAlignment = Alignment.Center) {
@@ -131,9 +168,14 @@ fun GameScreen(
                     GameOverOverlay(
                         score = gameState.score,
                         walletConnected = walletState.connected,
-                        signingInProgress = walletState.inProgress,
+                        walletBusy = walletState.inProgress,
                         onNewGame = gameViewModel::newGame,
-                        onSignScore = { onSignScore(walletViewModel, gameState.score) }
+                        onSignScore = { onSignScore(walletViewModel, gameState.score) },
+                        onSecondChance = {
+                            onPurchase(walletViewModel, Product.SECOND_CHANCE) {
+                                gameViewModel.applySecondChance()
+                            }
+                        }
                     )
                 }
             }
@@ -271,9 +313,10 @@ private fun RowScope.Tile(value: Int) {
 private fun GameOverOverlay(
     score: Int,
     walletConnected: Boolean,
-    signingInProgress: Boolean,
+    walletBusy: Boolean,
     onNewGame: () -> Unit,
-    onSignScore: () -> Unit
+    onSignScore: () -> Unit,
+    onSecondChance: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -307,11 +350,22 @@ private fun GameOverOverlay(
         }
         if (walletConnected) {
             Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onSecondChance,
+                enabled = !walletBusy,
+                colors = ButtonDefaults.buttonColors(containerColor = SolanaGreen)
+            ) {
+                Text(
+                    text = "Second Chance · ${Product.SECOND_CHANCE.priceLabel}",
+                    color = NightBackground
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = onSignScore,
-                enabled = !signingInProgress
+                enabled = !walletBusy
             ) {
-                Text(if (signingInProgress) "Waiting for wallet…" else "Sign score with wallet")
+                Text(if (walletBusy) "Waiting for wallet…" else "Sign score with wallet")
             }
         }
     }

@@ -20,6 +20,16 @@ to display the address and to request a message signature when you ask to
 sign your score. Private keys never leave your wallet app. Merge48 does not
 transmit your address, your scores, or your signatures anywhere.
 
+## Optional purchases
+
+Merge48 offers optional in-app purchases (Second Chance, Pro Unlock, tips)
+paid as Solana transactions from your wallet to the developer's wallet. When
+you start a purchase, the app makes one network request to a public Solana
+RPC endpoint to fetch a recent blockhash; the transaction itself is reviewed,
+signed, and submitted by your own wallet app. Purchases are recorded on the
+public Solana blockchain, as all on-chain transactions are. The app stores
+your Pro unlock status on-device only.
+
 ## Contact
 
 Questions: kelnine015@gmail.com

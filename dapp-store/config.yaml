@@ -60,7 +60,12 @@ release:
         Connect your Solana wallet with one tap via Mobile Wallet Adapter
         and cryptographically sign your high score to prove it's yours.
         No accounts, no ads, no tracking - just the game.
-      new_in_version: First release - core 2048 gameplay, best-score tracking, and wallet score signing.
+
+        Optional purchases, paid in SOL straight from your wallet: a Second
+        Chance that clears the smallest tiles when the board locks up, a
+        one-time Pro unlock that adds an Undo button, and a tip jar if you
+        just want to support development.
+      new_in_version: First release - core 2048 gameplay, best-score tracking, wallet score signing, and optional SOL-powered Second Chance / Pro / tips.
       saga_features: One-tap wallet connection and score signing via Mobile Wallet Adapter with the device seed vault.
   android_details:
     locales:
@@ -73,5 +78,9 @@ solana_mobile_dapp_publisher_portal:
     Tap "Connect Wallet" to authorize via Mobile Wallet Adapter (any MWA
     wallet, e.g. Phantom or Solflare). Play until the board locks up, then
     tap "Sign score with wallet" on the game-over screen to sign the score
-    attestation message. No login or funds are required; signing is a
-    message signature only, no transaction is submitted.
+    attestation message (free, message signature only). Optional purchases
+    (Second Chance 0.005 SOL, Pro Unlock 0.05 SOL, tip 0.01 SOL) are plain
+    System Program transfers to the developer wallet, built client-side and
+    approved in the user's wallet; testing them requires a mainnet wallet
+    with a small SOL balance. No login is required and the game is fully
+    playable without paying.

@@ -23,6 +23,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onSignScore = { walletViewModel, score ->
                         walletViewModel.signScore(activityResultSender, score)
+                    },
+                    onPurchase = { walletViewModel, product, onPurchased ->
+                        walletViewModel.purchase(activityResultSender, product, onPurchased)
                     }
                 )
             }

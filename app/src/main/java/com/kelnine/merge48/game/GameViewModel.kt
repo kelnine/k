@@ -13,7 +13,8 @@ data class GameUiState(
     val score: Int = 0,
     val bestScore: Int = 0,
     val isGameOver: Boolean = false,
-    val hasWon: Boolean = false
+    val hasWon: Boolean = false,
+    val canUndo: Boolean = false
 )
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
@@ -29,13 +30,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     )
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
+    // Board and score before the most recent move, for the Pro undo feature.
+    private var undoSnapshot: Pair<Board, Int>? = null
+
     fun newGame() {
+        undoSnapshot = null
         _state.update {
             it.copy(
                 board = GameEngine.newBoard(),
                 score = 0,
                 isGameOver = false,
-                hasWon = false
+                hasWon = false,
+                canUndo = false
             )
         }
     }
@@ -47,6 +53,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val result = GameEngine.move(current.board, direction)
         if (!result.moved) return
 
+        undoSnapshot = current.board to current.score
         val boardWithSpawn = GameEngine.spawnTile(result.board)
         val newScore = current.score + result.gainedScore
         val newBest = maxOf(newScore, current.bestScore)
@@ -60,7 +67,34 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 score = newScore,
                 bestScore = newBest,
                 isGameOver = GameEngine.isGameOver(boardWithSpawn),
-                hasWon = it.hasWon || boardWithSpawn.maxTile >= 2048
+                hasWon = it.hasWon || boardWithSpawn.maxTile >= 2048,
+                canUndo = true
+            )
+        }
+    }
+
+    /** Pro feature: reverts the last move (one step). */
+    fun undo() {
+        val (board, score) = undoSnapshot ?: return
+        undoSnapshot = null
+        _state.update {
+            it.copy(
+                board = board,
+                score = score,
+                isGameOver = false,
+                canUndo = false
+            )
+        }
+    }
+
+    /** Applied after a successful Second Chance purchase. */
+    fun applySecondChance() {
+        undoSnapshot = null
+        _state.update {
+            it.copy(
+                board = GameEngine.secondChance(it.board),
+                isGameOver = false,
+                canUndo = false
             )
         }
     }

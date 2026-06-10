@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -54,6 +55,13 @@ dependencies {
 
     // Solana Mobile Wallet Adapter (MWA) client
     implementation("com.solanamobile:mobile-wallet-adapter-clientlib-ktx:2.1.1")
+
+    // Transaction building (SystemProgram transfer) and JSON-RPC for payments
+    implementation("com.solanamobile:web3-solana:0.3.1")
+    implementation("com.solanamobile:rpc-core:0.2.11")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("io.ktor:ktor-client-core:2.3.12")
+    implementation("io.ktor:ktor-client-android:2.3.12")
 
     testImplementation("junit:junit:4.13.2")
 }

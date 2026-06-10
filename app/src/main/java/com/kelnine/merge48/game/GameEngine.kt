@@ -72,6 +72,21 @@ object GameEngine {
     }
 
     /**
+     * Paid "Second Chance": clears the smallest tiles from a locked board so
+     * the run can continue, keeping the player's big merges intact.
+     */
+    fun secondChance(board: Board, tilesToClear: Int = 8): Board {
+        val clearIndices = board.cells
+            .withIndex()
+            .filter { it.value != 0 }
+            .sortedBy { it.value }
+            .take(tilesToClear)
+            .map { it.index }
+            .toSet()
+        return Board(board.cells.mapIndexed { i, v -> if (i in clearIndices) 0 else v })
+    }
+
+    /**
      * Cell indices of one line (row or column), ordered so that sliding
      * "towards index 0" matches the given direction.
      */
