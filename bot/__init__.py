@@ -1,0 +1,1 @@
+"""Crypto signal funnel bot."""
