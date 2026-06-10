@@ -5,7 +5,7 @@ strategy("Smart Money Suite v4 [AlgoAlpha]", overlay=true, max_boxes_count=70, m
      default_qty_type=strategy.percent_of_equity, default_qty_value=10,
      initial_capital=10000, currency=currency.USD,
      commission_type=strategy.commission.percent, commission_value=0.05,
-     slippage=1, pyramiding=0)
+     slippage=1, pyramiding=0, process_orders_on_close=true)
 
 // ══════════════════════════════════════════════════════════════════════
 //  CORE LAYER
@@ -13,7 +13,9 @@ strategy("Smart Money Suite v4 [AlgoAlpha]", overlay=true, max_boxes_count=70, m
 var GE = "Strategy"
 strat_long  = input.bool(true,  "Enable Long Entries",   group=GE)
 strat_short = input.bool(true,  "Enable Short Entries",  group=GE)
-strat_size  = input.float(10.0, "Position Size (%)",     minval=0.1, maxval=100, step=0.5, group=GE)
+strat_mode  = input.string("Risk % (SL-based)", "Position Sizing", options=["Risk % (SL-based)", "% of Equity"], group=GE, tooltip="Risk %: size so a stop-out loses exactly Risk % of equity. % of Equity: fixed notional fraction.")
+strat_size  = input.float(10.0, "% of Equity Size",      minval=0.1, maxval=100, step=0.5, group=GE)
+strat_risk  = input.float(1.0,  "Risk % Per Trade",      minval=0.1, maxval=10,  step=0.1, group=GE)
 
 var GC = "Core (Execution)"
 ema_on      = input.bool(true,  "Show EMA 50 / 200",     group=GC)
@@ -678,12 +680,20 @@ if sniper_short
          extend=extend.right, color=color.new(col_bull, 55), width=1, style=line.style_dotted)
 
 // ── Strategy orders ───────────────────────────────────────────────────
-if sniper_long and strat_long and strategy.equity > 0 and close > 0
-    strategy.entry("Long", strategy.long, qty=strategy.equity * strat_size / 100 / close)
+// Risk %: qty = risk amount / SL distance, so a stop-out always costs
+// exactly strat_risk % of equity regardless of how far the stop sits.
+f_qty(sl_dist) =>
+    strat_mode == "% of Equity" ? strategy.equity * strat_size / 100 / close : strategy.equity * strat_risk / 100 / sl_dist
+
+long_dist  = close - long_sl
+short_dist = short_sl - close
+
+if sniper_long and strat_long and strategy.equity > 0 and long_dist > 0
+    strategy.entry("Long", strategy.long, qty=f_qty(long_dist))
     strategy.exit("Long Exit", "Long", stop=long_sl, limit=long_tp, comment_profit="TP", comment_loss="SL")
 
-if sniper_short and strat_short and strategy.equity > 0 and close > 0
-    strategy.entry("Short", strategy.short, qty=strategy.equity * strat_size / 100 / close)
+if sniper_short and strat_short and strategy.equity > 0 and short_dist > 0
+    strategy.entry("Short", strategy.short, qty=f_qty(short_dist))
     strategy.exit("Short Exit", "Short", stop=short_sl, limit=short_tp, comment_profit="TP", comment_loss="SL")
 
 // ══════════════════════════════════════════════════════════════════════
