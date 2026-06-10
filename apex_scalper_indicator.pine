@@ -1,0 +1,122 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  APEX SCALPER v6 — Signal Indicator (companion to the strategy)
+//
+//  Identical signal logic to "Apex Scalper v6 [1-Min]" strategy, packaged
+//  as an indicator so you can run real-time alerts for manual or
+//  webhook-driven trading. Each signal prints suggested entry, stop and
+//  target levels based on ATR.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Apex Scalper v6 — Signals [1-Min]", shorttitle = "Apex Signals",
+     overlay = true, max_labels_count = 500)
+
+// ═══════════════════════════ INPUTS ═══════════════════════════
+G_TREND  = "① Trend Engine"
+G_FILTER = "② Confluence Filters"
+G_RISK   = "③ Levels"
+G_GUARD  = "④ Session"
+
+htfTF      = input.timeframe("5",  "Higher-timeframe (trend bias)",        group = G_TREND)
+htfLen     = input.int(50,   "HTF EMA length",        minval = 5,          group = G_TREND)
+fastLen    = input.int(21,   "Fast EMA (pullback line)", minval = 2,       group = G_TREND)
+slowLen    = input.int(50,   "Slow EMA",              minval = 5,          group = G_TREND)
+useVwap    = input.bool(true, "Require correct side of VWAP",              group = G_TREND)
+
+rsiLen     = input.int(14,   "RSI length",            minval = 2,          group = G_FILTER)
+adxLen     = input.int(14,   "ADX length",            minval = 2,          group = G_FILTER)
+adxThresh  = input.float(18, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
+volLen     = input.int(20,   "Volume average length", minval = 5,          group = G_FILTER)
+volMult    = input.float(1.2,"Volume spike × average", minval = 0.5, step = 0.1, group = G_FILTER)
+pullWin    = input.int(8,    "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
+
+atrLen     = input.int(14,   "ATR length",            minval = 2,          group = G_RISK)
+slMult     = input.float(1.2,"Stop loss × ATR",       minval = 0.3, step = 0.1, group = G_RISK)
+rrMult     = input.float(1.8,"Take profit (R multiple)", minval = 0.5, step = 0.1, group = G_RISK)
+showLabels = input.bool(true, "Show entry/SL/TP labels",                   group = G_RISK)
+
+useSession = input.bool(true, "Limit to session",                          group = G_GUARD)
+sess       = input.session("0930-1530", "Trading session",                 group = G_GUARD)
+sessTz     = input.string("America/New_York", "Session timezone",          group = G_GUARD)
+
+// ═══════════════════════════ CORE SERIES ═══════════════════════════
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+vwap    = ta.vwap(hlc3)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(close, rsiLen)
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+volAvg  = ta.sma(volume, volLen)
+
+htfEma = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfLen)[1],
+     lookahead = barmerge.lookahead_on)
+
+inSession = not useSession or not na(time(timeframe.period, sess, sessTz))
+
+// ═══════════════════════════ SIGNAL LOGIC ═══════════════════════════
+bullTrend = close > htfEma and emaFast > emaSlow and (not useVwap or close > vwap)
+bearTrend = close < htfEma and emaFast < emaSlow and (not useVwap or close < vwap)
+
+strongTrend = adx > adxThresh
+volSpike    = volume > volAvg * volMult
+
+longPullback  = nz(ta.barssince(low  <= emaFast), 100000) <= pullWin
+shortPullback = nz(ta.barssince(high >= emaFast), 100000) <= pullWin
+
+longTrigger  = close > emaFast and close > open and close > high[1]
+shortTrigger = close < emaFast and close < open and close < low[1]
+
+longMomentum  = rsi > 50 and rsi < 70
+shortMomentum = rsi < 50 and rsi > 30
+
+longSignal  = inSession and bullTrend and strongTrend and volSpike and
+     longPullback and longTrigger and longMomentum
+shortSignal = inSession and bearTrend and strongTrend and volSpike and
+     shortPullback and shortTrigger and shortMomentum
+
+// Suggested levels
+longSL = close - atr * slMult
+longTP = close + atr * slMult * rrMult
+shortSL = close + atr * slMult
+shortTP = close - atr * slMult * rrMult
+
+// ═══════════════════════════ VISUALS ═══════════════════════════
+plot(emaFast, "Fast EMA", color = color.new(color.aqua,    0))
+plot(emaSlow, "Slow EMA", color = color.new(color.orange,  0))
+plot(vwap,    "VWAP",     color = color.new(color.fuchsia, 0), linewidth = 2)
+plot(htfEma,  "HTF EMA",  color = color.new(color.yellow, 30), linewidth = 2)
+
+plotshape(longSignal,  "Long",  shape.triangleup,   location.belowbar,
+     color.new(color.green, 0), size = size.small)
+plotshape(shortSignal, "Short", shape.triangledown, location.abovebar,
+     color.new(color.red, 0),   size = size.small)
+
+if showLabels and longSignal and barstate.isconfirmed
+    label.new(bar_index, low,
+         "LONG\nE " + str.tostring(close,  format.mintick) +
+         "\nSL " + str.tostring(longSL, format.mintick) +
+         "\nTP " + str.tostring(longTP, format.mintick),
+         style = label.style_label_up, color = color.new(color.green, 20),
+         textcolor = color.white, size = size.small)
+
+if showLabels and shortSignal and barstate.isconfirmed
+    label.new(bar_index, high,
+         "SHORT\nE " + str.tostring(close,   format.mintick) +
+         "\nSL " + str.tostring(shortSL, format.mintick) +
+         "\nTP " + str.tostring(shortTP, format.mintick),
+         style = label.style_label_down, color = color.new(color.red, 20),
+         textcolor = color.white, size = size.small)
+
+bgcolor(useSession and inSession ? color.new(color.blue, 96) : na)
+
+// ═══════════════════════════ ALERTS ═══════════════════════════
+alertcondition(longSignal,  "Apex Long",  "APEX LONG {{ticker}} @ {{close}}")
+alertcondition(shortSignal, "Apex Short", "APEX SHORT {{ticker}} @ {{close}}")
+
+if longSignal and barstate.isconfirmed
+    alert("APEX LONG "  + syminfo.ticker + " entry=" + str.tostring(close, format.mintick) +
+         " sl=" + str.tostring(longSL, format.mintick) +
+         " tp=" + str.tostring(longTP, format.mintick), alert.freq_once_per_bar_close)
+if shortSignal and barstate.isconfirmed
+    alert("APEX SHORT " + syminfo.ticker + " entry=" + str.tostring(close, format.mintick) +
+         " sl=" + str.tostring(shortSL, format.mintick) +
+         " tp=" + str.tostring(shortTP, format.mintick), alert.freq_once_per_bar_close)
