@@ -91,7 +91,7 @@ while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
         upIdx += 1
     else
         vaVol += dnV
-        dnIdx += 1
+        dnIdx -= 1
 
 poc = rowH > 0 ? profLow + (pocIdx + 0.5) * rowH : close
 vah = rowH > 0 ? profLow + upIdx * rowH          : close

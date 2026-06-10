@@ -91,7 +91,7 @@ while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
         upIdx += 1
     else
         vaVol += dnV
-        dnIdx += 1
+        dnIdx -= 1
 vaHiIdx = upIdx - 1
 vaLoIdx = dnIdx + 1
 
