@@ -1,0 +1,148 @@
+//@version=6
+// Signal Funnel — Confluence strategy (Pine port of bot/strategy.py)
+//
+// The bot scores three legs and fires when conviction is high enough:
+//   1. Fade crowded retail   (bot: positioning data → here: RSI distance from 50)
+//   2. Follow whales         (bot: large-position bias → here: OBV vs its EMA, z-scored)
+//   3. Momentum              (bot: 24h change → here: ROC over N bars)
+// Exits mirror the bot: -2.5% stop, +3.5% TP1 (half off), +7% TP2 (rest).
+// Pine has no access to real positioning data, so legs 1–2 are proxies.
+
+strategy("Signal Funnel Confluence", "SigFunnel", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     pyramiding = 0, process_orders_on_close = true)
+
+// ───────── Inputs ─────────
+grpX = "Exits (matches the bot)"
+stopPct = input.float(2.5, "Stop loss %", step = 0.1, group = grpX) / 100
+tp1Pct  = input.float(3.5, "TP1 % (close 50%)", step = 0.1, group = grpX) / 100
+tp2Pct  = input.float(7.0, "TP2 % (close rest)", step = 0.1, group = grpX) / 100
+
+grpW = "Confluence weights"
+fadeW   = input.float(2.0, "Fade crowded retail", step = 0.1, group = grpW)
+whaleW  = input.float(2.5, "Follow whales (OBV)", step = 0.1, group = grpW)
+momW    = input.float(1.0, "Momentum (ROC)",      step = 0.1, group = grpW)
+minScore = input.float(1.2, "Min |score| to fire", step = 0.1, group = grpW)
+
+grpP = "Proxy settings"
+rsiLen   = input.int(14, "RSI length (crowding proxy)", group = grpP)
+crowdMin = input.float(0.12, "Crowding threshold (|RSI−50|/50)", step = 0.01, group = grpP)
+obvLen   = input.int(55, "OBV baseline EMA length", group = grpP)
+autoMom  = input.bool(true, "Auto-scale ROC lookback to 24h (any timeframe)", group = grpP)
+momLen   = input.int(24, "Manual ROC lookback (bars, if auto off)", group = grpP)
+cooldown = input.int(4, "Cooldown bars after a trade closes", minval = 0, group = grpP)
+
+// ───────── Confluence score (positive = long, negative = short) ─────────
+clamp(x, lo, hi) => math.max(lo, math.min(hi, x))
+
+// 1. Retail crowding proxy: RSI stretched from 50 → crowd is long/short → fade it.
+rsiV  = ta.rsi(close, rsiLen)
+crowd = (rsiV - 50) / 50                       // −1..+1, + = crowd long
+fadeComp = math.abs(crowd) > crowdMin ? -crowd * fadeW : 0.0
+
+// 2. Whale proxy: OBV vs its EMA, z-scored — volume-backed direction.
+// Some symbols/feeds (e.g. index futures) report na volume; nz() keeps the
+// other two legs alive instead of na-poisoning the whole score.
+obvRaw = ta.cum(math.sign(ta.change(close)) * nz(volume))
+obvEma = ta.ema(obvRaw, obvLen)
+obvSd  = ta.stdev(obvRaw, obvLen)
+whaleZ = obvSd > 0 ? clamp((obvRaw - obvEma) / obvSd, -1, 1) : 0.0
+whaleComp = nz(whaleZ * whaleW * 0.5)          // ±whaleW/2, like the bot's ±0.5 bias
+
+// 3. Momentum, same shape as the bot (change/6, clamped).
+// Auto mode: lookback = however many bars make 24 hours on this chart
+// (24 on 1h, 6 on 4H, 96 on 15m) so it matches the bot's 24h momentum leg.
+tfSec = timeframe.in_seconds(timeframe.period)
+momLenEff = autoMom and tfSec > 0 ? math.max(1, math.round(86400.0 / tfSec)) : momLen
+rocV = ta.roc(close, momLenEff)
+momComp = math.abs(rocV) >= 1.0 ? clamp(rocV / 6, -1, 1) * momW : 0.0
+
+score = fadeComp + whaleComp + momComp
+confidence = math.min(90, 45 + math.abs(score) * 15)   // bot's confidence map
+
+// ───────── Entries ─────────
+// Cooldown stops the instant re-entry chains when the score stays stretched
+// past threshold after a TP/stop — each signal is a fresh setup, not a refill.
+var int lastPosBar = na
+if strategy.position_size != 0
+    lastPosBar := bar_index
+canEnter = strategy.position_size == 0 and (na(lastPosBar) or bar_index - lastPosBar > cooldown)
+
+longSig  = score >  minScore and canEnter
+shortSig = score < -minScore and canEnter
+
+if longSig
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "LONG\n" + str.tostring(confidence, "#") + "%",
+         style = label.style_label_up, color = color.new(color.green, 10),
+         textcolor = color.white, size = size.small)
+if shortSig
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "SHORT\n" + str.tostring(confidence, "#") + "%",
+         style = label.style_label_down, color = color.new(color.red, 10),
+         textcolor = color.white, size = size.small)
+
+// ───────── Exits: TP1 takes half, TP2 takes the rest, shared stop ─────────
+avg = strategy.position_avg_price
+if strategy.position_size > 0
+    strategy.exit("L-TP1", "L", qty_percent = 50, limit = avg * (1 + tp1Pct), stop = avg * (1 - stopPct))
+    strategy.exit("L-TP2", "L",                   limit = avg * (1 + tp2Pct), stop = avg * (1 - stopPct))
+if strategy.position_size < 0
+    strategy.exit("S-TP1", "S", qty_percent = 50, limit = avg * (1 - tp1Pct), stop = avg * (1 + stopPct))
+    strategy.exit("S-TP2", "S",                   limit = avg * (1 - tp2Pct), stop = avg * (1 + stopPct))
+
+// ───────── Visuals: persistent SL/TP rails ─────────
+// Drawn as real lines (not in-position plots) so they stay visible even when a
+// trade opens and closes within a bar or two — which is why fast-moving tickers
+// previously showed labels but no rails.
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line enLine  = na
+
+justEntered = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justEntered
+    line.delete(slLine)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(enLine)
+    a = strategy.position_avg_price
+    isLong = strategy.position_size > 0
+    sl  = isLong ? a * (1 - stopPct) : a * (1 + stopPct)
+    t1  = isLong ? a * (1 + tp1Pct)  : a * (1 - tp1Pct)
+    t2  = isLong ? a * (1 + tp2Pct)  : a * (1 - tp2Pct)
+    enLine  := line.new(bar_index, a,  bar_index, a,  color = color.new(color.gray, 20),  width = 1, style = line.style_dashed)
+    slLine  := line.new(bar_index, sl, bar_index, sl, color = color.new(color.red, 0),    width = 2)
+    tp1Line := line.new(bar_index, t1, bar_index, t1, color = color.new(color.green, 40), width = 1)
+    tp2Line := line.new(bar_index, t2, bar_index, t2, color = color.new(color.green, 0),  width = 2)
+
+// Extend the active (or most recent) trade's rails to the current bar.
+if not na(slLine)
+    line.set_x2(slLine,  bar_index)
+    line.set_x2(tp1Line, bar_index)
+    line.set_x2(tp2Line, bar_index)
+    line.set_x2(enLine,  bar_index)
+
+// ───────── Dashboard (the bot's /stats, on-chart) ─────────
+var table tbl = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 20),
+     border_color = color.new(color.gray, 60), border_width = 1)
+fmtCell(r, txt, val, valColor) =>
+    table.cell(tbl, 0, r, txt, text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 1, r, val, text_color = valColor,     text_size = size.small, text_halign = text.align_right)
+
+if barstate.islast
+    closed = strategy.closedtrades
+    wins   = strategy.wintrades
+    wr     = closed > 0 ? 100.0 * wins / closed : 0.0
+    fmtCell(0, "Score",       str.tostring(score, "#.##"), score > 0 ? color.green : score < 0 ? color.red : color.gray)
+    fmtCell(1, "Confidence",  str.tostring(confidence, "#") + "%", color.white)
+    fmtCell(2, "Crowd (RSI)", str.tostring(crowd, "#.##"), math.abs(crowd) > crowdMin ? color.orange : color.gray)
+    fmtCell(3, "Whale (OBV)", str.tostring(whaleZ, "#.##"), whaleZ > 0 ? color.green : color.red)
+    fmtCell(4, "Win rate",    str.tostring(wr, "#.#") + "% (" + str.tostring(closed) + ")", wr >= 50 ? color.green : color.red)
+    fmtCell(5, "Net P&L",     str.tostring(strategy.netprofit, "#.##"), strategy.netprofit >= 0 ? color.green : color.red)
+
+// ───────── Alerts (wire these to the Telegram bot via webhook later) ─────────
+alertcondition(longSig,  "Long signal",  "SigFunnel LONG {{ticker}} @ {{close}}")
+alertcondition(shortSig, "Short signal", "SigFunnel SHORT {{ticker}} @ {{close}}")
