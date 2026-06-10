@@ -1,4 +1,4 @@
-# Volume Profile Pro — Indicator + Strategy (TradingView / Pine Script v5)
+# Volume Profile Pro — Indicator + Strategy (TradingView / Pine Script v6)
 
 Two scripts built around a rolling **volume profile** — the map of *where* volume
 traded, not just *when*:

@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ─────────────────────────────────────────────────────────────────────────────
 // Volume Profile Pro [Predictive]
 //
@@ -51,11 +51,12 @@ colVAln = input.color(#2962ff, "VAH/VAL lines", group = grpCol)
 profHigh = ta.highest(high, lookback)
 profLow  = ta.lowest(low,  lookback)
 rowH     = (profHigh - profLow) / rows
+ready    = bar_index >= lookback - 1 and not na(rowH) and rowH > 0
 
 volRows   = array.new_float(rows, 0.0)
 deltaRows = array.new_float(rows, 0.0)
 
-if rowH > 0
+if ready
     for i = 0 to lookback - 1
         bh = high[i]
         bl = low[i]
@@ -95,9 +96,9 @@ while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
 vaHiIdx = upIdx - 1
 vaLoIdx = dnIdx + 1
 
-poc = rowH > 0 ? profLow + (pocIdx + 0.5) * rowH : close
-vah = rowH > 0 ? profLow + (vaHiIdx + 1) * rowH  : close
-val = rowH > 0 ? profLow + vaLoIdx * rowH        : close
+poc = ready ? profLow + (pocIdx + 0.5) * rowH : close
+vah = ready ? profLow + (vaHiIdx + 1) * rowH  : close
+val = ready ? profLow + vaLoIdx * rowH        : close
 vaW = vah - val
 
 deltaTotal = array.sum(deltaRows)
@@ -117,7 +118,7 @@ bias += fastMa > slowMa ? 1 : -1                   // trend agreement
 // Next HVN in the bias direction = most probable magnet; else VA extension
 f_nextNode(dir) =>
     found = float(na)
-    if rowH > 0
+    if ready
         startIdx = math.min(rows - 1, math.max(0, math.floor((close - profLow) / rowH)))
         j = startIdx + dir
         while j >= 0 and j < rows and na(found)
@@ -168,7 +169,7 @@ var line  valLn  = na
 var label fcastLb = na
 var label pocLb  = na
 
-if barstate.islast and rowH > 0
+if barstate.islast and ready
     for b in profBoxes
         box.delete(b)
     array.clear(profBoxes)

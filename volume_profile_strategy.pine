@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ─────────────────────────────────────────────────────────────────────────────
 // Volume Profile Strategy [VPP]
 //
@@ -58,9 +58,10 @@ inWindow  = not useWindow or (time >= startTime and time <= endTime)
 profHigh = ta.highest(high, lookback)
 profLow  = ta.lowest(low,  lookback)
 rowH     = (profHigh - profLow) / rows
+ready    = bar_index >= lookback - 1 and not na(rowH) and rowH > 0
 
 volRows = array.new_float(rows, 0.0)
-if rowH > 0
+if ready
     for i = 0 to lookback - 1
         bh = high[i]
         bl = low[i]
@@ -93,9 +94,9 @@ while vaVol < totalVol * vaPct / 100 and (upIdx < rows or dnIdx >= 0)
         vaVol += dnV
         dnIdx -= 1
 
-poc = rowH > 0 ? profLow + (pocIdx + 0.5) * rowH : close
-vah = rowH > 0 ? profLow + upIdx * rowH          : close
-val = rowH > 0 ? profLow + (dnIdx + 1) * rowH    : close
+poc = ready ? profLow + (pocIdx + 0.5) * rowH : close
+vah = ready ? profLow + upIdx * rowH          : close
+val = ready ? profLow + (dnIdx + 1) * rowH    : close
 vaW = vah - val
 
 // ── Regime & filters ─────────────────────────────────────────────────────────
