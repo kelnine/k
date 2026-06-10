@@ -1,5 +1,5 @@
 //@version=6
-indicator("S&D + Auto Fib", overlay=true, max_boxes_count=500, max_lines_count=50, max_labels_count=50)
+indicator("S&D + Auto Fib PRO", overlay=true, max_boxes_count=500, max_lines_count=100, max_labels_count=100)
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  INPUT GROUPS                                                           ║
@@ -7,15 +7,19 @@ indicator("S&D + Auto Fib", overlay=true, max_boxes_count=500, max_lines_count=5
 var string GZ = "Zones"
 var string GF = "Fibonacci"
 var string GE = "EMAs"
-var string GS = "Signals"
+var string GS = "Signal Filters"
+var string GR = "Risk Management"
 var string GV = "Display"
 
 // ── Zones ────────────────────────────────────────────────────────────────────
-show_zones   = input.bool(true,  "Show Zones",                group=GZ)
+show_zones   = input.bool(true,  "Show Zones",                 group=GZ)
 pivot_len    = input.int(10,     "Pivot Length",               minval=3,  maxval=50,   group=GZ)
 base_bars    = input.int(3,      "Base Candles",               minval=1,  maxval=10,   group=GZ)
 zone_ext     = input.int(100,    "Extend Right (bars)",        minval=10, maxval=1000, group=GZ)
 max_zones    = input.int(8,      "Max Zones per Side",         minval=2,  maxval=30,   group=GZ)
+use_strength = input.bool(true,  "Strong Zones Only",          group=GZ,
+                          tooltip="Only keep zones where price LEFT with an impulse ≥ the minimum below. Weak zones get retested and broken — strong departures mark real institutional orders.")
+min_impulse  = input.float(1.5,  "Min Departure Impulse (×ATR)", minval=0.5, maxval=5, step=0.25, group=GZ)
 show_broken  = input.bool(false, "Show Broken Zones",          group=GZ)
 show_zlabels = input.bool(false, "Zone Labels (D / S)",        group=GZ)
 d_col        = input.color(color.new(#00c853, 82), "Demand Colour", group=GZ)
@@ -33,36 +37,61 @@ show_e50     = input.bool(true,  "Show EMA 50",                group=GE)
 ema200_len   = input.int(200,    "EMA 200 Length",             minval=10, maxval=500,  group=GE)
 ema50_len    = input.int(50,     "EMA 50 Length",              minval=5,  maxval=200,  group=GE)
 
-// ── Signals ───────────────────────────────────────────────────────────────────
+// ── Signal Filters ────────────────────────────────────────────────────────────
 show_sig     = input.bool(true,  "Show Signals",               group=GS)
-use_trend    = input.bool(true,  "Trend Filter  (price vs EMA 200)",  group=GS)
-use_cross    = input.bool(true,  "EMA Cross Filter  (50 vs 200)",     group=GS)
-use_fresh    = input.bool(true,  "Fresh Zones Only  (★★★)",           group=GS)
-use_fib      = input.bool(true,  "Require Fib Level  (★★★)",          group=GS)
+use_trend    = input.bool(true,  "Trend Filter  (price vs EMA 200)",     group=GS)
+use_cross    = input.bool(true,  "EMA Cross Filter  (50 vs 200)",        group=GS)
+use_htf      = input.bool(true,  "Higher-Timeframe Trend Filter",        group=GS,
+                          tooltip="Signal direction must also agree with the trend on the higher timeframe below. Kills most counter-trend losers.")
+htf_tf       = input.timeframe("240", "Higher Timeframe",               group=GS)
+use_fresh    = input.bool(true,  "Fresh Zones Only  (★★★)",              group=GS)
+use_fib      = input.bool(true,  "Require Fib Level  (★★★)",             group=GS)
 use_rsi      = input.bool(true,  "RSI Filter  (< 65 buys / > 35 sells)", group=GS)
-use_body     = input.bool(true,  "Strong Candle Filter  (body ≥ 40%)", group=GS)
+use_body     = input.bool(true,  "Strong Candle Filter  (body ≥ 40%)",   group=GS)
+cooldown     = input.int(10,     "Signal Cooldown (bars)",     minval=0, maxval=100, group=GS,
+                          tooltip="Minimum bars between signals of the same direction — stops repeated arrows on the same move.")
+
+// ── Risk Management ───────────────────────────────────────────────────────────
+show_rr      = input.bool(true,  "Show SL / TP on ★★★ Signals", group=GR)
+rr_ratio     = input.float(2.0,  "Risk : Reward",              minval=0.5, maxval=10, step=0.5, group=GR)
+sl_atr_buf   = input.float(0.5,  "Stop Buffer (×ATR)",         minval=0.0, maxval=3,  step=0.25, group=GR,
+                          tooltip="Stop loss is placed beyond the zone edge by this many ATRs — survives stop-hunt wicks.")
+track_stats  = input.bool(true,  "Track Win Rate (★★★ only)",  group=GR)
 
 // ── Display ───────────────────────────────────────────────────────────────────
 show_bg      = input.bool(false, "Zone Background Tint",       group=GV)
 show_dash    = input.bool(true,  "Dashboard",                  group=GV)
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  EMAs                                                                   ║
+// ║  CORE SERIES                                                            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 ema200 = ta.ema(close, ema200_len)
 ema50  = ta.ema(close, ema50_len)
-is_bull      = close  > ema200
+atr    = ta.atr(14)
+rsi_val = ta.rsi(close, 14)
+
+is_bull        = close > ema200
 ema_cross_bull = ema50 > ema200
 ema_cross_bear = ema50 < ema200
+
+// Higher-timeframe trend — computed once per HTF bar, no repaint (uses confirmed values)
+htf_bull = request.security(syminfo.tickerid, htf_tf,
+             close > ta.ema(close, ema200_len),
+             lookahead=barmerge.lookahead_off)
 
 plot(show_e200 ? ema200 : na, "EMA 200", is_bull ? #2196F3 : #FF9800, linewidth=2)
 plot(show_e50  ? ema50  : na, "EMA 50",  ema_cross_bull ? #00bcd4 : #FF5722, linewidth=1)
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  PIVOT DETECTION                                                        ║
+// ║  PIVOTS                                                                 ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low,   pivot_len, pivot_len)
+
+// Impulse strength of the departure: how far price travelled away from the
+// pivot in the pivot_len bars after it, measured in ATRs.
+dep_up   = (close - low[pivot_len])  / atr   // rally away from a low
+dep_down = (high[pivot_len] - close) / atr   // drop away from a high
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  ZONE ARRAYS  (status: 0 = fresh  1 = tested  2 = broken)              ║
@@ -78,7 +107,7 @@ var array<float> s_bots = array.new<float>()
 var array<int>   s_sts  = array.new<int>()
 
 // ── Demand zone creation ──────────────────────────────────────────────────────
-if not na(pl) and show_zones
+if not na(pl) and show_zones and (not use_strength or dep_up >= min_impulse)
     zb = pl
     zt = math.max(open[pivot_len], close[pivot_len])
     for j = 1 to base_bars - 1
@@ -106,7 +135,7 @@ if not na(pl) and show_zones
         array.push(d_sts,  0)
 
 // ── Supply zone creation ──────────────────────────────────────────────────────
-if not na(ph) and show_zones
+if not na(ph) and show_zones and (not use_strength or dep_down >= min_impulse)
     zt = ph
     zb = math.min(open[pivot_len], close[pivot_len])
     for j = 1 to base_bars - 1
@@ -136,10 +165,12 @@ if not na(ph) and show_zones
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  UPDATE ZONES  –  extend, test, break                                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-bool in_demand       = false
-bool in_supply       = false
-bool in_fresh_demand = false
-bool in_fresh_supply = false
+bool  in_demand       = false
+bool  in_supply       = false
+bool  in_fresh_demand = false
+bool  in_fresh_supply = false
+float trig_d_bot      = na    // bottom of the demand zone price is in → stop placement
+float trig_s_top      = na    // top of the supply zone price is in   → stop placement
 
 if array.size(d_bxs) > 0
     for i = 0 to array.size(d_bxs) - 1
@@ -157,7 +188,8 @@ if array.size(d_bxs) > 0
                     box.set_border_color(bx, bc)
                     box.set_text_color(bx, bc)
                 else
-                    in_demand := true
+                    in_demand  := true
+                    trig_d_bot := na(trig_d_bot) ? zb : math.min(trig_d_bot, zb)
                     if st == 0
                         in_fresh_demand := true
                         array.set(d_sts, i, 1)
@@ -179,7 +211,8 @@ if array.size(s_bxs) > 0
                     box.set_border_color(bx, bc)
                     box.set_text_color(bx, bc)
                 else
-                    in_supply := true
+                    in_supply  := true
+                    trig_s_top := na(trig_s_top) ? zt : math.max(trig_s_top, zt)
                     if st == 0
                         in_fresh_supply := true
                         array.set(s_sts, i, 1)
@@ -208,11 +241,11 @@ var label lb_786 = na
 var label lb_100 = na
 
 if show_fib and barstate.islast
-    line.delete(ln_0),   line.delete(ln_500)
-    line.delete(ln_786), line.delete(ln_100)
+    line.delete(ln_0),    line.delete(ln_500)
+    line.delete(ln_786),  line.delete(ln_100)
     box.delete(gp_box)
-    label.delete(lb_0),  label.delete(lb_500)
-    label.delete(lb_786),label.delete(lb_100)
+    label.delete(lb_0),   label.delete(lb_500)
+    label.delete(lb_786), label.delete(lb_100)
 
     dim = color.new(fib_col, 55)
     key = color.new(fib_col, 0)
@@ -238,16 +271,17 @@ if show_fib and barstate.islast
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  SIGNAL FILTERS                                                         ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-rsi_val   = ta.rsi(close, 14)
 cndl_body = math.abs(close - open)
 cndl_rng  = high - low
-body_ok   = not use_body  or (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
-rsi_ok_b  = not use_rsi   or rsi_val < 65
-rsi_ok_s  = not use_rsi   or rsi_val > 35
+body_ok    = not use_body  or (cndl_rng > 0 ? cndl_body / cndl_rng >= 0.4 : false)
+rsi_ok_b   = not use_rsi   or rsi_val < 65
+rsi_ok_s   = not use_rsi   or rsi_val > 35
 cross_ok_b = not use_cross or ema_cross_bull
 cross_ok_s = not use_cross or ema_cross_bear
 trend_ok_b = not use_trend or is_bull
 trend_ok_s = not use_trend or not is_bull
+htf_ok_b   = not use_htf   or htf_bull
+htf_ok_s   = not use_htf   or not htf_bull
 
 fib_tol    = fib_rng * 0.01
 at_786     = show_fib and math.abs(close - f_786) < fib_tol
@@ -256,32 +290,38 @@ at_fib_key = (not use_fib) or at_786 or at_500
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  SIGNALS                                                                ║
-// ║  ★★★ BEST  — fresh zone + all active filters                           ║
-// ║  ★★  GOOD  — any first zone touch + trend/cross/candle/rsi             ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-zone_b = not use_fresh or in_fresh_demand
-zone_s = not use_fresh or in_fresh_supply
+var int last_buy_bar  = -99999
+var int last_sell_bar = -99999
+cd_ok_b = bar_index - last_buy_bar  > cooldown
+cd_ok_s = bar_index - last_sell_bar > cooldown
 
 best_buy  = show_sig and (use_fresh ? in_fresh_demand : in_demand) and at_fib_key
-             and cross_ok_b and trend_ok_b and body_ok and rsi_ok_b and close > open
+             and cross_ok_b and trend_ok_b and htf_ok_b and body_ok and rsi_ok_b
+             and close > open and cd_ok_b
 
 best_sell = show_sig and (use_fresh ? in_fresh_supply : in_supply) and at_fib_key
-             and cross_ok_s and trend_ok_s and body_ok and rsi_ok_s and close < open
+             and cross_ok_s and trend_ok_s and htf_ok_s and body_ok and rsi_ok_s
+             and close < open and cd_ok_s
 
 new_demand = in_demand and not in_demand[1]
 new_supply = in_supply and not in_supply[1]
 
 good_buy  = show_sig and new_demand and not best_buy
-             and cross_ok_b and trend_ok_b and body_ok and rsi_ok_b and close > open
+             and cross_ok_b and trend_ok_b and htf_ok_b and body_ok and rsi_ok_b
+             and close > open and cd_ok_b
 
 good_sell = show_sig and new_supply and not best_sell
-             and cross_ok_s and trend_ok_s and body_ok and rsi_ok_s and close < open
+             and cross_ok_s and trend_ok_s and htf_ok_s and body_ok and rsi_ok_s
+             and close < open and cd_ok_s
 
-// ★★★ large solid triangles
-plotshape(best_buy,  "BEST BUY",  shape.triangleup,   location.belowbar, color.new(#00c853, 0), size=size.large)
-plotshape(best_sell, "BEST SELL", shape.triangledown, location.abovebar, color.new(#f44336, 0), size=size.large)
+if best_buy or good_buy
+    last_buy_bar := bar_index
+if best_sell or good_sell
+    last_sell_bar := bar_index
 
-// ★★ small faded triangles
+plotshape(best_buy,  "BEST BUY",  shape.triangleup,   location.belowbar, color.new(#00c853, 0),  size=size.large)
+plotshape(best_sell, "BEST SELL", shape.triangledown, location.abovebar, color.new(#f44336, 0),  size=size.large)
 plotshape(good_buy,  "GOOD BUY",  shape.triangleup,   location.belowbar, color.new(#00c853, 45), size=size.small)
 plotshape(good_sell, "GOOD SELL", shape.triangledown, location.abovebar, color.new(#f44336, 45), size=size.small)
 
@@ -289,9 +329,76 @@ bgcolor(show_bg and in_demand and not in_supply ? color.new(#00c853, 95) : na, t
 bgcolor(show_bg and in_supply and not in_demand ? color.new(#f44336, 95) : na, title="Supply BG")
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  RISK MANAGEMENT  –  SL / TP drawn on ★★★ signals + win-rate tracker  ║
+// ║  Stop  = zone edge ± ATR buffer  (beyond the stop-hunt wicks)          ║
+// ║  Target = entry + risk × R:R                                            ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+var float t_entry = na
+var float t_sl    = na
+var float t_tp    = na
+var int   t_dir   = 0
+var int   wins    = 0
+var int   losses  = 0
+
+// Resolve any open tracked trade first — SL checked before TP (conservative)
+if track_stats and not na(t_entry)
+    if t_dir == 1
+        if low <= t_sl
+            losses  += 1
+            t_entry := na
+        else if high >= t_tp
+            wins    += 1
+            t_entry := na
+    else
+        if high >= t_sl
+            losses  += 1
+            t_entry := na
+        else if low <= t_tp
+            wins    += 1
+            t_entry := na
+
+draw_rr(float entry, float sl, float tp, bool is_long) =>
+    x1 = bar_index
+    x2 = bar_index + 20
+    risk_col = color.new(#f44336, 80)
+    rew_col  = color.new(#00c853, 80)
+    box.new(x1, entry, x2, sl, bgcolor=risk_col, border_color=color.new(#f44336, 50), border_width=1)
+    box.new(x1, tp,    x2, entry, bgcolor=rew_col, border_color=color.new(#00c853, 50), border_width=1)
+    label.new(x2, sl, "SL " + str.tostring(sl, format.mintick),
+              color=color.new(#f44336, 20), textcolor=color.white, size=size.tiny, style=label.style_label_left)
+    label.new(x2, tp, "TP " + str.tostring(tp, format.mintick) + "  (" + str.tostring(rr_ratio, "#.#") + "R)",
+              color=color.new(#00c853, 20), textcolor=color.white, size=size.tiny, style=label.style_label_left)
+
+if best_buy and not na(trig_d_bot)
+    sl = trig_d_bot - atr * sl_atr_buf
+    risk = close - sl
+    if risk > 0
+        tp = close + risk * rr_ratio
+        if show_rr
+            draw_rr(close, sl, tp, true)
+        if track_stats and na(t_entry)
+            t_entry := close
+            t_sl    := sl
+            t_tp    := tp
+            t_dir   := 1
+
+if best_sell and not na(trig_s_top)
+    sl = trig_s_top + atr * sl_atr_buf
+    risk = sl - close
+    if risk > 0
+        tp = close - risk * rr_ratio
+        if show_rr
+            draw_rr(close, sl, tp, false)
+        if track_stats and na(t_entry)
+            t_entry := close
+            t_sl    := sl
+            t_tp    := tp
+            t_dir   := -1
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  DASHBOARD                                                              ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-var table dash = table.new(position.top_right, 2, 9,
+var table dash = table.new(position.top_right, 2, 10,
                             bgcolor=color.new(#0d1117, 0),
                             border_color=color.new(color.white, 80),
                             border_width=1,
@@ -326,51 +433,58 @@ if barstate.islast and show_dash
               good_buy  ? color.new(#00c853, 25) :
               good_sell ? color.new(#f44336, 25) : color.gray
 
+    total   = wins + losses
+    wr_txt  = total > 0 ? str.tostring(math.round(100.0 * wins / total)) + "%  (" + str.tostring(wins) + "W/" + str.tostring(losses) + "L)" : "—"
+    wr_clr  = total == 0 ? color.gray : wins * 2 >= total ? #00c853 : #f44336
+
     BG  = color.new(#0d1117, 0)
     HDR = color.new(#1a237e, 0)
 
-    table.cell(dash, 0, 0, "S&D + FIB",  text_color=color.white,  text_size=size.small, bgcolor=HDR)
-    table.cell(dash, 1, 0, "v6",         text_color=#f9a825,      text_size=size.tiny,  bgcolor=HDR)
+    table.cell(dash, 0, 0, "S&D + FIB PRO", text_color=color.white, text_size=size.small, bgcolor=HDR)
+    table.cell(dash, 1, 0, "v6",            text_color=#f9a825,     text_size=size.tiny,  bgcolor=HDR)
 
-    table.cell(dash, 0, 1, "Trend",      text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 1, is_bull       ? "▲ BULL" : "▼ BEAR",
-                            text_color=is_bull ? #00c853 : #f44336,   text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 1, "Trend",     text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 1, is_bull ? "▲ BULL" : "▼ BEAR",
+                            text_color=is_bull ? #00c853 : #f44336, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 2, "EMA Cross",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 2, ema_cross_bull ? "50 > 200" : "50 < 200",
+    table.cell(dash, 0, 2, "HTF " + htf_tf, text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 2, htf_bull ? "▲ BULL" : "▼ BEAR",
+                            text_color=htf_bull ? #00c853 : #f44336, text_size=size.tiny, bgcolor=BG)
+
+    table.cell(dash, 0, 3, "EMA Cross", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 3, ema_cross_bull ? "50 > 200" : "50 < 200",
                             text_color=ema_cross_bull ? #00bcd4 : #FF5722, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 3, "RSI",        text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 3, str.tostring(math.round(rsi_val, 1)),
+    table.cell(dash, 0, 4, "RSI",       text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 4, str.tostring(math.round(rsi_val, 1)),
                             text_color=rsi_val > 70 ? #f44336 : rsi_val < 30 ? #00c853 : color.silver,
                             text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 4, "Fib",        text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 4, at_786 ? "0.786 ★" : at_500 ? "0.500" : "—",
+    table.cell(dash, 0, 5, "Fib",       text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 5, at_786 ? "0.786 ★" : at_500 ? "0.500" : "—",
                             text_color=at_786 or at_500 ? #f9a825 : color.gray, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 5, "Signal",     text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 5, sig_txt,      text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 6, "Signal",    text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 6, sig_txt,     text_color=sig_clr,      text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 6, "Zone",       text_color=color.silver, text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 6, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
+    table.cell(dash, 0, 7, "Zone",      text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 7, in_demand ? "DEMAND" : in_supply ? "SUPPLY" : "—",
                             text_color=in_demand ? #00c853 : in_supply ? #f44336 : color.gray,
                             text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 7, "Demand",     text_color=#00c853,      text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 7, str.tostring(df) + "F  " + str.tostring(dt) + "T",
+    table.cell(dash, 0, 8, "Zones D|S", text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 8, str.tostring(df) + "F " + str.tostring(dt) + "T | " + str.tostring(sf) + "F " + str.tostring(st2) + "T",
                             text_color=color.silver, text_size=size.tiny, bgcolor=BG)
 
-    table.cell(dash, 0, 8, "Supply",     text_color=#f44336,      text_size=size.tiny, bgcolor=BG)
-    table.cell(dash, 1, 8, str.tostring(sf) + "F  " + str.tostring(st2) + "T",
-                            text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 0, 9, "Win Rate",  text_color=color.silver, text_size=size.tiny, bgcolor=BG)
+    table.cell(dash, 1, 9, wr_txt,      text_color=wr_clr,       text_size=size.tiny, bgcolor=BG)
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  ALERTS                                                                 ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-alertcondition(best_buy,                              "★★★ Best Buy",   "Best Buy: all filters passed")
-alertcondition(best_sell,                             "★★★ Best Sell",  "Best Sell: all filters passed")
-alertcondition(good_buy,                              "★★ Good Buy",    "Good Buy: zone entry with trend/candle/RSI")
-alertcondition(good_sell,                             "★★ Good Sell",   "Good Sell: zone entry with trend/candle/RSI")
-alertcondition(best_buy  or best_sell,                "Any Best Signal", "Best signal triggered")
-alertcondition(best_buy  or best_sell or good_buy or good_sell, "Any Signal", "S&D signal triggered")
+alertcondition(best_buy,               "★★★ Best Buy",    "Best Buy: all filters passed")
+alertcondition(best_sell,              "★★★ Best Sell",   "Best Sell: all filters passed")
+alertcondition(good_buy,               "★★ Good Buy",     "Good Buy: zone entry confirmed")
+alertcondition(good_sell,              "★★ Good Sell",    "Good Sell: zone entry confirmed")
+alertcondition(best_buy or best_sell,  "Any Best Signal", "Best signal triggered")
+alertcondition(best_buy or best_sell or good_buy or good_sell, "Any Signal", "S&D signal triggered")
