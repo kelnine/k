@@ -13,11 +13,20 @@ def test_stop_loss_is_exactly_one_percent_of_equity():
 
 def test_quiet_instrument_gets_bigger_size_than_volatile_one():
     cfg = RiskConfig()
-    quiet_gold = plan_position(100_000, 2000, atr_value=5.0, direction=LONG, cfg=cfg)
-    wild_btc = plan_position(100_000, 2000, atr_value=50.0, direction=LONG, cfg=cfg)
+    quiet_gold = plan_position(100_000, 2000, atr_value=40.0, direction=LONG, cfg=cfg)
+    wild_btc = plan_position(100_000, 2000, atr_value=400.0, direction=LONG, cfg=cfg)
     assert quiet_gold.quantity > wild_btc.quantity
     # ...but the money at risk is identical
     assert abs(quiet_gold.risk_amount - wild_btc.risk_amount) < 1e-9
+
+
+def test_leverage_cap_binds_when_stop_is_tight():
+    cfg = RiskConfig(max_position_leverage=1.0)
+    # 2x4 = 8-point stop on a 5000 instrument implies 625 units = 3.1x equity;
+    # the cap trims it to 1x and the risk at the stop drops below 1%.
+    plan = plan_position(100_000, 5000, atr_value=4.0, direction=LONG, cfg=cfg)
+    assert abs(plan.quantity * 5000 - 100_000) < 1e-6
+    assert plan.risk_amount < 1_000
 
 
 def test_short_stop_sits_above_entry():

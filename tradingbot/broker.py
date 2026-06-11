@@ -23,6 +23,7 @@ JOURNAL_FIELDS = [
     "exit_price",
     "stop_price",
     "pnl",
+    "costs",
     "equity_after",
     "entry_reason",
     "exit_reason",
@@ -38,6 +39,7 @@ class Position:
     stop_price: float
     opened_at: datetime
     entry_reason: str = ""
+    cost_paid: float = 0.0    # entry-side costs, settled when the trade closes
 
 
 @dataclass
@@ -48,7 +50,8 @@ class ClosedTrade:
     entry_price: float
     exit_price: float
     stop_price: float
-    pnl: float
+    pnl: float               # net of costs
+    costs: float
     opened_at: datetime
     closed_at: datetime
     entry_reason: str
@@ -71,18 +74,22 @@ class PaperBroker:
         stop_price: float,
         at: datetime,
         reason: str = "",
+        cost: float = 0.0,
     ) -> Position:
         if symbol in self.positions:
             raise ValueError(f"already holding {symbol}")
-        pos = Position(symbol, direction, quantity, price, stop_price, at, reason)
+        pos = Position(symbol, direction, quantity, price, stop_price, at, reason,
+                       cost_paid=cost)
         self.positions[symbol] = pos
         return pos
 
     def close_position(
-        self, symbol: str, price: float, at: datetime, reason: str = ""
+        self, symbol: str, price: float, at: datetime, reason: str = "",
+        cost: float = 0.0,
     ) -> ClosedTrade:
         pos = self.positions.pop(symbol)
-        pnl = (price - pos.entry_price) * pos.quantity * pos.direction
+        costs = pos.cost_paid + cost
+        pnl = (price - pos.entry_price) * pos.quantity * pos.direction - costs
         self.equity += pnl
         trade = ClosedTrade(
             symbol=pos.symbol,
@@ -92,6 +99,7 @@ class PaperBroker:
             exit_price=price,
             stop_price=pos.stop_price,
             pnl=pnl,
+            costs=costs,
             opened_at=pos.opened_at,
             closed_at=at,
             entry_reason=pos.entry_reason,
@@ -141,6 +149,7 @@ class PaperBroker:
                     "exit_price": f"{t.exit_price:.4f}",
                     "stop_price": f"{t.stop_price:.4f}",
                     "pnl": f"{t.pnl:.2f}",
+                    "costs": f"{t.costs:.2f}",
                     "equity_after": f"{self.equity:.2f}",
                     "entry_reason": t.entry_reason,
                     "exit_reason": t.exit_reason,

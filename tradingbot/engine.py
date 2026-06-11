@@ -44,7 +44,10 @@ class Engine:
             bar = df.iloc[-1]
             fill = self.broker.check_stop(sym, bar["high"], bar["low"])
             if fill is not None:
-                trade = self.broker.close_position(sym, fill, now, reason="hard stop hit")
+                pos = self.broker.positions[sym]
+                cost = self._fill_cost(sym, fill, pos.quantity)
+                trade = self.broker.close_position(sym, fill, now,
+                                                   reason="hard stop hit", cost=cost)
                 stopped_now.add(sym)
                 self._log(now, f"{sym}: STOPPED OUT at {fill:.2f} (pnl {trade.pnl:+.2f})")
 
@@ -60,7 +63,9 @@ class Engine:
             price = float(df["close"].iloc[-1])
 
             if held and sig.direction != held.direction:
-                trade = self.broker.close_position(sym, price, now, reason=sig.reason)
+                cost = self._fill_cost(sym, price, held.quantity)
+                trade = self.broker.close_position(sym, price, now,
+                                                   reason=sig.reason, cost=cost)
                 self._log(now, f"{sym}: exit at {price:.2f} (pnl {trade.pnl:+.2f}) — {sig.reason}")
                 held = None
                 current_dir = FLAT
@@ -86,6 +91,7 @@ class Engine:
                 self.broker.open_position(
                     sym, sig.direction, plan.quantity, price, plan.stop_price,
                     now, reason=sig.reason,
+                    cost=self._fill_cost(sym, price, plan.quantity),
                 )
                 side = "LONG" if sig.direction > 0 else "SHORT"
                 self._log(
@@ -93,6 +99,10 @@ class Engine:
                     f"{sym}: {side} {plan.quantity:.4f} @ {price:.2f}, "
                     f"stop {plan.stop_price:.2f} (risk {plan.risk_amount:.0f}) — {sig.reason}",
                 )
+
+    def _fill_cost(self, sym: str, price: float, quantity: float) -> float:
+        """One-way friction on a fill: half-spread + slippage + fees."""
+        return price * quantity * self.instruments[sym].cost_bps / 10_000
 
     def _log(self, now: datetime, msg: str) -> None:
         line = f"[{now:%Y-%m-%d %H:%M}] {msg}"

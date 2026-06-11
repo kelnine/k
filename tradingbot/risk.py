@@ -34,6 +34,12 @@ def plan_position(
     stop_distance = cfg.atr_stop_multiple * atr_value
     risk_amount = cfg.risk_per_trade * equity
     quantity = risk_amount / stop_distance
+    # Tight stops on quiet instruments imply huge notional; cap it at what the
+    # account can actually carry. Risk at the stop then comes in *under* 1%.
+    max_quantity = cfg.max_position_leverage * equity / price
+    if quantity > max_quantity:
+        quantity = max_quantity
+        risk_amount = quantity * stop_distance
     if direction == LONG:
         stop_price = price - stop_distance
     else:

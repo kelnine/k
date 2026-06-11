@@ -21,6 +21,7 @@ class BacktestResult:
     wins: int
     final_equity: float
     max_drawdown: float
+    total_costs: float = 0.0
 
     @property
     def win_rate(self) -> float:
@@ -29,7 +30,8 @@ class BacktestResult:
     def summary(self) -> str:
         return (
             f"trades={self.trades} win_rate={self.win_rate:.0%} "
-            f"final_equity={self.final_equity:,.0f} max_dd={self.max_drawdown:.1%}"
+            f"final_equity={self.final_equity:,.0f} max_dd={self.max_drawdown:.1%} "
+            f"costs_paid={self.total_costs:,.0f}"
         )
 
 
@@ -69,4 +71,5 @@ def run_backtest(
         wins=wins,
         final_equity=broker.equity,
         max_drawdown=max_dd,
+        total_costs=sum(t.costs for t in broker.closed_trades),
     )

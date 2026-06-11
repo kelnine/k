@@ -23,7 +23,11 @@ def test_hard_stop_fires_before_strategy(tmp_path):
     assert "BTC" not in engine.broker.positions
     trade = engine.broker.closed_trades[-1]
     assert trade.exit_reason == "hard stop hit"
-    assert abs(trade.pnl - (49_000 - 50_000)) < 1e-6
+    # exit fills at the stop; pnl is net of the exit-side cost (8 bps on BTC).
+    # entry cost is 0 here because the position was opened directly on the broker.
+    exit_cost = 49_000 * 1.0 * 8 / 10_000
+    assert abs(trade.pnl - ((49_000 - 50_000) - exit_cost)) < 1e-6
+    assert abs(trade.costs - exit_cost) < 1e-6
     assert (tmp_path / "journal.csv").exists()
 
 
