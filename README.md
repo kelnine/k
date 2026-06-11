@@ -36,7 +36,7 @@ A signal requires **all** of the following confluences:
 - **Stop loss:** 1.5 × ATR(14) from entry — wide enough to survive 1-min noise.
 - **Scale-out exits:** 50% of the position takes profit at **TP1 (1R)**; the stop on the remainder moves to break-even; the runner targets **TP2 (2.2R)**. This is what produces *consistency*: many trades bank the partial and scratch the rest, while runners pay for the losers.
 - **Optional ATR trailing stop** (2 × ATR) on the runner instead of a fixed TP2.
-- **Guards:** session filter (default 09:30–15:30 New York), max 10 trades/day, 5-bar cooldown after a loss, 3% daily loss cap, forced flat at session end.
+- **Guards:** optional session filter (off by default — enable 09:30–15:30 NY for stocks/index futures), max 15 trades/day, 3-bar cooldown after a loss, 3% daily loss cap, forced flat at session end when the filter is on.
 - **Realistic costs baked in:** 0.02% commission + 1 tick slippage per fill. Keep these on — a 1-min backtest without costs is fiction.
 
 ### Visuals
@@ -60,8 +60,8 @@ These defaults are a sane starting point, not magic numbers. Tune in this order:
 
 | Symptom | Adjust |
 |---|---|
-| Too few trades | Lower `Min ADX` (18 → 14), lower `Volume spike` (1.2 → 1.0), widen `Pullback window` |
-| Chopped up by noise | Raise `Min ADX` (18 → 22–25), raise `Volume spike` (1.2 → 1.5) |
+| Too few trades | Lower `Min ADX` (15 → 12), turn off the `RSI momentum filter` and/or `Require volume above average` toggles, widen `Pullback window`, raise the stretch/bar-range caps |
+| Chopped up by noise | Raise `Min ADX` (15 → 20–25), raise `Volume ×` (1.0 → 1.3–1.5), enable `Trigger must break prior bar high/low` |
 | Stopped out then move goes your way | Raise `Stop loss × ATR` (1.2 → 1.5–2.0) and re-tune the R multiple |
 | Winners reverse before target | Lower the `R multiple` (1.8 → 1.3–1.5) or enable break-even earlier |
 | Strong trending instrument (NQ, BTC) | Enable the **ATR trailing stop** instead of fixed TP2 |

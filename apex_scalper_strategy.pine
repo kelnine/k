@@ -51,12 +51,15 @@ useSlope   = input.bool(true, "Require slow EMA slope in trade direction", group
 
 rsiLen     = input.int(14,   "RSI length",            minval = 2,          group = G_FILTER)
 adxLen     = input.int(14,   "ADX length",            minval = 2,          group = G_FILTER)
-adxThresh  = input.float(20, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
+adxThresh  = input.float(15, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
 volLen     = input.int(20,   "Volume average length", minval = 5,          group = G_FILTER)
-volMult    = input.float(1.2,"Volume spike × average", minval = 0.5, step = 0.1, group = G_FILTER)
-pullWin    = input.int(8,    "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
-maxStretch = input.float(1.0,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
-maxBarRng  = input.float(1.5,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
+useVolF    = input.bool(true, "Require volume above average",              group = G_FILTER)
+volMult    = input.float(1.0,"Volume × average",      minval = 0.5, step = 0.1, group = G_FILTER)
+useRsiF    = input.bool(true, "RSI momentum filter",                       group = G_FILTER)
+pullWin    = input.int(12,   "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
+reqBreak   = input.bool(false,"Trigger must break prior bar high/low",     group = G_FILTER)
+maxStretch = input.float(1.2,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
+maxBarRng  = input.float(2.0,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
 
 atrLen     = input.int(14,   "ATR length",            minval = 2,          group = G_RISK)
 slMult     = input.float(1.5,"Stop loss × ATR",       minval = 0.3, step = 0.1, group = G_RISK)
@@ -68,11 +71,11 @@ useBE      = input.bool(true, "Stop to break-even after TP1",              group
 useTrail   = input.bool(false,"ATR trailing stop on runner (disables TP2)",group = G_RISK)
 trailMult  = input.float(2.0,"Trailing stop × ATR",   minval = 0.5, step = 0.1, group = G_RISK)
 
-useSession = input.bool(true, "Limit to session",                          group = G_GUARD)
+useSession = input.bool(false,"Limit to session (enable for stocks/futures)", group = G_GUARD)
 sess       = input.session("0930-1530", "Trading session",                 group = G_GUARD)
 sessTz     = input.string("America/New_York", "Session timezone",          group = G_GUARD)
-maxPerDay  = input.int(10,   "Max trades per day",    minval = 1,          group = G_GUARD)
-coolBars   = input.int(5,    "Cooldown after loss (bars)", minval = 0,     group = G_GUARD)
+maxPerDay  = input.int(15,   "Max trades per day",    minval = 1,          group = G_GUARD)
+coolBars   = input.int(3,    "Cooldown after loss (bars)", minval = 0,     group = G_GUARD)
 maxDayLoss = input.float(3.0,"Daily loss cap (% equity)", minval = 0.5, step = 0.5, group = G_GUARD)
 allowLong  = input.bool(true, "Allow longs",                               group = G_GUARD)
 allowShort = input.bool(true, "Allow shorts",                              group = G_GUARD)
@@ -132,15 +135,15 @@ slopeOkLong  = not useSlope or emaSlow > emaSlow[3]
 slopeOkShort = not useSlope or emaSlow < emaSlow[3]
 
 strongTrend = adx > adxThresh
-volSpike    = volume > volAvg * volMult
+volOk       = not useVolF or volume > volAvg * volMult
 
 // Pullback: price touched the fast EMA within the last N bars…
 longPullback  = nz(ta.barssince(low  <= emaFast), 100000) <= pullWin
 shortPullback = nz(ta.barssince(high >= emaFast), 100000) <= pullWin
 
-// …then momentum resumes: bullish close back above the EMA taking out the prior high.
-longTrigger  = close > emaFast and close > open and close > high[1]
-shortTrigger = close < emaFast and close < open and close < low[1]
+// …then momentum resumes with a bullish close back above the EMA.
+longTrigger  = close > emaFast and close > open and (not reqBreak or close > high[1])
+shortTrigger = close < emaFast and close < open and (not reqBreak or close < low[1])
 
 // Overextension guard: never chase a climax bar or an entry far from the EMA —
 // the stop ends up in the wrong place and the move is usually spent.
@@ -149,12 +152,12 @@ notStretchedL  = (close - emaFast) <= atr * maxStretch
 notStretchedS  = (emaFast - close) <= atr * maxStretch
 
 // RSI confirms direction but blocks chasing exhaustion.
-longMomentum  = rsi > 50 and rsi < 70
-shortMomentum = rsi < 50 and rsi > 30
+longMomentum  = not useRsiF or (rsi > 45 and rsi < 75)
+shortMomentum = not useRsiF or (rsi < 55 and rsi > 25)
 
-longSignal  = allowLong  and bullTrend and slopeOkLong  and strongTrend and volSpike and
+longSignal  = allowLong  and bullTrend and slopeOkLong  and strongTrend and volOk and
      longPullback  and longTrigger  and longMomentum  and barRangeOk and notStretchedL
-shortSignal = allowShort and bearTrend and slopeOkShort and strongTrend and volSpike and
+shortSignal = allowShort and bearTrend and slopeOkShort and strongTrend and volOk and
      shortPullback and shortTrigger and shortMomentum and barRangeOk and notStretchedS
 
 // ═══════════════════════════ ORDER EXECUTION ═══════════════════════════

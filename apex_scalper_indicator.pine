@@ -27,19 +27,22 @@ useSlope   = input.bool(true, "Require slow EMA slope in trade direction", group
 
 rsiLen     = input.int(14,   "RSI length",            minval = 2,          group = G_FILTER)
 adxLen     = input.int(14,   "ADX length",            minval = 2,          group = G_FILTER)
-adxThresh  = input.float(20, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
+adxThresh  = input.float(15, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
 volLen     = input.int(20,   "Volume average length", minval = 5,          group = G_FILTER)
-volMult    = input.float(1.2,"Volume spike × average", minval = 0.5, step = 0.1, group = G_FILTER)
-pullWin    = input.int(8,    "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
-maxStretch = input.float(1.0,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
-maxBarRng  = input.float(1.5,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
+useVolF    = input.bool(true, "Require volume above average",              group = G_FILTER)
+volMult    = input.float(1.0,"Volume × average",      minval = 0.5, step = 0.1, group = G_FILTER)
+useRsiF    = input.bool(true, "RSI momentum filter",                       group = G_FILTER)
+pullWin    = input.int(12,   "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
+reqBreak   = input.bool(false,"Trigger must break prior bar high/low",     group = G_FILTER)
+maxStretch = input.float(1.2,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
+maxBarRng  = input.float(2.0,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
 
 atrLen     = input.int(14,   "ATR length",            minval = 2,          group = G_RISK)
 slMult     = input.float(1.5,"Stop loss × ATR",       minval = 0.3, step = 0.1, group = G_RISK)
 tp1R       = input.float(1.0,"TP1 (R multiple)",      minval = 0.3, step = 0.1, group = G_RISK)
 tp2R       = input.float(2.2,"TP2 (R multiple)",      minval = 0.5, step = 0.1, group = G_RISK)
 
-useSession = input.bool(true, "Limit to session",                          group = G_GUARD)
+useSession = input.bool(false,"Limit to session (enable for stocks/futures)", group = G_GUARD)
 sess       = input.session("0930-1530", "Trading session",                 group = G_GUARD)
 sessTz     = input.string("America/New_York", "Session timezone",          group = G_GUARD)
 
@@ -85,24 +88,24 @@ slopeOkLong  = not useSlope or emaSlow > emaSlow[3]
 slopeOkShort = not useSlope or emaSlow < emaSlow[3]
 
 strongTrend = adx > adxThresh
-volSpike    = volume > volAvg * volMult
+volOk       = not useVolF or volume > volAvg * volMult
 
 longPullback  = nz(ta.barssince(low  <= emaFast), 100000) <= pullWin
 shortPullback = nz(ta.barssince(high >= emaFast), 100000) <= pullWin
 
-longTrigger  = close > emaFast and close > open and close > high[1]
-shortTrigger = close < emaFast and close < open and close < low[1]
+longTrigger  = close > emaFast and close > open and (not reqBreak or close > high[1])
+shortTrigger = close < emaFast and close < open and (not reqBreak or close < low[1])
 
 barRangeOk    = (high - low) <= atr * maxBarRng
 notStretchedL = (close - emaFast) <= atr * maxStretch
 notStretchedS = (emaFast - close) <= atr * maxStretch
 
-longMomentum  = rsi > 50 and rsi < 70
-shortMomentum = rsi < 50 and rsi > 30
+longMomentum  = not useRsiF or (rsi > 45 and rsi < 75)
+shortMomentum = not useRsiF or (rsi < 55 and rsi > 25)
 
-longSignal  = inSession and bullTrend and slopeOkLong  and strongTrend and volSpike and
+longSignal  = inSession and bullTrend and slopeOkLong  and strongTrend and volOk and
      longPullback  and longTrigger  and longMomentum  and barRangeOk and notStretchedL
-shortSignal = inSession and bearTrend and slopeOkShort and strongTrend and volSpike and
+shortSignal = inSession and bearTrend and slopeOkShort and strongTrend and volOk and
      shortPullback and shortTrigger and shortMomentum and barRangeOk and notStretchedS
 
 // Suggested levels
@@ -165,10 +168,11 @@ if showZones and shortSignal and barstate.isconfirmed
 bgcolor(showBg and useSession and inSession ? color.new(color.blue, 96) : na)
 
 // ═══════════════════════════ DASHBOARD ═══════════════════════════
-var table dash = table.new(position.bottom_right, 2, 6, border_width = 1)
+var table dash = table.new(position.bottom_right, 2, 7, border_width = 1)
 if showDash and barstate.islast
     biasTxt = bullTrend ? "LONG"   : bearTrend ? "SHORT" : "FLAT"
     biasCol = bullTrend ? C_BULL   : bearTrend ? C_BEAR  : color.gray
+    pullOk  = bullTrend ? longPullback : bearTrend ? shortPullback : false
     table.cell(dash, 0, 0, "APEX",    bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.small)
     table.cell(dash, 1, 0, biasTxt,   bgcolor = C_PANEL, text_color = biasCol, text_size = size.small)
     table.cell(dash, 0, 1, "ADX",     bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
@@ -178,13 +182,16 @@ if showDash and barstate.islast
     table.cell(dash, 1, 2, str.format("{0,number,#.#}", rsi),
          bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
     table.cell(dash, 0, 3, "Volume",  bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
-    table.cell(dash, 1, 3, volSpike ? "SPIKE" : "normal",
-         bgcolor = C_PANEL, text_color = volSpike ? C_BULL : color.gray, text_size = size.tiny)
+    table.cell(dash, 1, 3, volOk ? "OK" : "low",
+         bgcolor = C_PANEL, text_color = volOk ? C_BULL : color.gray, text_size = size.tiny)
     table.cell(dash, 0, 4, "VWAP",    bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
     table.cell(dash, 1, 4, close > vwap ? "above" : "below",
          bgcolor = C_PANEL, text_color = close > vwap ? C_BULL : C_BEAR, text_size = size.tiny)
-    table.cell(dash, 0, 5, "Session", bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
-    table.cell(dash, 1, 5, inSession ? "OPEN" : "closed",
+    table.cell(dash, 0, 5, "Pullback", bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 5, pullOk ? "READY" : "waiting",
+         bgcolor = C_PANEL, text_color = pullOk ? C_BULL : color.gray, text_size = size.tiny)
+    table.cell(dash, 0, 6, "Session", bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 6, inSession ? "OPEN" : "closed",
          bgcolor = C_PANEL, text_color = inSession ? C_BULL : color.gray, text_size = size.tiny)
 
 // ═══════════════════════════ ALERTS ═══════════════════════════
