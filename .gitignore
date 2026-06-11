@@ -5,3 +5,4 @@ journal.csv
 messages.log
 bot_state.json
 .venv/
+demo_output/
