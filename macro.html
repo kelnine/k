@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terminal Financiero IA — Análisis Macroeconómico</title>
+<style>
+  :root{
+    --bg:#0A0A0A; --card:#141414; --border:#232323;
+    --green:#00C896; --red:#FF5252; --yellow:#FFC107;
+    --text:#E8E8E8; --muted:#8A8A8A;
+    --mono:"JetBrains Mono","SF Mono","Fira Code",Consolas,"Courier New",monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:var(--mono);min-height:100vh;}
+  a{color:inherit;text-decoration:none;}
+
+  header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+    padding:16px 24px;border-bottom:1px solid var(--border);}
+  .brand{font-size:15px;font-weight:700;letter-spacing:2px;}
+  .brand span{color:var(--green);}
+  nav{display:flex;gap:4px;flex-wrap:wrap;padding:10px 24px;border-bottom:1px solid var(--border);font-size:12px;}
+  nav a{padding:7px 14px;border-radius:6px;color:var(--muted);border:1px solid transparent;}
+  nav a:hover{color:var(--text);border-color:var(--border);}
+  nav a.active{color:var(--green);border-color:var(--green);background:rgba(0,200,150,.07);}
+
+  main{max-width:1200px;margin:0 auto;padding:24px;}
+  h1{font-size:18px;margin-bottom:4px;}
+  .subtitle{color:var(--muted);font-size:12px;margin-bottom:20px;}
+
+  section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin:18px 0;}
+  section h2{font-size:13px;letter-spacing:1.5px;color:var(--green);margin-bottom:14px;}
+
+  .exec p{font-size:13px;line-height:1.8;margin-bottom:14px;}
+  .exec-meta{display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:11px;color:var(--muted);}
+  .semaforo{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:12px;
+    padding:7px 14px;border-radius:8px;border:1px solid;}
+  .s-verde{color:var(--green);border-color:var(--green);background:rgba(0,200,150,.08);}
+  .s-amarillo{color:var(--yellow);border-color:var(--yellow);background:rgba(255,193,7,.08);}
+  .s-rojo{color:var(--red);border-color:var(--red);background:rgba(255,82,82,.08);}
+
+  .kv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
+  .kv{border:1px solid var(--border);border-radius:8px;padding:12px;}
+  .kv .k{font-size:10px;color:var(--muted);letter-spacing:1px;margin-bottom:5px;display:flex;gap:6px;align-items:center;}
+  .kv .v{font-size:17px;font-weight:700;}
+  .kv .note{font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5;}
+  .up{color:var(--green);} .down{color:var(--red);} .neu{color:var(--yellow);}
+
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th{font-size:10px;color:var(--muted);letter-spacing:1px;text-align:left;padding:8px;border-bottom:1px solid var(--border);}
+  td{padding:9px 8px;border-bottom:1px solid #1b1b1b;}
+  tr:last-child td{border-bottom:none;}
+  td.num{text-align:right;font-weight:700;}
+  th.num{text-align:right;}
+
+  .curve-wrap{display:grid;grid-template-columns:1fr 280px;gap:18px;align-items:start;}
+  canvas#curva{width:100%;height:200px;}
+  @media(max-width:780px){.curve-wrap{grid-template-columns:1fr;}}
+
+  .impact{font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid;}
+  .i-alto{color:var(--red);border-color:var(--red);}
+  .i-medio{color:var(--yellow);border-color:var(--yellow);}
+  .i-bajo{color:var(--muted);border-color:var(--border);}
+
+  .edu li{font-size:13px;line-height:1.8;margin:10px 0 10px 20px;}
+  .edu b{color:var(--green);}
+
+  footer{max-width:1200px;margin:0 auto;padding:24px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:32px;}
+  @media(max-width:600px){main{padding:16px;}}
+</style>
+</head>
+<body>
+
+<header><div class="brand">TERMINAL <span>FINANCIERO</span> IA</div></header>
+<nav>
+  <a href="index.html">📊 Dashboard</a>
+  <a href="analizador.html">🔎 Analizador de Acciones</a>
+  <a href="macro.html" class="active">🌍 Macroeconomía</a>
+  <a href="portafolio.html">💼 Mi Portafolio</a>
+</nav>
+
+<main>
+  <h1>Análisis Macroeconómico</h1>
+  <p class="subtitle">El "cerebro macro" del terminal: datos complejos traducidos a lenguaje simple · datos simulados</p>
+
+  <!-- 1. RESUMEN EJECUTIVO -->
+  <section class="exec">
+    <h2>RESUMEN EJECUTIVO</h2>
+    <p>
+      La economía estadounidense mantiene un crecimiento moderado pero positivo, con un mercado laboral que se
+      enfría de forma ordenada y una inflación que sigue bajando hacia el objetivo del 2 % de la Reserva Federal.
+      La Fed ha pausado las subidas de tasas y el mercado descuenta uno o dos recortes en los próximos doce meses,
+      lo que da soporte a las bolsas y alivia el costo del crédito. Los principales riesgos siguen siendo una
+      inflación de servicios persistente, la tensión geopolítica sobre el precio de la energía y unas valoraciones
+      bursátiles exigentes en el sector tecnológico. En conjunto, el entorno es constructivo para el inversor de
+      largo plazo, aunque con menos margen de error que en años anteriores: conviene mantener diversificación y
+      algo de liquidez para aprovechar correcciones.
+    </p>
+    <div class="exec-meta">
+      <span class="semaforo s-amarillo">⬤ RIESGO GLOBAL: AMARILLO</span>
+      <span>Justificación: crecimiento estable y Fed en pausa (positivo), pero inflación aún sobre el objetivo y valoraciones elevadas (precaución).</span>
+      <span id="actualizado"></span>
+    </div>
+  </section>
+
+  <!-- 2. INDICADORES CLAVE -->
+  <section>
+    <h2>INDICADORES CLAVE (EE.UU.)</h2>
+    <div class="kv-grid">
+      <div class="kv"><div class="k">🏦 FED FUNDS RATE</div><div class="v">4,25 – 4,50 %</div>
+        <div class="note">Sin cambios en la última reunión. Viene de un máximo de 5,50 %; el mercado espera recortes graduales.</div></div>
+      <div class="kv"><div class="k">📈 INFLACIÓN CPI (interanual)</div><div class="v">2,7 % <span class="up">▼</span></div>
+        <div class="note">Anterior: 2,9 %. Sigue moderándose hacia el objetivo del 2 %.</div></div>
+      <div class="kv"><div class="k">📈 INFLACIÓN PCE (interanual)</div><div class="v">2,4 % <span class="up">▼</span></div>
+        <div class="note">Anterior: 2,6 %. Es la medida preferida de la Fed.</div></div>
+      <div class="kv"><div class="k">👷 NÓMINAS NO AGRÍCOLAS (NFP)</div><div class="v">+165 mil</div>
+        <div class="note">Creación de empleo sólida pero en desaceleración. Desempleo: 4,1 %.</div></div>
+      <div class="kv"><div class="k">🏭 PIB (trimestral anualizado)</div><div class="v">+2,1 %</div>
+        <div class="note">Crecimiento moderado, sin señales de recesión inminente.</div></div>
+      <div class="kv"><div class="k">📋 ISM MANUFACTURERO</div><div class="v">49,2 <span class="down">▼</span></div>
+        <div class="note">Por debajo de 50 = contracción leve del sector industrial.</div></div>
+      <div class="kv"><div class="k">📋 ISM SERVICIOS</div><div class="v">53,4 <span class="up">▲</span></div>
+        <div class="note">Por encima de 50 = el sector servicios sigue en expansión.</div></div>
+      <div class="kv"><div class="k">🛒 CONFIANZA DEL CONSUMIDOR</div><div class="v">102,8</div>
+        <div class="note">Estable. El consumidor sigue gastando pese a las tasas altas.</div></div>
+    </div>
+  </section>
+
+  <!-- 3. MERCADOS GLOBALES -->
+  <section>
+    <h2>MERCADOS GLOBALES</h2>
+    <div class="kv-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+      <div>
+        <table>
+          <thead><tr><th>DIVISAS</th><th class="num">PRECIO</th><th class="num">VAR. DÍA</th></tr></thead>
+          <tbody id="tFx"></tbody>
+        </table>
+      </div>
+      <div>
+        <table>
+          <thead><tr><th>COMMODITIES</th><th class="num">PRECIO</th><th class="num">VAR. DÍA</th></tr></thead>
+          <tbody id="tCmd"></tbody>
+        </table>
+      </div>
+      <div>
+        <table>
+          <thead><tr><th>CRIPTO (TOP 5)</th><th class="num">PRECIO</th><th class="num">VAR. DÍA</th></tr></thead>
+          <tbody id="tCrypto"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. BONOS Y RENTA FIJA -->
+  <section>
+    <h2>BONOS Y RENTA FIJA</h2>
+    <div class="curve-wrap">
+      <div>
+        <canvas id="curva" width="640" height="200"></canvas>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;">Curva de rendimientos del Tesoro de EE.UU. (2Y · 5Y · 10Y · 30Y)</div>
+      </div>
+      <div class="kv-grid" style="grid-template-columns:1fr;">
+        <div class="kv"><div class="k">CURVA 2Y–10Y</div><div class="v up">+0,38 % · NORMAL</div>
+          <div class="note">La curva se ha des-invertido: el 10Y rinde más que el 2Y. Históricamente, una curva invertida ha precedido recesiones; hoy esa señal está apagada.</div></div>
+        <div class="kv"><div class="k">SPREAD CREDITICIO IG vs HY</div><div class="v">1,1 % / 3,2 %</div>
+          <div class="note">Diferenciales estrechos: el mercado de crédito no descuenta estrés. Si se amplían con rapidez, es señal de aversión al riesgo.</div></div>
+        <div class="kv"><div class="k">INDICADOR DE RECESIÓN</div><div class="v neu">RIESGO BAJO-MODERADO</div>
+          <div class="note">Curva normalizada + crédito estable + empleo sólido = probabilidad de recesión contenida a 12 meses.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. CALENDARIO ECONÓMICO -->
+  <section>
+    <h2>CALENDARIO ECONÓMICO · PRÓXIMOS 7 EVENTOS</h2>
+    <table>
+      <thead><tr><th>FECHA</th><th>EVENTO</th><th>IMPACTO</th><th class="num">CONSENSO</th><th class="num">ANTERIOR</th></tr></thead>
+      <tbody id="tCal"></tbody>
+    </table>
+  </section>
+
+  <!-- 6. EDUCATIVO -->
+  <section class="edu">
+    <h2>💡 LO QUE ESTO SIGNIFICA PARA TI</h2>
+    <ul>
+      <li><b>Si inviertes en bolsa:</b> una Fed en pausa con recortes a la vista suele favorecer a las acciones, pero las valoraciones tecnológicas ya descuentan buenas noticias — diversifica y no persigas precios.</li>
+      <li><b>Si ahorras:</b> aprovecha que las tasas siguen altas: cuentas remuneradas, depósitos y letras del Tesoro todavía pagan rendimientos atractivos que irán bajando cuando la Fed recorte.</li>
+      <li><b>Si tienes o buscas hipoteca/créditos:</b> el costo del crédito debería bajar lentamente en los próximos trimestres; si puedes esperar o refinanciar más adelante, podrías obtener mejores condiciones.</li>
+      <li><b>Para el mercado laboral:</b> el empleo se enfría pero no se desploma; los salarios crecen ya por encima de la inflación, lo que recupera poco a poco el poder adquisitivo.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>Los datos mostrados son simulados y no constituyen asesoría financiera.</footer>
+
+<script>
+const fmt=(n,d=2)=>n.toLocaleString("es-ES",{minimumFractionDigits:d,maximumFractionDigits:d});
+function row(name,price,chg,dec=2,suf=""){
+  const cls=chg>=0?"up":"down", sign=chg>=0?"+":"";
+  return `<tr><td>${name}</td><td class="num">${fmt(price,dec)}${suf}</td><td class="num ${cls}">${sign}${fmt(chg,2)} %</td></tr>`;
+}
+
+document.getElementById("tFx").innerHTML =
+  row("EUR/USD",1.0842,0.21,4)+row("GBP/USD",1.2735,0.08,4)+
+  row("USD/JPY",153.42,-0.34,2)+row("USD/CHF",0.8821,0.12,4);
+
+document.getElementById("tCmd").innerHTML =
+  row("Oro",2658.30,0.45,2," $")+row("Plata",31.18,0.92,2," $")+
+  row("Petróleo WTI",71.40,-1.12,2," $")+row("Petróleo Brent",75.10,-0.98,2," $")+
+  row("Gas Natural",2.94,2.15,2," $");
+
+document.getElementById("tCrypto").innerHTML =
+  row("Bitcoin (BTC)",97250,1.84,0," $")+row("Ethereum (ETH)",3482,2.31,0," $")+
+  row("BNB",612.4,0.76,1," $")+row("Solana (SOL)",188.2,3.42,1," $")+
+  row("XRP",1.42,-0.85,2," $");
+
+// Calendario: próximos 7 eventos a partir de hoy
+const eventos=[
+  {d:2,  ev:"Inflación CPI (mensual)",            imp:"alto",  cons:"+0,2 %",  prev:"+0,3 %"},
+  {d:3,  ev:"Solicitudes de subsidio por desempleo",imp:"medio",cons:"222 mil", prev:"219 mil"},
+  {d:6,  ev:"Ventas minoristas",                  imp:"medio", cons:"+0,3 %",  prev:"+0,4 %"},
+  {d:7,  ev:"Reunión de la Fed (decisión de tasas)",imp:"alto", cons:"4,25–4,50 %",prev:"4,25–4,50 %"},
+  {d:9,  ev:"PIB (revisión trimestral)",          imp:"medio", cons:"+2,1 %",  prev:"+2,0 %"},
+  {d:13, ev:"Inflación PCE",                      imp:"alto",  cons:"+0,2 %",  prev:"+0,2 %"},
+  {d:16, ev:"Nóminas no agrícolas (NFP)",         imp:"alto",  cons:"+160 mil",prev:"+165 mil"},
+];
+document.getElementById("tCal").innerHTML = eventos.map(e=>{
+  const f=new Date(); f.setDate(f.getDate()+e.d);
+  const fecha=f.toLocaleDateString("es-ES",{day:"2-digit",month:"short"});
+  return `<tr><td>${fecha}</td><td>${e.ev}</td>
+    <td><span class="impact i-${e.imp}">${e.imp.toUpperCase()}</span></td>
+    <td class="num">${e.cons}</td><td class="num">${e.prev}</td></tr>`;
+}).join("");
+
+// Marca de actualización simulada
+document.getElementById("actualizado").textContent =
+  "Actualizado: " + new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"short",year:"numeric"}) +
+  " " + new Date().toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"});
+
+// Curva de rendimientos
+(function(){
+  const cv=document.getElementById("curva"),ctx=cv.getContext("2d");
+  const W=cv.width,H=cv.height,padL=50,padR=20,padT=16,padB=28;
+  const pts=[["2Y",4.05],["5Y",4.12],["10Y",4.43],["30Y",4.61]];
+  const min=3.8,max=4.8;
+  const X=i=>padL+i*(W-padL-padR)/(pts.length-1);
+  const Y=v=>padT+(1-(v-min)/(max-min))*(H-padT-padB);
+  ctx.strokeStyle="#1d1d1d";ctx.fillStyle="#8A8A8A";ctx.font="10px monospace";
+  for(let g=0;g<=4;g++){
+    const v=min+(max-min)*g/4,y=Y(v);
+    ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();
+    ctx.textAlign="right";ctx.fillText(fmt(v,1)+" %",padL-8,y+3);
+  }
+  ctx.beginPath();ctx.moveTo(X(0),Y(pts[0][1]));
+  pts.forEach((p,i)=>ctx.lineTo(X(i),Y(p[1])));
+  ctx.strokeStyle="#00C896";ctx.lineWidth=2.4;ctx.stroke();
+  pts.forEach((p,i)=>{
+    ctx.beginPath();ctx.arc(X(i),Y(p[1]),4,0,7);ctx.fillStyle="#00C896";ctx.fill();
+    ctx.fillStyle="#E8E8E8";ctx.textAlign="center";
+    ctx.fillText(p[0],X(i),H-8);
+    ctx.fillText(fmt(p[1],2)+" %",X(i),Y(p[1])-10);
+  });
+})();
+</script>
+</body>
+</html>
