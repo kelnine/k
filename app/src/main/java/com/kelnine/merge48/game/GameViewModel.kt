@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 data class GameUiState(
-    val board: Board = Board.empty(),
+    val board: TileBoard = TileBoard.empty(),
     val score: Int = 0,
     val bestScore: Int = 0,
     val isGameOver: Boolean = false,
@@ -31,7 +31,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
     // Board and score before the most recent move, for the Pro undo feature.
-    private var undoSnapshot: Pair<Board, Int>? = null
+    private var undoSnapshot: Pair<TileBoard, Int>? = null
 
     fun newGame() {
         undoSnapshot = null

@@ -1,25 +1,38 @@
 package com.kelnine.merge48.ui
 
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -28,34 +41,54 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kelnine.merge48.game.Board
 import com.kelnine.merge48.game.Direction
 import com.kelnine.merge48.game.GameViewModel
+import com.kelnine.merge48.game.Tile
+import com.kelnine.merge48.game.TileBoard
 import com.kelnine.merge48.payments.PaymentsConfig
 import com.kelnine.merge48.payments.Product
+import com.kelnine.merge48.ui.theme.AppBackgroundBrush
 import com.kelnine.merge48.ui.theme.BoardBackground
+import com.kelnine.merge48.ui.theme.DisabledButtonBrush
 import com.kelnine.merge48.ui.theme.EmptyCell
-import com.kelnine.merge48.ui.theme.NightBackground
+import com.kelnine.merge48.ui.theme.GreenButtonBrush
+import com.kelnine.merge48.ui.theme.NightBottom
+import com.kelnine.merge48.ui.theme.PurpleButtonBrush
+import com.kelnine.merge48.ui.theme.SignatureBrush
 import com.kelnine.merge48.ui.theme.SolanaGreen
 import com.kelnine.merge48.ui.theme.SolanaPurple
+import com.kelnine.merge48.ui.theme.TextDim
+import com.kelnine.merge48.ui.theme.TextOnTile
 import com.kelnine.merge48.ui.theme.TextPrimary
-import com.kelnine.merge48.ui.theme.tileColor
+import com.kelnine.merge48.ui.theme.tileBrushColors
+import com.kelnine.merge48.ui.theme.tileGlowColor
 import com.kelnine.merge48.ui.theme.tileTextColor
 import com.kelnine.merge48.wallet.WalletViewModel
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 
 private const val SWIPE_THRESHOLD_PX = 60f
+private const val SLIDE_MILLIS = 130
 
 @Composable
 fun GameScreen(
@@ -77,97 +110,93 @@ fun GameScreen(
         }
     }
 
-    Scaffold(
-        containerColor = NightBackground,
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Header(
-                score = gameState.score,
-                best = gameState.bestScore
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppBackgroundBrush)
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                OutlinedButton(
-                    onClick = { gameViewModel.newGame() },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("New Game")
-                }
-                if (walletState.connected) {
-                    OutlinedButton(
-                        onClick = { walletViewModel.disconnect() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(WalletViewModel.shorten(walletState.address.orEmpty()))
-                    }
-                } else {
-                    Button(
-                        onClick = { onConnectWallet(walletViewModel) },
-                        enabled = !walletState.inProgress,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = SolanaPurple)
-                    ) {
-                        Text("Connect Wallet")
-                    }
-                }
-            }
+                Header(score = gameState.score, best = gameState.bestScore)
 
-            if (walletState.connected) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(14.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (walletState.proUnlocked) {
-                        OutlinedButton(
-                            onClick = gameViewModel::undo,
-                            enabled = gameState.canUndo,
+                    OutlineButton(
+                        text = "New Game",
+                        onClick = { gameViewModel.newGame() },
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (walletState.connected) {
+                        OutlineButton(
+                            text = WalletViewModel.shorten(walletState.address.orEmpty()),
+                            onClick = { walletViewModel.disconnect() },
                             modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Undo")
-                        }
+                        )
                     } else {
-                        OutlinedButton(
-                            onClick = {
-                                onPurchase(walletViewModel, Product.PRO_UNLOCK) {}
-                            },
+                        GradientButton(
+                            text = "Connect Wallet",
+                            onClick = { onConnectWallet(walletViewModel) },
                             enabled = !walletState.inProgress,
                             modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Go Pro · ${Product.PRO_UNLOCK.priceLabel}")
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { onPurchase(walletViewModel, Product.TIP) {} },
-                        enabled = !walletState.inProgress,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Tip · ${Product.TIP.priceLabel}")
+                        )
                     }
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
+                if (walletState.connected) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (walletState.proUnlocked) {
+                            OutlineButton(
+                                text = "Undo",
+                                onClick = gameViewModel::undo,
+                                enabled = gameState.canUndo,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            OutlineButton(
+                                text = "Go Pro · ${Product.PRO_UNLOCK.priceLabel}",
+                                onClick = {
+                                    onPurchase(walletViewModel, Product.PRO_UNLOCK) {}
+                                },
+                                enabled = !walletState.inProgress,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        OutlineButton(
+                            text = "Tip · ${Product.TIP.priceLabel}",
+                            onClick = { onPurchase(walletViewModel, Product.TIP) {} },
+                            enabled = !walletState.inProgress,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
 
-            Box(contentAlignment = Alignment.Center) {
-                GameBoard(
-                    board = gameState.board,
-                    onSwipe = gameViewModel::onSwipe
-                )
-                if (gameState.isGameOver) {
+                Spacer(Modifier.height(18.dp))
+
+                Box(contentAlignment = Alignment.Center) {
+                    BoardGlow()
+                    GameBoard(
+                        board = gameState.board,
+                        onSwipe = gameViewModel::onSwipe
+                    )
                     GameOverOverlay(
+                        visible = gameState.isGameOver,
                         score = gameState.score,
                         walletConnected = walletState.connected,
                         walletBusy = walletState.inProgress,
@@ -178,30 +207,24 @@ fun GameScreen(
                                 gameViewModel.applySecondChance()
                             }
                         },
-                        onMintTrophy = {
-                            onMintTrophy(walletViewModel, gameState.score)
-                        }
+                        onMintTrophy = { onMintTrophy(walletViewModel, gameState.score) }
                     )
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(18.dp))
 
-            if (gameState.hasWon) {
+                if (gameState.hasWon) {
+                    WinBanner()
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 Text(
-                    text = "You reached 2048! Keep merging…",
-                    color = SolanaGreen,
-                    fontWeight = FontWeight.Bold
+                    text = "Swipe to merge tiles. Connect your Solana wallet to sign your high score.",
+                    color = TextDim,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
                 )
-                Spacer(Modifier.height(8.dp))
             }
-
-            Text(
-                text = "Swipe to merge tiles. Connect your Solana wallet to sign your high score.",
-                color = TextPrimary.copy(alpha = 0.6f),
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center
-            )
         }
     }
 }
@@ -214,23 +237,44 @@ private fun Header(score: Int, best: Int) {
     ) {
         Text(
             text = "Merge48",
-            color = TextPrimary,
-            fontSize = 32.sp,
-            fontWeight = FontWeight.ExtraBold,
+            style = TextStyle(
+                brush = SignatureBrush,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.ExtraBold
+            ),
             modifier = Modifier.weight(1f)
         )
-        ScoreChip(label = "SCORE", value = score)
-        Spacer(Modifier.weight(0.1f))
-        ScoreChip(label = "BEST", value = best)
+        ScoreChip(label = "SCORE", value = score, pulseOnChange = true)
+        Spacer(Modifier.size(8.dp))
+        ScoreChip(label = "BEST", value = best, pulseOnChange = false)
     }
 }
 
 @Composable
-private fun ScoreChip(label: String, value: Int) {
+private fun ScoreChip(label: String, value: Int, pulseOnChange: Boolean) {
+    val scale = remember { Animatable(1f) }
+    if (pulseOnChange) {
+        LaunchedEffect(value) {
+            if (value > 0) {
+                scale.snapTo(1.12f)
+                scale.animateTo(1f, spring(stiffness = Spring.StiffnessMedium))
+            }
+        }
+    }
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            }
+            .clip(RoundedCornerShape(12.dp))
             .background(BoardBackground)
+            .border(
+                BorderStroke(1.dp, Brush.verticalGradient(
+                    listOf(SolanaPurple.copy(alpha = 0.5f), Color.Transparent)
+                )),
+                RoundedCornerShape(12.dp)
+            )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -239,14 +283,36 @@ private fun ScoreChip(label: String, value: Int) {
     }
 }
 
+/** Soft radial halo sitting behind the board. */
 @Composable
-private fun GameBoard(board: Board, onSwipe: (Direction) -> Unit) {
-    Column(
+private fun BoardGlow() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(0.92f)
+            .background(
+                Brush.radialGradient(
+                    listOf(SolanaPurple.copy(alpha = 0.30f), Color.Transparent)
+                )
+            )
+    )
+}
+
+@Composable
+private fun GameBoard(board: TileBoard, onSwipe: (Direction) -> Unit) {
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(16.dp))
+            .shadow(18.dp, RoundedCornerShape(20.dp), spotColor = SolanaPurple)
+            .clip(RoundedCornerShape(20.dp))
             .background(BoardBackground)
+            .border(
+                BorderStroke(1.dp, Brush.verticalGradient(
+                    listOf(SolanaPurple.copy(alpha = 0.35f), Color.Transparent)
+                )),
+                RoundedCornerShape(20.dp)
+            )
             .pointerInput(Unit) {
                 var totalDrag = Offset.Zero
                 detectDragGestures(
@@ -268,54 +334,126 @@ private fun GameBoard(board: Board, onSwipe: (Direction) -> Unit) {
                     }
                 )
             }
-            .padding(8.dp)
     ) {
-        for (row in 0 until Board.SIZE) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                for (col in 0 until Board.SIZE) {
-                    Tile(value = board[row, col])
-                }
+        val gap = 8.dp
+        val cellSize = (maxWidth - gap * (TileBoard.SIZE + 1)) / TileBoard.SIZE
+
+        // Static empty-cell wells
+        for (row in 0 until TileBoard.SIZE) {
+            for (col in 0 until TileBoard.SIZE) {
+                Box(
+                    modifier = Modifier
+                        .offset(
+                            x = gap + (cellSize + gap) * col,
+                            y = gap + (cellSize + gap) * row
+                        )
+                        .size(cellSize)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(EmptyCell)
+                )
+            }
+        }
+
+        // Live tiles, keyed by identity so they slide between cells
+        board.tiles.forEach { tile ->
+            key(tile.id) {
+                TileView(tile = tile, cellSize = cellSize, gap = gap)
             }
         }
     }
 }
 
 @Composable
-private fun RowScope.Tile(value: Int) {
-    val color by animateColorAsState(
-        targetValue = if (value == 0) EmptyCell else tileColor(value),
-        label = "tileColor"
+private fun TileView(tile: Tile, cellSize: Dp, gap: Dp) {
+    val x by animateDpAsState(
+        targetValue = gap + (cellSize + gap) * tile.col,
+        animationSpec = tween(SLIDE_MILLIS, easing = FastOutSlowInEasing),
+        label = "tileX"
     )
+    val y by animateDpAsState(
+        targetValue = gap + (cellSize + gap) * tile.row,
+        animationSpec = tween(SLIDE_MILLIS, easing = FastOutSlowInEasing),
+        label = "tileY"
+    )
+
+    val scale = remember { Animatable(0f) }
+    var seenValue by remember { mutableIntStateOf(tile.value) }
+
+    // Spawn: grow in with a bounce.
+    LaunchedEffect(Unit) {
+        scale.animateTo(
+            1f,
+            spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        )
+    }
+
+    // Merge: once the slide lands, pop.
+    LaunchedEffect(tile.value) {
+        if (tile.value != seenValue) {
+            seenValue = tile.value
+            delay(SLIDE_MILLIS.toLong() - 40)
+            scale.animateTo(1.18f, tween(70))
+            scale.animateTo(1f, tween(90))
+        }
+    }
+
+    val glow = tileGlowColor(tile.value)
     Box(
         modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .padding(4.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(color),
+            .offset(x = x, y = y)
+            .size(cellSize)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            }
+            .shadow(
+                elevation = if (glow == Color.Transparent) 0.dp else 12.dp,
+                shape = RoundedCornerShape(12.dp),
+                ambientColor = glow,
+                spotColor = glow
+            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brush.linearGradient(tileBrushColors(tile.value))),
         contentAlignment = Alignment.Center
     ) {
-        if (value != 0) {
-            Text(
-                text = "$value",
-                color = tileTextColor(value),
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = when {
-                    value < 100 -> 28.sp
-                    value < 1000 -> 24.sp
-                    else -> 19.sp
-                }
-            )
-        }
+        Text(
+            text = "${tile.value}",
+            color = tileTextColor(tile.value),
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = when {
+                tile.value < 100 -> 30.sp
+                tile.value < 1000 -> 25.sp
+                else -> 20.sp
+            }
+        )
     }
 }
 
 @Composable
+private fun WinBanner() {
+    val pulse by rememberInfiniteTransition(label = "win").animateFloat(
+        initialValue = 0.6f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "winAlpha"
+    )
+    Text(
+        text = "You reached 2048! Keep merging…",
+        style = TextStyle(
+            brush = SignatureBrush,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        modifier = Modifier.graphicsLayer { alpha = pulse }
+    )
+}
+
+@Composable
 private fun GameOverOverlay(
+    visible: Boolean,
     score: Int,
     walletConnected: Boolean,
     walletBusy: Boolean,
@@ -324,62 +462,126 @@ private fun GameOverOverlay(
     onSecondChance: () -> Unit,
     onMintTrophy: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(16.dp))
-            .background(NightBackground.copy(alpha = 0.88f))
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(250)) + scaleIn(initialScale = 0.92f, animationSpec = tween(250)),
+        exit = fadeOut(tween(150))
     ) {
-        Text(
-            text = "Game Over",
-            color = TextPrimary,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "Final score: $score",
-            color = SolanaGreen,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(
-            onClick = onNewGame,
-            colors = ButtonDefaults.buttonColors(containerColor = SolanaPurple)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(20.dp))
+                .background(NightBottom.copy(alpha = 0.92f))
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Text("Play Again")
-        }
-        if (walletConnected) {
+            Text(
+                text = "Game Over",
+                style = TextStyle(
+                    brush = SignatureBrush,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            )
             Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onSecondChance,
-                enabled = !walletBusy,
-                colors = ButtonDefaults.buttonColors(containerColor = SolanaGreen)
-            ) {
-                Text(
+            Text(
+                text = "Final score: $score",
+                color = SolanaGreen,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(22.dp))
+            GradientButton(
+                text = "Play Again",
+                onClick = onNewGame,
+                modifier = Modifier.fillMaxWidth(0.72f)
+            )
+            if (walletConnected) {
+                Spacer(Modifier.height(8.dp))
+                GradientButton(
                     text = "Second Chance · ${Product.SECOND_CHANCE.priceLabel}",
-                    color = NightBackground
+                    onClick = onSecondChance,
+                    enabled = !walletBusy,
+                    brush = GreenButtonBrush,
+                    textColor = TextOnTile,
+                    modifier = Modifier.fillMaxWidth(0.72f)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlineButton(
+                    text = "Mint Trophy NFT · ${PaymentsConfig.TROPHY_MINT_PRICE_LABEL}",
+                    onClick = onMintTrophy,
+                    enabled = !walletBusy,
+                    modifier = Modifier.fillMaxWidth(0.72f)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlineButton(
+                    text = if (walletBusy) "Waiting for wallet…" else "Sign score with wallet",
+                    onClick = onSignScore,
+                    enabled = !walletBusy,
+                    modifier = Modifier.fillMaxWidth(0.72f)
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onMintTrophy,
-                enabled = !walletBusy
-            ) {
-                Text("Mint Trophy NFT · ${PaymentsConfig.TROPHY_MINT_PRICE_LABEL}")
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onSignScore,
-                enabled = !walletBusy
-            ) {
-                Text(if (walletBusy) "Waiting for wallet…" else "Sign score with wallet")
-            }
         }
+    }
+}
+
+@Composable
+private fun GradientButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    brush: Brush = PurpleButtonBrush,
+    textColor: Color = TextPrimary
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (enabled) brush else DisabledButtonBrush)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 13.dp, horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (enabled) textColor else TextDim,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun OutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .border(
+                BorderStroke(
+                    1.dp,
+                    if (enabled) SignatureBrush
+                    else Brush.horizontalGradient(listOf(TextDim, TextDim))
+                ),
+                RoundedCornerShape(14.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 13.dp, horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (enabled) TextPrimary else TextDim,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            maxLines = 1
+        )
     }
 }

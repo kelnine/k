@@ -72,8 +72,8 @@ app/src/main/java/com/kelnine/merge48/
 ├── wallet/WalletViewModel.kt  # MWA connect / sign-score / purchases
 ├── payments/Payments.kt       # YOUR WALLET ADDRESS + product catalog/prices
 ├── payments/SolanaRpc.kt      # Minimal JSON-RPC client (blockhash fetch)
-├── ui/GameScreen.kt           # Board, swipe gestures, store buttons, game-over overlay
-└── ui/theme/Theme.kt          # Solana-flavored dark theme & tile palette
+├── ui/GameScreen.kt           # Animated board (sliding/merging tiles), store buttons, overlays
+├── ui/theme/Theme.kt          # Gradient tile palette, glow colors, signature brushes
 dapp-store/                    # dApp Store publishing config + media assets
 ```
 
