@@ -54,3 +54,4 @@ class BotConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     journal_path: str = "journal.csv"
     state_path: str = "bot_state.json"
+    ticket_path: str | None = None  # set to emit Liquid order tickets (JSONL)

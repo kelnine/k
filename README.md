@@ -31,6 +31,14 @@ executes.
 - **Correlation filter** — if S&P and NASDAQ are already long, a new bitcoin
   long is the same risk-on bet a third time and gets skipped. Risk groups
   and caps live in `config.py`.
+- **Costs are modelled, not ignored** — every fill pays a per-instrument
+  one-way cost (half-spread + slippage + fees, in bps). P&L and the journal
+  are net. On the synthetic demo this turns +0.9% gross into −7.5% net,
+  which is the honest number and the reason high-turnover strategies need
+  a real edge, not a plausible one.
+- **Leverage cap** — notional per position is capped at 1× equity; a tight
+  stop on a quiet instrument no longer implies size the account couldn't
+  actually carry.
 
 ## The two daily messages
 
@@ -50,6 +58,16 @@ pytest                     # 21 tests, all offline (synthetic data)
 python run_backtest.py     # backtest the whole book on recent Yahoo data
 python run_bot.py          # live paper-trading loop (polls every 15 min)
 ```
+
+## Forward test on Liquid (paper)
+
+Set `BotConfig.ticket_path` and the engine appends an order ticket to
+`tickets.jsonl` for every entry/exit it takes — instrument mapped to its
+Liquid market (`tradingbot/liquid.py`), sized in USD by the same risk
+engine, stop-loss attached. In a Claude session connected to the Liquid
+MCP server (with paper trading enabled), Claude turns unprocessed tickets
+into `suggest_trade` confirmation cards; nothing executes until you press
+Confirm. A suggestion is not an execution, and the hard stop rides along.
 
 ## Layout
 

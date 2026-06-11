@@ -12,6 +12,7 @@ import pandas as pd
 from .broker import PaperBroker
 from .config import INSTRUMENTS, BotConfig, Instrument
 from .indicators import atr
+from .liquid import append_ticket, close_ticket, entry_ticket
 from .risk import correlation_filter_allows, plan_position
 from .strategies import STRATEGY_REGISTRY, Strategy
 from .strategies.base import FLAT
@@ -48,6 +49,12 @@ class Engine:
                 cost = self._fill_cost(sym, fill, pos.quantity)
                 trade = self.broker.close_position(sym, fill, now,
                                                    reason="hard stop hit", cost=cost)
+                if self.config.ticket_path:
+                    append_ticket(
+                        close_ticket(self.instruments[sym], trade.direction, fill,
+                                     now, "hard stop hit"),
+                        self.config.ticket_path,
+                    )
                 stopped_now.add(sym)
                 self._log(now, f"{sym}: STOPPED OUT at {fill:.2f} (pnl {trade.pnl:+.2f})")
 
@@ -67,6 +74,9 @@ class Engine:
                 trade = self.broker.close_position(sym, price, now,
                                                    reason=sig.reason, cost=cost)
                 self._log(now, f"{sym}: exit at {price:.2f} (pnl {trade.pnl:+.2f}) — {sig.reason}")
+                if self.config.ticket_path:
+                    append_ticket(close_ticket(inst, trade.direction, price, now, sig.reason),
+                                  self.config.ticket_path)
                 held = None
                 current_dir = FLAT
 
@@ -93,6 +103,9 @@ class Engine:
                     now, reason=sig.reason,
                     cost=self._fill_cost(sym, price, plan.quantity),
                 )
+                if self.config.ticket_path:
+                    append_ticket(entry_ticket(inst, sig.direction, price, plan, now, sig.reason),
+                                  self.config.ticket_path)
                 side = "LONG" if sig.direction > 0 else "SHORT"
                 self._log(
                     now,
