@@ -1,6 +1,6 @@
 //@version=6
 // ─────────────────────────────────────────────────────────────────────────────
-// Volume Profile Strategy [VPP]
+// Volume Profile Strategy [VPP] v2
 //
 // Backtestable strategy built on a rolling volume profile (POC / VAH / VAL).
 // Two playbooks, switchable or auto-selected by regime (ADX):
@@ -10,49 +10,65 @@
 //     • Short: price gets rejected back under VAH    → target POC
 //
 //   BREAKOUT (trending markets)
-//     • Long : volume-confirmed close above VAH → target VAH + value-area width
-//     • Short: volume-confirmed close below VAL → target VAL − value-area width
+//     • Entry only after N consecutive closes of ACCEPTANCE outside value
+//       (kills most fakeouts) + a volume spike within that window
+//     • Target: one value-area-width extension beyond the break
 //
-// Risk: ATR-based stop, profile-derived targets, optional EMA trend filter,
-// optional time stop. Costs (commission + slippage) are modeled by default.
+// Risk engine:
+//   • Position sized so each trade risks a fixed % of equity (stop-based)
+//   • Optional scale-out: bank 50% at 1R, stop to breakeven, ATR-trail runner
+//   • Time stop, EMA trend filter, modeled commission + slippage
 // ─────────────────────────────────────────────────────────────────────────────
-strategy("Volume Profile Strategy [VPP]", "VPP Strat", overlay = true,
+strategy("Volume Profile Strategy [VPP] v2", "VPP Strat v2", overlay = true,
      initial_capital = 10000,
-     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
      commission_type = strategy.commission.percent, commission_value = 0.05,
      slippage = 2, process_orders_on_close = true,
-     max_lines_count = 500, max_labels_count = 500)
+     max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 grpProf  = "Profile"
-lookback = input.int(150, "Lookback (bars)", minval = 20, maxval = 400, group = grpProf)
+lbMode   = input.string("Auto", "Lookback", options = ["Auto", "Manual"], group = grpProf,
+     tooltip = "Auto picks a lookback suited to the chart timeframe:\n≤15m → 300 · ≤3H → 240 · 4H+ intraday → 180 · Daily → 110 · Weekly+ → 60")
+lbManual = input.int(150, "Manual lookback (bars)", minval = 20, maxval = 400, group = grpProf)
 rows     = input.int(30,  "Profile rows",    minval = 10, maxval = 80,  group = grpProf)
 vaPct    = input.float(70.0, "Value Area %", minval = 50, maxval = 95,  group = grpProf)
 
 grpMode = "Playbook"
-mode      = input.string("Adaptive", "Mode", options = ["Adaptive", "Mean Reversion", "Breakout"], group = grpMode)
-adxLen    = input.int(14,  "ADX length (Adaptive)",    minval = 5,  group = grpMode)
-adxThresh = input.float(23, "ADX trend threshold",     minval = 10, group = grpMode)
+mode        = input.string("Adaptive", "Mode", options = ["Adaptive", "Mean Reversion", "Breakout"], group = grpMode)
+adxLen      = input.int(14,  "ADX length (Adaptive)", minval = 5,  group = grpMode)
+adxThresh   = input.float(23, "ADX trend threshold",  minval = 10, group = grpMode)
+confirmBars = input.int(2, "Breakout acceptance (closes outside value)", minval = 1, maxval = 5, group = grpMode,
+     tooltip = "Breakouts only fire after this many consecutive closes beyond VAH/VAL.\n1 = enter on the cross (fast, more fakeouts). 2–3 = wait for acceptance.")
 
 grpFilt   = "Filters"
 useTrend  = input.bool(true, "EMA trend filter (longs above / shorts below)", group = grpFilt)
-trendLen  = input.int(200,   "Trend EMA length",       minval = 10, group = grpFilt)
-volLen    = input.int(20,    "Volume MA length",       minval = 5,  group = grpFilt)
+trendLen  = input.int(200,   "Trend EMA length",         minval = 10, group = grpFilt)
+volLen    = input.int(20,    "Volume MA length",         minval = 5,  group = grpFilt)
 volMult   = input.float(1.5, "Breakout volume multiple", minval = 1.0, step = 0.1, group = grpFilt)
 allowLong  = input.bool(true, "Allow longs",  group = grpFilt)
 allowShort = input.bool(true, "Allow shorts", group = grpFilt)
 
-grpRisk  = "Risk"
-atrLen   = input.int(14,    "ATR length",          minval = 1, group = grpRisk)
-stopMult = input.float(2.0, "Stop = ATR ×",        minval = 0.5, step = 0.25, group = grpRisk)
-useTimeStop = input.bool(true, "Time stop",        group = grpRisk)
-maxBarsHeld = input.int(40, "Max bars in trade",   minval = 5, group = grpRisk)
+grpRisk   = "Risk & trade management"
+riskPct   = input.float(1.0, "Risk per trade (% equity)", minval = 0.1, maxval = 10, step = 0.25, group = grpRisk)
+maxPosPct = input.float(100, "Max position size (% equity)", minval = 10, maxval = 500, group = grpRisk)
+atrLen    = input.int(14,    "ATR length",   minval = 1, group = grpRisk)
+stopMult  = input.float(2.0, "Stop = ATR ×", minval = 0.5, step = 0.25, group = grpRisk)
+useScale  = input.bool(true, "Bank 50% at 1R, breakeven + trail the rest", group = grpRisk)
+trailMult = input.float(2.0, "Trail = ATR ×", minval = 0.5, step = 0.25, group = grpRisk)
+useTimeStop = input.bool(true, "Time stop",      group = grpRisk)
+maxBarsHeld = input.int(40, "Max bars in trade", minval = 5, group = grpRisk)
 
 grpDate   = "Backtest window"
 useWindow = input.bool(false, "Limit date range", group = grpDate)
 startTime = input.time(timestamp("1 Jan 2020 00:00 +0000"), "Start", group = grpDate)
 endTime   = input.time(timestamp("1 Jan 2030 00:00 +0000"), "End",   group = grpDate)
 inWindow  = not useWindow or (time >= startTime and time <= endTime)
+
+// ── Auto lookback ────────────────────────────────────────────────────────────
+autoLb = timeframe.isintraday ?
+     (timeframe.multiplier <= 15 ? 300 : timeframe.multiplier < 240 ? 240 : 180) :
+     timeframe.isdaily ? 110 : 60
+lookback = lbMode == "Auto" ? autoLb : lbManual
 
 // ── Profile engine ───────────────────────────────────────────────────────────
 profHigh = ta.highest(high, lookback)
@@ -104,44 +120,81 @@ vaW = vah - val
 trending = mode == "Breakout" or (mode == "Adaptive" and adx > adxThresh)
 ranging  = mode == "Mean Reversion" or (mode == "Adaptive" and adx <= adxThresh)
 
-trendEma   = ta.ema(close, trendLen)
-trendOkL   = not useTrend or close > trendEma
-trendOkS   = not useTrend or close < trendEma
-volConfirm = volume > ta.sma(volume, volLen) * volMult
-atr        = ta.atr(atrLen)
+trendEma = ta.ema(close, trendLen)
+trendOkL = not useTrend or close > trendEma
+trendOkS = not useTrend or close < trendEma
+volSpike = volume > ta.sma(volume, volLen) * volMult
+volOk    = math.sum(volSpike ? 1.0 : 0.0, confirmBars) > 0
+atr      = ta.atr(atrLen)
+
+// Acceptance counters: consecutive closes held outside value
+var int accUp = 0
+var int accDn = 0
+accUp := close > vah ? accUp + 1 : 0
+accDn := close < val ? accDn + 1 : 0
 
 // ── Signals ──────────────────────────────────────────────────────────────────
-longRev  = ranging  and ta.crossover(close,  val) and trendOkL
-shortRev = ranging  and ta.crossunder(close, vah) and trendOkS
-longBrk  = trending and ta.crossover(close,  vah) and volConfirm and trendOkL
-shortBrk = trending and ta.crossunder(close, val) and volConfirm and trendOkS
+longRev  = ranging and ta.crossover(close,  val) and trendOkL and poc > close
+shortRev = ranging and ta.crossunder(close, vah) and trendOkS and poc < close
+longBrk  = trending and accUp == confirmBars and volOk and trendOkL
+shortBrk = trending and accDn == confirmBars and volOk and trendOkS
 
-// Sanity: reversion targets must still be on the right side at entry
-longRev  := longRev  and poc > close
-shortRev := shortRev and poc < close
+// ── Sizing: fixed % of equity at risk, stop-distance based ──────────────────
+stopDist = atr * stopMult
+qtyRisk  = stopDist > 0 ? strategy.equity * riskPct / 100 / stopDist : 0.0
+qtyCap   = close > 0 ? strategy.equity * maxPosPct / 100 / close : 0.0
+qty      = math.min(qtyRisk, qtyCap)
 
 // ── Orders ───────────────────────────────────────────────────────────────────
 var float longStop    = na
 var float longTarget  = na
+var float longR       = na
+var bool  longBE      = false
 var float shortStop   = na
 var float shortTarget = na
+var float shortR      = na
+var bool  shortBE     = false
 
 flat = strategy.position_size == 0
 
-if inWindow and allowLong and flat and (longRev or longBrk) and barstate.isconfirmed
-    longStop   := close - atr * stopMult
+if inWindow and allowLong and flat and (longRev or longBrk) and barstate.isconfirmed and qty > 0
+    longStop   := close - stopDist
+    longR      := stopDist
     longTarget := longBrk ? vah + vaW : poc
-    strategy.entry("L", strategy.long, comment = longBrk ? "Breakout L" : "Revert L")
+    longBE     := false
+    strategy.entry("L", strategy.long, qty = qty, comment = longBrk ? "Breakout L" : "Revert L")
 
-if inWindow and allowShort and flat and (shortRev or shortBrk) and barstate.isconfirmed
-    shortStop   := close + atr * stopMult
+if inWindow and allowShort and flat and (shortRev or shortBrk) and barstate.isconfirmed and qty > 0
+    shortStop   := close + stopDist
+    shortR      := stopDist
     shortTarget := shortBrk ? val - vaW : poc
-    strategy.entry("S", strategy.short, comment = shortBrk ? "Breakout S" : "Revert S")
+    shortBE     := false
+    strategy.entry("S", strategy.short, qty = qty, comment = shortBrk ? "Breakout S" : "Revert S")
 
+// Manage longs: 1R hit → breakeven, then ATR trail; optional 50% bank at 1R
 if strategy.position_size > 0
-    strategy.exit("Lx", "L", stop = longStop, limit = longTarget)
+    ep = strategy.opentrades.entry_price(strategy.opentrades - 1)
+    if not longBE and high >= ep + longR
+        longBE := true
+    if longBE
+        longStop := math.max(longStop, math.max(ep, close - atr * trailMult))
+    if useScale
+        strategy.exit("L-tp1", "L", qty_percent = 50, limit = ep + longR, stop = longStop, comment_profit = "TP1 1R")
+        strategy.exit("L-run", "L", limit = longTarget, stop = longStop, comment_profit = "Target", comment_loss = "Stop")
+    else
+        strategy.exit("Lx", "L", limit = longTarget, stop = longStop, comment_profit = "Target", comment_loss = "Stop")
+
 if strategy.position_size < 0
-    strategy.exit("Sx", "S", stop = shortStop, limit = shortTarget)
+    ep = strategy.opentrades.entry_price(strategy.opentrades - 1)
+    if not shortBE and low <= ep - shortR
+        shortBE := true
+    if shortBE
+        shortStop := math.min(shortStop, math.min(ep, close + atr * trailMult))
+    if useScale
+        strategy.exit("S-tp1", "S", qty_percent = 50, limit = ep - shortR, stop = shortStop, comment_profit = "TP1 1R")
+        strategy.exit("S-run", "S", limit = shortTarget, stop = shortStop, comment_profit = "Target", comment_loss = "Stop")
+    else
+        strategy.exit("Sx", "S", limit = shortTarget, stop = shortStop, comment_profit = "Target", comment_loss = "Stop")
 
 // Time stop: stale trades give back edge — cut them
 if useTimeStop and strategy.opentrades > 0
@@ -158,6 +211,8 @@ pVah = plot(vah, "VAH", color.new(#2962ff, 45), 1, plot.style_steplinebr)
 pVal = plot(val, "VAL", color.new(#2962ff, 45), 1, plot.style_steplinebr)
 fill(pVah, pVal, color = color.new(#2962ff, 92), title = "Value area")
 plot(useTrend ? trendEma : na, "Trend EMA", color.new(#787b86, 50))
+plot(strategy.position_size > 0 ? longStop : strategy.position_size < 0 ? shortStop : na,
+     "Active stop", color.new(#ef5350, 35), 1, plot.style_linebr)
 
 plotshape(longRev or longBrk,   "Long setup",  shape.triangleup,   location.belowbar, color.new(#26a69a, 0), size = size.small)
 plotshape(shortRev or shortBrk, "Short setup", shape.triangledown, location.abovebar, color.new(#ef5350, 0), size = size.small)
