@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+journal.csv
+messages.log
+bot_state.json
+.venv/
+demo_output/
