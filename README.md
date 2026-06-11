@@ -1,27 +1,27 @@
-# Terminal Financiero IA
+# AI Financial Terminal
 
-Terminal financiero interactivo construido a partir de los **4 Prompts Maestros** de la guía
-*Terminal Financiero IA*. Cada módulo es un archivo HTML autónomo (HTML + CSS + JavaScript,
-sin dependencias externas) con tema oscuro profesional y datos simulados realistas.
+Interactive financial terminal built from the **4 Master Prompts** of the
+*AI Financial Terminal* guide. Each module is a self-contained HTML file (HTML + CSS + JavaScript,
+no external dependencies) with a professional dark theme and realistic simulated data.
 
-## Módulos
+## Modules
 
-| Archivo | Módulo | Descripción |
+| File | Module | Description |
 |---|---|---|
-| `index.html` | 📊 Dashboard de Mercado | Índices principales (S&P 500, NASDAQ, Dow, Russell 2000, VIX, FTSE, DAX, Nikkei) con precio, variación, mini-gráficos de 5 sesiones, estado del mercado y actualización automática cada 30 s. |
-| `analizador.html` | 🔎 Analizador de Acciones | Busca cualquier ticker (AAPL, TSLA, BTC-USD…) y obtén datos básicos, análisis técnico (RSI, MACD, SMAs, soporte/resistencia), fundamental (P/E, EPS, dividendos, ROE/ROA) y un resumen ejecutivo con señal COMPRAR/MANTENER/VENDER. |
-| `macro.html` | 🌍 Análisis Macroeconómico | Resumen ejecutivo en lenguaje simple, semáforo de riesgo global, indicadores clave (Fed, CPI/PCE, NFP, PIB, ISM), mercados globales, curva del Tesoro, calendario económico y sección educativa "lo que esto significa para ti". |
-| `portafolio.html` | 💼 Análisis de Portafolio | Tabla editable de posiciones (demo pre-cargada), resumen, distribución por activo/sector/geografía, análisis de riesgo (volatilidad, Sharpe, drawdown, beta), comparativa vs S&P 500, recomendaciones IA y reporte exportable (PDF / copiar resumen). |
+| `index.html` | 📊 Market Dashboard | Major indices (S&P 500, NASDAQ, Dow, Russell 2000, VIX, FTSE, DAX, Nikkei) with price, daily change, 5-session sparklines, market open/closed status and auto-refresh every 30 s. |
+| `analyzer.html` | 🔎 Stock Analyzer | Search any ticker (AAPL, TSLA, BTC-USD…) and get basic data, technical analysis (RSI, MACD, SMAs, support/resistance), fundamentals (P/E, EPS, dividends, ROE/ROA) and an executive summary with a BUY/HOLD/SELL signal. |
+| `macro.html` | 🌍 Macroeconomic Analysis | Plain-language executive summary, global risk traffic light, key indicators (Fed, CPI/PCE, NFP, GDP, ISM), global markets, Treasury yield curve, economic calendar and a "what this means for you" educational section. |
+| `portfolio.html` | 💼 Portfolio Analysis | Editable positions table (demo pre-loaded), summary, allocation by asset/sector/geography, risk analysis (volatility, Sharpe, drawdown, beta), S&P 500 comparison, AI recommendations and an exportable report (PDF / copy summary). |
 
-## Cómo verlo
+## How to view it
 
-Es un sitio 100 % estático: descarga el repositorio y abre `index.html` en cualquier navegador,
-o sírvelo con `python3 -m http.server` y visita `http://localhost:8000`.
+It's a 100 % static site: download the repository and open `index.html` in any browser,
+or serve it with `python3 -m http.server` and visit `http://localhost:8000`.
 
-## Diseño
+## Design
 
-- Fondo `#0A0A0A`, acentos verdes `#00C896`, tipografía monospace estilo terminal.
-- Código de colores: verde = positivo, rojo = negativo, amarillo = neutral.
-- Responsive (escritorio y móvil). Gráficos dibujados con `<canvas>` nativo.
+- `#0A0A0A` background, `#00C896` green accents, terminal-style monospace typography.
+- Color coding: green = positive, red = negative, yellow = neutral.
+- Responsive (desktop and mobile). Charts drawn with native `<canvas>`.
 
-> ⚠️ Todos los datos son **simulados** con fines demostrativos y no constituyen asesoría financiera.
+> ⚠️ All data is **simulated** for demo purposes and does not constitute financial advice.

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terminal Financiero IA — Analizador de Acciones</title>
+<title>AI Financial Terminal — Stock Analyzer</title>
 <style>
   :root{
     --bg:#0A0A0A; --card:#141414; --border:#232323;
@@ -82,25 +82,25 @@
 </head>
 <body>
 
-<header><div class="brand">TERMINAL <span>FINANCIERO</span> IA</div></header>
+<header><div class="brand">AI <span>FINANCIAL</span> TERMINAL</div></header>
 <nav>
   <a href="index.html">📊 Dashboard</a>
-  <a href="analizador.html" class="active">🔎 Analizador de Acciones</a>
-  <a href="macro.html">🌍 Macroeconomía</a>
-  <a href="portafolio.html">💼 Mi Portafolio</a>
+  <a href="analyzer.html" class="active">🔎 Stock Analyzer</a>
+  <a href="macro.html">🌍 Macroeconomics</a>
+  <a href="portfolio.html">💼 My Portfolio</a>
 </nav>
 
 <main>
-  <h1>Analizador de Acciones</h1>
-  <p class="subtitle">Análisis técnico + fundamental con interpretación en español · datos simulados para demo</p>
+  <h1>Stock Analyzer</h1>
+  <p class="subtitle">Technical + fundamental analysis with plain-English interpretation · simulated demo data</p>
 
   <div class="searchbar">
-    <input id="tickerInput" placeholder="Escribe un ticker… (AAPL, TSLA, NVDA, BTC-USD…)" maxlength="12">
-    <button id="btnAnalizar">ANALIZAR</button>
+    <input id="tickerInput" placeholder="Type a ticker… (AAPL, TSLA, NVDA, BTC-USD…)" maxlength="12">
+    <button id="btnAnalizar">ANALYZE</button>
   </div>
-  <p class="hints">Prueba: <b data-t="AAPL">AAPL</b> · <b data-t="TSLA">TSLA</b> · <b data-t="NVDA">NVDA</b> · <b data-t="MSFT">MSFT</b> · <b data-t="BTC-USD">BTC-USD</b> · <b data-t="JPM">JPM</b></p>
+  <p class="hints">Try: <b data-t="AAPL">AAPL</b> · <b data-t="TSLA">TSLA</b> · <b data-t="NVDA">NVDA</b> · <b data-t="MSFT">MSFT</b> · <b data-t="BTC-USD">BTC-USD</b> · <b data-t="JPM">JPM</b></p>
 
-  <div id="spinner"><div class="loader"></div>Cargando análisis…</div>
+  <div id="spinner"><div class="loader"></div>Loading analysis…</div>
 
   <div id="result">
     <div class="head-row">
@@ -111,28 +111,28 @@
     <div><span class="bigprice" id="coPrice"></span><span class="chg" id="coChg"></span></div>
 
     <section>
-      <h2>GRÁFICO · ÚLTIMOS 30 DÍAS</h2>
+      <h2>CHART · LAST 30 DAYS</h2>
       <canvas id="chart" width="1040" height="260"></canvas>
       <div class="chart-label" id="chartLabel"></div>
     </section>
 
     <section>
-      <h2>DATOS BÁSICOS</h2>
+      <h2>BASIC DATA</h2>
       <div class="kv-grid" id="basicos"></div>
     </section>
 
     <section>
-      <h2>ANÁLISIS TÉCNICO</h2>
+      <h2>TECHNICAL ANALYSIS</h2>
       <div class="kv-grid" id="tecnico"></div>
     </section>
 
     <section>
-      <h2>ANÁLISIS FUNDAMENTAL</h2>
+      <h2>FUNDAMENTAL ANALYSIS</h2>
       <div class="kv-grid" id="fundamental"></div>
     </section>
 
     <section class="resumen">
-      <h2>RESUMEN EJECUTIVO</h2>
+      <h2>EXECUTIVE SUMMARY</h2>
       <p id="resumenTxt"></p>
       <div class="badges">
         <span class="badge" id="senal"></span>
@@ -142,37 +142,37 @@
   </div>
 </main>
 
-<footer>Los datos mostrados son simulados y no constituyen asesoría financiera.</footer>
+<footer>All data shown is simulated and does not constitute financial advice.</footer>
 
 <script>
-// ---------- Catálogo de activos conocidos ----------
+// ---------- Known assets catalog ----------
 const KNOWN = {
-  "AAPL":   {name:"Apple Inc.",            sector:"Tecnología",          industry:"Electrónica de consumo", base:228.4,  div:0.45},
-  "MSFT":   {name:"Microsoft Corp.",       sector:"Tecnología",          industry:"Software",               base:441.2,  div:0.72},
-  "NVDA":   {name:"NVIDIA Corp.",          sector:"Tecnología",          industry:"Semiconductores",        base:138.6,  div:0.03},
-  "TSLA":   {name:"Tesla Inc.",            sector:"Consumo discrecional",industry:"Automóviles eléctricos", base:312.8,  div:0},
-  "AMZN":   {name:"Amazon.com Inc.",       sector:"Consumo discrecional",industry:"Comercio electrónico",   base:206.3,  div:0},
-  "GOOGL":  {name:"Alphabet Inc.",         sector:"Comunicaciones",      industry:"Internet y búsqueda",    base:186.5,  div:0.45},
-  "META":   {name:"Meta Platforms Inc.",   sector:"Comunicaciones",      industry:"Redes sociales",         base:592.1,  div:0.35},
-  "JPM":    {name:"JPMorgan Chase & Co.",  sector:"Financiero",          industry:"Banca diversificada",    base:248.7,  div:2.3},
-  "JNJ":    {name:"Johnson & Johnson",     sector:"Salud",               industry:"Farmacéutica",           base:152.4,  div:3.2},
-  "XOM":    {name:"Exxon Mobil Corp.",     sector:"Energía",             industry:"Petróleo y gas",         base:114.9,  div:3.5},
-  "KO":     {name:"Coca-Cola Co.",         sector:"Consumo básico",      industry:"Bebidas",                base:69.8,   div:2.9},
-  "BTC-USD":{name:"Bitcoin",               sector:"Criptomonedas",       industry:"Activo digital",         base:97250,  div:0, crypto:true},
-  "ETH-USD":{name:"Ethereum",              sector:"Criptomonedas",       industry:"Activo digital",         base:3480,   div:0, crypto:true},
+  "AAPL":   {name:"Apple Inc.",            sector:"Technology",            industry:"Consumer electronics",   base:228.4,  div:0.45},
+  "MSFT":   {name:"Microsoft Corp.",       sector:"Technology",            industry:"Software",               base:441.2,  div:0.72},
+  "NVDA":   {name:"NVIDIA Corp.",          sector:"Technology",            industry:"Semiconductors",         base:138.6,  div:0.03},
+  "TSLA":   {name:"Tesla Inc.",            sector:"Consumer discretionary",industry:"Electric vehicles",      base:312.8,  div:0},
+  "AMZN":   {name:"Amazon.com Inc.",       sector:"Consumer discretionary",industry:"E-commerce",             base:206.3,  div:0},
+  "GOOGL":  {name:"Alphabet Inc.",         sector:"Communications",        industry:"Internet & search",      base:186.5,  div:0.45},
+  "META":   {name:"Meta Platforms Inc.",   sector:"Communications",        industry:"Social media",           base:592.1,  div:0.35},
+  "JPM":    {name:"JPMorgan Chase & Co.",  sector:"Financials",            industry:"Diversified banking",    base:248.7,  div:2.3},
+  "JNJ":    {name:"Johnson & Johnson",     sector:"Healthcare",            industry:"Pharmaceuticals",        base:152.4,  div:3.2},
+  "XOM":    {name:"Exxon Mobil Corp.",     sector:"Energy",                industry:"Oil & gas",              base:114.9,  div:3.5},
+  "KO":     {name:"Coca-Cola Co.",         sector:"Consumer staples",      industry:"Beverages",              base:69.8,   div:2.9},
+  "BTC-USD":{name:"Bitcoin",               sector:"Crypto",                industry:"Digital asset",          base:97250,  div:0, crypto:true},
+  "ETH-USD":{name:"Ethereum",              sector:"Crypto",                industry:"Digital asset",          base:3480,   div:0, crypto:true},
 };
-const PE_SECTOR = {"Tecnología":31,"Consumo discrecional":24,"Comunicaciones":22,"Financiero":13,
-  "Salud":18,"Energía":12,"Consumo básico":21,"Criptomonedas":null};
+const PE_SECTOR = {"Technology":31,"Consumer discretionary":24,"Communications":22,"Financials":13,
+  "Healthcare":18,"Energy":12,"Consumer staples":21,"Crypto":null};
 
-// ---------- RNG con semilla por ticker (mismo ticker → mismos datos) ----------
+// ---------- Seeded RNG per ticker (same ticker → same data) ----------
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
-const fmtN=(n,d=2)=>n.toLocaleString("es-ES",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtN=(n,d=2)=>n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtMC=n=>{
-  if(n>=1e12) return fmtN(n/1e12,2)+" B$ (billones)";
-  if(n>=1e9)  return fmtN(n/1e9,1)+" mil M$";
-  return fmtN(n/1e6,0)+" M$";
+  if(n>=1e12) return "$"+fmtN(n/1e12,2)+" T";
+  if(n>=1e9)  return "$"+fmtN(n/1e9,1)+" B";
+  return "$"+fmtN(n/1e6,0)+" M";
 };
 
 function buildAnalysis(ticker){
@@ -180,34 +180,33 @@ function buildAnalysis(ticker){
   const rnd = mulberry32(hashStr(ticker));
   const info = known || {
     name: ticker + " Corp.",
-    sector: ["Tecnología","Salud","Financiero","Energía","Consumo básico"][Math.floor(rnd()*5)],
-    industry:"Diversificada",
+    sector: ["Technology","Healthcare","Financials","Energy","Consumer staples"][Math.floor(rnd()*5)],
+    industry:"Diversified",
     base: 20 + rnd()*480,
     div: rnd()<0.5 ? +(rnd()*3).toFixed(2) : 0,
   };
   const dec = info.base>=1000 ? 0 : 2;
 
-  // Serie de 30 días (paseo aleatorio con deriva)
+  // 30-day series (random walk with drift)
   const drift=(rnd()-0.45)*0.004, vol=(info.crypto?0.035:0.018)*(0.7+rnd()*0.8);
   const series=[info.base*(0.9+rnd()*0.2)];
   for(let i=1;i<30;i++) series.push(series[i-1]*(1+drift+(rnd()-0.5)*vol));
   const price=series[29], prev=series[28];
   const chg=price-prev, pct=chg/prev*100;
 
-  // Técnico
+  // Technical
   const sma=(n)=>series.slice(-n).reduce((a,b)=>a+b,0)/Math.min(n,series.length);
   const sma20=sma(20), sma50=sma20*(0.97+rnd()*0.06), sma200=sma20*(0.92+rnd()*0.16);
   const rsi=Math.round(28+rnd()*46);
   const macdBull=rnd()>0.45;
   const sup=price*(0.93+rnd()*0.04), res=price*(1.03+rnd()*0.05);
-  const trend = price>sma50&&sma50>sma200 ? "ALCISTA" : (price<sma50&&sma50<sma200 ? "BAJISTA" : "LATERAL");
+  const trend = price>sma50&&sma50>sma200 ? "BULLISH" : (price<sma50&&sma50<sma200 ? "BEARISH" : "SIDEWAYS");
 
   // Fundamental
   const peSector=PE_SECTOR[info.sector];
   const pe = info.crypto?null:+(peSector*(0.65+rnd()*0.9)).toFixed(1);
   const eps = pe?+(price/pe).toFixed(2):null;
-  const divYield = info.div>0 ? +(info.div/price*100*(price<100?1:100)).toFixed(2) : 0;
-  const dYield = info.div>0 ? +(info.div).toFixed(2) : 0; // % anual aprox
+  const dYield = info.div>0 ? +(info.div).toFixed(2) : 0; // approx annual %
   const debtCap = info.crypto?null:Math.round(15+rnd()*55);
   const roe = info.crypto?null:Math.round(8+rnd()*30);
   const roa = roe?Math.round(roe*(0.3+rnd()*0.4)):null;
@@ -216,15 +215,15 @@ function buildAnalysis(ticker){
   const w52h = Math.max(...series)*(1.02+rnd()*0.12);
   const w52l = Math.min(...series)*(0.78+rnd()*0.12);
 
-  // Puntaje → señal
+  // Score → signal
   let score=0;
-  if(trend==="ALCISTA")score+=2; if(trend==="BAJISTA")score-=2;
+  if(trend==="BULLISH")score+=2; if(trend==="BEARISH")score-=2;
   if(rsi<35)score+=1; if(rsi>68)score-=1;
   if(macdBull)score+=1; else score-=1;
   if(pe&&peSector&&pe<peSector)score+=1; if(pe&&peSector&&pe>peSector*1.3)score-=1;
-  const senal = score>=2 ? "COMPRAR" : (score<=-2 ? "VENDER" : "MANTENER");
+  const senal = score>=2 ? "BUY" : (score<=-2 ? "SELL" : "HOLD");
   const volPct=vol*Math.sqrt(252)*100;
-  const riesgo = volPct>45?"ALTO":(volPct>25?"MEDIO":"BAJO");
+  const riesgo = volPct>45?"HIGH":(volPct>25?"MEDIUM":"LOW");
 
   return {ticker,info,dec,series,price,prev,chg,pct,sma20,sma50,sma200,rsi,macdBull,sup,res,trend,
           pe,peSector,eps,dYield,debtCap,roe,roa,mcap,w52h,w52l,senal,riesgo,volPct,score};
@@ -240,63 +239,63 @@ function render(a){
   document.getElementById("coPrice").textContent="$"+fmtN(a.price,d);
   const chgEl=document.getElementById("coChg");
   chgEl.className="chg "+(a.chg>=0?"up":"down");
-  chgEl.textContent=`${a.chg>=0?"▲ +":"▼ "}${fmtN(a.chg,d)} (${a.pct>=0?"+":""}${fmtN(a.pct,2)} %) hoy`;
+  chgEl.textContent=`${a.chg>=0?"▲ +":"▼ "}${fmtN(a.chg,d)} (${a.pct>=0?"+":""}${fmtN(a.pct,2)} %) today`;
 
   document.getElementById("basicos").innerHTML =
-    kv("APERTURA","$"+fmtN(a.prev*(1+0.001),d)) +
-    kv("MÁXIMO / MÍNIMO DEL DÍA",`$${fmtN(a.price*1.012,d)} / $${fmtN(a.price*0.988,d)}`) +
-    kv("VOLUMEN",fmtN(5+Math.abs(a.pct)*8,1)+" M") +
-    kv("CAPITALIZACIÓN",fmtMC(a.mcap)) +
-    kv("MÁX 52 SEMANAS","$"+fmtN(a.w52h,d)) +
-    kv("MÍN 52 SEMANAS","$"+fmtN(a.w52l,d));
+    kv("OPEN","$"+fmtN(a.prev*(1+0.001),d)) +
+    kv("DAY HIGH / LOW",`$${fmtN(a.price*1.012,d)} / $${fmtN(a.price*0.988,d)}`) +
+    kv("VOLUME",fmtN(5+Math.abs(a.pct)*8,1)+" M") +
+    kv("MARKET CAP",fmtMC(a.mcap)) +
+    kv("52-WEEK HIGH","$"+fmtN(a.w52h,d)) +
+    kv("52-WEEK LOW","$"+fmtN(a.w52l,d));
 
-  const rsiTxt = a.rsi<30?"Sobreventa: el precio podría estar castigado en exceso."
-    : a.rsi>70?"Sobrecompra: el precio podría estar adelantado; cuidado con correcciones."
-    : "Zona neutral: sin presión extrema de compra ni de venta.";
-  const trendCls = a.trend==="ALCISTA"?"up":(a.trend==="BAJISTA"?"down":"neutral");
+  const rsiTxt = a.rsi<30?"Oversold: the price may be excessively beaten down."
+    : a.rsi>70?"Overbought: the price may have run ahead; watch out for pullbacks."
+    : "Neutral zone: no extreme buying or selling pressure.";
+  const trendCls = a.trend==="BULLISH"?"up":(a.trend==="BEARISH"?"down":"neutral");
   document.getElementById("tecnico").innerHTML =
     kv("RSI (14)",a.rsi,rsiTxt) +
-    kv("MACD",`<span class="${a.macdBull?"up":"down"}">${a.macdBull?"SEÑAL ALCISTA":"SEÑAL BAJISTA"}</span>`,
-       a.macdBull?"El impulso de corto plazo favorece a los compradores.":"El impulso de corto plazo favorece a los vendedores.") +
-    kv("MEDIAS MÓVILES",`SMA20 $${fmtN(a.sma20,d)}<br>SMA50 $${fmtN(a.sma50,d)}<br>SMA200 $${fmtN(a.sma200,d)}`) +
-    kv("SOPORTE / RESISTENCIA",`$${fmtN(a.sup,d)} / $${fmtN(a.res,d)}`,"Niveles estimados de los últimos 30 días.") +
-    kv("TENDENCIA",`<span class="${trendCls}">${a.trend}</span>`) +
-    kv("VOLATILIDAD ANUALIZADA",fmtN(a.volPct,1)+" %");
+    kv("MACD",`<span class="${a.macdBull?"up":"down"}">${a.macdBull?"BULLISH SIGNAL":"BEARISH SIGNAL"}</span>`,
+       a.macdBull?"Short-term momentum favors buyers.":"Short-term momentum favors sellers.") +
+    kv("MOVING AVERAGES",`SMA20 $${fmtN(a.sma20,d)}<br>SMA50 $${fmtN(a.sma50,d)}<br>SMA200 $${fmtN(a.sma200,d)}`) +
+    kv("SUPPORT / RESISTANCE",`$${fmtN(a.sup,d)} / $${fmtN(a.res,d)}`,"Estimated levels from the last 30 days.") +
+    kv("TREND",`<span class="${trendCls}">${a.trend}</span>`) +
+    kv("ANNUALIZED VOLATILITY",fmtN(a.volPct,1)+" %");
 
   const peNote = a.pe&&a.peSector
-    ? (a.pe<a.peSector?`Por debajo del promedio del sector (${a.peSector}): valoración atractiva.`
-                      :`Por encima del promedio del sector (${a.peSector}): valoración exigente.`)
+    ? (a.pe<a.peSector?`Below the sector average (${a.peSector}): attractive valuation.`
+                      :`Above the sector average (${a.peSector}): demanding valuation.`)
     : "";
   document.getElementById("fundamental").innerHTML =
-    kv("P/E RATIO",a.pe??"N/A",a.pe?peNote:"No aplica para este activo.") +
-    kv("EPS (GANANCIA POR ACCIÓN)",a.eps?("$"+fmtN(a.eps,2)):"N/A") +
-    kv("DIVIDEND YIELD",a.dYield>0?fmtN(a.dYield,2)+" %":"No paga dividendo") +
-    kv("DEUDA / CAPITAL",a.debtCap!=null?a.debtCap+" %":"N/A",
-       a.debtCap!=null?(a.debtCap>60?"Apalancamiento elevado.":"Nivel de deuda manejable."):"") +
+    kv("P/E RATIO",a.pe??"N/A",a.pe?peNote:"Not applicable for this asset.") +
+    kv("EPS (EARNINGS PER SHARE)",a.eps?("$"+fmtN(a.eps,2)):"N/A") +
+    kv("DIVIDEND YIELD",a.dYield>0?fmtN(a.dYield,2)+" %":"No dividend") +
+    kv("DEBT / CAPITAL",a.debtCap!=null?a.debtCap+" %":"N/A",
+       a.debtCap!=null?(a.debtCap>60?"Elevated leverage.":"Manageable debt level."):"") +
     kv("ROE",a.roe!=null?a.roe+" %":"N/A") +
     kv("ROA",a.roa!=null?a.roa+" %":"N/A");
 
-  // Resumen ejecutivo
-  const dir = a.trend==="ALCISTA"?"al alza":(a.trend==="BAJISTA"?"a la baja":"sin dirección clara");
-  const valTxt = a.pe&&a.peSector ? (a.pe<a.peSector?"cotiza barata frente a su sector":"cotiza cara frente a su sector")
-                                  : "se valora principalmente por oferta y demanda";
+  // Executive summary
+  const dir = a.trend==="BULLISH"?"higher":(a.trend==="BEARISH"?"lower":"with no clear direction");
+  const valTxt = a.pe&&a.peSector ? (a.pe<a.peSector?"trades cheap relative to its sector":"trades rich relative to its sector")
+                                  : "is priced mainly by supply and demand";
   document.getElementById("resumenTxt").textContent =
-    `${a.info.name} (${a.ticker}) se mueve ${dir} en el último mes, con un RSI de ${a.rsi} y un MACD que ` +
-    `${a.macdBull?"apoya a los compradores":"apoya a los vendedores"}. En lo fundamental, ${valTxt}` +
-    `${a.dYield>0?` y reparte un dividendo cercano al ${fmtN(a.dYield,2)} % anual`:""}. ` +
-    `En conjunto, el análisis sugiere ${a.senal === "COMPRAR" ? "una oportunidad de compra" : a.senal === "VENDER" ? "reducir o evitar la posición" : "mantener y vigilar"} ` +
-    `con un nivel de riesgo ${a.riesgo.toLowerCase()} dado su perfil de volatilidad.`;
+    `${a.info.name} (${a.ticker}) has been moving ${dir} over the past month, with an RSI of ${a.rsi} and a MACD that ` +
+    `${a.macdBull?"supports the buyers":"supports the sellers"}. On the fundamental side, it ${valTxt}` +
+    `${a.dYield>0?` and pays a dividend of roughly ${fmtN(a.dYield,2)} % per year`:""}. ` +
+    `Overall, the analysis suggests ${a.senal === "BUY" ? "a buying opportunity" : a.senal === "SELL" ? "reducing or avoiding the position" : "holding and monitoring"} ` +
+    `with a ${a.riesgo.toLowerCase()} risk level given its volatility profile.`;
 
   const sn=document.getElementById("senal");
-  sn.textContent="SEÑAL: "+a.senal;
-  sn.className="badge "+(a.senal==="COMPRAR"?"b-buy":a.senal==="VENDER"?"b-sell":"b-hold");
+  sn.textContent="SIGNAL: "+a.senal;
+  sn.className="badge "+(a.senal==="BUY"?"b-buy":a.senal==="SELL"?"b-sell":"b-hold");
   const rg=document.getElementById("riesgo");
-  rg.textContent="RIESGO: "+a.riesgo;
-  rg.className="badge "+(a.riesgo==="BAJO"?"b-buy":a.riesgo==="ALTO"?"b-sell":"b-hold");
+  rg.textContent="RISK: "+a.riesgo;
+  rg.className="badge "+(a.riesgo==="LOW"?"b-buy":a.riesgo==="HIGH"?"b-sell":"b-hold");
 
   drawChart(a);
   document.getElementById("chartLabel").textContent =
-    `${a.ticker} · 30 días · soporte $${fmtN(a.sup,d)} · resistencia $${fmtN(a.res,d)}`;
+    `${a.ticker} · 30 days · support $${fmtN(a.sup,d)} · resistance $${fmtN(a.res,d)}`;
 }
 
 function drawChart(a){
@@ -307,20 +306,20 @@ function drawChart(a){
   const min=Math.min(...data,a.sup)*0.995, max=Math.max(...data,a.res)*1.005, span=max-min;
   const X=i=>padL+i*(W-padL-padR)/(data.length-1);
   const Y=v=>padT+(1-(v-min)/span)*(H-padT-padB);
-  // rejilla + eje Y
+  // grid + Y axis
   ctx.strokeStyle="#1d1d1d";ctx.fillStyle="#8A8A8A";ctx.font="10px monospace";ctx.textAlign="right";
   for(let g=0;g<=4;g++){
     const v=min+span*g/4, y=Y(v);
     ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();
     ctx.fillText("$"+fmtN(v,a.dec),padL-8,y+3);
   }
-  // soporte / resistencia
+  // support / resistance
   [["#FF5252",a.res,"R"],["#00C896",a.sup,"S"]].forEach(([c,v,lbl])=>{
     ctx.strokeStyle=c;ctx.setLineDash([5,5]);
     ctx.beginPath();ctx.moveTo(padL,Y(v));ctx.lineTo(W-padR,Y(v));ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle=c;ctx.textAlign="left";ctx.fillText(lbl,W-padR-12,Y(v)-4);
   });
-  // precio
+  // price
   const up=data[29]>=data[0], col=up?"#00C896":"#FF5252";
   ctx.beginPath();ctx.moveTo(X(0),Y(data[0]));
   data.forEach((v,i)=>ctx.lineTo(X(i),Y(v)));
@@ -332,7 +331,7 @@ function drawChart(a){
   ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke();
 }
 
-// ---------- Interacción ----------
+// ---------- Interaction ----------
 function analizar(){
   const t=document.getElementById("tickerInput").value.trim().toUpperCase();
   if(!t)return;

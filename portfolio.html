@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terminal Financiero IA — Análisis de Portafolio</title>
+<title>AI Financial Terminal — Portfolio Analysis</title>
 <style>
   :root{
     --bg:#0A0A0A; --card:#141414; --border:#232323;
@@ -99,84 +99,84 @@
 </head>
 <body>
 
-<header><div class="brand">TERMINAL <span>FINANCIERO</span> IA</div></header>
+<header><div class="brand">AI <span>FINANCIAL</span> TERMINAL</div></header>
 <nav>
   <a href="index.html">📊 Dashboard</a>
-  <a href="analizador.html">🔎 Analizador de Acciones</a>
-  <a href="macro.html">🌍 Macroeconomía</a>
-  <a href="portafolio.html" class="active">💼 Mi Portafolio</a>
+  <a href="analyzer.html">🔎 Stock Analyzer</a>
+  <a href="macro.html">🌍 Macroeconomics</a>
+  <a href="portfolio.html" class="active">💼 My Portfolio</a>
 </nav>
 
 <main>
-  <h1>Análisis de Portafolio</h1>
-  <p class="subtitle">Ingresa tus posiciones reales y obtén un diagnóstico profesional · ejemplo pre-cargado para demo</p>
+  <h1>Portfolio Analysis</h1>
+  <p class="subtitle">Enter your real positions and get a professional diagnosis · demo portfolio pre-loaded</p>
 
-  <!-- ENTRADA DE DATOS -->
+  <!-- DATA ENTRY -->
   <section id="entrada">
-    <h2>TUS POSICIONES</h2>
+    <h2>YOUR POSITIONS</h2>
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>TICKER</th><th>NOMBRE</th><th class="num">CANTIDAD</th>
-          <th class="num">PRECIO COMPRA $</th><th class="num">PRECIO ACTUAL $</th><th></th>
+          <th>TICKER</th><th>NAME</th><th class="num">SHARES</th>
+          <th class="num">BUY PRICE $</th><th class="num">CURRENT PRICE $</th><th></th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
     <div class="btnrow">
-      <button class="ghost" id="btnAdd">+ Agregar fila</button>
-      <button class="primary" id="btnAnalizar">ANALIZAR PORTAFOLIO</button>
+      <button class="ghost" id="btnAdd">+ Add row</button>
+      <button class="primary" id="btnAnalizar">ANALYZE PORTFOLIO</button>
     </div>
   </section>
 
-  <!-- REPORTE -->
+  <!-- REPORT -->
   <div id="report">
     <section>
-      <h2>1 · RESUMEN DEL PORTAFOLIO</h2>
+      <h2>1 · PORTFOLIO SUMMARY</h2>
       <div class="kv-grid" id="resumen"></div>
     </section>
 
     <section>
-      <h2>2 · DISTRIBUCIÓN Y DIVERSIFICACIÓN</h2>
+      <h2>2 · ALLOCATION &amp; DIVERSIFICATION</h2>
       <div class="pies">
-        <div class="pie-block"><h3>POR ACTIVO</h3><canvas id="pieActivo" width="240" height="240"></canvas><div class="legend" id="legActivo"></div></div>
-        <div class="pie-block"><h3>POR SECTOR</h3><canvas id="pieSector" width="240" height="240"></canvas><div class="legend" id="legSector"></div></div>
-        <div class="pie-block"><h3>GEOGRÁFICA</h3><canvas id="pieGeo" width="240" height="240"></canvas><div class="legend" id="legGeo"></div></div>
+        <div class="pie-block"><h3>BY ASSET</h3><canvas id="pieActivo" width="240" height="240"></canvas><div class="legend" id="legActivo"></div></div>
+        <div class="pie-block"><h3>BY SECTOR</h3><canvas id="pieSector" width="240" height="240"></canvas><div class="legend" id="legSector"></div></div>
+        <div class="pie-block"><h3>GEOGRAPHIC</h3><canvas id="pieGeo" width="240" height="240"></canvas><div class="legend" id="legGeo"></div></div>
       </div>
       <div id="alertas"></div>
     </section>
 
     <section>
-      <h2>3 · ANÁLISIS DE RIESGO</h2>
+      <h2>3 · RISK ANALYSIS</h2>
       <div class="kv-grid" id="riesgo"></div>
       <div style="margin-top:14px;"><span class="badge" id="perfilBadge"></span></div>
     </section>
 
     <section>
-      <h2>4 · RENDIMIENTO</h2>
+      <h2>4 · PERFORMANCE</h2>
       <div class="kv-grid" id="rendimiento"></div>
     </section>
 
     <section class="reco">
-      <h2>5 · RECOMENDACIONES IA</h2>
+      <h2>5 · AI RECOMMENDATIONS</h2>
       <ul id="recos"></ul>
     </section>
 
     <section>
-      <h2>6 · REPORTE EXPORTABLE</h2>
+      <h2>6 · EXPORTABLE REPORT</h2>
       <div class="btnrow" style="margin-top:0;">
-        <button class="primary" onclick="window.print()">⬇ DESCARGAR PDF</button>
-        <button class="ghost" id="btnCopiar">⧉ Copiar resumen</button>
-        <span id="copiadoOk" style="display:none;color:var(--green);font-size:12px;align-self:center;">✓ Copiado al portapapeles</span>
+        <button class="primary" onclick="window.print()">⬇ DOWNLOAD PDF</button>
+        <button class="ghost" id="btnCopiar">⧉ Copy summary</button>
+        <span id="copiadoOk" style="display:none;color:var(--green);font-size:12px;align-self:center;">✓ Copied to clipboard</span>
       </div>
     </section>
   </div>
 </main>
 
-<footer>Los datos mostrados son simulados y no constituyen asesoría financiera.</footer>
+<footer>All data shown is simulated and does not constitute financial advice.</footer>
 
 <script>
-// ---------- Portafolio de ejemplo pre-cargado ----------
+// ---------- Pre-loaded demo portfolio ----------
 const DEMO = [
   {t:"AAPL", n:"Apple Inc.",        q:15, pc:172.50, pa:228.40},
   {t:"MSFT", n:"Microsoft Corp.",   q:8,  pc:315.20, pa:441.20},
@@ -187,31 +187,31 @@ const DEMO = [
 ];
 
 const META = {
-  "AAPL":{sector:"Tecnología",geo:"EE.UU.",vol:0.26,beta:1.2,div:0.5},
-  "MSFT":{sector:"Tecnología",geo:"EE.UU.",vol:0.24,beta:1.1,div:0.7},
-  "NVDA":{sector:"Tecnología",geo:"EE.UU.",vol:0.48,beta:1.7,div:0.03},
-  "VOO":{sector:"ETF Diversificado",geo:"EE.UU.",vol:0.16,beta:1.0,div:1.3,etf:true},
-  "JNJ":{sector:"Salud",geo:"EE.UU.",vol:0.15,beta:0.6,div:3.2},
-  "BTC-USD":{sector:"Cripto",geo:"Global",vol:0.65,beta:2.2,div:0},
+  "AAPL":{sector:"Technology",geo:"USA",vol:0.26,beta:1.2,div:0.5},
+  "MSFT":{sector:"Technology",geo:"USA",vol:0.24,beta:1.1,div:0.7},
+  "NVDA":{sector:"Technology",geo:"USA",vol:0.48,beta:1.7,div:0.03},
+  "VOO":{sector:"Diversified ETF",geo:"USA",vol:0.16,beta:1.0,div:1.3,etf:true},
+  "JNJ":{sector:"Healthcare",geo:"USA",vol:0.15,beta:0.6,div:3.2},
+  "BTC-USD":{sector:"Crypto",geo:"Global",vol:0.65,beta:2.2,div:0},
 };
 function metaOf(t){
-  return META[t.toUpperCase()] || {sector:"Otros",geo:"Global",vol:0.30,beta:1.0,div:0};
+  return META[t.toUpperCase()] || {sector:"Other",geo:"Global",vol:0.30,beta:1.0,div:0};
 }
 
 const COLORS=["#00C896","#4DA3FF","#FFC107","#FF5252","#B388FF","#FF8A65","#26C6DA","#9CCC65"];
-const fmt=(n,d=2)=>n.toLocaleString("es-ES",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt=(n,d=2)=>n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const usd=(n,d=2)=>"$"+fmt(n,d);
 
-// ---------- Tabla editable ----------
+// ---------- Editable table ----------
 function addRow(p={t:"",n:"",q:"",pc:"",pa:""}){
   const tr=document.createElement("tr");
   tr.innerHTML=`
     <td><input class="f-t" value="${p.t}" placeholder="AAPL" style="text-transform:uppercase"></td>
-    <td><input class="f-n" value="${p.n}" placeholder="Nombre"></td>
+    <td><input class="f-n" value="${p.n}" placeholder="Name"></td>
     <td><input class="f-q num" value="${p.q}" placeholder="0" inputmode="decimal"></td>
     <td><input class="f-pc num" value="${p.pc}" placeholder="0.00" inputmode="decimal"></td>
     <td><input class="f-pa num" value="${p.pa}" placeholder="0.00" inputmode="decimal"></td>
-    <td><button class="del" title="Eliminar">✕</button></td>`;
+    <td><button class="del" title="Delete">✕</button></td>`;
   tr.querySelector(".del").addEventListener("click",()=>tr.remove());
   document.getElementById("tbody").appendChild(tr);
 }
@@ -229,11 +229,11 @@ function readPositions(){
   })).filter(p=>p.t&&p.q>0&&p.pc>0&&p.pa>0);
 }
 
-// ---------- Análisis ----------
+// ---------- Analysis ----------
 let lastSummary="";
 function analizar(){
   const pos=readPositions();
-  if(!pos.length){alert("Agrega al menos una posición válida.");return;}
+  if(!pos.length){alert("Add at least one valid position.");return;}
 
   pos.forEach(p=>{
     p.inv=p.q*p.pc; p.val=p.q*p.pa;
@@ -248,18 +248,18 @@ function analizar(){
   const worst=[...pos].sort((a,b)=>a.pct-b.pct)[0];
   const beta=pos.reduce((a,p)=>a+p.meta.beta*p.w,0);
 
-  // 1. Resumen
+  // 1. Summary
   const gCls=totGain>=0?"up":"down";
   document.getElementById("resumen").innerHTML=
-    `<div class="kv"><div class="k">VALOR INVERTIDO</div><div class="v">${usd(totInv)}</div></div>`+
-    `<div class="kv"><div class="k">VALOR ACTUAL</div><div class="v">${usd(totVal)}</div></div>`+
-    `<div class="kv"><div class="k">GANANCIA / PÉRDIDA</div><div class="v ${gCls}">${totGain>=0?"+":""}${usd(totGain)} (${totPct>=0?"+":""}${fmt(totPct,1)} %)</div></div>`+
-    `<div class="kv"><div class="k">MEJOR POSICIÓN</div><div class="v up">${best.t} +${fmt(best.pct,1)} %</div></div>`+
-    `<div class="kv"><div class="k">PEOR POSICIÓN</div><div class="v ${worst.pct<0?"down":"up"}">${worst.t} ${worst.pct>=0?"+":""}${fmt(worst.pct,1)} %</div></div>`+
-    `<div class="kv"><div class="k">BETA DEL PORTAFOLIO</div><div class="v">${fmt(beta,2)}</div>
-      <div class="note">${beta>1.1?"Se mueve más que el mercado (mayor volatilidad).":beta<0.9?"Más defensivo que el mercado.":"Se mueve en línea con el mercado."}</div></div>`;
+    `<div class="kv"><div class="k">TOTAL INVESTED</div><div class="v">${usd(totInv)}</div></div>`+
+    `<div class="kv"><div class="k">CURRENT VALUE</div><div class="v">${usd(totVal)}</div></div>`+
+    `<div class="kv"><div class="k">GAIN / LOSS</div><div class="v ${gCls}">${totGain>=0?"+":""}${usd(totGain)} (${totPct>=0?"+":""}${fmt(totPct,1)} %)</div></div>`+
+    `<div class="kv"><div class="k">BEST POSITION</div><div class="v up">${best.t} +${fmt(best.pct,1)} %</div></div>`+
+    `<div class="kv"><div class="k">WORST POSITION</div><div class="v ${worst.pct<0?"down":"up"}">${worst.t} ${worst.pct>=0?"+":""}${fmt(worst.pct,1)} %</div></div>`+
+    `<div class="kv"><div class="k">PORTFOLIO BETA</div><div class="v">${fmt(beta,2)}</div>
+      <div class="note">${beta>1.1?"Moves more than the market (higher volatility).":beta<0.9?"More defensive than the market.":"Moves in line with the market."}</div></div>`;
 
-  // 2. Distribución
+  // 2. Allocation
   const byActivo=pos.map(p=>[p.t,p.w]);
   const agg=(key)=>{const m={};pos.forEach(p=>{const k=p.meta[key];m[k]=(m[k]||0)+p.w;});return Object.entries(m);};
   drawPie("pieActivo","legActivo",byActivo);
@@ -269,15 +269,15 @@ function analizar(){
   let alertHTML="";
   const conc=pos.filter(p=>p.w>0.20);
   conc.forEach(p=>{
-    alertHTML+=`<div class="alert${p.w>0.35?" red":""}">⚠ CONCENTRACIÓN: ${p.t} representa el ${fmt(p.w*100,1)} % del portafolio (recomendado: &lt; 20 % por posición).</div>`;
+    alertHTML+=`<div class="alert${p.w>0.35?" red":""}">⚠ CONCENTRATION: ${p.t} represents ${fmt(p.w*100,1)} % of the portfolio (recommended: &lt; 20 % per position).</div>`;
   });
   const sectores=agg("sector");
   const sectMax=sectores.sort((a,b)=>b[1]-a[1])[0];
-  if(sectMax[1]>0.5) alertHTML+=`<div class="alert">⚠ El sector "${sectMax[0]}" concentra el ${fmt(sectMax[1]*100,1)} % del portafolio. Considera diversificar hacia otros sectores.</div>`;
+  if(sectMax[1]>0.5) alertHTML+=`<div class="alert">⚠ The "${sectMax[0]}" sector concentrates ${fmt(sectMax[1]*100,1)} % of the portfolio. Consider diversifying into other sectors.</div>`;
   document.getElementById("alertas").innerHTML=alertHTML;
 
-  // 3. Riesgo
-  // Volatilidad de cartera: aproximación con correlación media de 0,55 entre posiciones
+  // 3. Risk
+  // Portfolio volatility: approximation with average correlation of 0.55 between positions
   const corr=0.55;
   let varP=0;
   pos.forEach(pi=>pos.forEach(pj=>{
@@ -285,62 +285,62 @@ function analizar(){
     varP+=pi.w*pj.w*pi.meta.vol*pj.meta.vol*c;
   }));
   const volP=Math.sqrt(varP)*100;
-  const rf=4.3, expRet=rf+beta*5; // CAPM simple: prima de riesgo 5 %
-  const sharpe=(expRet-rf)/volP*Math.sqrt(1)*1; // aprox anual
+  const rf=4.3, expRet=rf+beta*5; // simple CAPM: 5 % risk premium
+  const sharpe=(expRet-rf)/volP*Math.sqrt(1)*1; // approx annual
   const maxDD=Math.min(60,volP*2.2);
-  const perfil=volP>30||beta>1.4?"AGRESIVO":(volP>18||beta>1.05?"MODERADO":"CONSERVADOR");
+  const perfil=volP>30||beta>1.4?"AGGRESSIVE":(volP>18||beta>1.05?"MODERATE":"CONSERVATIVE");
   const realDiv = sectores.length>=3 && !conc.length;
 
   document.getElementById("riesgo").innerHTML=
-    `<div class="kv"><div class="k">VOLATILIDAD ANUALIZADA</div><div class="v">${fmt(volP,1)} %</div>
-      <div class="note">Desviación estándar estimada de los retornos anuales.</div></div>`+
+    `<div class="kv"><div class="k">ANNUALIZED VOLATILITY</div><div class="v">${fmt(volP,1)} %</div>
+      <div class="note">Estimated standard deviation of annual returns.</div></div>`+
     `<div class="kv"><div class="k">SHARPE RATIO (est.)</div><div class="v">${fmt(sharpe,2)}</div>
-      <div class="note">${sharpe>1?"Buena compensación riesgo/retorno.":sharpe>0.5?"Compensación aceptable.":"Retorno bajo para el riesgo asumido."}</div></div>`+
-    `<div class="kv"><div class="k">MÁXIMO DRAWDOWN (est.)</div><div class="v down">−${fmt(maxDD,0)} %</div>
-      <div class="note">Caída máxima plausible en un escenario de estrés.</div></div>`+
-    `<div class="kv"><div class="k">CORRELACIÓN ENTRE POSICIONES</div><div class="v ${realDiv?"up":"neu"}">${realDiv?"DIVERSIFICADO":"PARCIAL"}</div>
-      <div class="note">${realDiv?"Tus posiciones combinan sectores distintos: la diversificación es real.":"Varias posiciones tienden a moverse juntas: la diversificación es menor de lo que parece."}</div></div>`;
+      <div class="note">${sharpe>1?"Good risk/return trade-off.":sharpe>0.5?"Acceptable trade-off.":"Low return for the risk taken."}</div></div>`+
+    `<div class="kv"><div class="k">MAX DRAWDOWN (est.)</div><div class="v down">−${fmt(maxDD,0)} %</div>
+      <div class="note">Plausible maximum decline in a stress scenario.</div></div>`+
+    `<div class="kv"><div class="k">CORRELATION BETWEEN POSITIONS</div><div class="v ${realDiv?"up":"neu"}">${realDiv?"DIVERSIFIED":"PARTIAL"}</div>
+      <div class="note">${realDiv?"Your positions span different sectors: the diversification is real.":"Several positions tend to move together: you are less diversified than it seems."}</div></div>`;
   const pb=document.getElementById("perfilBadge");
-  pb.textContent="NIVEL DE RIESGO: "+perfil;
-  pb.className="badge "+(perfil==="CONSERVADOR"?"b-g":perfil==="MODERADO"?"b-y":"b-r");
+  pb.textContent="RISK LEVEL: "+perfil;
+  pb.className="badge "+(perfil==="CONSERVATIVE"?"b-g":perfil==="MODERATE"?"b-y":"b-r");
 
-  // 4. Rendimiento
-  const spx=11.0; // retorno simulado S&P 500 en el periodo
+  // 4. Performance
+  const spx=11.0; // simulated S&P 500 return over the period
   const alpha=totPct-spx;
   const divAnual=pos.reduce((a,p)=>a+p.val*p.meta.div/100,0);
   const esc=(r)=>usd(totVal*(1+r/100),0)+` (${r>=0?"+":""}${fmt(r,0)} %)`;
   const pess=-volP*0.8, base=expRet, opt=expRet+volP*0.7;
   document.getElementById("rendimiento").innerHTML=
-    `<div class="kv"><div class="k">VS S&P 500 (periodo)</div><div class="v ${alpha>=0?"up":"down"}">${alpha>=0?"+":""}${fmt(alpha,1)} % alpha</div>
-      <div class="note">Tu portafolio: ${totPct>=0?"+":""}${fmt(totPct,1)} % · S&P 500: +${fmt(spx,1)} % → ${alpha>=0?"alpha generado.":"alpha perdido."}</div></div>`+
-    `<div class="kv"><div class="k">ESCENARIO PESIMISTA (1 AÑO)</div><div class="v down">${esc(pess)}</div></div>`+
-    `<div class="kv"><div class="k">ESCENARIO BASE (1 AÑO)</div><div class="v">${esc(base)}</div></div>`+
-    `<div class="kv"><div class="k">ESCENARIO OPTIMISTA (1 AÑO)</div><div class="v up">${esc(opt)}</div></div>`+
-    `<div class="kv"><div class="k">DIVIDENDOS ANUALES (est.)</div><div class="v">${divAnual>0?usd(divAnual,0):"—"}</div>
-      <div class="note">${divAnual>0?"Ingreso pasivo estimado al ritmo actual.":"Tu portafolio no genera dividendos significativos."}</div></div>`;
+    `<div class="kv"><div class="k">VS S&P 500 (period)</div><div class="v ${alpha>=0?"up":"down"}">${alpha>=0?"+":""}${fmt(alpha,1)} % alpha</div>
+      <div class="note">Your portfolio: ${totPct>=0?"+":""}${fmt(totPct,1)} % · S&P 500: +${fmt(spx,1)} % → ${alpha>=0?"alpha generated.":"alpha lost."}</div></div>`+
+    `<div class="kv"><div class="k">BEAR SCENARIO (1 YEAR)</div><div class="v down">${esc(pess)}</div></div>`+
+    `<div class="kv"><div class="k">BASE SCENARIO (1 YEAR)</div><div class="v">${esc(base)}</div></div>`+
+    `<div class="kv"><div class="k">BULL SCENARIO (1 YEAR)</div><div class="v up">${esc(opt)}</div></div>`+
+    `<div class="kv"><div class="k">ANNUAL DIVIDENDS (est.)</div><div class="v">${divAnual>0?usd(divAnual,0):"—"}</div>
+      <div class="note">${divAnual>0?"Estimated passive income at the current rate.":"Your portfolio does not generate meaningful dividends."}</div></div>`;
 
-  // 5. Recomendaciones IA
+  // 5. AI Recommendations
   const recos=[];
-  conc.forEach(p=>recos.push(`<b>Reduce la concentración en ${p.t}:</b> con un ${fmt(p.w*100,1)} % del portafolio, una mala noticia de un solo activo golpea demasiado tu patrimonio. Considera recortar hasta ~15-20 % y redistribuir.`));
-  if(sectMax[1]>0.5) recos.push(`<b>Diversifica fuera de "${sectMax[0]}":</b> añade sectores defensivos (salud, consumo básico) o un ETF global para reducir la dependencia de un solo motor.`);
-  if(!pos.some(p=>p.meta.etf)) recos.push(`<b>Añade un ETF indexado:</b> un fondo tipo S&P 500 o MSCI World como núcleo del portafolio reduce el riesgo específico de cada empresa.`);
-  if(pos.some(p=>p.meta.sector==="Cripto"&&p.w>0.10)) recos.push(`<b>Vigila tu exposición cripto:</b> supera el 10 % del portafolio; por su volatilidad (~65 % anual), mantenla en un nivel que te permita dormir tranquilo.`);
-  if(divAnual/totVal<0.01) recos.push(`<b>Considera activos con dividendo:</b> tu cartera casi no genera ingreso pasivo; añadir pagadores de dividendos estables aporta retorno aunque el mercado se mueva lateral.`);
-  if(beta>1.3) recos.push(`<b>Rebalanceo defensivo:</b> con beta ${fmt(beta,2)}, tu portafolio amplifica las caídas del mercado. Recortar las posiciones más calientes y aumentar defensivos suaviza el viaje.`);
-  if(worst.pct<-15) recos.push(`<b>Revisa ${worst.t}:</b> acumula ${fmt(worst.pct,1)} %; decide con la tesis de inversión en la mano si es oportunidad de promediar o momento de asumir la pérdida.`);
-  if(!recos.length) recos.push(`<b>Buen trabajo:</b> tu portafolio está razonablemente diversificado y sin concentraciones peligrosas. Mantén aportes periódicos y rebalancea una o dos veces al año.`);
+  conc.forEach(p=>recos.push(`<b>Reduce the concentration in ${p.t}:</b> at ${fmt(p.w*100,1)} % of the portfolio, bad news from a single asset hits your wealth too hard. Consider trimming to ~15-20 % and redistributing.`));
+  if(sectMax[1]>0.5) recos.push(`<b>Diversify away from "${sectMax[0]}":</b> add defensive sectors (healthcare, consumer staples) or a global ETF to reduce dependence on a single engine.`);
+  if(!pos.some(p=>p.meta.etf)) recos.push(`<b>Add an index ETF:</b> an S&P 500 or MSCI World fund as the core of the portfolio reduces single-company risk.`);
+  if(pos.some(p=>p.meta.sector==="Crypto"&&p.w>0.10)) recos.push(`<b>Watch your crypto exposure:</b> it exceeds 10 % of the portfolio; given its volatility (~65 % per year), keep it at a level that lets you sleep at night.`);
+  if(divAnual/totVal<0.01) recos.push(`<b>Consider dividend-paying assets:</b> your portfolio generates almost no passive income; adding stable dividend payers provides returns even in a sideways market.`);
+  if(beta>1.3) recos.push(`<b>Defensive rebalancing:</b> at a beta of ${fmt(beta,2)}, your portfolio amplifies market declines. Trimming the hottest positions and adding defensives smooths the ride.`);
+  if(worst.pct<-15) recos.push(`<b>Review ${worst.t}:</b> it is down ${fmt(worst.pct,1)} %; with your investment thesis in hand, decide whether it is a chance to average down or time to take the loss.`);
+  if(!recos.length) recos.push(`<b>Good job:</b> your portfolio is reasonably diversified with no dangerous concentrations. Keep contributing regularly and rebalance once or twice a year.`);
   document.getElementById("recos").innerHTML=recos.slice(0,5).map(r=>`<li>${r}</li>`).join("");
 
-  // Resumen copiable
+  // Copyable summary
   lastSummary=
-`📊 MI PORTAFOLIO — Terminal Financiero IA
-Valor actual: ${usd(totVal)} | Invertido: ${usd(totInv)}
-Resultado: ${totGain>=0?"+":""}${usd(totGain)} (${totPct>=0?"+":""}${fmt(totPct,1)} %)
-Mejor: ${best.t} +${fmt(best.pct,1)} % | Peor: ${worst.t} ${fmt(worst.pct,1)} %
-Beta: ${fmt(beta,2)} | Volatilidad: ${fmt(volP,1)} % | Sharpe: ${fmt(sharpe,2)}
-Perfil de riesgo: ${perfil}
+`📊 MY PORTFOLIO — AI Financial Terminal
+Current value: ${usd(totVal)} | Invested: ${usd(totInv)}
+Result: ${totGain>=0?"+":""}${usd(totGain)} (${totPct>=0?"+":""}${fmt(totPct,1)} %)
+Best: ${best.t} +${fmt(best.pct,1)} % | Worst: ${worst.t} ${fmt(worst.pct,1)} %
+Beta: ${fmt(beta,2)} | Volatility: ${fmt(volP,1)} % | Sharpe: ${fmt(sharpe,2)}
+Risk profile: ${perfil}
 vs S&P 500: ${alpha>=0?"+":""}${fmt(alpha,1)} % alpha
-(Datos simulados — no es asesoría financiera)`;
+(Simulated data — not financial advice)`;
 
   document.getElementById("report").style.display="block";
   document.getElementById("report").scrollIntoView({behavior:"smooth"});
@@ -375,7 +375,7 @@ document.getElementById("btnCopiar").addEventListener("click",async()=>{
   ok.style.display="inline";setTimeout(()=>ok.style.display="none",2000);
 });
 
-// Analizar el demo automáticamente al cargar
+// Auto-analyze the demo portfolio on load
 analizar();
 </script>
 </body>

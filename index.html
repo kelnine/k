@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terminal Financiero IA — Dashboard de Mercado</title>
+<title>AI Financial Terminal — Market Dashboard</title>
 <style>
   :root{
     --bg:#0A0A0A; --card:#141414; --border:#232323;
@@ -68,57 +68,57 @@
 <body>
 
 <header>
-  <div class="brand">TERMINAL <span>FINANCIERO</span> IA</div>
+  <div class="brand">AI <span>FINANCIAL</span> TERMINAL</div>
   <div class="clock">
     <span id="fecha"></span>
     <span id="hora"></span>
-    <span class="status"><span id="statusDot" class="dot closed"></span><span id="statusTxt">MERCADO CERRADO</span></span>
+    <span class="status"><span id="statusDot" class="dot closed"></span><span id="statusTxt">MARKET CLOSED</span></span>
   </div>
 </header>
 
 <nav>
   <a href="index.html" class="active">📊 Dashboard</a>
-  <a href="analizador.html">🔎 Analizador de Acciones</a>
-  <a href="macro.html">🌍 Macroeconomía</a>
-  <a href="portafolio.html">💼 Mi Portafolio</a>
+  <a href="analyzer.html">🔎 Stock Analyzer</a>
+  <a href="macro.html">🌍 Macroeconomics</a>
+  <a href="portfolio.html">💼 My Portfolio</a>
 </nav>
 
 <main>
-  <h1>Dashboard de Mercado</h1>
-  <p class="subtitle">Índices principales · datos simulados con fines demostrativos · actualización automática cada 30 s</p>
+  <h1>Market Dashboard</h1>
+  <p class="subtitle">Major indices · simulated data for demo purposes · auto-refresh every 30 s</p>
   <div class="grid" id="grid"></div>
 </main>
 
 <footer>
-  <span class="refresh-note"><span class="dot"></span>Última actualización: <span id="lastUpdate">—</span></span><br><br>
-  Los datos mostrados son simulados y no constituyen asesoría financiera.
+  <span class="refresh-note"><span class="dot"></span>Last update: <span id="lastUpdate">—</span></span><br><br>
+  All data shown is simulated and does not constitute financial advice.
 </footer>
 
 <script>
-// ---------- Índices base ----------
+// ---------- Base indices ----------
 const INDICES = [
-  {sym:"SPX",  name:"S&P 500",            region:"EE.UU.",  base:5612.40, dec:2},
-  {sym:"IXIC", name:"NASDAQ Composite",   region:"EE.UU.",  base:18421.75,dec:2},
-  {sym:"DJI",  name:"Dow Jones Industrial",region:"EE.UU.", base:41338.20,dec:2},
-  {sym:"RUT",  name:"Russell 2000",       region:"EE.UU.",  base:2218.65, dec:2},
-  {sym:"VIX",  name:"VIX (Volatilidad)",  region:"CBOE",    base:15.84,  dec:2, inverse:true},
-  {sym:"FTSE", name:"FTSE 100",           region:"R. UNIDO",base:8392.10, dec:2},
-  {sym:"DAX",  name:"DAX",                region:"ALEMANIA",base:19874.55,dec:2},
-  {sym:"N225", name:"Nikkei 225",         region:"JAPÓN",   base:39102.30,dec:2},
+  {sym:"SPX",  name:"S&P 500",            region:"USA",     base:5612.40, dec:2},
+  {sym:"IXIC", name:"NASDAQ Composite",   region:"USA",     base:18421.75,dec:2},
+  {sym:"DJI",  name:"Dow Jones Industrial",region:"USA",    base:41338.20,dec:2},
+  {sym:"RUT",  name:"Russell 2000",       region:"USA",     base:2218.65, dec:2},
+  {sym:"VIX",  name:"VIX (Volatility)",   region:"CBOE",    base:15.84,  dec:2, inverse:true},
+  {sym:"FTSE", name:"FTSE 100",           region:"UK",      base:8392.10, dec:2},
+  {sym:"DAX",  name:"DAX",                region:"GERMANY", base:19874.55,dec:2},
+  {sym:"N225", name:"Nikkei 225",         region:"JAPAN",   base:39102.30,dec:2},
 ];
 
-// RNG con semilla para que las "5 sesiones" sean estables durante la visita
+// Seeded RNG so the "5 sessions" stay stable during the visit
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
 const state = INDICES.map((idx,i)=>{
   const rnd = mulberry32(0xC0FFEE + i*7919);
-  // 5 sesiones previas + precio actual (paseo aleatorio)
+  // 5 previous sessions + current price (random walk)
   const hist = [idx.base];
   for(let s=0;s<5;s++) hist.unshift(hist[0] * (1 - (rnd()-0.5)*0.022));
   return {...idx, hist, price: idx.base, prevClose: hist[hist.length-2]};
 });
 
-const fmt = (n,d)=> n.toLocaleString("es-ES",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt = (n,d)=> n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 
 function render(){
   const grid = document.getElementById("grid");
@@ -141,11 +141,11 @@ function render(){
         <span>(${pct>=0?"+":""}${fmt(pct,2)} %)</span>
       </div>
       <canvas class="spark" width="280" height="46"></canvas>
-      <div class="sessions"><span>-5d</span><span>-4d</span><span>-3d</span><span>-2d</span><span>-1d</span><span>hoy</span></div>`;
+      <div class="sessions"><span>-5d</span><span>-4d</span><span>-3d</span><span>-2d</span><span>-1d</span><span>today</span></div>`;
     grid.appendChild(card);
     drawSpark(card.querySelector("canvas"), [...s.hist.slice(0,5), s.price], upGood);
   });
-  document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("es-ES");
+  document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("en-US");
 }
 
 function drawSpark(cv, data, up){
@@ -156,28 +156,28 @@ function drawSpark(cv, data, up){
   const X=i=> pad + i*(W-2*pad)/(data.length-1);
   const Y=v=> H-pad - (v-min)/span*(H-2*pad);
   const col = up ? "#00C896" : "#FF5252";
-  // área
+  // area
   ctx.beginPath(); ctx.moveTo(X(0),Y(data[0]));
   data.forEach((v,i)=>ctx.lineTo(X(i),Y(v)));
   ctx.lineTo(X(data.length-1),H); ctx.lineTo(X(0),H); ctx.closePath();
   const g = ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0, col+"44"); g.addColorStop(1, col+"00");
   ctx.fillStyle=g; ctx.fill();
-  // línea
+  // line
   ctx.beginPath(); ctx.moveTo(X(0),Y(data[0]));
   data.forEach((v,i)=>ctx.lineTo(X(i),Y(v)));
   ctx.strokeStyle=col; ctx.lineWidth=1.6; ctx.stroke();
-  // punto final
+  // last point
   ctx.beginPath(); ctx.arc(X(data.length-1),Y(data[data.length-1]),2.6,0,7);
   ctx.fillStyle=col; ctx.fill();
 }
 
-// ---------- Reloj y estado del mercado (NYSE, hora del Este) ----------
+// ---------- Clock and market status (NYSE, Eastern Time) ----------
 function tick(){
   const now = new Date();
   document.getElementById("fecha").textContent =
-    now.toLocaleDateString("es-ES",{weekday:"short",day:"2-digit",month:"short",year:"numeric"});
-  document.getElementById("hora").textContent = now.toLocaleTimeString("es-ES");
+    now.toLocaleDateString("en-US",{weekday:"short",day:"2-digit",month:"short",year:"numeric"});
+  document.getElementById("hora").textContent = now.toLocaleTimeString("en-US");
   let open = false;
   try{
     const et = new Date(now.toLocaleString("en-US",{timeZone:"America/New_York"}));
@@ -186,10 +186,10 @@ function tick(){
     open = weekday>=1 && weekday<=5 && mins>=570 && mins<960; // 09:30–16:00 ET
   }catch(e){}
   document.getElementById("statusDot").className = "dot " + (open?"open":"closed");
-  document.getElementById("statusTxt").textContent = open ? "MERCADO ABIERTO" : "MERCADO CERRADO";
+  document.getElementById("statusTxt").textContent = open ? "MARKET OPEN" : "MARKET CLOSED";
 }
 
-// ---------- Actualización simulada cada 30 s ----------
+// ---------- Simulated refresh every 30 s ----------
 function refresh(){
   state.forEach(s=>{
     const vol = s.sym==="VIX" ? 0.012 : 0.0035;
