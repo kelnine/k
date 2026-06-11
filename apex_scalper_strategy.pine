@@ -1,0 +1,273 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  APEX SCALPER v6  —  1-Minute Trend-Pullback Strategy  (v2)
+//
+//  Concept
+//  ───────
+//  Trades only WITH the higher-timeframe trend, entering on momentum
+//  resumption after a shallow pullback to the fast EMA. Multiple
+//  confluence filters (HTF EMA, EMA stack + slope, VWAP, ADX strength,
+//  RSI momentum, volume spike, overextension guard) keep it out of
+//  chop — the #1 killer of 1-minute systems.
+//
+//  Risk engine
+//  ───────────
+//  • ATR-based stop loss
+//  • Scale-out: partial profit at TP1 (default 50% @ 1R), stop to
+//    break-even on the remainder, runner targets TP2 (default 2.2R)
+//  • Optional ATR trailing stop on the runner (replaces TP2)
+//  • Session filter, max trades/day, post-loss cooldown, daily loss cap
+//
+//  Recommended markets: liquid futures (ES/NQ/MES/MNQ), major FX pairs,
+//  BTC/ETH perpetuals, high-volume large-cap stocks.
+// ─────────────────────────────────────────────────────────────────────────────
+strategy("Apex Scalper v6 [1-Min]",
+     shorttitle           = "Apex Scalper",
+     overlay              = true,
+     initial_capital      = 10000,
+     default_qty_type     = strategy.percent_of_equity,
+     default_qty_value    = 5,
+     commission_type      = strategy.commission.percent,
+     commission_value     = 0.02,
+     slippage             = 1,
+     pyramiding           = 0,
+     calc_on_every_tick   = false,
+     process_orders_on_close = true,
+     max_labels_count     = 500)
+
+// ═══════════════════════════ INPUTS ═══════════════════════════
+G_TREND  = "① Trend Engine"
+G_FILTER = "② Confluence Filters"
+G_RISK   = "③ Risk Management"
+G_GUARD  = "④ Trade Guards"
+G_UI     = "⑤ Display"
+
+htfTF      = input.timeframe("5",  "Higher-timeframe (trend bias)",        group = G_TREND)
+htfLen     = input.int(50,   "HTF EMA length",        minval = 5,          group = G_TREND)
+fastLen    = input.int(21,   "Fast EMA (pullback line)", minval = 2,       group = G_TREND)
+slowLen    = input.int(50,   "Slow EMA",              minval = 5,          group = G_TREND)
+useVwap    = input.bool(true, "Require correct side of VWAP",              group = G_TREND)
+useSlope   = input.bool(true, "Require slow EMA slope in trade direction", group = G_TREND)
+
+rsiLen     = input.int(14,   "RSI length",            minval = 2,          group = G_FILTER)
+adxLen     = input.int(14,   "ADX length",            minval = 2,          group = G_FILTER)
+adxThresh  = input.float(15, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
+volLen     = input.int(20,   "Volume average length", minval = 5,          group = G_FILTER)
+useVolF    = input.bool(true, "Require volume above average",              group = G_FILTER)
+volMult    = input.float(1.0,"Volume × average",      minval = 0.5, step = 0.1, group = G_FILTER)
+useRsiF    = input.bool(true, "RSI momentum filter",                       group = G_FILTER)
+pullWin    = input.int(12,   "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
+reqBreak   = input.bool(false,"Trigger must break prior bar high/low",     group = G_FILTER)
+maxStretch = input.float(1.2,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
+maxBarRng  = input.float(2.0,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
+
+atrLen     = input.int(14,   "ATR length",            minval = 2,          group = G_RISK)
+slMult     = input.float(1.5,"Stop loss × ATR",       minval = 0.3, step = 0.1, group = G_RISK)
+useScale   = input.bool(true, "Scale out at TP1, runner to TP2",           group = G_RISK)
+tp1R       = input.float(1.0,"TP1 (R multiple)",      minval = 0.3, step = 0.1, group = G_RISK)
+tp1Pct     = input.float(50, "TP1 size (% of position)", minval = 10, maxval = 90, step = 5, group = G_RISK)
+tp2R       = input.float(2.2,"TP2 / final target (R multiple)", minval = 0.5, step = 0.1, group = G_RISK)
+useBE      = input.bool(true, "Stop to break-even after TP1",              group = G_RISK)
+useTrail   = input.bool(false,"ATR trailing stop on runner (disables TP2)",group = G_RISK)
+trailMult  = input.float(2.0,"Trailing stop × ATR",   minval = 0.5, step = 0.1, group = G_RISK)
+
+useSession = input.bool(false,"Limit to session (enable for stocks/futures)", group = G_GUARD)
+sess       = input.session("0930-1530", "Trading session",                 group = G_GUARD)
+sessTz     = input.string("America/New_York", "Session timezone",          group = G_GUARD)
+maxPerDay  = input.int(15,   "Max trades per day",    minval = 1,          group = G_GUARD)
+coolBars   = input.int(3,    "Cooldown after loss (bars)", minval = 0,     group = G_GUARD)
+maxDayLoss = input.float(3.0,"Daily loss cap (% equity)", minval = 0.5, step = 0.5, group = G_GUARD)
+allowLong  = input.bool(true, "Allow longs",                               group = G_GUARD)
+allowShort = input.bool(true, "Allow shorts",                              group = G_GUARD)
+
+showLines  = input.bool(true, "Plot EMAs / VWAP / HTF EMA",                group = G_UI)
+showCloud  = input.bool(true, "Trend cloud (EMA fill)",                    group = G_UI)
+showLevels = input.bool(true, "Plot active stop & targets",                group = G_UI)
+paintBars  = input.bool(false,"Paint bars by trend bias",                  group = G_UI)
+showTable  = input.bool(true, "Show performance table",                    group = G_UI)
+showBg     = input.bool(true, "Shade active session",                      group = G_UI)
+
+// Palette
+C_BULL = #26a69a
+C_BEAR = #ef5350
+C_FAST = #26c6da
+C_SLOW = #ffa726
+C_VWAP = #b388ff
+C_HTF  = #ffd54f
+
+// ═══════════════════════════ CORE SERIES ═══════════════════════════
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+vwap    = ta.vwap(hlc3)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(close, rsiLen)
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+volAvg  = ta.sma(volume, volLen)
+
+// Non-repainting HTF EMA: confirmed value of the previous HTF bar.
+htfEma = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfLen)[1],
+     lookahead = barmerge.lookahead_on)
+
+// ═══════════════════════════ TRADE GUARDS ═══════════════════════════
+inSession = not useSession or not na(time(timeframe.period, sess, sessTz))
+
+var int   tradesToday    = 0
+var float dayStartEquity = strategy.equity
+if timeframe.change("D")
+    tradesToday    := 0
+    dayStartEquity := strategy.equity
+dailyLossOk = strategy.equity > dayStartEquity * (1 - maxDayLoss / 100)
+
+var int lastLossBar = -100000
+if strategy.closedtrades > nz(strategy.closedtrades[1])
+    if strategy.closedtrades.profit(strategy.closedtrades - 1) < 0
+        lastLossBar := bar_index
+cooldownOk = bar_index - lastLossBar > coolBars
+
+canTrade = inSession and dailyLossOk and cooldownOk and
+     tradesToday < maxPerDay and strategy.position_size == 0
+
+// ═══════════════════════════ SIGNAL LOGIC ═══════════════════════════
+bullTrend = close > htfEma and emaFast > emaSlow and (not useVwap or close > vwap)
+bearTrend = close < htfEma and emaFast < emaSlow and (not useVwap or close < vwap)
+
+slopeOkLong  = not useSlope or emaSlow > emaSlow[3]
+slopeOkShort = not useSlope or emaSlow < emaSlow[3]
+
+strongTrend = adx > adxThresh
+volOk       = not useVolF or volume > volAvg * volMult
+
+// Pullback: price touched the fast EMA within the last N bars…
+longPullback  = nz(ta.barssince(low  <= emaFast), 100000) <= pullWin
+shortPullback = nz(ta.barssince(high >= emaFast), 100000) <= pullWin
+
+// …then momentum resumes with a bullish close back above the EMA.
+longTrigger  = close > emaFast and close > open and (not reqBreak or close > high[1])
+shortTrigger = close < emaFast and close < open and (not reqBreak or close < low[1])
+
+// Overextension guard: never chase a climax bar or an entry far from the EMA —
+// the stop ends up in the wrong place and the move is usually spent.
+barRangeOk     = (high - low) <= atr * maxBarRng
+notStretchedL  = (close - emaFast) <= atr * maxStretch
+notStretchedS  = (emaFast - close) <= atr * maxStretch
+
+// RSI confirms direction but blocks chasing exhaustion.
+longMomentum  = not useRsiF or (rsi > 45 and rsi < 75)
+shortMomentum = not useRsiF or (rsi < 55 and rsi > 25)
+
+longSignal  = allowLong  and bullTrend and slopeOkLong  and strongTrend and volOk and
+     longPullback  and longTrigger  and longMomentum  and barRangeOk and notStretchedL
+shortSignal = allowShort and bearTrend and slopeOkShort and strongTrend and volOk and
+     shortPullback and shortTrigger and shortMomentum and barRangeOk and notStretchedS
+
+// ═══════════════════════════ ORDER EXECUTION ═══════════════════════════
+var float slPrice  = na
+var float tp1Price = na
+var float tp2Price = na
+var float entryPx  = na
+var bool  tp1Done  = false
+
+if longSignal and canTrade
+    entryPx     := close
+    slPrice     := close - atr * slMult
+    tp1Price    := close + atr * slMult * tp1R
+    tp2Price    := close + atr * slMult * tp2R
+    tp1Done     := false
+    tradesToday += 1
+    strategy.entry("L", strategy.long,
+         alert_message = "APEX LONG {{ticker}} @ {{close}}")
+
+if shortSignal and canTrade
+    entryPx     := close
+    slPrice     := close + atr * slMult
+    tp1Price    := close - atr * slMult * tp1R
+    tp2Price    := close - atr * slMult * tp2R
+    tp1Done     := false
+    tradesToday += 1
+    strategy.entry("S", strategy.short,
+         alert_message = "APEX SHORT {{ticker}} @ {{close}}")
+
+// Position management: scale-out, break-even after TP1, optional trailing runner.
+if strategy.position_size > 0
+    if useScale and not tp1Done and high >= tp1Price
+        tp1Done := true
+        if useBE
+            slPrice := math.max(slPrice, entryPx)
+    if useTrail
+        slPrice := math.max(slPrice, close - atr * trailMult)
+    if useScale and not tp1Done
+        strategy.exit("TP1", "L", stop = slPrice, limit = tp1Price,
+             qty_percent = tp1Pct, alert_message = "APEX TP1 LONG {{ticker}} @ {{close}}")
+    strategy.exit("TP2", "L", stop = slPrice, limit = useTrail ? na : tp2Price,
+         alert_message = "APEX EXIT LONG {{ticker}} @ {{close}}")
+
+if strategy.position_size < 0
+    if useScale and not tp1Done and low <= tp1Price
+        tp1Done := true
+        if useBE
+            slPrice := math.min(slPrice, entryPx)
+    if useTrail
+        slPrice := math.min(slPrice, close + atr * trailMult)
+    if useScale and not tp1Done
+        strategy.exit("TP1", "S", stop = slPrice, limit = tp1Price,
+             qty_percent = tp1Pct, alert_message = "APEX TP1 SHORT {{ticker}} @ {{close}}")
+    strategy.exit("TP2", "S", stop = slPrice, limit = useTrail ? na : tp2Price,
+         alert_message = "APEX EXIT SHORT {{ticker}} @ {{close}}")
+
+// Hard flat at session end so nothing is held overnight.
+sessionClosing = useSession and inSession[1] and not inSession
+if sessionClosing and strategy.position_size != 0
+    strategy.close_all(comment = "Session end")
+
+// ═══════════════════════════ VISUALS ═══════════════════════════
+pFast = plot(showLines ? emaFast : na, "Fast EMA", color = color.new(C_FAST, 0), linewidth = 1)
+pSlow = plot(showLines ? emaSlow : na, "Slow EMA", color = color.new(C_SLOW, 0), linewidth = 1)
+fill(pFast, pSlow, title = "Trend cloud",
+     color = showCloud ? (emaFast > emaSlow ? color.new(C_BULL, 82) : color.new(C_BEAR, 82)) : na)
+
+plot(showLines ? vwap   : na, "VWAP",    color = color.new(C_VWAP, 0), linewidth = 2)
+plot(showLines ? htfEma : na, "HTF EMA", color = color.new(C_HTF, 35), linewidth = 2)
+
+barcolor(paintBars ? (bullTrend ? color.new(C_BULL, 0) : bearTrend ? color.new(C_BEAR, 0) : color.new(color.gray, 40)) : na)
+
+inPos = strategy.position_size != 0
+plot(showLevels and inPos ? slPrice : na, "Active Stop",
+     color = color.new(C_BEAR, 0),  style = plot.style_linebr, linewidth = 2)
+plot(showLevels and inPos and useScale and not tp1Done ? tp1Price : na, "Target 1",
+     color = color.new(C_BULL, 40), style = plot.style_linebr, linewidth = 1)
+plot(showLevels and inPos and not useTrail ? tp2Price : na, "Target 2",
+     color = color.new(C_BULL, 0),  style = plot.style_linebr, linewidth = 2)
+
+plotshape(longSignal,  "Long setup",  shape.triangleup,   location.belowbar,
+     color.new(C_BULL, 0), size = size.tiny)
+plotshape(shortSignal, "Short setup", shape.triangledown, location.abovebar,
+     color.new(C_BEAR, 0), size = size.tiny)
+
+bgcolor(showBg and useSession and inSession ? color.new(color.blue, 96) : na)
+
+// ═══════════════════════════ PERFORMANCE TABLE ═══════════════════════════
+var table perf = table.new(position.top_right, 2, 6, border_width = 1)
+if showTable and barstate.islast
+    winRate = strategy.closedtrades > 0 ?
+         100.0 * strategy.wintrades / strategy.closedtrades : 0.0
+    pf      = strategy.grossloss > 0 ?
+         strategy.grossprofit / strategy.grossloss : 0.0
+    netPct  = strategy.initial_capital > 0 ?
+         100.0 * strategy.netprofit / strategy.initial_capital : 0.0
+    hCol = color.new(color.gray, 70)
+    table.cell(perf, 0, 0, "APEX SCALPER",          bgcolor = hCol, text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 0, "",                       bgcolor = hCol)
+    table.cell(perf, 0, 1, "Net profit",             text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 1, str.format("{0,number,#.##}%", netPct),
+         text_color = netPct >= 0 ? color.lime : color.red, text_size = size.small)
+    table.cell(perf, 0, 2, "Win rate",               text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 2, str.format("{0,number,#.#}%", winRate),
+         text_color = color.white, text_size = size.small)
+    table.cell(perf, 0, 3, "Profit factor",          text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 3, str.format("{0,number,#.##}", pf),
+         text_color = pf >= 1 ? color.lime : color.red, text_size = size.small)
+    table.cell(perf, 0, 4, "Closed trades",          text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 4, str.tostring(strategy.closedtrades), text_color = color.white, text_size = size.small)
+    table.cell(perf, 0, 5, "Trades today",           text_color = color.white, text_size = size.small)
+    table.cell(perf, 1, 5, str.tostring(tradesToday) + " / " + str.tostring(maxPerDay),
+         text_color = color.white, text_size = size.small)

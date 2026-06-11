@@ -1,0 +1,210 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  APEX SCALPER v6 — Signal Indicator (companion to the strategy)  (v2)
+//
+//  Identical signal logic to "Apex Scalper v6 [1-Min]" strategy, packaged
+//  as an indicator for real-time alerts (manual or webhook trading).
+//
+//  Visuals: gradient trend cloud, compact signal markers with hover
+//  tooltips (entry/SL/TP), shaded risk & reward zones, live dashboard.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Apex Scalper v6 — Signals [1-Min]", shorttitle = "Apex Signals",
+     overlay = true, max_labels_count = 500, max_boxes_count = 500, max_lines_count = 500)
+
+// ═══════════════════════════ INPUTS ═══════════════════════════
+G_TREND  = "① Trend Engine"
+G_FILTER = "② Confluence Filters"
+G_RISK   = "③ Levels"
+G_GUARD  = "④ Session"
+G_UI     = "⑤ Display"
+
+htfTF      = input.timeframe("5",  "Higher-timeframe (trend bias)",        group = G_TREND)
+htfLen     = input.int(50,   "HTF EMA length",        minval = 5,          group = G_TREND)
+fastLen    = input.int(21,   "Fast EMA (pullback line)", minval = 2,       group = G_TREND)
+slowLen    = input.int(50,   "Slow EMA",              minval = 5,          group = G_TREND)
+useVwap    = input.bool(true, "Require correct side of VWAP",              group = G_TREND)
+useSlope   = input.bool(true, "Require slow EMA slope in trade direction", group = G_TREND)
+
+rsiLen     = input.int(14,   "RSI length",            minval = 2,          group = G_FILTER)
+adxLen     = input.int(14,   "ADX length",            minval = 2,          group = G_FILTER)
+adxThresh  = input.float(15, "Min ADX (trend strength)", minval = 5, step = 0.5, group = G_FILTER)
+volLen     = input.int(20,   "Volume average length", minval = 5,          group = G_FILTER)
+useVolF    = input.bool(true, "Require volume above average",              group = G_FILTER)
+volMult    = input.float(1.0,"Volume × average",      minval = 0.5, step = 0.1, group = G_FILTER)
+useRsiF    = input.bool(true, "RSI momentum filter",                       group = G_FILTER)
+pullWin    = input.int(12,   "Pullback window (bars)", minval = 1, maxval = 50, group = G_FILTER)
+reqBreak   = input.bool(false,"Trigger must break prior bar high/low",     group = G_FILTER)
+maxStretch = input.float(1.2,"Max stretch from fast EMA (× ATR)", minval = 0.2, step = 0.1, group = G_FILTER)
+maxBarRng  = input.float(2.0,"Max trigger bar range (× ATR)",     minval = 0.5, step = 0.1, group = G_FILTER)
+
+atrLen     = input.int(14,   "ATR length",            minval = 2,          group = G_RISK)
+slMult     = input.float(1.5,"Stop loss × ATR",       minval = 0.3, step = 0.1, group = G_RISK)
+tp1R       = input.float(1.0,"TP1 (R multiple)",      minval = 0.3, step = 0.1, group = G_RISK)
+tp2R       = input.float(2.2,"TP2 (R multiple)",      minval = 0.5, step = 0.1, group = G_RISK)
+
+useSession = input.bool(false,"Limit to session (enable for stocks/futures)", group = G_GUARD)
+sess       = input.session("0930-1530", "Trading session",                 group = G_GUARD)
+sessTz     = input.string("America/New_York", "Session timezone",          group = G_GUARD)
+
+showCloud  = input.bool(true,  "Trend cloud (EMA fill)",                   group = G_UI)
+showVwapPl = input.bool(true,  "Plot VWAP",                                group = G_UI)
+showHtfPl  = input.bool(true,  "Plot HTF EMA",                             group = G_UI)
+showZones  = input.bool(true,  "Shade risk / reward zones on signals",     group = G_UI)
+zoneBars   = input.int(12,     "Zone width (bars)", minval = 3, maxval = 50, group = G_UI)
+showMarks  = input.bool(true,  "Signal markers (hover for entry/SL/TP)",   group = G_UI)
+paintBars  = input.bool(false, "Paint bars by trend bias",                 group = G_UI)
+showDash   = input.bool(true,  "Live dashboard",                           group = G_UI)
+showBg     = input.bool(true,  "Shade active session",                     group = G_UI)
+
+// ═══════════════════════════ PALETTE ═══════════════════════════
+C_BULL  = #26a69a
+C_BEAR  = #ef5350
+C_FAST  = #26c6da
+C_SLOW  = #ffa726
+C_VWAP  = #b388ff
+C_HTF   = #ffd54f
+C_TEXT  = #e0e0e0
+C_PANEL = color.new(#1e222d, 15)
+
+// ═══════════════════════════ CORE SERIES ═══════════════════════════
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+vwap    = ta.vwap(hlc3)
+atr     = ta.atr(atrLen)
+rsi     = ta.rsi(close, rsiLen)
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+volAvg  = ta.sma(volume, volLen)
+
+htfEma = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfLen)[1],
+     lookahead = barmerge.lookahead_on)
+
+inSession = not useSession or not na(time(timeframe.period, sess, sessTz))
+
+// ═══════════════════════════ SIGNAL LOGIC ═══════════════════════════
+bullTrend = close > htfEma and emaFast > emaSlow and (not useVwap or close > vwap)
+bearTrend = close < htfEma and emaFast < emaSlow and (not useVwap or close < vwap)
+
+slopeOkLong  = not useSlope or emaSlow > emaSlow[3]
+slopeOkShort = not useSlope or emaSlow < emaSlow[3]
+
+strongTrend = adx > adxThresh
+volOk       = not useVolF or volume > volAvg * volMult
+
+longPullback  = nz(ta.barssince(low  <= emaFast), 100000) <= pullWin
+shortPullback = nz(ta.barssince(high >= emaFast), 100000) <= pullWin
+
+longTrigger  = close > emaFast and close > open and (not reqBreak or close > high[1])
+shortTrigger = close < emaFast and close < open and (not reqBreak or close < low[1])
+
+barRangeOk    = (high - low) <= atr * maxBarRng
+notStretchedL = (close - emaFast) <= atr * maxStretch
+notStretchedS = (emaFast - close) <= atr * maxStretch
+
+longMomentum  = not useRsiF or (rsi > 45 and rsi < 75)
+shortMomentum = not useRsiF or (rsi < 55 and rsi > 25)
+
+longSignal  = inSession and bullTrend and slopeOkLong  and strongTrend and volOk and
+     longPullback  and longTrigger  and longMomentum  and barRangeOk and notStretchedL
+shortSignal = inSession and bearTrend and slopeOkShort and strongTrend and volOk and
+     shortPullback and shortTrigger and shortMomentum and barRangeOk and notStretchedS
+
+// Suggested levels
+riskL   = atr * slMult
+longSL  = close - riskL
+longTP1 = close + riskL * tp1R
+longTP2 = close + riskL * tp2R
+shortSL  = close + riskL
+shortTP1 = close - riskL * tp1R
+shortTP2 = close - riskL * tp2R
+
+// ═══════════════════════════ VISUALS ═══════════════════════════
+pFast = plot(emaFast, "Fast EMA", color = color.new(C_FAST, 0), linewidth = 1)
+pSlow = plot(emaSlow, "Slow EMA", color = color.new(C_SLOW, 0), linewidth = 1)
+fill(pFast, pSlow, title = "Trend cloud",
+     color = showCloud ? (emaFast > emaSlow ? color.new(C_BULL, 82) : color.new(C_BEAR, 82)) : na)
+
+plot(showVwapPl ? vwap   : na, "VWAP",    color = color.new(C_VWAP, 0),  linewidth = 2)
+plot(showHtfPl  ? htfEma : na, "HTF EMA", color = color.new(C_HTF, 35),  linewidth = 2)
+
+barcolor(paintBars ? (bullTrend ? color.new(C_BULL, 0) : bearTrend ? color.new(C_BEAR, 0) : color.new(color.gray, 40)) : na)
+
+// Compact markers — full trade plan lives in the hover tooltip.
+if showMarks and longSignal and barstate.isconfirmed
+    label.new(bar_index, low, "▲", style = label.style_label_up,
+         color = color.new(C_BULL, 0), textcolor = color.white, size = size.tiny,
+         tooltip = "LONG"
+              + "\nEntry  " + str.tostring(close,   format.mintick)
+              + "\nStop   " + str.tostring(longSL,  format.mintick)
+              + "\nTP1    "   + str.tostring(longTP1, format.mintick)
+              + "\nTP2    "   + str.tostring(longTP2, format.mintick))
+
+if showMarks and shortSignal and barstate.isconfirmed
+    label.new(bar_index, high, "▼", style = label.style_label_down,
+         color = color.new(C_BEAR, 0), textcolor = color.white, size = size.tiny,
+         tooltip = "SHORT"
+              + "\nEntry  " + str.tostring(close,    format.mintick)
+              + "\nStop   " + str.tostring(shortSL,  format.mintick)
+              + "\nTP1    "   + str.tostring(shortTP1, format.mintick)
+              + "\nTP2    "   + str.tostring(shortTP2, format.mintick))
+
+// Risk / reward zones: red box = risk to stop, green box = reward to TP2,
+// dashed line = TP1 scale-out level.
+if showZones and longSignal and barstate.isconfirmed
+    box.new(bar_index, close, bar_index + zoneBars, longSL,
+         bgcolor = color.new(C_BEAR, 84), border_color = color.new(C_BEAR, 45))
+    box.new(bar_index, longTP2, bar_index + zoneBars, close,
+         bgcolor = color.new(C_BULL, 84), border_color = color.new(C_BULL, 45))
+    line.new(bar_index, longTP1, bar_index + zoneBars, longTP1,
+         color = color.new(C_BULL, 20), style = line.style_dashed)
+
+if showZones and shortSignal and barstate.isconfirmed
+    box.new(bar_index, close, bar_index + zoneBars, shortSL,
+         bgcolor = color.new(C_BEAR, 84), border_color = color.new(C_BEAR, 45))
+    box.new(bar_index, shortTP2, bar_index + zoneBars, close,
+         bgcolor = color.new(C_BULL, 84), border_color = color.new(C_BULL, 45))
+    line.new(bar_index, shortTP1, bar_index + zoneBars, shortTP1,
+         color = color.new(C_BULL, 20), style = line.style_dashed)
+
+bgcolor(showBg and useSession and inSession ? color.new(color.blue, 96) : na)
+
+// ═══════════════════════════ DASHBOARD ═══════════════════════════
+var table dash = table.new(position.bottom_right, 2, 7, border_width = 1)
+if showDash and barstate.islast
+    biasTxt = bullTrend ? "LONG"   : bearTrend ? "SHORT" : "FLAT"
+    biasCol = bullTrend ? C_BULL   : bearTrend ? C_BEAR  : color.gray
+    pullOk  = bullTrend ? longPullback : bearTrend ? shortPullback : false
+    table.cell(dash, 0, 0, "APEX",    bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.small)
+    table.cell(dash, 1, 0, biasTxt,   bgcolor = C_PANEL, text_color = biasCol, text_size = size.small)
+    table.cell(dash, 0, 1, "ADX",     bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 1, str.format("{0,number,#.#}", adx),
+         bgcolor = C_PANEL, text_color = adx > adxThresh ? C_BULL : C_BEAR, text_size = size.tiny)
+    table.cell(dash, 0, 2, "RSI",     bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 2, str.format("{0,number,#.#}", rsi),
+         bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 0, 3, "Volume",  bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 3, volOk ? "OK" : "low",
+         bgcolor = C_PANEL, text_color = volOk ? C_BULL : color.gray, text_size = size.tiny)
+    table.cell(dash, 0, 4, "VWAP",    bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 4, close > vwap ? "above" : "below",
+         bgcolor = C_PANEL, text_color = close > vwap ? C_BULL : C_BEAR, text_size = size.tiny)
+    table.cell(dash, 0, 5, "Pullback", bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 5, pullOk ? "READY" : "waiting",
+         bgcolor = C_PANEL, text_color = pullOk ? C_BULL : color.gray, text_size = size.tiny)
+    table.cell(dash, 0, 6, "Session", bgcolor = C_PANEL, text_color = C_TEXT, text_size = size.tiny)
+    table.cell(dash, 1, 6, inSession ? "OPEN" : "closed",
+         bgcolor = C_PANEL, text_color = inSession ? C_BULL : color.gray, text_size = size.tiny)
+
+// ═══════════════════════════ ALERTS ═══════════════════════════
+alertcondition(longSignal,  "Apex Long",  "APEX LONG {{ticker}} @ {{close}}")
+alertcondition(shortSignal, "Apex Short", "APEX SHORT {{ticker}} @ {{close}}")
+
+if longSignal and barstate.isconfirmed
+    alert("APEX LONG "  + syminfo.ticker + " entry=" + str.tostring(close, format.mintick) +
+         " sl=" + str.tostring(longSL, format.mintick) +
+         " tp1=" + str.tostring(longTP1, format.mintick) +
+         " tp2=" + str.tostring(longTP2, format.mintick), alert.freq_once_per_bar_close)
+if shortSignal and barstate.isconfirmed
+    alert("APEX SHORT " + syminfo.ticker + " entry=" + str.tostring(close, format.mintick) +
+         " sl=" + str.tostring(shortSL, format.mintick) +
+         " tp1=" + str.tostring(shortTP1, format.mintick) +
+         " tp2=" + str.tostring(shortTP2, format.mintick), alert.freq_once_per_bar_close)
