@@ -22,8 +22,8 @@ transmit your address, your scores, or your signatures anywhere.
 
 ## Optional purchases
 
-Merge48 offers optional in-app purchases (Second Chance, Pro Unlock, tips)
-paid as Solana transactions from your wallet to the developer's wallet. When
+Merge48 offers optional in-app purchases (Second Chance, Pro Unlock, trophy
+NFT minting, tips) paid as Solana transactions from your wallet. When
 you start a purchase, the app makes one network request to a public Solana
 RPC endpoint to fetch a recent blockhash; the transaction itself is reviewed,
 signed, and submitted by your own wallet app. Purchases are recorded on the

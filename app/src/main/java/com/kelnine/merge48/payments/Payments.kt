@@ -14,6 +14,15 @@ object PaymentsConfig {
     // Public RPC is fine for testing; use a dedicated endpoint (e.g. Helius,
     // QuickNode, Triton free tiers) for production traffic.
     const val RPC_URL = "https://api.mainnet-beta.solana.com"
+
+    // Off-chain metadata for the score trophy NFT. Must stay reachable —
+    // it resolves from this repo's main branch, so the repo must be public.
+    const val NFT_METADATA_URI =
+        "https://raw.githubusercontent.com/kelnine/k/main/nft/trophy.json"
+
+    /** Mint fee paid to DEV_WALLET_ADDRESS on top of on-chain rent (~0.012 SOL). */
+    const val TROPHY_MINT_FEE_LAMPORTS = 10_000_000L // 0.01 SOL
+    const val TROPHY_MINT_PRICE_LABEL = "0.01 SOL"
 }
 
 private const val LAMPORTS_PER_SOL = 1_000_000_000L

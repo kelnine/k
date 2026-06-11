@@ -14,6 +14,8 @@ import io.ktor.http.HttpMethod
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
@@ -49,6 +51,24 @@ object SolanaRpc {
         response.result?.value?.blockhash
             ?: throw IOException("getLatestBlockhash returned no result")
     }
+
+    suspend fun minimumBalanceForRentExemption(rpcUrl: String, size: Long): Long =
+        withContext(Dispatchers.IO) {
+            val rpc = Rpc20Driver(rpcUrl, KtorHttpDriver())
+            val request = JsonRpc20Request(
+                "getMinimumBalanceForRentExemption",
+                buildJsonArray { add(size) },
+                UUID.randomUUID().toString()
+            )
+            val response = rpc.makeRequest(request, Long.serializer())
+            response.error?.let { error ->
+                throw IOException(
+                    "getMinimumBalanceForRentExemption failed: ${error.code} ${error.message}"
+                )
+            }
+            response.result
+                ?: throw IOException("getMinimumBalanceForRentExemption returned no result")
+        }
 
     @Serializable
     class BlockhashResponse(val value: BlockhashInfo)

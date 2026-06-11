@@ -26,6 +26,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onPurchase = { walletViewModel, product, onPurchased ->
                         walletViewModel.purchase(activityResultSender, product, onPurchased)
+                    },
+                    onMintTrophy = { walletViewModel, score ->
+                        walletViewModel.mintTrophy(activityResultSender, score)
                     }
                 )
             }

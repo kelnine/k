@@ -65,7 +65,11 @@ release:
         Chance that clears the smallest tiles when the board locks up, a
         one-time Pro unlock that adds an Undo button, and a tip jar if you
         just want to support development.
-      new_in_version: First release - core 2048 gameplay, best-score tracking, wallet score signing, and optional SOL-powered Second Chance / Pro / tips.
+
+        Finished a great run? Mint your score as a real 1-of-1 NFT trophy,
+        created entirely on-device and delivered straight to your wallet -
+        the score is engraved in the NFT's on-chain name.
+      new_in_version: First release - core 2048 gameplay, best-score tracking, wallet score signing, score trophy NFT minting, and optional SOL-powered Second Chance / Pro / tips.
       saga_features: One-tap wallet connection and score signing via Mobile Wallet Adapter with the device seed vault.
   android_details:
     locales:
@@ -81,6 +85,8 @@ solana_mobile_dapp_publisher_portal:
     attestation message (free, message signature only). Optional purchases
     (Second Chance 0.005 SOL, Pro Unlock 0.05 SOL, tip 0.01 SOL) are plain
     System Program transfers to the developer wallet, built client-side and
-    approved in the user's wallet; testing them requires a mainnet wallet
-    with a small SOL balance. No login is required and the game is fully
-    playable without paying.
+    approved in the user's wallet. "Mint Trophy NFT" builds a standard
+    Metaplex NFT mint (metadata + master edition) client-side; the NFT is
+    minted to the user's own wallet. Testing paid features requires a
+    mainnet wallet with a small SOL balance. No login is required and the
+    game is fully playable without paying.

@@ -42,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kelnine.merge48.game.Board
 import com.kelnine.merge48.game.Direction
 import com.kelnine.merge48.game.GameViewModel
+import com.kelnine.merge48.payments.PaymentsConfig
 import com.kelnine.merge48.payments.Product
 import com.kelnine.merge48.ui.theme.BoardBackground
 import com.kelnine.merge48.ui.theme.EmptyCell
@@ -61,6 +62,7 @@ fun GameScreen(
     onConnectWallet: (WalletViewModel) -> Unit,
     onSignScore: (WalletViewModel, Int) -> Unit,
     onPurchase: (WalletViewModel, Product, () -> Unit) -> Unit,
+    onMintTrophy: (WalletViewModel, Int) -> Unit,
     gameViewModel: GameViewModel = viewModel(),
     walletViewModel: WalletViewModel = viewModel()
 ) {
@@ -175,6 +177,9 @@ fun GameScreen(
                             onPurchase(walletViewModel, Product.SECOND_CHANCE) {
                                 gameViewModel.applySecondChance()
                             }
+                        },
+                        onMintTrophy = {
+                            onMintTrophy(walletViewModel, gameState.score)
                         }
                     )
                 }
@@ -316,7 +321,8 @@ private fun GameOverOverlay(
     walletBusy: Boolean,
     onNewGame: () -> Unit,
     onSignScore: () -> Unit,
-    onSecondChance: () -> Unit
+    onSecondChance: () -> Unit,
+    onMintTrophy: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -359,6 +365,13 @@ private fun GameOverOverlay(
                     text = "Second Chance · ${Product.SECOND_CHANCE.priceLabel}",
                     color = NightBackground
                 )
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onMintTrophy,
+                enabled = !walletBusy
+            ) {
+                Text("Mint Trophy NFT · ${PaymentsConfig.TROPHY_MINT_PRICE_LABEL}")
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(

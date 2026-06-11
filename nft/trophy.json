@@ -1,0 +1,20 @@
+{
+  "name": "Merge48 Trophy",
+  "symbol": "M48",
+  "description": "A score trophy minted in-game from Merge48 on Solana Mobile. The exact score lives in this NFT's on-chain name.",
+  "image": "https://raw.githubusercontent.com/kelnine/k/main/nft/trophy.png",
+  "external_url": "https://github.com/kelnine/k",
+  "attributes": [
+    { "trait_type": "Game", "value": "Merge48" },
+    { "trait_type": "Platform", "value": "Solana Mobile" }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://raw.githubusercontent.com/kelnine/k/main/nft/trophy.png",
+        "type": "image/png"
+      }
+    ],
+    "category": "image"
+  }
+}

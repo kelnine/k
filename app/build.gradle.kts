@@ -64,4 +64,5 @@ dependencies {
     implementation("io.ktor:ktor-client-android:2.3.12")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 }

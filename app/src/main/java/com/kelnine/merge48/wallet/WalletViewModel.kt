@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kelnine.merge48.nft.NftMinter
 import com.kelnine.merge48.payments.PaymentsConfig
 import com.kelnine.merge48.payments.Product
 import com.kelnine.merge48.payments.SolanaRpc
@@ -175,6 +176,77 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     it.copy(
                         inProgress = false,
                         statusMessage = "Payment failed: ${result.e.message ?: result.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Mints the player's score as a 1-of-1 Metaplex NFT, owned by the
+     * player, in a single wallet-signed transaction. A mint fee is
+     * transferred to the developer wallet in the same transaction (skipped
+     * while DEV_WALLET_ADDRESS is unset, e.g. during development).
+     */
+    fun mintTrophy(sender: ActivityResultSender, score: Int) {
+        if (_state.value.inProgress) return
+        viewModelScope.launch {
+            _state.update { it.copy(inProgress = true, statusMessage = null) }
+
+            val (blockhash, rentLamports) = try {
+                SolanaRpc.latestBlockhash(PaymentsConfig.RPC_URL) to
+                    SolanaRpc.minimumBalanceForRentExemption(
+                        PaymentsConfig.RPC_URL, NftMinter.MINT_ACCOUNT_SIZE
+                    )
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(
+                        inProgress = false,
+                        statusMessage = "Network error preparing mint: ${e.message}"
+                    )
+                }
+                return@launch
+            }
+
+            val feeReceiver = PaymentsConfig.DEV_WALLET_ADDRESS
+                .takeIf { it.isNotBlank() }
+                ?.let { SolanaPublicKey.from(it) }
+
+            val result = walletAdapter.transact(sender) { authResult ->
+                val payer = SolanaPublicKey(authResult.accounts.first().publicKey)
+                val transaction = NftMinter.buildMintTrophyTransaction(
+                    payer = payer,
+                    score = score,
+                    blockhash = blockhash,
+                    mintRentLamports = rentLamports,
+                    feeReceiver = feeReceiver,
+                    feeLamports = PaymentsConfig.TROPHY_MINT_FEE_LAMPORTS
+                )
+                signAndSendTransactions(arrayOf(transaction.serialize()))
+            }
+
+            when (result) {
+                is TransactionResult.Success -> {
+                    val signature = result.payload.signatures.firstOrNull()
+                    _state.update {
+                        it.copy(
+                            inProgress = false,
+                            statusMessage = signature?.let { sig ->
+                                "Trophy minted! tx ${shorten(Base58.encode(sig))}"
+                            } ?: "Wallet returned no transaction signature"
+                        )
+                    }
+                }
+                is TransactionResult.NoWalletFound -> _state.update {
+                    it.copy(
+                        inProgress = false,
+                        statusMessage = "No MWA-compatible wallet found on this device"
+                    )
+                }
+                is TransactionResult.Failure -> _state.update {
+                    it.copy(
+                        inProgress = false,
+                        statusMessage = "Mint failed: ${result.e.message ?: result.message}"
                     )
                 }
             }

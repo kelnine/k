@@ -26,6 +26,7 @@ wallet**, signed and submitted by their wallet app via MWA. Before shipping:
 |---|---|---|
 | Second Chance | 0.005 SOL | On game over: clears the 8 smallest tiles, run continues (consumable — this is the core earner) |
 | Pro Unlock | 0.05 SOL | Permanent Undo button (persisted on-device) |
+| Trophy NFT | 0.01 SOL fee (+ ~0.012 SOL on-chain rent) | A real 1-of-1 Metaplex NFT titled "Merge48 Trophy · &lt;score&gt;", minted to the player's wallet, with a 5% royalty to you on secondary sales |
 | Tip the Dev | 0.01 SOL | Goodwill |
 
 Prices are constants in `Payments.kt` — tune freely. Notes:
@@ -37,6 +38,23 @@ Prices are constants in `Payments.kt` — tune freely. Notes:
   (submission), without waiting for finalization — a fair UX tradeoff for
   sub-cent risk. Add a `getSignatureStatuses` confirmation loop if you want
   stricter behavior.
+
+### How the NFT mint works (no backend)
+
+`nft/NftMinter.kt` builds the whole mint in one transaction signed only by
+the player's wallet: mint fee transfer → `createAccountWithSeed` (the mint
+address derives from the player's key + a unique seed, so no mint-keypair
+co-signer is needed) → `initializeMint` → create ATA → `mintTo` → Metaplex
+`CreateMetadataAccountV3` → `CreateMasterEditionV3` (locks supply at 1).
+The Metaplex instruction encoding is covered by golden unit tests whose
+expected bytes were generated with the official JS SDK.
+
+The NFT's off-chain metadata is served from this repo:
+`nft/trophy.json` + `nft/trophy.png` via raw.githubusercontent.com — so
+**the repo must stay public**, and the files must exist on `main`. For
+something sturdier, upload both to Arweave/Irys or NFT.Storage and change
+`NFT_METADATA_URI` in `Payments.kt`. The player's score is embedded in the
+on-chain NFT name (32-byte limit), so the shared JSON works for every mint.
 
 | | |
 |---|---|
