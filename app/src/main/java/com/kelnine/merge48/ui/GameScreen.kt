@@ -7,6 +7,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -15,9 +16,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,7 +71,6 @@ import com.kelnine.merge48.game.Tile
 import com.kelnine.merge48.game.TileBoard
 import com.kelnine.merge48.payments.PaymentsConfig
 import com.kelnine.merge48.payments.Product
-import com.kelnine.merge48.ui.theme.AppBackgroundBrush
 import com.kelnine.merge48.ui.theme.BoardBackground
 import com.kelnine.merge48.ui.theme.DisabledButtonBrush
 import com.kelnine.merge48.ui.theme.EmptyCell
@@ -110,11 +113,8 @@ fun GameScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AppBackgroundBrush)
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AuroraBackground(Modifier.matchParentSize())
         Scaffold(
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -193,6 +193,8 @@ fun GameScreen(
                     BoardGlow()
                     GameBoard(
                         board = gameState.board,
+                        mergedCells = gameState.mergedCells,
+                        mergeBurstId = gameState.mergeBurstId,
                         onSwipe = gameViewModel::onSwipe
                     )
                     GameOverOverlay(
@@ -235,10 +237,20 @@ private fun Header(score: Int, best: Int) {
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val shimmer by rememberInfiniteTransition(label = "title").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(3500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "titleShimmer"
+        )
         Text(
             text = "Merge48",
             style = TextStyle(
-                brush = SignatureBrush,
+                brush = Brush.linearGradient(
+                    colors = listOf(SolanaPurple, Color(0xFF7C6BFF), SolanaGreen),
+                    start = Offset(shimmer * 220f, 0f),
+                    end = Offset(shimmer * 220f + 320f, 80f)
+                ),
                 fontSize = 34.sp,
                 fontWeight = FontWeight.ExtraBold
             ),
@@ -299,7 +311,12 @@ private fun BoardGlow() {
 }
 
 @Composable
-private fun GameBoard(board: TileBoard, onSwipe: (Direction) -> Unit) {
+private fun GameBoard(
+    board: TileBoard,
+    mergedCells: List<Pair<Int, Int>>,
+    mergeBurstId: Int,
+    onSwipe: (Direction) -> Unit
+) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -360,6 +377,16 @@ private fun GameBoard(board: TileBoard, onSwipe: (Direction) -> Unit) {
                 TileView(tile = tile, cellSize = cellSize, gap = gap)
             }
         }
+
+        // Spark bursts where merges land, drawn above the tiles
+        MergeBursts(
+            burstId = mergeBurstId,
+            cells = mergedCells,
+            cellSize = cellSize,
+            gap = gap,
+            slideMillis = SLIDE_MILLIS,
+            modifier = Modifier.matchParentSize()
+        )
     }
 }
 
@@ -527,6 +554,21 @@ private fun GameOverOverlay(
     }
 }
 
+/** Scales down slightly while pressed, springing back on release. */
+@Composable
+private fun Modifier.pressScale(interactionSource: MutableInteractionSource): Modifier {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "pressScale"
+    )
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
+}
+
 @Composable
 private fun GradientButton(
     text: String,
@@ -536,11 +578,18 @@ private fun GradientButton(
     brush: Brush = PurpleButtonBrush,
     textColor: Color = TextPrimary
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
+            .pressScale(interactionSource)
             .clip(RoundedCornerShape(14.dp))
             .background(if (enabled) brush else DisabledButtonBrush)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(vertical = 13.dp, horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -561,8 +610,10 @@ private fun OutlineButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
+            .pressScale(interactionSource)
             .clip(RoundedCornerShape(14.dp))
             .border(
                 BorderStroke(
@@ -572,7 +623,12 @@ private fun OutlineButton(
                 ),
                 RoundedCornerShape(14.dp)
             )
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(vertical = 13.dp, horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {

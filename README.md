@@ -56,6 +56,12 @@ something sturdier, upload both to Arweave/Irys or NFT.Storage and change
 `NFT_METADATA_URI` in `Payments.kt`. The player's score is embedded in the
 on-chain NFT name (32-byte limit), so the shared JSON works for every mint.
 
+> **Optional art upgrade:** AI-generated versions of the trophy and a
+> banner hero image were created in your Higgsfield account (see chat).
+> To use them: save the trophy image over `nft/trophy.png` (512×512 or
+> 1024×1024), and composite the banner art behind the title text in
+> `dapp-store/media/banner.png` (1200×600).
+
 | | |
 |---|---|
 | Icon | `dapp-store/media/icon-512.png` |

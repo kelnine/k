@@ -14,7 +14,11 @@ data class GameUiState(
     val bestScore: Int = 0,
     val isGameOver: Boolean = false,
     val hasWon: Boolean = false,
-    val canUndo: Boolean = false
+    val canUndo: Boolean = false,
+    /** Cells where merges just landed, for particle bursts. */
+    val mergedCells: List<Pair<Int, Int>> = emptyList(),
+    /** Monotonic id so the UI can replay a burst per move. */
+    val mergeBurstId: Int = 0
 )
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +65,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             prefs.edit().putInt(KEY_BEST_SCORE, newBest).apply()
         }
 
+        val mergedCells = result.board.tiles
+            .filter { it.id in result.mergedIds }
+            .map { it.row to it.col }
+
         _state.update {
             it.copy(
                 board = boardWithSpawn,
@@ -68,7 +76,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 bestScore = newBest,
                 isGameOver = GameEngine.isGameOver(boardWithSpawn),
                 hasWon = it.hasWon || boardWithSpawn.maxTile >= 2048,
-                canUndo = true
+                canUndo = true,
+                mergedCells = mergedCells,
+                mergeBurstId = if (mergedCells.isEmpty()) it.mergeBurstId
+                else it.mergeBurstId + 1
             )
         }
     }
