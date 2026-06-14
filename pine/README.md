@@ -3,11 +3,21 @@
 An all-in-one Smart Money Concepts overlay for TradingView, built from scratch
 (no `request.security()`, ASCII-only source to avoid curly-quote paste errors).
 
+## Files
+
+- [`FutureFi.pine`](./FutureFi.pine) — the **indicator** (visuals, signals, alerts).
+- [`FutureFiStrategy.pine`](./FutureFiStrategy.pine) — the **strategy** version for
+  backtesting in TradingView's Strategy Tester (same confluence engine driving
+  long/short entries with ATR/zone stops and a Risk:Reward target).
+
 ## Load it
 
 1. Open TradingView → **Pine Editor**.
-2. Paste the contents of [`FutureFi.pine`](./FutureFi.pine).
+2. Paste the contents of [`FutureFi.pine`](./FutureFi.pine) (or
+   [`FutureFiStrategy.pine`](./FutureFiStrategy.pine) to backtest).
 3. **Save**, then **Add to chart**. Works on any symbol / timeframe.
+4. For the strategy, open the **Strategy Tester** tab to see net profit, win
+   rate, profit factor, drawdown, and the trade list.
 
 ## What's inside
 

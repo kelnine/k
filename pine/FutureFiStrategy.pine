@@ -1,0 +1,145 @@
+//@version=6
+// FutureFi Strategy - backtestable version of the FutureFi indicator.
+// Same confluence engine (trend, structure, location, momentum, volume,
+// break/sweep) driving long/short entries with ATR/zone-based stops and a
+// Risk:Reward target. No request.security(). ASCII only.
+strategy("FutureFi Strategy", shorttitle="FutureFi Strat", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.05, slippage=1, process_orders_on_close=true, max_labels_count=500)
+
+// ============================================================
+// Inputs
+// ============================================================
+grpTrend = "Trend"
+emaFastLen = input.int(21, "Fast EMA", minval=1, group=grpTrend)
+emaSlowLen = input.int(50, "Slow EMA", minval=1, group=grpTrend)
+atrLen     = input.int(14, "ATR Length", minval=1, group=grpTrend)
+
+grpStruct = "Structure"
+pivotLen = input.int(10, "Swing Lookback", minval=2, group=grpStruct)
+
+grpZone = "Zones"
+zonePad = input.float(0.5, "Zone Width (ATR x)", minval=0.1, step=0.1, group=grpZone)
+
+grpSig = "Signals"
+sigSpacing  = input.int(5, "Min Bars Between Signals", minval=1, group=grpSig)
+minConfl    = input.int(3, "Min Confluence To Enter", minval=1, maxval=6, group=grpSig)
+useMomentum = input.bool(true, "Require Momentum Filter", group=grpSig)
+useVolume   = input.bool(true, "Use Volume In Confluence", group=grpSig)
+allowShorts = input.bool(true, "Allow Short Trades", group=grpSig)
+
+grpRisk = "Risk"
+rrTarget  = input.float(2.0, "Risk : Reward", minval=0.5, step=0.5, group=grpRisk)
+slBuffer  = input.float(0.1, "Stop Buffer (ATR x)", minval=0.0, step=0.1, group=grpRisk)
+
+grpDate = "Backtest Window"
+useWindow = input.bool(false, "Limit Date Range", group=grpDate)
+startDate = input.time(timestamp("2020-01-01 00:00"), "Start", group=grpDate)
+endDate   = input.time(timestamp("2099-01-01 00:00"), "End", group=grpDate)
+inWindow  = not useWindow or (time >= startDate and time <= endDate)
+
+// ============================================================
+// Trend / momentum / volume
+// ============================================================
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atr     = ta.atr(atrLen)
+trendUp = emaFast > emaSlow
+rsi     = ta.rsi(close, 14)
+momUp   = rsi >= 50
+volAvg  = ta.sma(volume, 20)
+volHigh = not na(volume) and not na(volAvg) and volume > volAvg
+
+// ============================================================
+// Structure: swings, BOS / CHoCH, sweeps
+// ============================================================
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var bool  brokeHigh = false
+var bool  brokeLow  = false
+var int   structBias = 0
+
+if not na(ph)
+    lastSwingHigh := ph
+    brokeHigh := false
+if not na(pl)
+    lastSwingLow := pl
+    brokeLow := false
+
+bullBreak = not na(lastSwingHigh) and not brokeHigh and close > lastSwingHigh
+bearBreak = not na(lastSwingLow)  and not brokeLow  and close < lastSwingLow
+if bullBreak
+    structBias := 1
+    brokeHigh := true
+if bearBreak
+    structBias := -1
+    brokeLow := true
+
+bullSweep = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow
+bearSweep = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+// ============================================================
+// Zones, premium/discount
+// ============================================================
+buyZoneTop  = not na(lastSwingLow)  ? lastSwingLow  + atr * zonePad : na
+buyZoneBot  = not na(lastSwingLow)  ? lastSwingLow  - atr * zonePad : na
+sellZoneTop = not na(lastSwingHigh) ? lastSwingHigh + atr * zonePad : na
+sellZoneBot = not na(lastSwingHigh) ? lastSwingHigh - atr * zonePad : na
+
+inBuyZone  = not na(buyZoneTop)  and low  <= buyZoneTop  and close >= buyZoneBot
+inSellZone = not na(sellZoneBot) and high >= sellZoneBot and close <= sellZoneTop
+
+float eq = not na(lastSwingHigh) and not na(lastSwingLow) ? (lastSwingHigh + lastSwingLow) / 2 : na
+discount = not na(eq) and close < eq
+premium  = not na(eq) and close > eq
+
+// ============================================================
+// Confluence + signals
+// ============================================================
+bullLoc = inBuyZone or discount
+bearLoc = inSellZone or premium
+momOkBull = not useMomentum or momUp
+momOkBear = not useMomentum or not momUp
+
+bullConfl = (trendUp ? 1 : 0) + (structBias == 1 ? 1 : 0) + (bullLoc ? 1 : 0) + (momOkBull ? 1 : 0) + ((useVolume and volHigh) ? 1 : 0) + ((bullBreak or bullSweep) ? 1 : 0)
+bearConfl = (not trendUp ? 1 : 0) + (structBias == -1 ? 1 : 0) + (bearLoc ? 1 : 0) + (momOkBear ? 1 : 0) + ((useVolume and volHigh) ? 1 : 0) + ((bearBreak or bearSweep) ? 1 : 0)
+
+var int lastSigBar = na
+spacingOk = na(lastSigBar) or bar_index - lastSigBar >= sigSpacing
+buySig  = inWindow and trendUp     and bullLoc and momOkBull and bullConfl >= minConfl and spacingOk
+sellSig = inWindow and allowShorts and not trendUp and bearLoc and momOkBear and bearConfl >= minConfl and spacingOk
+if buySig or sellSig
+    lastSigBar := bar_index
+
+// ============================================================
+// Orders with stop / target
+// ============================================================
+if buySig and strategy.position_size <= 0
+    float base = not na(buyZoneBot) ? math.min(buyZoneBot, low) : low
+    float sl   = base - atr * slBuffer
+    float risk = math.max(close - sl, atr * 0.1)
+    sl := close - risk
+    float tp = close + risk * rrTarget
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", from_entry="Long", stop=sl, limit=tp)
+
+if sellSig and strategy.position_size >= 0
+    float base = not na(sellZoneTop) ? math.max(sellZoneTop, high) : high
+    float sl   = base + atr * slBuffer
+    float risk = math.max(sl - close, atr * 0.1)
+    sl := close + risk
+    float tp = close - risk * rrTarget
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", from_entry="Short", stop=sl, limit=tp)
+
+// Close out trades that fall outside the backtest window
+if useWindow and not inWindow and strategy.position_size != 0
+    strategy.close_all(comment="Window End")
+
+// ============================================================
+// Plots (light context)
+// ============================================================
+plot(emaFast, "EMA Fast", color = trendUp ? color.new(#00c2a8, 0) : color.new(#ff5d73, 0), linewidth=2)
+plotshape(buySig,  "Buy",  style=shape.triangleup,   location=location.belowbar, color=color.new(#00c2a8, 0), size=size.small)
+plotshape(sellSig, "Sell", style=shape.triangledown, location=location.abovebar, color=color.new(#ff5d73, 0), size=size.small)
