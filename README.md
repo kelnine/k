@@ -14,6 +14,10 @@ fully custom canvas rendering engine, with no third-party charting library.
   you pan back.
 - **Indicators** — MA 20/50/200, EMA 21, Bollinger Bands, daily-anchored VWAP
   (overlays) plus RSI and MACD in their own synced panes.
+- **Phantom Flow SMC** — a from-scratch Smart Money Concepts overlay: swing
+  structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
+  fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
+  liquidity pools, with a live trend read-out in the legend.
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.

@@ -1,5 +1,5 @@
 import type { Candle } from '../data/types'
-import { indicatorById, type IndicatorDef, type IndicatorResult } from '../indicators'
+import { indicatorById, type IndicatorDef, type IndicatorResult, type IndicatorShape } from '../indicators'
 import {
   DEFAULT_COLOR,
   hitTestDrawing,
@@ -389,6 +389,7 @@ export class ChartEngine {
       this.drawVolume(ctx, from, to, mainBottom)
       this.drawCandles(ctx, from, to, this.mainScale)
       this.drawOverlayIndicators(ctx, from, to, this.mainScale)
+      this.drawIndicatorShapes(ctx, this.mainScale)
       this.drawLastPrice(ctx, this.mainScale)
       const sp = this.drawSpace()
       if (sp) for (const d of this.drawings) renderDrawing(ctx, sp, d, d.id === this.selectedId)
@@ -550,6 +551,78 @@ export class ChartEngine {
         this.strokePlot(ctx, plot.values, from, to, (v) => this.yForPrice(v, s), plot.color, plot.width)
       }
     }
+  }
+
+  private drawIndicatorShapes(ctx: CanvasRenderingContext2D, s: PaneScale): void {
+    const shapes: IndicatorShape[] = []
+    for (const a of this.indicators) {
+      if (a.def.kind === 'overlay' && a.result.shapes) shapes.push(...a.result.shapes)
+    }
+    if (shapes.length === 0) return
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, this.plotW, s.bottom + 4)
+    ctx.clip()
+    ctx.font = '10px system-ui, sans-serif'
+    ctx.textBaseline = 'middle'
+
+    for (const sh of shapes) {
+      if (sh.type === 'box') {
+        const ax = this.xForIndex(sh.x1)
+        const bx = sh.x2 === null ? this.plotW : this.xForIndex(sh.x2)
+        const left = Math.min(ax, bx)
+        const right = Math.max(ax, bx)
+        if (right < 0 || left > this.plotW) continue
+        const yT = this.yForPrice(sh.yTop, s)
+        const yB = this.yForPrice(sh.yBottom, s)
+        const cl = Math.max(0, left)
+        const cr = Math.min(this.plotW, right)
+        ctx.fillStyle = sh.fill
+        ctx.fillRect(cl, yT, cr - cl, yB - yT)
+        if (sh.stroke) {
+          ctx.strokeStyle = sh.stroke
+          ctx.lineWidth = 1
+          ctx.strokeRect(Math.round(cl) + 0.5, Math.round(yT) + 0.5, Math.round(cr - cl), Math.round(yB - yT))
+        }
+        if (sh.label && cr - cl > 26 && yB - yT > 12) {
+          ctx.fillStyle = sh.labelColor ?? '#fff'
+          ctx.textAlign = 'left'
+          ctx.fillText(sh.label, cl + 3, (yT + yB) / 2)
+        }
+      } else if (sh.type === 'line') {
+        const ax = this.xForIndex(sh.x1)
+        const bx = sh.x2 === null ? this.plotW : this.xForIndex(sh.x2)
+        if (Math.max(ax, bx) < 0 || Math.min(ax, bx) > this.plotW) continue
+        const y1 = this.yForPrice(sh.y1, s)
+        const y2 = this.yForPrice(sh.y2, s)
+        ctx.strokeStyle = sh.color
+        ctx.lineWidth = sh.width ?? 1
+        if (sh.dash) ctx.setLineDash(sh.dash)
+        ctx.beginPath()
+        ctx.moveTo(ax, Math.round(y1) + 0.5)
+        ctx.lineTo(bx, Math.round(y2) + 0.5)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.lineWidth = 1
+        if (sh.label) {
+          const lx = Math.min(this.plotW - 2, Math.max(ax, bx))
+          ctx.fillStyle = sh.labelColor ?? sh.color
+          ctx.textAlign = 'right'
+          ctx.fillText(sh.label, lx, y2 - 7)
+        }
+      } else {
+        const x = this.xForIndex(sh.x)
+        if (x < 0 || x > this.plotW) continue
+        const y = this.yForPrice(sh.y, s)
+        ctx.fillStyle = sh.color
+        ctx.textAlign = 'center'
+        ctx.textBaseline = sh.place === 'above' ? 'bottom' : 'top'
+        ctx.fillText(sh.text, x, sh.place === 'above' ? y - 5 : y + 5)
+        ctx.textBaseline = 'middle'
+      }
+    }
+    ctx.restore()
   }
 
   private drawLastPrice(ctx: CanvasRenderingContext2D, s: PaneScale): void {
@@ -788,7 +861,7 @@ export class ChartEngine {
     const i = Math.max(0, Math.min(n - 1, idx ?? n - 1))
     const indicators = this.indicators.map((a) => ({
       name: a.def.name,
-      items: a.result.plots.map((p) => {
+      items: a.result.legend ?? a.result.plots.map((p) => {
         const v = p.values[i]
         return { color: p.color, value: v === null || v === undefined ? '—' : formatPrice(v) }
       }),
