@@ -1,4 +1,5 @@
 import type { Candle } from '../data/types'
+import { makeSmc } from './smc'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -10,6 +11,48 @@ export interface Plot {
   values: (number | null)[]
 }
 
+/**
+ * Free-form drawing primitives an indicator can emit, positioned in
+ * (candle-index, price) space. `x` is a candle index; an `x2` of `null`
+ * means "extend to the right edge of the chart". Rendered on the main pane
+ * for overlay indicators (used by Phantom Flow SMC for zones / structure).
+ */
+export interface ShapeBox {
+  type: 'box'
+  x1: number
+  x2: number | null
+  yTop: number
+  yBottom: number
+  fill: string
+  stroke?: string
+  label?: string
+  labelColor?: string
+}
+
+export interface ShapeLine {
+  type: 'line'
+  x1: number
+  x2: number | null
+  y1: number
+  y2: number
+  color: string
+  width?: number
+  dash?: number[]
+  label?: string
+  labelColor?: string
+}
+
+export interface ShapeMarker {
+  type: 'marker'
+  x: number
+  y: number
+  text: string
+  color: string
+  place: 'above' | 'below'
+}
+
+export type IndicatorShape = ShapeBox | ShapeLine | ShapeMarker
+
 export interface IndicatorResult {
   plots: Plot[]
   /** horizontal reference lines (oscillator panes) */
@@ -18,6 +61,10 @@ export interface IndicatorResult {
   range?: [number, number]
   /** translucent fill between two plot keys */
   fills?: { a: string; b: string; color: string }[]
+  /** free-form overlay primitives (boxes / lines / markers) */
+  shapes?: IndicatorShape[]
+  /** custom legend chips (used when an indicator has no numeric plots) */
+  legend?: { color: string; value: string }[]
 }
 
 export interface IndicatorDef {
@@ -207,6 +254,7 @@ export const INDICATORS: IndicatorDef[] = [
       }
     },
   },
+  makeSmc(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {
