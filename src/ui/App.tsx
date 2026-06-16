@@ -4,6 +4,7 @@ import { TIMEFRAMES } from '../data'
 import type { DrawingTool } from '../engine/drawings'
 import { formatPrice } from '../engine/utils'
 import { INDICATORS } from '../indicators'
+import { BotFeed } from './BotFeed'
 import { ChartView } from './ChartView'
 
 type Layout = '1' | '2h' | '2v' | '4'
@@ -322,6 +323,7 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             adapter={adapter}
             onAdd={(s) => setWatchlist((w) => (w.includes(s) ? w : [...w, s]))}
           />
+          <BotFeed adapter={adapter} symbols={watchlist} />
         </aside>
       </div>
     </div>
