@@ -8,7 +8,7 @@ import { processTrades } from './trade-manager'
 import type { BotState, Trade } from './types'
 import { BOT_SYMBOLS, BOT_TF, BOT_POLL_MS, BOT_SWING, BOT_CANDLES } from './config'
 
-const RECENCY_BARS = 3
+const RECENCY_BARS = parseInt(process.env.BOT_RECENCY ?? '3', 10)
 
 async function scanSymbol(symbol: string, state: BotState): Promise<void> {
   const candles = await fetchCandles(symbol, BOT_TF, BOT_CANDLES)
