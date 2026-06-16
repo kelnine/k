@@ -46,7 +46,7 @@ function toSignal(symbol: string, sb: StructureBreak, totalBars: number): Signal
 }
 
 async function loadSignals(adapter: DataAdapter, symbol: string, tf: Timeframe): Promise<Signal[]> {
-  const candles = await adapter.fetchCandles(symbol, tf, 300)
+  const candles = await adapter.fetchCandles(symbol, tf, 150)
   const breaks = detectStructureBreaks(candles, 5)
   return breaks
     .slice(-4)
@@ -132,22 +132,24 @@ export function BotFeed({
 
   const refresh = useCallback(async () => {
     setLoading(true)
-    try {
-      const all: Signal[] = []
-      for (const sym of symbols.slice(0, 6)) {
+    setSignals([])
+    const bucket: Signal[] = []
+
+    // fetch all symbols in parallel; show cards as each one lands
+    await Promise.allSettled(
+      symbols.slice(0, 6).map(async (sym) => {
         try {
           const sigs = await loadSignals(adapter, sym, '1h')
-          all.push(...sigs)
+          bucket.push(...sigs)
+          const sorted = [...bucket].sort((a, b) => a.barAge - b.barAge)
+          setSignals(sorted.slice(0, 12))
         } catch {
-          /* skip unreachable symbols */
+          /* symbol unreachable — skip */
         }
-      }
-      // sort by recency (barAge ascending)
-      all.sort((a, b) => a.barAge - b.barAge)
-      setSignals(all.slice(0, 12))
-    } finally {
-      setLoading(false)
-    }
+      }),
+    )
+
+    setLoading(false)
   }, [adapter, symbols])
 
   useEffect(() => {
