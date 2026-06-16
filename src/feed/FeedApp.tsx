@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BinanceAdapter } from '../data/binance'
 import { DemoAdapter } from '../data/demo'
-import type { DataAdapter, Timeframe } from '../data/types'
+import type { DataAdapter, SymbolInfo, Timeframe } from '../data/types'
 import { detectStructureBreaks } from '../../bot/smc-signals'
 import type { StructureBreak } from '../../bot/smc-signals'
 
@@ -51,11 +51,7 @@ function toSignal(symbol: string, tf: string, sb: StructureBreak, total: number)
   }
 }
 
-async function fetchSignals(
-  adapter: DataAdapter,
-  symbol: string,
-  tf: Timeframe,
-): Promise<Signal[]> {
+async function fetchSignals(adapter: DataAdapter, symbol: string, tf: Timeframe): Promise<Signal[]> {
   const candles = await adapter.fetchCandles(symbol, tf, 150)
   const breaks = detectStructureBreaks(candles, 5)
   return breaks
@@ -71,15 +67,87 @@ function p(n: number): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
 }
 
-// ── constants ─────────────────────────────────────────────────────────────────
+// ── default watchlist ─────────────────────────────────────────────────────────
 
-const ALL_SYMBOLS = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT',
-  'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT',
-  'LINKUSDT', 'DOTUSDT',
-]
-
+const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT']
 const REFRESH_SEC = 60
+
+// ── symbol search ─────────────────────────────────────────────────────────────
+
+function SymbolSearch({
+  adapter,
+  active,
+  onAdd,
+  onRemove,
+}: {
+  adapter: DataAdapter
+  active: string[]
+  onAdd: (s: string) => void
+  onRemove: (s: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SymbolInfo[]>([])
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const t = setTimeout(async () => {
+      const r = await adapter.searchSymbols(query)
+      if (!cancelled) setResults(r.slice(0, 12))
+    }, 120)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [adapter, query])
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [])
+
+  return (
+    <div className="fc-search" ref={ref}>
+      <input
+        className="fc-search-input"
+        placeholder="+ Add pair…"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && results[0]) {
+            onAdd(results[0].symbol)
+            setQuery('')
+          }
+          if (e.key === 'Escape') setOpen(false)
+        }}
+      />
+      {open && results.length > 0 && (
+        <div className="fc-search-drop">
+          {results.map((r) => {
+            const on = active.includes(r.symbol)
+            return (
+              <div
+                key={r.symbol}
+                className={`fc-search-item${on ? ' on' : ''}`}
+                onClick={() => {
+                  on ? onRemove(r.symbol) : onAdd(r.symbol)
+                  setQuery('')
+                  setOpen(false)
+                }}
+              >
+                <span className="fc-search-sym">{r.symbol}</span>
+                <span className="fc-search-desc">{r.description}</span>
+                {on && <span className="fc-search-check">✓</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── card ──────────────────────────────────────────────────────────────────────
 
@@ -90,7 +158,7 @@ function SignalCard({ sig }: { sig: Signal }) {
   const bgColor = bull ? 'rgba(38,166,154,0.06)' : 'rgba(239,83,80,0.06)'
   const setup = `${sig.breakType} ${bull ? 'Bullish' : 'Bearish'}`
   const risk = Math.abs(sig.entry - sig.stop)
-  const rr = [
+  const targets = [
     { label: 'T1', val: sig.t1, r: '0.5R' },
     { label: 'T2', val: sig.t2, r: '1R' },
     { label: 'T3', val: sig.t3, r: '2R' },
@@ -98,7 +166,6 @@ function SignalCard({ sig }: { sig: Signal }) {
 
   return (
     <div className="fc-card" style={{ borderTopColor: color, background: bgColor }}>
-      {/* header */}
       <div className="fc-card-header">
         <div className="fc-card-title">
           <span className="fc-sym">${base}</span>
@@ -110,7 +177,6 @@ function SignalCard({ sig }: { sig: Signal }) {
         </div>
       </div>
 
-      {/* entry / stop */}
       <div className="fc-es">
         <div className="fc-es-item">
           <span>Entry</span>
@@ -130,9 +196,8 @@ function SignalCard({ sig }: { sig: Signal }) {
         </div>
       </div>
 
-      {/* targets */}
       <div className="fc-targets">
-        {rr.map(({ label, val, r }) => (
+        {targets.map(({ label, val, r }) => (
           <div key={label} className="fc-target" style={{ borderColor: color }}>
             <span className="fc-target-label" style={{ color }}>{label}</span>
             <span className="fc-target-val">{p(val)}</span>
@@ -141,10 +206,9 @@ function SignalCard({ sig }: { sig: Signal }) {
         ))}
       </div>
 
-      {/* footer */}
       <div className="fc-card-footer">
-        <span>OB {p(sig.obBottom)} – {p(sig.obTop)}</span>
-        <span style={{ color: 'var(--text-dim)' }}>{sig.barAge}h ago</span>
+        <span>OB {p(sig.obBottom)}–{p(sig.obTop)}</span>
+        <span>{sig.barAge}h ago</span>
       </div>
     </div>
   )
@@ -169,9 +233,7 @@ function Countdown({ secs, onTick }: { secs: number; onTick: () => void }) {
   const cb = useRef(onTick)
   cb.current = onTick
 
-  useEffect(() => {
-    setLeft(secs)
-  }, [secs])
+  useEffect(() => { setLeft(secs) }, [secs])
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -188,15 +250,28 @@ function Countdown({ secs, onTick }: { secs: number; onTick: () => void }) {
 
 // ── main app ──────────────────────────────────────────────────────────────────
 
+const STORAGE_KEY = 'sigfeed:symbols'
+
+function loadSymbols(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) return JSON.parse(raw) as string[]
+  } catch {}
+  return DEFAULT_SYMBOLS
+}
+
 export function FeedApp() {
-  const [symbols, setSymbols] = useState(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'])
+  const [symbols, setSymbols] = useState<string[]>(loadSymbols)
   const [tf, setTf] = useState<Timeframe>('1h')
   const [signals, setSignals] = useState<Signal[]>([])
   const [loading, setLoading] = useState(true)
   const [adapter, setAdapter] = useState<DataAdapter | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // resolve adapter once on mount
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(symbols))
+  }, [symbols])
+
   useEffect(() => {
     BinanceAdapter.available(3000).then((ok) => {
       setAdapter(ok ? new BinanceAdapter() : new DemoAdapter())
@@ -214,7 +289,7 @@ export function FeedApp() {
           const sigs = await fetchSignals(adapter, sym, tf)
           live.push(...sigs)
           const sorted = [...live].sort((a, b) => a.barAge - b.barAge)
-          setSignals(sorted.slice(0, 20))
+          setSignals(sorted.slice(0, 30))
         } catch {/* skip */}
       }),
     )
@@ -224,12 +299,12 @@ export function FeedApp() {
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  function toggleSymbol(s: string) {
-    setSymbols((prev) =>
-      prev.includes(s)
-        ? prev.length > 1 ? prev.filter((x) => x !== s) : prev
-        : [...prev, s],
-    )
+  function addSymbol(s: string) {
+    setSymbols((prev) => prev.includes(s) ? prev : [...prev, s])
+  }
+
+  function removeSymbol(s: string) {
+    setSymbols((prev) => prev.length > 1 ? prev.filter((x) => x !== s) : prev)
   }
 
   const isLive = adapter instanceof BinanceAdapter
@@ -241,13 +316,15 @@ export function FeedApp() {
         <div className="fc-brand">
           <span className="fc-bolt">⚡</span>
           <span>Signal Feed</span>
-          <span className="fc-badge" style={{ background: isLive ? 'rgba(38,166,154,0.15)' : 'rgba(139,147,163,0.15)', color: isLive ? '#26a69a' : '#8b93a3' }}>
+          <span className="fc-badge" style={{
+            background: isLive ? 'rgba(38,166,154,0.15)' : 'rgba(139,147,163,0.15)',
+            color: isLive ? '#26a69a' : '#8b93a3',
+          }}>
             {isLive ? '● Live' : '● Demo'}
           </span>
         </div>
 
         <div className="fc-controls">
-          {/* timeframe */}
           <div className="fc-tf-group">
             {(['15m', '1h', '4h', '1d'] as Timeframe[]).map((t) => (
               <button
@@ -259,8 +336,6 @@ export function FeedApp() {
               </button>
             ))}
           </div>
-
-          {/* refresh */}
           <button
             className="fc-refresh-btn"
             onClick={() => setRefreshKey((k) => k + 1)}
@@ -269,27 +344,35 @@ export function FeedApp() {
           >
             {loading ? '…' : '↻'}
           </button>
-          {!loading && (
-            <Countdown secs={REFRESH_SEC} onTick={() => setRefreshKey((k) => k + 1)} />
-          )}
+          {!loading && <Countdown secs={REFRESH_SEC} onTick={() => setRefreshKey((k) => k + 1)} />}
         </div>
       </header>
 
-      {/* ── symbol pills ── */}
+      {/* ── watchlist pills + search ── */}
       <div className="fc-symbols">
-        {ALL_SYMBOLS.map((s) => {
+        {symbols.map((s) => {
           const base = s.replace(/USDT$/, '')
-          const on = symbols.includes(s)
           return (
-            <button
-              key={s}
-              className={`fc-sym-pill${on ? ' on' : ''}`}
-              onClick={() => toggleSymbol(s)}
-            >
+            <span key={s} className="fc-sym-pill on">
               {base}
-            </button>
+              <button
+                className="fc-pill-remove"
+                onClick={() => removeSymbol(s)}
+                title={`Remove ${s}`}
+              >
+                ×
+              </button>
+            </span>
           )
         })}
+        {adapter && (
+          <SymbolSearch
+            adapter={adapter}
+            active={symbols}
+            onAdd={addSymbol}
+            onRemove={removeSymbol}
+          />
+        )}
       </div>
 
       {/* ── grid ── */}
@@ -298,12 +381,12 @@ export function FeedApp() {
           Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} />)}
 
         {!loading && signals.length === 0 && (
-          <div className="fc-empty">No signals detected — try a different timeframe or add more symbols</div>
+          <div className="fc-empty">
+            No signals detected — try a different timeframe or add more pairs
+          </div>
         )}
 
-        {signals.map((sig) => (
-          <SignalCard key={sig.id} sig={sig} />
-        ))}
+        {signals.map((sig) => <SignalCard key={sig.id} sig={sig} />)}
       </main>
     </div>
   )
