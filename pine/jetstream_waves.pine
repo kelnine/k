@@ -1,0 +1,61 @@
+//@version=6
+// Jetstream Waves — free alternative to premium "money-flow wave" oscillators.
+// A WaveTrend oscillator drawn as a stack of nested rainbow waves, computed
+// locally from public math. Paste into TradingView → Pine Editor → Add to
+// chart (it opens in its own pane). Pairs with "Jetstream Trend".
+indicator("Jetstream Waves", overlay = false, precision = 2)
+
+// ---------------------------------------------------------------- inputs
+grpW   = "WaveTrend"
+n1     = input.int(10, "Channel Length", minval = 1, group = grpW)
+n2     = input.int(21, "Average Length", minval = 1, group = grpW)
+sigLen = input.int(4,  "Signal SMA",     minval = 1, group = grpW)
+
+grpL   = "Levels"
+ob     = input.int(60,  "Overbought", group = grpL)
+os     = input.int(-60, "Oversold",   group = grpL)
+
+grpR   = "Rainbow"
+layers = input.int(6, "Layers", minval = 1, maxval = 6, group = grpR)
+
+// ---------------------------------------------------------------- wavetrend
+ap  = hlc3
+esa = ta.ema(ap, n1)
+de  = ta.ema(math.abs(ap - esa), n1)
+ci  = de != 0 ? (ap - esa) / (0.015 * de) : 0
+wt1 = ta.ema(ci, n2)
+wt2 = ta.sma(wt1, sigLen)
+
+// ---------------------------------------------------------------- rainbow layers
+// progressively smoothed copies of the wave, violet -> red across the spectrum
+w0 = ta.ema(wt1, 3)
+w1 = ta.ema(wt1, 7)
+w2 = ta.ema(wt1, 11)
+w3 = ta.ema(wt1, 15)
+w4 = ta.ema(wt1, 19)
+w5 = ta.ema(wt1, 23)
+
+plot(layers >= 1 ? w0 : na, "L1", color = color.new(#8a2be2, 10))
+plot(layers >= 2 ? w1 : na, "L2", color = color.new(#3d7bff, 10))
+plot(layers >= 3 ? w2 : na, "L3", color = color.new(#00d4c8, 10))
+plot(layers >= 4 ? w3 : na, "L4", color = color.new(#46d000, 10))
+plot(layers >= 5 ? w4 : na, "L5", color = color.new(#ffd000, 10))
+plot(layers >= 6 ? w5 : na, "L6", color = color.new(#ff3b30, 10))
+
+// ---------------------------------------------------------------- primary wave + signal
+p1 = plot(wt1, "WT1", color = color.new(color.white, 10), linewidth = 2)
+p2 = plot(wt2, "WT2", color = color.new(#7890ff, 5),  linewidth = 1)
+fill(p1, p2, color = wt1 > wt2 ? color.new(#26a69a, 82) : color.new(#ef5350, 82), title = "Wave band")
+
+hline(ob, "Overbought", color = color.new(#ef5350, 55), linestyle = hline.style_dashed)
+hline(0,  "Zero",       color = color.new(color.gray, 70))
+hline(os, "Oversold",   color = color.new(#26a69a, 55), linestyle = hline.style_dashed)
+
+// ---------------------------------------------------------------- cross signals
+buy  = ta.crossover(wt1, wt2)  and wt1 < os
+sell = ta.crossunder(wt1, wt2) and wt1 > ob
+plotshape(buy,  "Wave buy",  style = shape.circle, location = location.bottom, color = color.new(#26a69a, 0), size = size.tiny)
+plotshape(sell, "Wave sell", style = shape.circle, location = location.top,    color = color.new(#ef5350, 0), size = size.tiny)
+
+alertcondition(buy,  "Jetstream Wave Buy",  "Jetstream Waves crossed up from oversold on {{ticker}} {{interval}}")
+alertcondition(sell, "Jetstream Wave Sell", "Jetstream Waves crossed down from overbought on {{ticker}} {{interval}}")
