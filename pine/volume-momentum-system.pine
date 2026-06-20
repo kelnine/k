@@ -112,18 +112,8 @@ volScaled = math.min(relVol, 5.0) * (obLevel / 2.0)
 
 // ------------------------------------------------------------- combined signal
 volConfirm = relVol >= highMult
-combo = bullCross ? (volConfirm ? "STRONG BUY" : "Bullish") :
-        bearCross ? (volConfirm ? "STRONG SELL" : "Bearish") :
-        mom >= obLevel ? "Overbought" :
-        mom <= osLevel ? "Oversold" :
-        (mom >= 0 ? "Bull bias" : "Bear bias")
-comboBull = combo == "STRONG BUY" or combo == "Bullish" or combo == "Oversold" or combo == "Bull bias"
-comboBear = combo == "STRONG SELL" or combo == "Bearish" or combo == "Overbought" or combo == "Bear bias"
-comboCol  = combo == "STRONG BUY" or combo == "STRONG SELL" ? (comboBull ? cUp : cDown) :
-            comboBull ? cMute : comboBear ? cMute : cWarn
-comboCol2 = combo == "STRONG BUY" ? cUp : combo == "STRONG SELL" ? cDown :
-            combo == "Bullish" ? cUp : combo == "Bearish" ? cDown :
-            combo == "Oversold" ? cUp : combo == "Overbought" ? cDown : cWarn
+combo = bullCross ? (volConfirm ? "STRONG BUY" : "Bullish") : bearCross ? (volConfirm ? "STRONG SELL" : "Bearish") : mom >= obLevel ? "Overbought" : mom <= osLevel ? "Oversold" : (mom >= 0 ? "Bull bias" : "Bear bias")
+comboCol2 = combo == "STRONG BUY" ? cUp : combo == "STRONG SELL" ? cDown : combo == "Bullish" ? cUp : combo == "Bearish" ? cDown : combo == "Oversold" ? cUp : combo == "Overbought" ? cDown : cWarn
 
 // ------------------------------------------------------------- plots
 // volume heatmap drawn first so momentum sits on top
