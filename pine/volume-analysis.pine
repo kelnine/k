@@ -1,0 +1,114 @@
+//@version=6
+// Volume Analysis — a volume-profiling dashboard.
+// Relative-volume columns + a volume moving average, plus a HUD table of
+// derived metrics (relative volume, volume %, consecutive run, consistency,
+// pattern, trend and a composite buy/sell/monitor signal).
+indicator("Volume Analysis", shorttitle="VolAna", overlay=false)
+
+// ------------------------------------------------------------- inputs
+maLen      = input.int(20, "Volume MA Length", minval=1, group="Calculation")
+consistLen = input.int(20, "Consistency Window", minval=2, group="Calculation")
+trendLen   = input.int(8,  "Trend Window", minval=1, group="Calculation")
+spikeMult  = input.float(2.0, "Spike  (× MA)", minval=1.0, step=0.1, group="Thresholds")
+highMult   = input.float(1.3, "High   (× MA)", minval=1.0, step=0.1, group="Thresholds")
+lowMult    = input.float(0.5, "Low    (× MA)", minval=0.0, step=0.1, group="Thresholds")
+showTable  = input.bool(true, "Show dashboard", group="Dashboard")
+tablePos   = input.string("Bottom Right", "Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group="Dashboard")
+
+// ------------------------------------------------------------- palette
+cUp   = #26a69a
+cDown = #ef5350
+cHi   = #26c6da
+cLo   = #5c6f7a
+cMute = #9aa7b2
+cWarn = #fdd835
+cMa   = #ff9800
+
+// ------------------------------------------------------------- helpers
+f_pos() =>
+    tablePos == "Top Right"  ? position.top_right  :
+     tablePos == "Top Left"   ? position.top_left   :
+     tablePos == "Bottom Left" ? position.bottom_left :
+     position.bottom_right
+
+f_compact(float x) =>
+    a = math.abs(x)
+    a >= 1e9 ? str.tostring(x / 1e9, "#.##") + "B" :
+     a >= 1e6 ? str.tostring(x / 1e6, "#.##") + "M" :
+     a >= 1e3 ? str.tostring(x / 1e3, "#.##") + "K" :
+     str.tostring(x, "#.##")
+
+// ------------------------------------------------------------- core metrics
+volMA   = ta.sma(volume, maLen)
+relVol  = volMA > 0 ? volume / volMA : 1.0
+volPct  = (relVol - 1.0) * 100.0
+priceUp = close >= open
+
+// histogram tinted by relative-volume intensity
+volColor = relVol >= highMult ? cHi : relVol <= lowMult ? cLo : cMute
+
+plot(volume, "Volume", color=volColor, style=plot.style_columns)
+plot(volMA,  "Vol MA", color=cMa, linewidth=2)
+
+// consecutive same-direction volume bars
+dir = math.sign(volume - volume[1])
+var int consec = 0
+if dir == 0
+    consec := 0
+else if dir == dir[1]
+    consec := consec + 1
+else
+    consec := 1
+
+// consistency via coefficient of variation
+meanV = ta.sma(volume, consistLen)
+sdV   = ta.stdev(volume, consistLen)
+cv    = meanV > 0 ? sdV / meanV : 0.0
+consistency  = cv < 0.4 ? "CONSISTENT" : cv < 0.9 ? "MODERATE" : "ERRATIC"
+consistColor = cv < 0.4 ? cUp : cv < 0.9 ? cWarn : cDown
+
+// pattern classification of the current bar
+pattern  = relVol >= spikeMult ? "Volume Spike" : relVol >= highMult ? "High Volume" : relVol <= lowMult ? "Low Volume" : "Normal"
+patColor = relVol >= highMult ? cHi : relVol <= lowMult ? cLo : cMute
+
+// trend: slope of the volume MA over the trend window
+maPast   = volMA[trendLen]
+slope    = not na(maPast) and maPast > 0 ? (volMA - maPast) / maPast : 0.0
+trendTxt = slope > 0.1 ? "Increasing" : slope < -0.1 ? "Decreasing" : "Flat"
+trendCol = slope > 0.1 ? cUp : slope < -0.1 ? cDown : cMute
+
+// composite signal: relative volume crossed with price direction
+signal = relVol >= spikeMult ? (priceUp ? "STRONG BUY" : "STRONG SELL") :
+         relVol >= highMult  ? (priceUp ? "ACCUMULATE" : "DISTRIBUTION") :
+         relVol <= lowMult   ? "MONITOR" :
+         (priceUp ? "BULLISH" : "BEARISH")
+bullish = signal == "STRONG BUY" or signal == "ACCUMULATE" or signal == "BULLISH"
+bearish = signal == "STRONG SELL" or signal == "DISTRIBUTION" or signal == "BEARISH"
+sigColor = bullish ? cUp : bearish ? cDown : cWarn
+
+relColor = relVol >= highMult ? cHi : relVol <= lowMult ? cLo : cMute
+pctColor = volPct >= 0 ? cUp : cDown
+
+// ------------------------------------------------------------- dashboard
+var table dash = table.new(f_pos(), 2, 10, border_width=1, frame_width=1, frame_color=color.new(color.gray, 40))
+
+f_row(int r, string label, string val, color valCol) =>
+    table.cell(dash, 0, r, label, text_color=color.new(#9aa7b2, 0), text_size=size.small, text_halign=text.align_left,  bgcolor=color.new(#0c1116, 0))
+    table.cell(dash, 1, r, val,   text_color=valCol,                text_size=size.small, text_halign=text.align_right, bgcolor=color.new(#0c1116, 0))
+
+if showTable and barstate.islast
+    table.cell(dash, 0, 0, "VOLUME ANALYSIS", text_color=color.white, text_size=size.small, text_halign=text.align_left,  bgcolor=color.new(#1b2630, 0))
+    table.cell(dash, 1, 0, "",                text_color=color.white, text_size=size.small,                               bgcolor=color.new(#1b2630, 0))
+    f_row(1, "Volume",       f_compact(volume),                         color.new(cUp, 0))
+    f_row(2, "Vol MA",       f_compact(volMA),                          color.new(cMa, 0))
+    f_row(3, "Relative Vol", str.tostring(relVol, "#.##") + "×",        color.new(relColor, 0))
+    f_row(4, "Volume %",     (volPct >= 0 ? "+" : "") + str.tostring(volPct, "#.#") + "%", color.new(pctColor, 0))
+    f_row(5, "Consecutive",  str.tostring(consec) + " bars",            color.new(cMute, 0))
+    f_row(6, "Consistency",  consistency,                               color.new(consistColor, 0))
+    f_row(7, "Pattern",      pattern,                                   color.new(patColor, 0))
+    f_row(8, "Trend",        trendTxt,                                  color.new(trendCol, 0))
+    f_row(9, "Signal",       signal,                                    color.new(sigColor, 0))
+
+// ------------------------------------------------------------- alerts
+alertcondition(relVol >= spikeMult, "Volume spike", "Volume spike: relative volume above threshold")
+alertcondition(ta.crossover(relVol, highMult), "High volume", "Relative volume crossed above the high threshold")
