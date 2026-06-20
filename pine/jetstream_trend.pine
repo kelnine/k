@@ -16,7 +16,8 @@ fastLen = input.int(21, "Fast EMA", minval = 1, group = grpR)
 slowLen = input.int(55, "Slow EMA", minval = 1, group = grpR)
 
 grpS    = "Signals"
-showSig = input.bool(true, "Show BUY / SELL", group = grpS)
+showSig = input.bool(true, "Show signals", group = grpS)
+sigStyle = input.string("Labels", "Style", options = ["Labels", "Triangles"], group = grpS)
 colorBars = input.bool(false, "Colour bars by trend", group = grpS)
 
 // ---------------------------------------------------------------- trend
@@ -42,12 +43,18 @@ flip   = ta.change(dir)
 buy    = flip < 0   // direction flipped from downtrend to uptrend
 sell   = flip > 0   // direction flipped from uptrend to downtrend
 
-plotshape(showSig and buy,  "Buy",  style = shape.labelup,   location = location.belowbar,
+labels = sigStyle == "Labels"
+plotshape(showSig and buy and labels,      "Buy label",  style = shape.labelup,   location = location.belowbar,
      color = teal, text = "BUY",  textcolor = color.white, size = size.small)
-plotshape(showSig and sell, "Sell", style = shape.labeldown, location = location.abovebar,
+plotshape(showSig and sell and labels,     "Sell label", style = shape.labeldown, location = location.abovebar,
      color = red,  text = "SELL", textcolor = color.white, size = size.small)
+plotshape(showSig and buy and not labels,  "Buy tri",    style = shape.triangleup,   location = location.belowbar,
+     color = teal, size = size.tiny)
+plotshape(showSig and sell and not labels, "Sell tri",   style = shape.triangledown, location = location.abovebar,
+     color = red,  size = size.tiny)
 
 barcolor(colorBars ? (upTrend ? teal : red) : na)
 
 alertcondition(buy,  "Jetstream Buy",  "Jetstream Trend flipped LONG on {{ticker}} {{interval}}")
 alertcondition(sell, "Jetstream Sell", "Jetstream Trend flipped SHORT on {{ticker}} {{interval}}")
+alertcondition(buy or sell, "Jetstream Signal", "Jetstream Trend flipped on {{ticker}} {{interval}}")

@@ -18,6 +18,17 @@ os     = input.int(-60, "Oversold",   group = grpL)
 grpR   = "Rainbow"
 layers = input.int(6, "Layers", minval = 1, maxval = 6, group = grpR)
 
+grpMF  = "Money Flow"
+showMF = input.bool(true, "Show money-flow area", group = grpMF)
+mfLen  = input.int(60, "MF Length", minval = 1, group = grpMF)
+mfMult = input.float(30.0, "MF Scale", minval = 1, group = grpMF)
+
+// ---------------------------------------------------------------- money flow
+// candle-body pressure (VuManChu-style), smoothed and scaled into the pane
+rng = high - low
+mf  = ta.sma(rng != 0 ? ((close - open) / rng) * mfMult : 0, mfLen)
+plot(showMF ? mf : na, "Money Flow", color = mf >= 0 ? color.new(#26a69a, 55) : color.new(#ef5350, 55), style = plot.style_area)
+
 // ---------------------------------------------------------------- wavetrend
 ap  = hlc3
 esa = ta.ema(ap, n1)

@@ -28,8 +28,12 @@ and pick *Jetstream Buy/Sell* or *Jetstream Wave Buy/Sell*.
 ## Settings worth tuning
 
 - **Trend** — `ATR Multiplier` (higher = fewer, slower flips), `ATR Length`.
+  `Signals → Style` switches between **Labels** (BUY/SELL) and minimal
+  **Triangles**. A combined *Jetstream Signal* alert fires on either side.
 - **Waves** — `Channel`/`Average` length set the wave speed; `Overbought` /
-  `Oversold` set where cross signals are allowed to fire.
+  `Oversold` set where cross signals are allowed to fire. The green/red
+  **money-flow area** behind the waves is toggled under *Money Flow*
+  (`MF Length` / `MF Scale` control its smoothness and height).
 
 ## Note
 
