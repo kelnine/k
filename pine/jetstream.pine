@@ -36,7 +36,7 @@ fast = ta.ema(close, fastLen)
 slow = ta.ema(close, slowLen)
 pf = plot(showRib ? fast : na, "Fast EMA", color = color.new(#78c8ff, 30), force_overlay = true)
 ps = plot(showRib ? slow : na, "Slow EMA", color = color.new(#ffaa5a, 30), force_overlay = true)
-fill(pf, ps, color = fast > slow ? color.new(#26a69a, 88) : color.new(#ef5350, 88), title = "Ribbon", force_overlay = true)
+fill(pf, ps, color = fast > slow ? color.new(#26a69a, 88) : color.new(#ef5350, 88), title = "Ribbon")
 
 flip = ta.change(dir)
 tBuy  = flip < 0
