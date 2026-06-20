@@ -21,7 +21,7 @@ layers = input.int(6, "Layers", minval = 1, maxval = 6, group = grpR)
 grpMF  = "Money Flow"
 showMF = input.bool(true, "Show money-flow area", group = grpMF)
 mfLen  = input.int(60, "MF Length", minval = 1, group = grpMF)
-mfMult = input.float(30.0, "MF Scale", minval = 1, group = grpMF)
+mfMult = input.float(150.0, "MF Scale", minval = 1, group = grpMF)
 
 // ---------------------------------------------------------------- money flow
 // candle-body pressure (VuManChu-style), smoothed and scaled into the pane
