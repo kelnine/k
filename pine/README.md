@@ -5,20 +5,25 @@ Free, from-scratch TradingView indicators that replicate the look of premium
 built from public techniques (ATR SuperTrend + WaveTrend), so they're fully
 auditable and cost nothing.
 
-Because TradingView can't mix on-chart overlays and a separate oscillator pane
-in a single script, this ships as two scripts (the same way the paid packs do):
+Because TradingView gives each `indicator()` a single `overlay` setting, the
+on-chart pieces and the oscillator pane normally have to be separate scripts.
+Pine v6's `force_overlay = true` gets around that, so there are two ways to run
+Jetstream:
 
-| File | Pane | What it draws |
+| File | Add to chart | Result |
 | --- | --- | --- |
-| `jetstream_trend.pine` | on the price chart | ATR SuperTrend trail, EMA ribbon, ▲ BUY / ▼ SELL labels on trend flips |
-| `jetstream_waves.pine` | its own sub-pane | WaveTrend oscillator as nested rainbow waves + OB/OS guides |
+| `jetstream.pine` | once | **All-in-one.** Waves in a sub-pane; trail, ribbon and signals forced onto the price chart. Recommended. |
+| `jetstream_trend.pine` | on the price chart | Just the trail + ribbon + BUY/SELL labels (modular). |
+| `jetstream_waves.pine` | its own sub-pane | Just the WaveTrend rainbow waves + money-flow area (modular). |
+
+Use **`jetstream.pine`** if you want the single-indicator experience like the
+paid pack. The two modular files are kept for anyone who wants only one half.
 
 ## Install
 
 1. Open TradingView → bottom panel → **Pine Editor**.
-2. Paste the contents of `jetstream_trend.pine`, click **Add to chart**.
-3. Open a new Pine Editor tab, paste `jetstream_waves.pine`, **Add to chart**.
-4. (Optional) Save each as a personal indicator so they're in your favourites.
+2. Paste the contents of `jetstream.pine`, click **Add to chart**. Done.
+3. (Optional) Save it as a personal indicator so it's in your favourites.
 
 ## Alerts
 
