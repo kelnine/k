@@ -57,8 +57,8 @@ i_maxLbl   = input.int(3,     "Max Struct Labels", group=g7, minval=1, maxval=10
 var gOB    = "📦 Order Blocks"
 i_showOB   = input.bool(true, "Show OBs",      group=gOB)
 i_obLen    = input.int(8,     "OB Length",     group=gOB, minval=2, maxval=30)
-i_maxOB    = input.int(3,     "Max OBs Each",  group=gOB, minval=1, maxval=6)
-i_obRight  = input.int(100,   "Extend Right",   group=gOB, minval=5, maxval=300)
+i_maxOB    = input.int(2,     "Max OBs Each",  group=gOB, minval=1, maxval=6)
+i_obRight  = input.int(60,    "Extend Right",   group=gOB, minval=5, maxval=300)
 i_cBullOB  = input.color(color.new(#26A69A,62), "Bull OB", group=gOB)
 i_cBearOB  = input.color(color.new(#7B1FA2,62), "Bear OB", group=gOB)
 
@@ -67,7 +67,7 @@ i_cBearOB  = input.color(color.new(#7B1FA2,62), "Bear OB", group=gOB)
 // ══════════════════════════════════════════════════════════════════════
 var g8      = "⚡ FVG"
 i_showFVG   = input.bool(true, "Show FVG",        group=g8)
-i_maxFVG    = input.int(5,     "Max Active FVGs",  group=g8, minval=1, maxval=15)
+i_maxFVG    = input.int(3,     "Max Active FVGs",  group=g8, minval=1, maxval=15)
 i_fvgProx   = input.float(0.5, "FVG Proximity %",  group=g8, minval=0.1, maxval=3.0, step=0.1)
 i_cFVGBull  = input.color(color.new(#26A69A,82), "Bull FVG", group=g8)
 i_cFVGBear  = input.color(color.new(#7B1FA2,82), "Bear FVG", group=g8)
@@ -76,7 +76,7 @@ i_cFVGBear  = input.color(color.new(#7B1FA2,82), "Bear FVG", group=g8)
 // SUPPLY & DEMAND
 // ══════════════════════════════════════════════════════════════════════
 var g9     = "🟥🟩 S&D"
-i_showSD   = input.bool(true, "Show S&D",     group=g9)
+i_showSD   = input.bool(false, "Show S&D",     group=g9)
 i_sdLen    = input.int(15,    "Zone Length",  group=g9, minval=3, maxval=50)
 i_sdRight  = input.int(50,    "Extend Right", group=g9, minval=5, maxval=200)
 i_maxSD    = input.int(2,     "Max Zones",    group=g9, minval=1, maxval=6)
@@ -87,7 +87,7 @@ i_cDemand  = input.color(color.new(#26A69A,80), "Demand", group=g9)
 // FIBONACCI
 // ══════════════════════════════════════════════════════════════════════
 var g10    = "📐 Fibonacci"
-i_showFib  = input.bool(true, "Show Fib",  group=g10)
+i_showFib  = input.bool(false, "Show Fib",  group=g10)
 i_fibLen   = input.int(50,    "Lookback",  group=g10, minval=10, maxval=300)
 i_f382     = input.bool(true, "0.382", group=g10, inline="fa")
 i_f500     = input.bool(true, "0.500", group=g10, inline="fa")
@@ -100,7 +100,7 @@ i_cFib     = input.color(color.new(#90A4AE,50), "Fib Color", group=g10)
 // PREMIUM / DISCOUNT
 // ══════════════════════════════════════════════════════════════════════
 var g11    = "📊 P/D Zones"
-i_showPD   = input.bool(true, "Show P/D",  group=g11)
+i_showPD   = input.bool(false, "Show P/D",  group=g11)
 i_pdLen    = input.int(50,    "Lookback",  group=g11, minval=10, maxval=300)
 i_cPrem    = input.color(color.new(#7B1FA2,88), "Premium",     group=g11)
 i_cDisc    = input.color(color.new(#26A69A,88), "Discount",    group=g11)
@@ -123,10 +123,10 @@ var g13     = "📊 Main Dashboard"
 i_showMain  = input.bool(true, "Show Main Panel", group=g13)
 i_mainPos   = input.string("Bottom Right", "Position", group=g13,
                options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"])
-i_mainSz    = input.string("Small", "Size", group=g13, options=["Tiny","Small","Normal"])
+i_mainSz    = input.string("Tiny", "Size", group=g13, options=["Tiny","Small","Normal"])
 
 var gSC     = "🔭 Scanner"
-i_showScan  = input.bool(true, "Show Scanner",   group=gSC)
+i_showScan  = input.bool(false, "Show Scanner",   group=gSC)
 i_scanPos   = input.string("Top Left", "Position", group=gSC,
                options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right","Middle Left"])
 i_scanSz    = input.string("Tiny", "Size", group=gSC, options=["Tiny","Small","Normal"])
