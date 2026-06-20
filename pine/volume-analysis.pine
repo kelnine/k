@@ -24,6 +24,13 @@ cMute = #9aa7b2
 cWarn = #fdd835
 cMa   = #ff9800
 
+// heatmap stops for the volume columns (low → extreme)
+hmCold = #2962ff
+hmBase = #26a69a
+hmMid  = #26c6da
+hmHot  = #fdd835
+hmMax  = #e040fb
+
 // ------------------------------------------------------------- helpers
 f_pos() =>
     tablePos == "Top Right"  ? position.top_right  :
@@ -44,8 +51,11 @@ relVol  = volMA > 0 ? volume / volMA : 1.0
 volPct  = (relVol - 1.0) * 100.0
 priceUp = close >= open
 
-// histogram tinted by relative-volume intensity
-volColor = relVol >= highMult ? cHi : relVol <= lowMult ? cLo : cMute
+// vibrant volume heatmap: a smooth gradient by relative-volume intensity
+// (blue → teal → cyan → yellow → magenta as volume rises above its average)
+volColor = relVol <= 1.0       ? color.from_gradient(relVol, lowMult, 1.0, hmCold, hmBase) :
+           relVol <= spikeMult ? color.from_gradient(relVol, 1.0, spikeMult, hmMid, hmHot) :
+           color.from_gradient(relVol, spikeMult, spikeMult * 2.0, hmHot, hmMax)
 
 plot(volume, "Volume", color=volColor, style=plot.style_columns)
 plot(volMA,  "Vol MA", color=cMa, linewidth=2)
