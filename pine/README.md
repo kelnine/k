@@ -33,6 +33,15 @@ changing the underlying signals (both share one WaveTrend core):
   VolMom view is adapted, with thanks, from a user-provided open-source
   Volume + Momentum WaveTrend study, rebuilt here from the same public methods.
 
+## Supply/Demand zones (`jetstream.pine`)
+
+A toggleable price-chart overlay (off the **Supply/Demand Zones** group, master
+switch **Show Supply/Demand Zones**). It marks supply/demand zones from swing
+pivots — ATR-sized and de-duplicated, auto-flipped to "historic" when broken,
+with retest markers and an info label (size in pips, strength, session, age,
+distance). Drawn on price via `force_overlay`. Adapted, with thanks, from a
+user-provided open-source "Supply Demand Zones PRO" study.
+
 ## Backtesting (`jetstream_strategy.pine`)
 
 Add it to the chart, then open the **Strategy Tester** tab at the bottom for the
