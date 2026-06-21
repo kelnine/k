@@ -20,6 +20,18 @@ Jetstream:
 Use **`jetstream.pine`** for charting, or **`jetstream_strategy.pine`** to
 backtest. The two modular files are kept for anyone who wants only one half.
 
+## Oscillator styles (`jetstream.pine`)
+
+The bottom pane has an **Oscillator → Style** toggle so you can switch the look
+without changing the underlying signals (both share one WaveTrend core):
+
+- **Jetstream** — nested rainbow waves + candle-body money-flow area.
+- **VolMom** — a gradient momentum "mountain" (blue → cyan → yellow → red into
+  overbought) over a relative-volume heatmap, with Bull/Bear labels and a
+  top-corner dashboard (Signal / Momentum / Mom State / Rel Vol / Volume). The
+  VolMom view is adapted, with thanks, from a user-provided open-source
+  Volume + Momentum WaveTrend study, rebuilt here from the same public methods.
+
 ## Backtesting (`jetstream_strategy.pine`)
 
 Add it to the chart, then open the **Strategy Tester** tab at the bottom for the
