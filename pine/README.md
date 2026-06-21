@@ -13,11 +13,28 @@ Jetstream:
 | File | Add to chart | Result |
 | --- | --- | --- |
 | `jetstream.pine` | once | **All-in-one.** Waves in a sub-pane; trail, ribbon and signals forced onto the price chart. Recommended. |
+| `jetstream_strategy.pine` | once | **Backtestable.** Same visuals, but the trend flips drive stop-and-reverse orders so it runs in the Strategy Tester. |
 | `jetstream_trend.pine` | on the price chart | Just the trail + ribbon + BUY/SELL labels (modular). |
 | `jetstream_waves.pine` | its own sub-pane | Just the WaveTrend rainbow waves + money-flow area (modular). |
 
-Use **`jetstream.pine`** if you want the single-indicator experience like the
-paid pack. The two modular files are kept for anyone who wants only one half.
+Use **`jetstream.pine`** for charting, or **`jetstream_strategy.pine`** to
+backtest. The two modular files are kept for anyone who wants only one half.
+
+## Backtesting (`jetstream_strategy.pine`)
+
+Add it to the chart, then open the **Strategy Tester** tab at the bottom for the
+performance summary, equity curve and trade list. Entries are stop-and-reverse
+on the trend flips. Useful knobs under *Strategy*:
+
+- **Direction** — Both / Long only / Short only.
+- **Require wave agreement** — only take a flip when the WaveTrend confirms it
+  (fewer, higher-quality trades).
+- **Use ATR stop / target** — optional exits at `× ATR` from entry.
+- **Limit date range** — backtest a specific window.
+
+Defaults: 10k starting capital, 10% equity per trade, 0.05% commission, orders
+filled on bar close. Tune these in the script's *Properties* tab. Past
+performance is hypothetical and not a guarantee of future results.
 
 ## Install
 
