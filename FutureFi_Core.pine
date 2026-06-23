@@ -1,0 +1,187 @@
+//@version=6
+indicator("FutureFi Core", "FutureFi Core", overlay=true, max_boxes_count=150, max_labels_count=150, max_lines_count=100)
+
+mode = input.string("Live", "Mode", options=["Live", "Debug"])
+scanEnable = input.bool(true, "Enable Scanner Panel")
+showDashboard = input.bool(true, "Show Dashboard")
+
+swingLen = input.int(5, "Structure Swing Length", minval=2, maxval=20)
+atrLen = input.int(14, "ATR Length", minval=5, maxval=100)
+zoneKeep = input.int(3, "Recent Zones To Keep", minval=1, maxval=6)
+minSignalScore = input.int(70, "Minimum Signal Score", minval=50, maxval=95)
+
+rsiLen = input.int(14, "Momentum RSI Length", minval=5, maxval=50)
+emaFastLen = input.int(20, "Fast EMA", minval=5, maxval=100)
+emaSlowLen = input.int(50, "Slow EMA", minval=10, maxval=200)
+
+showTP = input.bool(true, "Show TP1/TP2")
+maxSignalMarks = input.int(25, "Max Signal Marks", minval=5, maxval=60)
+maxTPMarks = input.int(40, "Max TP Marks", minval=10, maxval=80)
+
+atr = ta.atr(atrLen)
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsi = ta.rsi(close, rsiLen)
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+bullBOS = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+bearBOS = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+
+var int structureState = 0
+var bool choch = false
+choch := false
+if bullBOS
+    choch := structureState == -1
+    structureState := 1
+if bearBOS
+    choch := structureState == 1
+    structureState := -1
+structureText = structureState == 1 ? "Bullish" : structureState == -1 ? "Bearish" : "Neutral"
+
+momScoreRaw = (emaFast > emaSlow ? 40 : emaFast < emaSlow ? -40 : 0) + (rsi > 55 ? 35 : rsi < 45 ? -35 : 0) + (close > emaFast ? 25 : -25)
+momentumState = momScoreRaw >= 40 ? "Bullish" : momScoreRaw <= -40 ? "Bearish" : math.abs(momScoreRaw) >= 15 ? "Weakening" : "Neutral"
+
+rangeHigh = ta.highest(high, 80)
+rangeLow = ta.lowest(low, 80)
+eq = (rangeHigh + rangeLow) * 0.5
+discount = close < eq
+premium = close > eq
+
+var box[] bullOB = array.new_box()
+var box[] bearOB = array.new_box()
+if bullBOS
+    array.unshift(bullOB, box.new(bar_index-1, math.max(open[1], close[1]), bar_index+20, low[1], border_color=color.new(color.green, 10), bgcolor=color.new(color.green, 87)))
+if bearBOS
+    array.unshift(bearOB, box.new(bar_index-1, high[1], bar_index+20, math.min(open[1], close[1]), border_color=color.new(color.purple, 10), bgcolor=color.new(color.purple, 87)))
+while array.size(bullOB) > zoneKeep
+    box.delete(array.pop(bullOB))
+while array.size(bearOB) > zoneKeep
+    box.delete(array.pop(bearOB))
+if array.size(bullOB) > 0
+    for i = 0 to array.size(bullOB) - 1
+        box.set_right(array.get(bullOB, i), bar_index + 20)
+if array.size(bearOB) > 0
+    for i = 0 to array.size(bearOB) - 1
+        box.set_right(array.get(bearOB, i), bar_index + 20)
+
+inBullOB = false
+if array.size(bullOB) > 0
+    for i = 0 to array.size(bullOB) - 1
+        bx = array.get(bullOB, i)
+        inBullOB := inBullOB or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
+inBearOB = false
+if array.size(bearOB) > 0
+    for i = 0 to array.size(bearOB) - 1
+        bx = array.get(bearOB, i)
+        inBearOB := inBearOB or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
+
+var box[] bullFVG = array.new_box()
+var box[] bearFVG = array.new_box()
+if low > high[2]
+    array.unshift(bullFVG, box.new(bar_index-2, low, bar_index+15, high[2], border_color=color.new(color.teal, 50), bgcolor=color.new(color.teal, 90)))
+if high < low[2]
+    array.unshift(bearFVG, box.new(bar_index-2, low[2], bar_index+15, high, border_color=color.new(color.orange, 50), bgcolor=color.new(color.orange, 90)))
+while array.size(bullFVG) > zoneKeep
+    box.delete(array.pop(bullFVG))
+while array.size(bearFVG) > zoneKeep
+    box.delete(array.pop(bearFVG))
+
+inBullFVG = false
+if array.size(bullFVG) > 0
+    for i = 0 to array.size(bullFVG) - 1
+        bx = array.get(bullFVG, i)
+        inBullFVG := inBullFVG or (low <= box.get_top(bx) and high >= box.get_bottom(bx))
+inBearFVG = false
+if array.size(bearFVG) > 0
+    for i = 0 to array.size(bearFVG) - 1
+        bx = array.get(bearFVG, i)
+        inBearFVG := inBearFVG or (high >= box.get_bottom(bx) and low <= box.get_top(bx))
+
+longScore = (structureState == 1 ? 25 : 0) + (momentumState == "Bullish" ? 25 : momentumState == "Weakening" ? 10 : 0) + (discount ? 15 : 0) + ((inBullOB or inBullFVG) ? 20 : 0) + (bullBOS ? 15 : 0)
+shortScore = (structureState == -1 ? 25 : 0) + (momentumState == "Bearish" ? 25 : momentumState == "Weakening" ? 10 : 0) + (premium ? 15 : 0) + ((inBearOB or inBearFVG) ? 20 : 0) + (bearBOS ? 15 : 0)
+
+strongLong = longScore >= minSignalScore
+strongShort = shortScore >= minSignalScore
+verdict = strongLong and longScore > shortScore ? "BULLISH BIAS" : strongShort and shortScore > longScore ? "BEARISH BIAS" : math.max(longScore, shortScore) >= minSignalScore - 10 ? "CAUTION" : "NO CLEAR EDGE"
+
+longSignal = verdict == "BULLISH BIAS"
+shortSignal = verdict == "BEARISH BIAS"
+
+recentHigh = ta.highest(high, 50)
+recentLow = ta.lowest(low, 50)
+longTP1 = math.min(recentHigh, close + atr * 1.5)
+longTP2 = math.min(recentHigh + atr * 0.5, close + atr * 3.0)
+shortTP1 = math.max(recentLow, close - atr * 1.5)
+shortTP2 = math.max(recentLow - atr * 0.5, close - atr * 3.0)
+longSignal := longSignal and longTP1 > close + atr * 0.6 and longTP2 > longTP1
+shortSignal := shortSignal and shortTP1 < close - atr * 0.6 and shortTP2 < shortTP1
+
+plot(emaFast, "EMA Fast", color=color.new(color.aqua, 25), linewidth=1)
+plot(emaSlow, "EMA Slow", color=color.new(color.blue, 35), linewidth=1)
+
+var label[] sigLabels = array.new_label()
+var label[] tpLabels = array.new_label()
+
+if mode == "Debug"
+    if bullBOS
+        array.unshift(sigLabels, label.new(bar_index, high, choch ? "CHoCH↑" : "BOS↑", style=label.style_label_down, textcolor=color.white, color=color.new(color.green, 65), size=size.tiny))
+    if bearBOS
+        array.unshift(sigLabels, label.new(bar_index, low, choch ? "CHoCH↓" : "BOS↓", style=label.style_label_up, textcolor=color.white, color=color.new(color.purple, 65), size=size.tiny))
+
+if longSignal and barstate.isconfirmed
+    array.unshift(sigLabels, label.new(bar_index, low, mode == "Debug" ? "LONG" : "L", style=label.style_label_up, textcolor=color.white, color=color.new(color.lime, mode == "Debug" ? 25 : 45), size=size.tiny))
+if shortSignal and barstate.isconfirmed
+    array.unshift(sigLabels, label.new(bar_index, high, mode == "Debug" ? "SHORT" : "S", style=label.style_label_down, textcolor=color.white, color=color.new(color.red, mode == "Debug" ? 25 : 45), size=size.tiny))
+
+if showTP and longSignal and barstate.isconfirmed
+    array.unshift(tpLabels, label.new(bar_index, longTP1, "TP1", style=label.style_label_left, color=color.new(color.green, 78), textcolor=color.green, size=size.tiny))
+    array.unshift(tpLabels, label.new(bar_index, longTP2, "TP2", style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.green, size=size.tiny))
+if showTP and shortSignal and barstate.isconfirmed
+    array.unshift(tpLabels, label.new(bar_index, shortTP1, "TP1", style=label.style_label_left, color=color.new(color.red, 78), textcolor=color.red, size=size.tiny))
+    array.unshift(tpLabels, label.new(bar_index, shortTP2, "TP2", style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.red, size=size.tiny))
+
+while array.size(sigLabels) > maxSignalMarks
+    label.delete(array.pop(sigLabels))
+while array.size(tpLabels) > maxTPMarks
+    label.delete(array.pop(tpLabels))
+
+var table dash = table.new(position.top_right, 2, 8, border_width=1)
+if barstate.islast and showDashboard
+    table.cell(dash, 0, 0, "FutureFi Core", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, mode, text_color=color.silver)
+    table.cell(dash, 0, 1, "Structure")
+    table.cell(dash, 1, 1, structureText, text_color=structureState == 1 ? color.lime : structureState == -1 ? color.red : color.silver)
+    table.cell(dash, 0, 2, "Momentum")
+    table.cell(dash, 1, 2, momentumState, text_color=momentumState == "Bullish" ? color.lime : momentumState == "Bearish" ? color.red : color.yellow)
+    table.cell(dash, 0, 3, "Long Score")
+    table.cell(dash, 1, 3, str.tostring(longScore))
+    table.cell(dash, 0, 4, "Short Score")
+    table.cell(dash, 1, 4, str.tostring(shortScore))
+    table.cell(dash, 0, 5, "Verdict")
+    table.cell(dash, 1, 5, verdict, text_color=verdict == "BULLISH BIAS" ? color.lime : verdict == "BEARISH BIAS" ? color.red : verdict == "CAUTION" ? color.yellow : color.silver)
+    table.cell(dash, 0, 6, "Setup")
+    table.cell(dash, 1, 6, longSignal ? "Long" : shortSignal ? "Short" : "None")
+    table.cell(dash, 0, 7, "Zone")
+    table.cell(dash, 1, 7, discount ? "Discount" : premium ? "Premium" : "Mid")
+
+var table scanner = table.new(position.bottom_right, 5, 2, border_width=1)
+if barstate.islast and scanEnable
+    table.cell(scanner, 0, 0, "Symbol", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(scanner, 1, 0, "TF", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(scanner, 2, 0, "Bias", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(scanner, 3, 0, "Setup", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(scanner, 4, 0, "Score", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(scanner, 0, 1, syminfo.ticker)
+    table.cell(scanner, 1, 1, timeframe.period)
+    table.cell(scanner, 2, 1, verdict == "BULLISH BIAS" ? "Bullish" : verdict == "BEARISH BIAS" ? "Bearish" : "Mixed")
+    table.cell(scanner, 3, 1, longSignal ? "Long" : shortSignal ? "Short" : "None")
+    table.cell(scanner, 4, 1, str.tostring(math.max(longScore, shortScore)))
