@@ -251,7 +251,7 @@ f_trow(table t, int r, string lab, bool up) =>
     table.cell(t, 0, r, lab, text_color = color.new(cMute, 0), text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#0c1116, 0))
     table.cell(t, 1, r, f_dir(up), text_color = f_dcol(up),    text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#0c1116, 0))
 
-var table tdash = table.new(f_tpos(), 2, 6, border_width = 1, frame_width = 1, frame_color = color.new(color.gray, 40))
+var table tdash = table.new(f_tpos(), 2, 6, border_width = 1, frame_width = 1, frame_color = color.new(color.gray, 40), force_overlay = true)
 if showTrend and barstate.islast
     table.cell(tdash, 0, 0, byTF ? "TREND · MTF" : "TREND SCAN", text_color = color.white, text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#1b2630, 0))
     table.cell(tdash, 1, 0, consensus, text_color = consCol, text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#1b2630, 0))
