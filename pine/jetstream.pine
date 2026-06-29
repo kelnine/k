@@ -200,6 +200,46 @@ if isVM and showTable and barstate.islast
     f_row(3, "Rel Vol", str.tostring(relVol, "#.##") + "×", color.new(patCol, 0))
     f_row(4, "Volume", pattern, color.new(patCol, 0))
 
+// ================================================================ TREND SCANNER (dashboard)
+// A small toggleable table reading four independent trend methods at once, so
+// you can see which way each is pointing plus an overall consensus.
+gTS       = "Trend Scanner"
+showTrend = input.bool(true, "Show trend scanner", group = gTS)
+trendPos  = input.string("Top Left", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = gTS)
+
+// scanner 1 — ATR SuperTrend (reuses the on-chart trail)
+s1Up = upTrend
+// scanner 2 — EMA ribbon (fast vs slow)
+s2Up = fast > slow
+// scanner 3 — WaveTrend momentum (bull/bear zone)
+s3Up = wt1 >= 0
+// scanner 4 — MACD (12/26/9)
+[macdLine, macdSig, _macdHist] = ta.macd(close, 12, 26, 9)
+s4Up = macdLine > macdSig
+
+bullVotes = (s1Up ? 1 : 0) + (s2Up ? 1 : 0) + (s3Up ? 1 : 0) + (s4Up ? 1 : 0)
+consensus = bullVotes == 4 ? "STRONG UP" : bullVotes == 3 ? "UP" : bullVotes == 2 ? "MIXED" : bullVotes == 1 ? "DOWN" : "STRONG DOWN"
+consCol   = bullVotes >= 3 ? teal : bullVotes == 2 ? color.new(#fdd835, 0) : red
+
+f_dir(bool up) => up ? "▲ UP" : "▼ DN"
+f_dcol(bool up) => up ? teal : red
+f_tpos() =>
+    trendPos == "Top Right" ? position.top_right : trendPos == "Top Left" ? position.top_left : trendPos == "Bottom Left" ? position.bottom_left : position.bottom_right
+f_trow(table t, int r, string lab, bool up) =>
+    table.cell(t, 0, r, lab, text_color = color.new(cMute, 0), text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#0c1116, 0))
+    table.cell(t, 1, r, f_dir(up), text_color = f_dcol(up),    text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#0c1116, 0))
+
+var table tdash = table.new(f_tpos(), 2, 6, border_width = 1, frame_width = 1, frame_color = color.new(color.gray, 40))
+if showTrend and barstate.islast
+    table.cell(tdash, 0, 0, "TREND SCAN", text_color = color.white, text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#1b2630, 0))
+    table.cell(tdash, 1, 0, consensus,    text_color = consCol,     text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#1b2630, 0))
+    f_trow(tdash, 1, "SuperTrend", s1Up)
+    f_trow(tdash, 2, "EMA Ribbon", s2Up)
+    f_trow(tdash, 3, "Momentum",   s3Up)
+    f_trow(tdash, 4, "MACD",       s4Up)
+    table.cell(tdash, 0, 5, "Score", text_color = color.new(cMute, 0), text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#0c1116, 0))
+    table.cell(tdash, 1, 5, str.tostring(bullVotes) + "/4 up", text_color = consCol, text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#0c1116, 0))
+
 // ================================================================ alerts
 alertcondition(tBuy,  "Jetstream Buy",  "Jetstream flipped LONG on {{ticker}} {{interval}}")
 alertcondition(tSell, "Jetstream Sell", "Jetstream flipped SHORT on {{ticker}} {{interval}}")

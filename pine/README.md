@@ -33,6 +33,15 @@ changing the underlying signals (both share one WaveTrend core):
   VolMom view is adapted, with thanks, from a user-provided open-source
   Volume + Momentum WaveTrend study, rebuilt here from the same public methods.
 
+## Trend scanner (`jetstream.pine`)
+
+A toggleable mini-dashboard (**Trend Scanner** group, **Show trend scanner**)
+reading four independent trend methods at once — **SuperTrend**, **EMA Ribbon**,
+**Momentum** (WaveTrend zone) and **MACD** — each shown as ▲ UP / ▼ DN, with a
+consensus header (STRONG UP / UP / MIXED / DOWN / STRONG DOWN) and a score
+(`n/4 up`). Set its corner with **Position** (defaults Top Left, opposite the
+VolMom dashboard).
+
 ## Supply/Demand zones (`jetstream.pine`)
 
 A toggleable price-chart overlay (off the **Supply/Demand Zones** group, master
