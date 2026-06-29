@@ -1,0 +1,118 @@
+//@version=5
+// =============================================================================
+// DepthFlow Strategy — Sweep + Displacement (backtest)
+// -----------------------------------------------------------------------------
+// A testable version of the DepthFlow playbook so you can see whether the setup
+// actually holds an edge on YOUR symbol/timeframe in TradingView's Strategy
+// Tester (win rate, profit factor, drawdown).
+//
+// Rule (per bar, non-repainting):
+//   • A liquidity sweep arms a setup:
+//       - sell-side sweep (wick under a swing low, close back above)  → arm LONG
+//       - buy-side  sweep (wick over a swing high, close back below)  → arm SHORT
+//   • A same-direction DISPLACEMENT candle within `confirmBars` confirms it.
+//   • Entry at that candle's close.
+//   • Stop just beyond the sweep extreme; target = R-multiple of the risk.
+//   • Position size from a fixed % account risk per trade.
+//
+// This is educational backtesting, NOT financial advice. Past performance does
+// not predict future results. Always include realistic commission/slippage.
+// =============================================================================
+strategy("DepthFlow Strategy — Sweep + Displacement", overlay = true, initial_capital = 10000, currency = currency.USD, commission_type = strategy.commission.percent, commission_value = 0.02, slippage = 2, calc_on_every_tick = false, process_orders_on_close = true)
+
+// ----------------------------------------------------------------- inputs
+grpSig      = "Setup"
+swingLen    = input.int(5, "Swing strength", minval = 1, group = grpSig)
+atrLen      = input.int(14, "ATR length", minval = 1, group = grpSig)
+dispMult    = input.float(1.6, "Displacement (× ATR body)", minval = 0.5, step = 0.1, group = grpSig)
+confirmBars = input.int(3, "Sweep→displacement window (bars)", minval = 1, group = grpSig)
+
+grpRisk     = "Risk"
+riskPct     = input.float(1.0, "Risk per trade (% equity)", minval = 0.05, step = 0.05, group = grpRisk)
+rMult       = input.float(2.0, "Target (R multiple)", minval = 0.5, step = 0.25, group = grpRisk)
+stopBufATR  = input.float(0.1, "Stop buffer (× ATR beyond sweep)", minval = 0.0, step = 0.05, group = grpRisk)
+
+grpTime     = "Session filter"
+useSession  = input.bool(false, "Restrict to a session", group = grpTime)
+sess        = input.session("0930-1600", "Session", group = grpTime)
+tradeLong   = input.bool(true, "Allow longs", group = grpTime)
+tradeShort  = input.bool(true, "Allow shorts", group = grpTime)
+
+// ----------------------------------------------------------------- signals
+atrv = ta.atr(atrLen)
+
+ph = ta.pivothigh(swingLen, swingLen)
+pl = ta.pivotlow(swingLen, swingLen)
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+sweepHigh = not na(lastPH) and high > lastPH and close < lastPH
+sweepLow  = not na(lastPL) and low < lastPL and close > lastPL
+// consume the level once swept, so already-grabbed liquidity can't re-trigger
+if sweepHigh
+    lastPH := na
+if sweepLow
+    lastPL := na
+
+body  = math.abs(close - open)
+disp  = atrv > 0 and body > atrv * dispMult
+dispUp = disp and close >= open
+dispDn = disp and close < open
+
+inSession = not useSession or not na(time(timeframe.period, sess))
+
+// ----------------------------------------------------------------- setup state
+var bool  pendLong  = false
+var float sweepLo   = na
+var int   pendLongBar = na
+var bool  pendShort = false
+var float sweepHi   = na
+var int   pendShortBar = na
+
+if sweepLow
+    pendLong := true
+    sweepLo := low
+    pendLongBar := bar_index
+if sweepHigh
+    pendShort := true
+    sweepHi := high
+    pendShortBar := bar_index
+if not na(pendLongBar) and bar_index - pendLongBar > confirmBars
+    pendLong := false
+if not na(pendShortBar) and bar_index - pendShortBar > confirmBars
+    pendShort := false
+
+flat = strategy.position_size == 0
+goLong  = tradeLong  and inSession and flat and pendLong  and dispUp
+goShort = tradeShort and inSession and flat and pendShort and dispDn
+
+// ----------------------------------------------------------------- execution
+if goLong
+    float stop  = sweepLo - atrv * stopBufATR
+    float entry = close
+    float risk  = entry - stop
+    if risk > 0
+        float qty = (strategy.equity * riskPct / 100) / risk
+        float tgt = entry + rMult * risk
+        strategy.entry("L", strategy.long, qty = qty)
+        strategy.exit("L exit", "L", stop = stop, limit = tgt)
+        pendLong := false
+
+if goShort
+    float stop  = sweepHi + atrv * stopBufATR
+    float entry = close
+    float risk  = stop - entry
+    if risk > 0
+        float qty = (strategy.equity * riskPct / 100) / risk
+        float tgt = entry - rMult * risk
+        strategy.entry("S", strategy.short, qty = qty)
+        strategy.exit("S exit", "S", stop = stop, limit = tgt)
+        pendShort := false
+
+// markers for visual review
+plotshape(goLong,  "Long",  shape.labelup,   location.belowbar, color = color.rgb(38,166,154), text = "L", textcolor = color.white, size = size.tiny)
+plotshape(goShort, "Short", shape.labeldown, location.abovebar, color = color.rgb(239,83,80),  text = "S", textcolor = color.white, size = size.tiny)
