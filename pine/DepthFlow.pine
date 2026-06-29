@@ -214,9 +214,14 @@ if not na(pl)
     lastPL := pl
 
 // buy-side sweep: poke above a swing high, close back below it
-sweepHigh = showSweeps and not na(lastPH) and high > lastPH and close < lastPH and not (high[1] > lastPH and close[1] < lastPH)
+sweepHigh = showSweeps and not na(lastPH) and high > lastPH and close < lastPH
 // sell-side sweep: dip under a swing low, close back above it
-sweepLow  = showSweeps and not na(lastPL) and low < lastPL and close > lastPL and not (low[1] < lastPL and close[1] > lastPL)
+sweepLow  = showSweeps and not na(lastPL) and low < lastPL and close > lastPL
+// consume the level once swept, so already-grabbed liquidity can't re-trigger
+if sweepHigh
+    lastPH := na
+if sweepLow
+    lastPL := na
 plotshape(sweepHigh, "Sweep High", shape.triangledown, location.abovebar, color = cSupply, text = "sweep", textcolor = cSupply, size = size.tiny)
 plotshape(sweepLow,  "Sweep Low",  shape.triangleup,   location.belowbar, color = cDemand, text = "sweep", textcolor = cDemand, size = size.tiny)
 

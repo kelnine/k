@@ -50,8 +50,13 @@ if not na(ph)
 if not na(pl)
     lastPL := pl
 
-sweepHigh = not na(lastPH) and high > lastPH and close < lastPH and not (high[1] > lastPH and close[1] < lastPH)
-sweepLow  = not na(lastPL) and low < lastPL and close > lastPL and not (low[1] < lastPL and close[1] > lastPL)
+sweepHigh = not na(lastPH) and high > lastPH and close < lastPH
+sweepLow  = not na(lastPL) and low < lastPL and close > lastPL
+// consume the level once swept, so already-grabbed liquidity can't re-trigger
+if sweepHigh
+    lastPH := na
+if sweepLow
+    lastPL := na
 
 body  = math.abs(close - open)
 disp  = atrv > 0 and body > atrv * dispMult
