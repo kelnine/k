@@ -36,11 +36,17 @@ changing the underlying signals (both share one WaveTrend core):
 ## Trend scanner (`jetstream.pine`)
 
 A toggleable mini-dashboard (**Trend Scanner** group, **Show trend scanner**)
-reading four independent trend methods at once — **SuperTrend**, **EMA Ribbon**,
-**Momentum** (WaveTrend zone) and **MACD** — each shown as ▲ UP / ▼ DN, with a
-consensus header (STRONG UP / UP / MIXED / DOWN / STRONG DOWN) and a score
-(`n/4 up`). Set its corner with **Position** (defaults Top Left, opposite the
-VolMom dashboard).
+with a **Mode** switch:
+
+- **Timeframes** (default) — one trend read across **5m / 15m / 1h / 4h**
+  (each configurable), so you can see whether the timeframes agree. Uses
+  `request.security` with no lookahead, so each row is non-repainting on close.
+- **Methods** — four trend methods on the current timeframe: **SuperTrend**,
+  **EMA Ribbon**, **Momentum** (WaveTrend zone) and **MACD**.
+
+Each row shows ▲ BULL / ▼ BEAR with a consensus header (STRONG BULL / BULLISH /
+MIXED / BEARISH / STRONG BEAR) and a score (`n/4 bull`). Set its corner with
+**Position** (defaults Top Left, opposite the VolMom dashboard).
 
 ## Supply/Demand zones (`jetstream.pine`)
 

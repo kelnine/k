@@ -201,27 +201,49 @@ if isVM and showTable and barstate.islast
     f_row(4, "Volume", pattern, color.new(patCol, 0))
 
 // ================================================================ TREND SCANNER (dashboard)
-// A small toggleable table reading four independent trend methods at once, so
-// you can see which way each is pointing plus an overall consensus.
+// A small toggleable table with two modes:
+//   • Timeframes — one trend method read across 5m / 15m / 1h / 4h (configurable)
+//   • Methods    — four trend methods (SuperTrend / EMA / Momentum / MACD) on
+//                  the current timeframe
+// Each row reads bullish/bearish, with an overall consensus + score.
 gTS       = "Trend Scanner"
 showTrend = input.bool(true, "Show trend scanner", group = gTS)
+scanMode  = input.string("Timeframes", "Mode", options = ["Timeframes", "Methods"], group = gTS)
 trendPos  = input.string("Top Left", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = gTS)
+tfA = input.timeframe("5",   "Timeframe 1", group = gTS)
+tfB = input.timeframe("15",  "Timeframe 2", group = gTS)
+tfC = input.timeframe("60",  "Timeframe 3", group = gTS)
+tfD = input.timeframe("240", "Timeframe 4", group = gTS)
 
-// scanner 1 — ATR SuperTrend (reuses the on-chart trail)
-s1Up = upTrend
-// scanner 2 — EMA ribbon (fast vs slow)
-s2Up = fast > slow
-// scanner 3 — WaveTrend momentum (bull/bear zone)
-s3Up = wt1 >= 0
-// scanner 4 — MACD (12/26/9)
+// per-timeframe trend = EMA ribbon direction on that timeframe (no lookahead → non-repaint on close)
+f_tfTrend() => ta.ema(close, fastLen) > ta.ema(close, slowLen)
+t1Up = request.security(syminfo.tickerid, tfA, f_tfTrend(), lookahead = barmerge.lookahead_off)
+t2Up = request.security(syminfo.tickerid, tfB, f_tfTrend(), lookahead = barmerge.lookahead_off)
+t3Up = request.security(syminfo.tickerid, tfC, f_tfTrend(), lookahead = barmerge.lookahead_off)
+t4Up = request.security(syminfo.tickerid, tfD, f_tfTrend(), lookahead = barmerge.lookahead_off)
+
+// method scanners on the current timeframe
+s1Up = upTrend                       // ATR SuperTrend trail
+s2Up = fast > slow                   // EMA ribbon
+s3Up = wt1 >= 0                      // WaveTrend momentum zone
 [macdLine, macdSig, _macdHist] = ta.macd(close, 12, 26, 9)
-s4Up = macdLine > macdSig
+s4Up = macdLine > macdSig            // MACD
 
-bullVotes = (s1Up ? 1 : 0) + (s2Up ? 1 : 0) + (s3Up ? 1 : 0) + (s4Up ? 1 : 0)
-consensus = bullVotes == 4 ? "STRONG UP" : bullVotes == 3 ? "UP" : bullVotes == 2 ? "MIXED" : bullVotes == 1 ? "DOWN" : "STRONG DOWN"
+byTF = scanMode == "Timeframes"
+l1 = byTF ? tfA : "SuperTrend"
+l2 = byTF ? tfB : "EMA Ribbon"
+l3 = byTF ? tfC : "Momentum"
+l4 = byTF ? tfD : "MACD"
+r1Up = byTF ? t1Up : s1Up
+r2Up = byTF ? t2Up : s2Up
+r3Up = byTF ? t3Up : s3Up
+r4Up = byTF ? t4Up : s4Up
+
+bullVotes = (r1Up ? 1 : 0) + (r2Up ? 1 : 0) + (r3Up ? 1 : 0) + (r4Up ? 1 : 0)
+consensus = bullVotes == 4 ? "STRONG BULL" : bullVotes == 3 ? "BULLISH" : bullVotes == 2 ? "MIXED" : bullVotes == 1 ? "BEARISH" : "STRONG BEAR"
 consCol   = bullVotes >= 3 ? teal : bullVotes == 2 ? color.new(#fdd835, 0) : red
 
-f_dir(bool up) => up ? "▲ UP" : "▼ DN"
+f_dir(bool up) => up ? "▲ BULL" : "▼ BEAR"
 f_dcol(bool up) => up ? teal : red
 f_tpos() =>
     trendPos == "Top Right" ? position.top_right : trendPos == "Top Left" ? position.top_left : trendPos == "Bottom Left" ? position.bottom_left : position.bottom_right
@@ -231,14 +253,14 @@ f_trow(table t, int r, string lab, bool up) =>
 
 var table tdash = table.new(f_tpos(), 2, 6, border_width = 1, frame_width = 1, frame_color = color.new(color.gray, 40))
 if showTrend and barstate.islast
-    table.cell(tdash, 0, 0, "TREND SCAN", text_color = color.white, text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#1b2630, 0))
-    table.cell(tdash, 1, 0, consensus,    text_color = consCol,     text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#1b2630, 0))
-    f_trow(tdash, 1, "SuperTrend", s1Up)
-    f_trow(tdash, 2, "EMA Ribbon", s2Up)
-    f_trow(tdash, 3, "Momentum",   s3Up)
-    f_trow(tdash, 4, "MACD",       s4Up)
+    table.cell(tdash, 0, 0, byTF ? "TREND · MTF" : "TREND SCAN", text_color = color.white, text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#1b2630, 0))
+    table.cell(tdash, 1, 0, consensus, text_color = consCol, text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#1b2630, 0))
+    f_trow(tdash, 1, l1, r1Up)
+    f_trow(tdash, 2, l2, r2Up)
+    f_trow(tdash, 3, l3, r3Up)
+    f_trow(tdash, 4, l4, r4Up)
     table.cell(tdash, 0, 5, "Score", text_color = color.new(cMute, 0), text_size = size.tiny, text_halign = text.align_left,  bgcolor = color.new(#0c1116, 0))
-    table.cell(tdash, 1, 5, str.tostring(bullVotes) + "/4 up", text_color = consCol, text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#0c1116, 0))
+    table.cell(tdash, 1, 5, str.tostring(bullVotes) + "/4 bull", text_color = consCol, text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(#0c1116, 0))
 
 // ================================================================ alerts
 alertcondition(tBuy,  "Jetstream Buy",  "Jetstream flipped LONG on {{ticker}} {{interval}}")
