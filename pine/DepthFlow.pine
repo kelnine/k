@@ -38,6 +38,8 @@ swingLen   = input.int(5, "Swing strength", minval = 1, group = grpSig)
 showDisp   = input.bool(true, "Displacement", group = grpSig)
 atrLen     = input.int(14, "ATR length", minval = 1, group = grpSig)
 dispMult   = input.float(1.6, "Displacement (× ATR body)", minval = 0.5, step = 0.1, group = grpSig)
+confirmBars = input.int(3, "Setup: sweep→displacement window (bars)", minval = 1, group = grpSig)
+showSetups  = input.bool(true, "Mark LONG/SHORT setups", group = grpSig)
 
 // ----------------------------------------------------------------- palette
 cSupply = color.rgb(239, 83, 80)   // red  — resting supply above price
@@ -57,6 +59,10 @@ f_buyFrac(float h, float l, float c, float o) =>
 // =============================================================================
 var box[]   vpBoxes  = array.new<box>()
 var label[] vpLabels = array.new<label>()
+// current block levels, kept for setup/alert proximity checks
+var float[] gBlkTop    = array.new_float()
+var float[] gBlkBot    = array.new_float()
+var bool[]  gBlkDemand = array.new<bool>()
 
 if barstate.islast
     // clear the previous render
@@ -66,6 +72,9 @@ if barstate.islast
     for lb in vpLabels
         label.delete(lb)
     array.clear(vpLabels)
+    array.clear(gBlkTop)
+    array.clear(gBlkBot)
+    array.clear(gBlkDemand)
 
     int n = math.min(lookback, bar_index + 1)
 
@@ -164,6 +173,10 @@ if barstate.islast
             label lbX = label.new(bar_index, center, txt, xloc = xloc.bar_index, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = size.small)
             array.push(vpLabels, lbX)
 
+            array.push(gBlkTop, top)
+            array.push(gBlkBot, bot)
+            array.push(gBlkDemand, not above)
+
             array.remove(bTop, mi)
             array.remove(bBot, mi)
             array.remove(bVol, mi)
@@ -216,3 +229,56 @@ dispUp = showDisp and body > atrv * dispMult and close >= open
 dispDn = showDisp and body > atrv * dispMult and close < open
 plotshape(dispUp, "Displacement Up", shape.diamond, location.belowbar, color = cDemand, text = "DISP", textcolor = cDemand, size = size.tiny)
 plotshape(dispDn, "Displacement Dn", shape.diamond, location.abovebar, color = cSupply, text = "DISP", textcolor = cSupply, size = size.tiny)
+
+// =============================================================================
+// 5) SETUPS + ALERTS  (sweep → displacement, at a liquidity block)
+// =============================================================================
+f_nearDemand(float p) =>
+    bool hit = false
+    if array.size(gBlkBot) > 0
+        for i = 0 to array.size(gBlkBot) - 1
+            if array.get(gBlkDemand, i) and p >= array.get(gBlkBot, i) and p <= array.get(gBlkTop, i)
+                hit := true
+    hit
+
+f_nearSupply(float p) =>
+    bool hit = false
+    if array.size(gBlkBot) > 0
+        for i = 0 to array.size(gBlkBot) - 1
+            if not array.get(gBlkDemand, i) and p >= array.get(gBlkBot, i) and p <= array.get(gBlkTop, i)
+                hit := true
+    hit
+
+// a sweep arms a pending setup; a same-direction displacement within
+// `confirmBars` (while price is at the matching block) confirms it
+var bool pendLong  = false
+var int  pendLongBar = na
+var bool pendShort = false
+var int  pendShortBar = na
+if sweepLow
+    pendLong := true
+    pendLongBar := bar_index
+if sweepHigh
+    pendShort := true
+    pendShortBar := bar_index
+if not na(pendLongBar) and bar_index - pendLongBar > confirmBars
+    pendLong := false
+if not na(pendShortBar) and bar_index - pendShortBar > confirmBars
+    pendShort := false
+
+bullSetup = pendLong and dispUp and f_nearDemand(low)
+bearSetup = pendShort and dispDn and f_nearSupply(high)
+if bullSetup
+    pendLong := false
+if bearSetup
+    pendShort := false
+
+plotshape(showSetups and bullSetup, "LONG setup", shape.labelup, location.belowbar, color = cDemand, text = "LONG", textcolor = color.white, size = size.small)
+plotshape(showSetups and bearSetup, "SHORT setup", shape.labeldown, location.abovebar, color = cSupply, text = "SHORT", textcolor = color.white, size = size.small)
+
+alertcondition(sweepLow,  "Sweep (sell-side)", "DepthFlow: sell-side sweep — possible long")
+alertcondition(sweepHigh, "Sweep (buy-side)",  "DepthFlow: buy-side sweep — possible short")
+alertcondition(dispUp,    "Displacement up",   "DepthFlow: bullish displacement")
+alertcondition(dispDn,    "Displacement down", "DepthFlow: bearish displacement")
+alertcondition(bullSetup, "LONG setup",  "DepthFlow LONG: sweep + displacement at demand block")
+alertcondition(bearSetup, "SHORT setup", "DepthFlow SHORT: sweep + displacement at supply block")

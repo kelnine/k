@@ -28,3 +28,33 @@ Everything is computed from raw OHLCV — no external data feed required. Note
 the buy/sell split is *inferred* from each candle's close location, the same
 approximation retail "order-flow on TradingView" tools use; it is not true
 bid/ask tape, which TradingView does not expose to Pine.
+
+#### Alerts
+
+The indicator emits `alertcondition`s you can wire up via TradingView's **Add
+alert** dialog (pick "DepthFlow" as the condition):
+
+- *Sweep (sell-side / buy-side)* — a raw liquidity grab fired.
+- *Displacement up / down* — an impulsive candle fired.
+- *LONG setup* — sweep + displacement up **at a demand block** (the high-
+  confluence long).
+- *SHORT setup* — sweep + displacement down **at a supply block**.
+
+`LONG`/`SHORT` labels also print on the chart at those confluence points.
+
+## DepthFlowStrategy.pine
+
+A `strategy()` backtest of the DepthFlow playbook so you can measure whether the
+setup actually has an edge on **your** symbol/timeframe — load it and open the
+**Strategy Tester** tab for win rate, profit factor, and max drawdown.
+
+Rule: a liquidity sweep arms a setup; a same-direction displacement candle
+within `confirmBars` confirms it; entry at that close, stop just beyond the
+sweep extreme, target an R-multiple of the risk. Position size comes from a
+fixed **% account risk per trade** (default 1%). Inputs cover swing strength,
+ATR/displacement, R-multiple, stop buffer, an optional session filter, and
+long/short toggles. Commission + slippage are on by default — keep them
+realistic so the results aren't fantasy.
+
+> Educational backtesting only, not financial advice. Past performance does not
+> predict future results.
