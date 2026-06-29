@@ -726,6 +726,30 @@ export class ChartEngine {
       ctx.setLineDash([])
     }
 
+    for (const fill of a.result.fills ?? []) {
+      const pa = a.result.plots.find((p) => p.key === fill.a)
+      const pb = a.result.plots.find((p) => p.key === fill.b)
+      if (!pa || !pb) continue
+      ctx.fillStyle = fill.color
+      ctx.beginPath()
+      let started = false
+      for (let i = from; i <= to; i++) {
+        const v = pa.values[i]
+        if (v === null || v === undefined) continue
+        const x = this.xForIndex(i)
+        if (started) ctx.lineTo(x, this.yForPrice(v, s))
+        else ctx.moveTo(x, this.yForPrice(v, s))
+        started = true
+      }
+      for (let i = to; i >= from; i--) {
+        const v = pb.values[i]
+        if (v === null || v === undefined) continue
+        ctx.lineTo(this.xForIndex(i), this.yForPrice(v, s))
+      }
+      ctx.closePath()
+      ctx.fill()
+    }
+
     for (const plot of a.result.plots) {
       if (plot.style === 'hist') {
         const zero = this.yForPrice(0, s)

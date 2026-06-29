@@ -1,0 +1,60 @@
+//@version=6
+// Jetstream Trend — free alternative to premium "buy/sell signal" overlays.
+// Built from public techniques (ATR SuperTrend + EMA ribbon), fully auditable.
+// Paste into TradingView → Pine Editor → Add to chart. Pairs with
+// "Jetstream Waves" (the oscillator) for the full money-flow-wave look.
+indicator("Jetstream Trend", overlay = true, max_labels_count = 500)
+
+// ---------------------------------------------------------------- inputs
+grpT   = "Trend"
+atrLen = input.int(10, "ATR Length", minval = 1, group = grpT)
+mult   = input.float(3.0, "ATR Multiplier", minval = 0.1, step = 0.1, group = grpT)
+
+grpR    = "EMA Ribbon"
+showRib = input.bool(true, "Show ribbon", group = grpR)
+fastLen = input.int(21, "Fast EMA", minval = 1, group = grpR)
+slowLen = input.int(55, "Slow EMA", minval = 1, group = grpR)
+
+grpS    = "Signals"
+showSig = input.bool(true, "Show signals", group = grpS)
+sigStyle = input.string("Labels", "Style", options = ["Labels", "Triangles"], group = grpS)
+colorBars = input.bool(false, "Colour bars by trend", group = grpS)
+
+// ---------------------------------------------------------------- trend
+// ta.supertrend returns the trail and a direction: -1 = uptrend, 1 = downtrend.
+[st, dir] = ta.supertrend(mult, atrLen)
+upTrend = dir < 0
+
+teal = color.new(#26a69a, 0)
+red  = color.new(#ef5350, 0)
+
+plot(upTrend ? st : na, "Up trail",   color = teal, linewidth = 2, style = plot.style_linebr)
+plot(upTrend ? na : st, "Down trail", color = red,  linewidth = 2, style = plot.style_linebr)
+
+// ---------------------------------------------------------------- ribbon
+fast = ta.ema(close, fastLen)
+slow = ta.ema(close, slowLen)
+pf = plot(showRib ? fast : na, "Fast EMA", color = color.new(#78c8ff, 30))
+ps = plot(showRib ? slow : na, "Slow EMA", color = color.new(#ffaa5a, 30))
+fill(pf, ps, color = fast > slow ? color.new(#26a69a, 88) : color.new(#ef5350, 88), title = "Ribbon")
+
+// ---------------------------------------------------------------- signals
+flip   = ta.change(dir)
+buy    = flip < 0   // direction flipped from downtrend to uptrend
+sell   = flip > 0   // direction flipped from uptrend to downtrend
+
+labels = sigStyle == "Labels"
+plotshape(showSig and buy and labels,      "Buy label",  style = shape.labelup,   location = location.belowbar,
+     color = teal, text = "BUY",  textcolor = color.white, size = size.small)
+plotshape(showSig and sell and labels,     "Sell label", style = shape.labeldown, location = location.abovebar,
+     color = red,  text = "SELL", textcolor = color.white, size = size.small)
+plotshape(showSig and buy and not labels,  "Buy tri",    style = shape.triangleup,   location = location.belowbar,
+     color = teal, size = size.tiny)
+plotshape(showSig and sell and not labels, "Sell tri",   style = shape.triangledown, location = location.abovebar,
+     color = red,  size = size.tiny)
+
+barcolor(colorBars ? (upTrend ? teal : red) : na)
+
+alertcondition(buy,  "Jetstream Buy",  "Jetstream Trend flipped LONG on {{ticker}} {{interval}}")
+alertcondition(sell, "Jetstream Sell", "Jetstream Trend flipped SHORT on {{ticker}} {{interval}}")
+alertcondition(buy or sell, "Jetstream Signal", "Jetstream Trend flipped on {{ticker}} {{interval}}")

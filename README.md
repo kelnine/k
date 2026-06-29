@@ -14,6 +14,11 @@ fully custom canvas rendering engine, with no third-party charting library.
   you pan back.
 - **Indicators** — MA 20/50/200, EMA 21, Bollinger Bands, daily-anchored VWAP
   (overlays) plus RSI and MACD in their own synced panes.
+- **Jetstream** — a free, from-scratch alternative to the premium "buy/sell
+  signal + money-flow wave" indicator packs: an ATR SuperTrend trail with an
+  EMA ribbon and ▲/▼ flip signals on the price pane (`Jetstream Trend`), paired
+  with a WaveTrend money-flow oscillator drawn as nested rainbow waves
+  (`Jetstream Waves`). Built from public techniques, fully auditable, $0.
 - **Phantom Flow SMC** — a from-scratch Smart Money Concepts overlay: swing
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low

@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { makeSmc } from './smc'
+import { makeJetstreamTrend, makeJetstreamWaves } from './jetstream'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -255,6 +256,8 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeJetstreamTrend(),
+  makeJetstreamWaves(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {
