@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { makeSmc } from './smc'
+import { makeDepthFlow } from './depthflow'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -27,6 +28,8 @@ export interface ShapeBox {
   stroke?: string
   label?: string
   labelColor?: string
+  /** which edge of the box the label sits against (default 'left') */
+  labelAlign?: 'left' | 'right'
 }
 
 export interface ShapeLine {
@@ -255,6 +258,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeDepthFlow(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {

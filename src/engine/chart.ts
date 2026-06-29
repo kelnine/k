@@ -587,8 +587,13 @@ export class ChartEngine {
         }
         if (sh.label && cr - cl > 26 && yB - yT > 12) {
           ctx.fillStyle = sh.labelColor ?? '#fff'
-          ctx.textAlign = 'left'
-          ctx.fillText(sh.label, cl + 3, (yT + yB) / 2)
+          if (sh.labelAlign === 'right') {
+            ctx.textAlign = 'right'
+            ctx.fillText(sh.label, cr - 4, (yT + yB) / 2)
+          } else {
+            ctx.textAlign = 'left'
+            ctx.fillText(sh.label, cl + 3, (yT + yB) / 2)
+          }
         }
       } else if (sh.type === 'line') {
         const ax = this.xForIndex(sh.x1)

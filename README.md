@@ -18,6 +18,11 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **DepthFlow** — a from-scratch order-flow overlay: a volume-by-price profile
+  whose high-volume nodes are drawn as horizontal liquidity blocks (red supply
+  above price, green demand below) labelled with traded volume and buy/sell
+  split, a live spot buy/sell dominance read-out, liquidity sweeps (stop-hunt
+  wicks that close back inside), and ATR-scaled displacement markers.
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.
