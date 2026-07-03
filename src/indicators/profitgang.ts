@@ -164,8 +164,23 @@ function resample(candles: Candle[], bucketMs: number): Candle[] {
   return out
 }
 
-/** CISD bias and open bias for a resampled series; 0 = not enough data */
-function seriesBias(series: Candle[]): { cisd: number; open: number } {
+/** chart candle interval, inferred as the median gap between recent candles */
+function inferTfMs(candles: Candle[]): number {
+  const diffs: number[] = []
+  for (let i = Math.max(1, candles.length - 50); i < candles.length; i++) {
+    diffs.push(candles[i].time - candles[i - 1].time)
+  }
+  diffs.sort((a, b) => a - b)
+  return diffs[Math.floor(diffs.length / 2)] || 60_000
+}
+
+/**
+ * CISD bias and open bias of the series resampled to `bucketMs`;
+ * 0 = not derivable (bucket smaller than the source candles, or too few of them)
+ */
+function seriesBias(candles: Candle[], tfMs: number, bucketMs: number): { cisd: number; open: number } {
+  if (bucketMs < tfMs) return { cisd: 0, open: 0 }
+  const series = resample(candles, bucketMs)
   if (series.length < 3) return { cisd: 0, open: 0 }
   const { state } = detectCisd(series, 1)
   const cur = series[series.length - 1]
@@ -290,8 +305,9 @@ function compute(candles: Candle[], o: ProfitGangOptions): IndicatorResult {
   )
 
   // ---- HTF / MTF bias dashboard
-  const htf = seriesBias(resample(candles, 86_400_000))
-  const mtf = seriesBias(resample(candles, 3_600_000))
+  const tfMs = inferTfMs(candles)
+  const htf = seriesBias(candles, tfMs, 86_400_000)
+  const mtf = seriesBias(candles, tfMs, 3_600_000)
   const swingPart: TablePart =
     trend === 0
       ? { text: 'Swing: —', color: '#666' }
