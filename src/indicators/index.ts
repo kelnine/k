@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { makeSmc } from './smc'
+import { makeVwapWinner } from './vwap-winner'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -8,6 +9,7 @@ export interface Plot {
   color: string
   style: PlotStyle
   width?: number
+  dash?: number[]
   values: (number | null)[]
 }
 
@@ -209,6 +211,7 @@ export const INDICATORS: IndicatorDef[] = [
       return { plots: [{ key: 'vwap', color: C.purple, style: 'line', values }] }
     },
   },
+  makeVwapWinner(),
   {
     id: 'rsi',
     name: 'RSI 14',

@@ -500,9 +500,11 @@ export class ChartEngine {
     yFor: (v: number) => number,
     color: string,
     width = 1.5,
+    dash?: number[],
   ): void {
     ctx.strokeStyle = color
     ctx.lineWidth = width
+    if (dash) ctx.setLineDash(dash)
     ctx.beginPath()
     let started = false
     for (let i = from; i <= to; i++) {
@@ -518,6 +520,7 @@ export class ChartEngine {
       started = true
     }
     ctx.stroke()
+    if (dash) ctx.setLineDash([])
     ctx.lineWidth = 1
   }
 
@@ -548,7 +551,7 @@ export class ChartEngine {
         ctx.fill()
       }
       for (const plot of a.result.plots) {
-        this.strokePlot(ctx, plot.values, from, to, (v) => this.yForPrice(v, s), plot.color, plot.width)
+        this.strokePlot(ctx, plot.values, from, to, (v) => this.yForPrice(v, s), plot.color, plot.width, plot.dash)
       }
     }
   }
@@ -742,7 +745,7 @@ export class ChartEngine {
           ctx.fillRect(this.xForIndex(i) - bw / 2, Math.min(y, zero), bw, Math.abs(zero - y) || 1)
         }
       } else {
-        this.strokePlot(ctx, plot.values, from, to, (v) => this.yForPrice(v, s), plot.color, plot.width)
+        this.strokePlot(ctx, plot.values, from, to, (v) => this.yForPrice(v, s), plot.color, plot.width, plot.dash)
       }
     }
 

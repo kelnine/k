@@ -14,6 +14,10 @@ fully custom canvas rendering engine, with no third-party charting library.
   you pan back.
 - **Indicators** — MA 20/50/200, EMA 21, Bollinger Bands, daily-anchored VWAP
   (overlays) plus RSI and MACD in their own synced panes.
+- **VWAP Winner** — daily-anchored VWAP with ±1/2/3σ volume-weighted
+  standard-deviation bands (green sell zone above, lavender buy zone below)
+  and BUY/SELL markers on ±2σ band rejections, with a live zone read-out in
+  the legend.
 - **Phantom Flow SMC** — a from-scratch Smart Money Concepts overlay: swing
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
