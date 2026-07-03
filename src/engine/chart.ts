@@ -1,5 +1,5 @@
 import type { Candle } from '../data/types'
-import { indicatorById, type IndicatorDef, type IndicatorResult, type IndicatorShape } from '../indicators'
+import { indicatorById, type IndicatorDef, type IndicatorResult, type IndicatorShape, type IndicatorTable } from '../indicators'
 import {
   DEFAULT_COLOR,
   hitTestDrawing,
@@ -393,6 +393,7 @@ export class ChartEngine {
       this.drawLastPrice(ctx, this.mainScale)
       const sp = this.drawSpace()
       if (sp) for (const d of this.drawings) renderDrawing(ctx, sp, d, d.id === this.selectedId)
+      this.drawIndicatorTables(ctx, this.mainScale)
     }
     this.drawPriceAxis(ctx, this.mainScale)
 
@@ -618,11 +619,98 @@ export class ChartEngine {
         ctx.fillStyle = sh.color
         ctx.textAlign = 'center'
         ctx.textBaseline = sh.place === 'above' ? 'bottom' : 'top'
+        if (sh.size) ctx.font = `${sh.size}px system-ui, sans-serif`
         ctx.fillText(sh.text, x, sh.place === 'above' ? y - 5 : y + 5)
+        if (sh.size) ctx.font = '10px system-ui, sans-serif'
         ctx.textBaseline = 'middle'
       }
     }
     ctx.restore()
+  }
+
+  /** status dashboards (e.g. Profit Gang bias table) pinned bottom-left of the main pane */
+  private drawIndicatorTables(ctx: CanvasRenderingContext2D, s: PaneScale): void {
+    const tables: IndicatorTable[] = []
+    for (const a of this.indicators) {
+      if (a.def.kind === 'overlay' && a.result.table) tables.push(a.result.table)
+    }
+    if (tables.length === 0) return
+    let bottom = s.bottom - 4
+    for (const t of tables) bottom = this.drawTable(ctx, t, 8, bottom) - 8
+  }
+
+  /** draws one table with its bottom edge at `bottom`; returns its top edge */
+  private drawTable(ctx: CanvasRenderingContext2D, table: IndicatorTable, x: number, bottom: number): number {
+    const rowH = 15
+    const pad = 6
+    const font = '9.5px system-ui, sans-serif'
+    const boldFont = '600 9.5px system-ui, sans-serif'
+    const header = `${this.symbol} · ${tfLabel(this.tfMs)}`
+
+    ctx.save()
+    ctx.font = font
+    let labelW = 0
+    let valueW = 0
+    for (const r of table.rows) {
+      labelW = Math.max(labelW, ctx.measureText(r.label).width)
+      valueW = Math.max(valueW, ctx.measureText(r.parts.map((p) => p.text).join('')).width)
+    }
+    ctx.font = boldFont
+    labelW = Math.max(labelW, ctx.measureText(header).width)
+    valueW = Math.max(valueW, ctx.measureText(table.title).width)
+    const col1 = Math.ceil(labelW) + pad * 2
+    const col2 = Math.ceil(valueW) + pad * 2
+    const w = col1 + col2
+    const h = rowH * (table.rows.length + 1)
+    const top = bottom - h
+
+    ctx.textBaseline = 'middle'
+    // header row
+    ctx.fillStyle = '#f8f9fb'
+    ctx.fillRect(x, top, w, rowH)
+    ctx.fillStyle = '#111'
+    ctx.font = boldFont
+    ctx.textAlign = 'center'
+    ctx.fillText(header, x + col1 / 2, top + rowH / 2 + 0.5)
+    ctx.fillText(table.title, x + col1 + col2 / 2, top + rowH / 2 + 0.5)
+
+    ctx.font = font
+    table.rows.forEach((r, i) => {
+      const y = top + rowH * (i + 1)
+      ctx.fillStyle = '#4b5563'
+      ctx.fillRect(x, y, col1, rowH)
+      ctx.fillStyle = r.bg ?? '#ffffff'
+      ctx.fillRect(x + col1, y, col2, rowH)
+      ctx.fillStyle = '#f3f4f6'
+      ctx.textAlign = 'left'
+      ctx.fillText(r.label, x + pad, y + rowH / 2 + 0.5)
+      // value parts, centered as a group, each with its own color
+      let total = 0
+      for (const p of r.parts) total += ctx.measureText(p.text).width
+      let px = x + col1 + (col2 - total) / 2
+      for (const p of r.parts) {
+        ctx.fillStyle = p.color ?? '#111'
+        ctx.fillText(p.text, px, y + rowH / 2 + 0.5)
+        px += ctx.measureText(p.text).width
+      }
+    })
+
+    // grid
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (let i = 0; i <= table.rows.length + 1; i++) {
+      const y = Math.round(top + rowH * i) + 0.5
+      ctx.moveTo(x, y)
+      ctx.lineTo(x + w, y)
+    }
+    for (const cx of [x, x + col1, x + w]) {
+      ctx.moveTo(Math.round(cx) + 0.5, top)
+      ctx.lineTo(Math.round(cx) + 0.5, top + h)
+    }
+    ctx.stroke()
+    ctx.restore()
+    return top
   }
 
   private drawLastPrice(ctx: CanvasRenderingContext2D, s: PaneScale): void {
@@ -1039,4 +1127,11 @@ export class ChartEngine {
       this.opts.onLoadMore()
     }
   }
+}
+
+function tfLabel(tfMs: number): string {
+  const m = Math.round(tfMs / 60_000)
+  if (m < 60) return `${m}m`
+  if (m < 1440) return `${m / 60}h`
+  return m === 1440 ? '1D' : `${m / 1440}D`
 }
