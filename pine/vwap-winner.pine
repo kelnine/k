@@ -1,0 +1,73 @@
+//@version=6
+indicator("VWAP Winner", overlay = true, max_labels_count = 500)
+
+// ─── Inputs ────────────────────────────────────────────────────────────────
+anchorInput = input.string("Session", "Anchor period", options = ["Session", "Week", "Month"])
+srcInput    = input.source(hlc3, "Source")
+showBands   = input.bool(true,  "Show σ bands")
+sigMult     = input.float(2.0,  "Signal band (σ)", minval = 0.5, step = 0.5,
+     tooltip = "Signals fire when a candle wicks past this band but closes back inside")
+cooldown    = input.int(5, "Signal cooldown (bars)", minval = 0)
+minBars     = input.int(3, "Min bars into session before signals", minval = 0)
+showSignals = input.bool(true, "Show BUY / SELL signals")
+
+// ─── Anchor reset ──────────────────────────────────────────────────────────
+isNewPeriod = switch anchorInput
+    "Session" => timeframe.change("D")
+    "Week"    => timeframe.change("W")
+    "Month"   => timeframe.change("M")
+
+// ─── Cumulative VWAP + volume-weighted std-dev ─────────────────────────────
+var float pv    = 0.0
+var float pv2   = 0.0
+var float vol   = 0.0
+var int   nBars = 0
+
+if isNewPeriod
+    pv    := 0.0
+    pv2   := 0.0
+    vol   := 0.0
+    nBars := 0
+
+pv    += srcInput * volume
+pv2   += srcInput * srcInput * volume
+vol   += volume
+nBars += 1
+
+float vwapVal = vol > 0 ? pv / vol : na
+float sd      = vol > 0 ? math.sqrt(math.max(0.0, pv2 / vol - vwapVal * vwapVal)) : na
+
+// ─── Plots: yellow VWAP, green sell bands above, lavender buy bands below ──
+colVwap  = color.yellow
+colUpper = color.new(#4caf50, 0)
+colLower = color.new(#b39ddb, 0)
+
+plot(vwapVal, "VWAP", colVwap, 2)
+plot(showBands ? vwapVal + 1 * sd : na, "+1σ", colUpper, 1, plot.style_circles)
+plot(showBands ? vwapVal + 2 * sd : na, "+2σ", colUpper, 1, plot.style_circles)
+plot(showBands ? vwapVal + 3 * sd : na, "+3σ", colUpper, 1, plot.style_circles)
+plot(showBands ? vwapVal - 1 * sd : na, "-1σ", colLower, 1, plot.style_circles)
+plot(showBands ? vwapVal - 2 * sd : na, "-2σ", colLower, 1, plot.style_circles)
+plot(showBands ? vwapVal - 3 * sd : na, "-3σ", colLower, 1, plot.style_circles)
+
+// ─── Signals: mean-reversion rejections of the ±sigMult·σ band ─────────────
+float upperSig = vwapVal + sigMult * sd
+float lowerSig = vwapVal - sigMult * sd
+
+var int lastSignalBar = -1000000
+bool canSignal = not na(sd) and sd > 0 and nBars >= minBars and bar_index - lastSignalBar > cooldown
+
+bool buySig  = canSignal and low  <= lowerSig and close > lowerSig
+bool sellSig = canSignal and high >= upperSig and close < upperSig
+
+if buySig or sellSig
+    lastSignalBar := bar_index
+
+plotshape(showSignals and buySig,  "BUY",  shape.triangleup,   location.belowbar,
+     color.new(#26a69a, 0), text = "BUY",  textcolor = color.new(#26a69a, 0), size = size.small)
+plotshape(showSignals and sellSig, "SELL", shape.triangledown, location.abovebar,
+     color.new(#ef5350, 0), text = "SELL", textcolor = color.new(#ef5350, 0), size = size.small)
+
+// ─── Alerts ────────────────────────────────────────────────────────────────
+alertcondition(buySig,  "VWAP Winner BUY",  "VWAP Winner: BUY — price rejected the lower band")
+alertcondition(sellSig, "VWAP Winner SELL", "VWAP Winner: SELL — price rejected the upper band")
