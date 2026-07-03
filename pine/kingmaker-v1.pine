@@ -1,5 +1,5 @@
 //@version=6
-indicator("K Gang v1.0", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+indicator("Kingmaker v1.0", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // ═══════════════════════════════════════════════════════ inputs
 
@@ -248,7 +248,7 @@ if showDash and barstate.islast
     htfName = f_tfTxt(htfTf)
     mtfName = f_tfTxt(mtfTf)
     table.cell(dash, 0, 0, syminfo.ticker + " " + timeframe.period, bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
-    table.cell(dash, 1, 0, "K Gang v1.0", bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
+    table.cell(dash, 1, 0, "Kingmaker v1.0", bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
     table.cell(dash, 0, 1, "Swing", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
     table.cell(dash, 1, 1, f_biasWord(swingTrend), bgcolor = color.white, text_color = f_biasCol(swingTrend), text_size = dashTextSize)
     table.cell(dash, 0, 2, "CISD", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
