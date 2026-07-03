@@ -1,15 +1,32 @@
 //@version=6
 indicator("VWAP Winner", overlay = true, max_labels_count = 500)
 
-// ─── Inputs ────────────────────────────────────────────────────────────────
-anchorInput = input.string("Session", "Anchor period", options = ["Session", "Week", "Month"])
-srcInput    = input.source(hlc3, "Source")
-showBands   = input.bool(true,  "Show σ bands")
-sigMult     = input.float(2.0,  "Signal band (σ)", minval = 0.5, step = 0.5,
+// ─── VWAP & bands ──────────────────────────────────────────────────────────
+grpA = "VWAP & bands"
+anchorInput = input.string("Session", "Anchor period", options = ["Session", "Week", "Month"], group = grpA)
+srcInput    = input.source(hlc3, "Source", group = grpA)
+showBands   = input.bool(true,  "Show σ bands", group = grpA)
+sigMult     = input.float(2.0,  "Signal band (σ)", minval = 0.5, step = 0.5, group = grpA,
      tooltip = "Signals fire when a candle wicks past this band but closes back inside")
-cooldown    = input.int(5, "Signal cooldown (bars)", minval = 0)
-minBars     = input.int(3, "Min bars into session before signals", minval = 0)
-showSignals = input.bool(true, "Show BUY / SELL signals")
+
+// ─── Signal quality filters ────────────────────────────────────────────────
+grpF = "Signal filters"
+useStrongClose = input.bool(true,  "Strong rejection: close in favorable half of candle", group = grpF)
+useVolume      = input.bool(true,  "Volume confirmation", group = grpF)
+volMult        = input.float(1.2,  "Volume > 20-bar SMA ×", minval = 0.5, step = 0.1, group = grpF)
+useRsi         = input.bool(true,  "RSI confluence (BUY < 40, SELL > 60)", group = grpF)
+useTrend       = input.bool(false, "Only fade in direction of VWAP slope", group = grpF,
+     tooltip = "BUY only when VWAP is flat/rising, SELL only when flat/falling — avoids fading strong trends")
+trendLen       = input.int(10, "VWAP slope lookback", minval = 1, group = grpF)
+cooldown       = input.int(5,  "Signal cooldown (bars)", minval = 0, group = grpF)
+minBars        = input.int(3,  "Min bars into session before signals", minval = 0, group = grpF)
+
+// ─── Targets & stats ───────────────────────────────────────────────────────
+grpT = "Targets & stats"
+showTargets = input.bool(true, "Label TP / SL on signals", group = grpT,
+     tooltip = "Target = VWAP at signal time (mean reversion), stop = beyond the rejection wick")
+stopPad     = input.float(0.5, "Stop beyond wick (σ)", minval = 0.0, step = 0.25, group = grpT)
+showStats   = input.bool(true, "Show performance table", group = grpT)
 
 // ─── Anchor reset ──────────────────────────────────────────────────────────
 isNewPeriod = switch anchorInput
@@ -50,23 +67,103 @@ plot(showBands ? vwapVal - 1 * sd : na, "-1σ", colLower, 1, plot.style_circles)
 plot(showBands ? vwapVal - 2 * sd : na, "-2σ", colLower, 1, plot.style_circles)
 plot(showBands ? vwapVal - 3 * sd : na, "-3σ", colLower, 1, plot.style_circles)
 
-// ─── Signals: mean-reversion rejections of the ±sigMult·σ band ─────────────
+// ─── Filters ───────────────────────────────────────────────────────────────
+float rsiVal = ta.rsi(close, 14)
+float volSma = ta.sma(volume, 20)
+float mid    = (high + low) / 2
+
+bool volOk       = not useVolume or volume > volSma * volMult
+bool buyRsiOk    = not useRsi or rsiVal < 40
+bool sellRsiOk   = not useRsi or rsiVal > 60
+bool buyTrendOk  = not useTrend or vwapVal >= vwapVal[trendLen]
+bool sellTrendOk = not useTrend or vwapVal <= vwapVal[trendLen]
+bool buyCloseOk  = not useStrongClose or close > mid
+bool sellCloseOk = not useStrongClose or close < mid
+
+// ─── Signals: filtered rejections of the ±sigMult·σ band ───────────────────
 float upperSig = vwapVal + sigMult * sd
 float lowerSig = vwapVal - sigMult * sd
 
 var int lastSignalBar = -1000000
 bool canSignal = not na(sd) and sd > 0 and nBars >= minBars and bar_index - lastSignalBar > cooldown
 
-bool buySig  = canSignal and low  <= lowerSig and close > lowerSig
-bool sellSig = canSignal and high >= upperSig and close < upperSig
+bool buySig  = canSignal and low  <= lowerSig and close > lowerSig and volOk and buyRsiOk  and buyTrendOk  and buyCloseOk
+bool sellSig = canSignal and high >= upperSig and close < upperSig and volOk and sellRsiOk and sellTrendOk and sellCloseOk
 
 if buySig or sellSig
     lastSignalBar := bar_index
 
-plotshape(showSignals and buySig,  "BUY",  shape.triangleup,   location.belowbar,
+plotshape(buySig,  "BUY",  shape.triangleup,   location.belowbar,
      color.new(#26a69a, 0), text = "BUY",  textcolor = color.new(#26a69a, 0), size = size.small)
-plotshape(showSignals and sellSig, "SELL", shape.triangledown, location.abovebar,
+plotshape(sellSig, "SELL", shape.triangledown, location.abovebar,
      color.new(#ef5350, 0), text = "SELL", textcolor = color.new(#ef5350, 0), size = size.small)
+
+// ─── Trade levels + self-tracking stats ────────────────────────────────────
+// Each signal targets VWAP (mean reversion) with a stop beyond the wick.
+// Open signals are tracked bar-by-bar; if stop and target hit on the same
+// bar it counts as a loss (conservative).
+var int wins   = 0
+var int losses = 0
+var array<int>   actDir    = array.new<int>()
+var array<float> actStop   = array.new<float>()
+var array<float> actTarget = array.new<float>()
+
+if array.size(actDir) > 0
+    for i = array.size(actDir) - 1 to 0
+        int   d  = array.get(actDir, i)
+        float st = array.get(actStop, i)
+        float tg = array.get(actTarget, i)
+        bool hitLoss = d == 1 ? low <= st : high >= st
+        bool hitWin  = d == 1 ? high >= tg : low <= tg
+        if hitLoss or hitWin
+            if hitLoss
+                losses += 1
+            else
+                wins += 1
+            array.remove(actDir, i)
+            array.remove(actStop, i)
+            array.remove(actTarget, i)
+
+float buyStop  = low - stopPad * sd
+float sellStop = high + stopPad * sd
+
+if buySig
+    array.push(actDir, 1)
+    array.push(actStop, buyStop)
+    array.push(actTarget, vwapVal)
+if sellSig
+    array.push(actDir, -1)
+    array.push(actStop, sellStop)
+    array.push(actTarget, vwapVal)
+
+if showTargets and (buySig or sellSig)
+    float st = buySig ? buyStop : sellStop
+    label.new(bar_index, buySig ? low : high,
+         text = "TP " + str.tostring(vwapVal, format.mintick) + "\nSL " + str.tostring(st, format.mintick),
+         style = buySig ? label.style_label_up : label.style_label_down,
+         color = buySig ? color.new(#26a69a, 30) : color.new(#ef5350, 30),
+         textcolor = color.white, size = size.small)
+
+// ─── Performance table ─────────────────────────────────────────────────────
+var table statsTable = showStats
+     ? table.new(position.top_right, 2, 4, bgcolor = color.new(color.black, 15),
+         border_width = 1, border_color = color.new(color.gray, 70))
+     : na
+
+if showStats and barstate.islast
+    int total = wins + losses
+    float winRate = total > 0 ? 100.0 * wins / total : na
+    table.cell(statsTable, 0, 0, "VWAP Winner", text_color = colVwap, text_size = size.small)
+    table.cell(statsTable, 1, 0, timeframe.period, text_color = color.gray, text_size = size.small)
+    table.cell(statsTable, 0, 1, "Signals", text_color = color.white, text_size = size.small)
+    table.cell(statsTable, 1, 1, str.tostring(total) + (array.size(actDir) > 0 ? " (+" + str.tostring(array.size(actDir)) + " open)" : ""),
+         text_color = color.white, text_size = size.small)
+    table.cell(statsTable, 0, 2, "W / L", text_color = color.white, text_size = size.small)
+    table.cell(statsTable, 1, 2, str.tostring(wins) + " / " + str.tostring(losses), text_color = color.white, text_size = size.small)
+    table.cell(statsTable, 0, 3, "Win rate", text_color = color.white, text_size = size.small)
+    table.cell(statsTable, 1, 3, na(winRate) ? "—" : str.tostring(winRate, "#.#") + "%",
+         text_color = na(winRate) ? color.gray : winRate >= 50 ? color.new(#26a69a, 0) : color.new(#ef5350, 0),
+         text_size = size.small)
 
 // ─── Alerts ────────────────────────────────────────────────────────────────
 alertcondition(buySig,  "VWAP Winner BUY",  "VWAP Winner: BUY — price rejected the lower band")
