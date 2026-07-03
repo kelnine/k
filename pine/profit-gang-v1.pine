@@ -1,0 +1,250 @@
+//@version=6
+indicator("Profit Gang v1.0", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ═══════════════════════════════════════════════════════ inputs
+
+swingLen  = input.int(5,  "Structure swing length", minval = 2,  group = "Structure")
+sigLen    = input.int(10, "Signal swing length",    minval = 2,  group = "Structure")
+minRun    = input.int(2,  "Min candles in delivery leg", minval = 1, group = "CISD")
+showZones = input.bool(true, "Show CISD zones",                  group = "CISD")
+maxZones  = input.int(6,  "Max active zones", minval = 1,        group = "CISD")
+showSMT   = input.bool(true, "Show SMT divergence",              group = "SMT")
+smtSym    = input.symbol("CME_MINI:ES1!", "Comparison symbol",   group = "SMT")
+htfTf     = input.timeframe("D",  "HTF bias timeframe",          group = "Dashboard")
+mtfTf     = input.timeframe("60", "MTF bias timeframe",          group = "Dashboard")
+showDash  = input.bool(true, "Show dashboard",                   group = "Dashboard")
+
+colBull   = #089981
+colBear   = #e5342c
+colStruct = #2962ff
+
+// ═══════════════════════════════════════════════════════ helpers
+
+// CISD state of a series: +1 after a close through the open of the last
+// bearish delivery leg, -1 after a close through the open of the last bullish leg
+f_cisd() =>
+    var int   state  = 0
+    var int   curDir = 0
+    var float curOpen = na
+    var float upOpen  = na
+    var float dnOpen  = na
+    d = close >= open ? 1 : -1
+    if d != curDir
+        if curDir == 1
+            upOpen := curOpen
+        else if curDir == -1
+            dnOpen := curOpen
+        curDir := d
+        curOpen := open
+    if not na(dnOpen) and close > dnOpen
+        state := 1
+        dnOpen := na
+    if not na(upOpen) and close < upOpen
+        state := -1
+        upOpen := na
+    state
+
+f_tfTxt(string tf) =>
+    tf == "60" ? "h1" : tf == "120" ? "h2" : tf == "240" ? "h4" : tf == "1D" ? "D" : tf
+
+f_biasTxt(string prefix, int b) =>
+    prefix + ": " + (b > 0 ? "Bullish" : b < 0 ? "Bearish" : "—")
+
+f_biasCol(int b) =>
+    b > 0 ? colBull : b < 0 ? colBear : color.gray
+
+// ═══════════════════════════════════════════════════════ CISD levels + zones (chart TF)
+
+var int   curDir   = 0
+var int   curStart = na
+var float curOpen  = na
+var float curHigh  = na
+var float curLow   = na
+var int   curLen   = 0
+
+var float dnOpen  = na
+var int   dnStart = na
+var float dnLow   = na
+var int   dnLen   = 0
+
+var float upOpen  = na
+var int   upStart = na
+var float upHigh  = na
+var int   upLen   = 0
+
+var int cisdState = 0
+
+// active zones, terminated when price closes back through their level
+var array<box>   zBoxes  = array.new<box>()
+var array<float> zLevels = array.new<float>()
+var array<int>   zDirs   = array.new<int>()
+
+if barstate.isconfirmed
+    d = close >= open ? 1 : -1
+    if d != curDir
+        if curDir == 1
+            upOpen  := curOpen
+            upStart := curStart
+            upHigh  := curHigh
+            upLen   := curLen
+        else if curDir == -1
+            dnOpen  := curOpen
+            dnStart := curStart
+            dnLow   := curLow
+            dnLen   := curLen
+        curDir   := d
+        curStart := bar_index
+        curOpen  := open
+        curHigh  := high
+        curLow   := low
+        curLen   := 1
+    else
+        curHigh := math.max(curHigh, high)
+        curLow  := math.min(curLow, low)
+        curLen  += 1
+
+    // bullish change in the state of delivery
+    if not na(dnOpen) and close > dnOpen
+        if dnLen >= minRun
+            line.new(dnStart, dnOpen, bar_index, dnOpen, color = colBull, style = line.style_dotted)
+            label.new(bar_index, dnOpen, "+CISD", style = label.style_label_left, color = color(na), textcolor = colBull, size = size.small)
+            label.new(dnStart, dnOpen, "+", style = label.style_none, textcolor = colBull, size = size.small)
+            if showZones
+                array.push(zBoxes, box.new(dnStart, dnOpen, bar_index, dnLow, border_color = color(na), bgcolor = color.new(colBull, 87), extend = extend.right))
+                array.push(zLevels, dnOpen)
+                array.push(zDirs, 1)
+        cisdState := 1
+        dnOpen := na
+
+    // bearish change in the state of delivery
+    if not na(upOpen) and close < upOpen
+        if upLen >= minRun
+            line.new(upStart, upOpen, bar_index, upOpen, color = colBear, style = line.style_dotted)
+            label.new(bar_index, upOpen, "-CISD", style = label.style_label_left, color = color(na), textcolor = colBear, size = size.small)
+            label.new(upStart, upOpen, "+", style = label.style_none, textcolor = colBear, size = size.small)
+            if showZones
+                array.push(zBoxes, box.new(upStart, upHigh, bar_index, upOpen, border_color = color(na), bgcolor = color.new(colBear, 90), extend = extend.right))
+                array.push(zLevels, upOpen)
+                array.push(zDirs, -1)
+        cisdState := -1
+        upOpen := na
+
+    // stop extending a zone once price closes back through its level
+    if array.size(zBoxes) > 0
+        for i = array.size(zBoxes) - 1 to 0
+            lvl = array.get(zLevels, i)
+            zd  = array.get(zDirs, i)
+            if (zd == 1 and close < lvl) or (zd == -1 and close > lvl)
+                b = array.get(zBoxes, i)
+                box.set_extend(b, extend.none)
+                box.set_right(b, bar_index)
+                array.remove(zBoxes, i)
+                array.remove(zLevels, i)
+                array.remove(zDirs, i)
+    while array.size(zBoxes) > maxZones
+        box.delete(array.shift(zBoxes))
+        array.shift(zLevels)
+        array.shift(zDirs)
+
+// ═══════════════════════════════════════════════════════ structure: SH / SL rays + swing status
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastH    = na
+var bool  crossedH = true
+var float lastL    = na
+var bool  crossedL = true
+var int   swingTrend = 0
+var line  shLine = na
+var label shLab  = na
+var line  slLine = na
+var label slLab  = na
+
+if barstate.isconfirmed
+    if not na(ph)
+        lastH := ph
+        crossedH := false
+        line.delete(shLine)
+        label.delete(shLab)
+        shLine := line.new(bar_index - swingLen, ph, bar_index, ph, color = colStruct, extend = extend.right)
+        shLab  := label.new(bar_index, ph, "SH", style = label.style_none, textcolor = colStruct, size = size.small)
+    if not na(pl)
+        lastL := pl
+        crossedL := false
+        line.delete(slLine)
+        label.delete(slLab)
+        slLine := line.new(bar_index - swingLen, pl, bar_index, pl, color = colStruct, extend = extend.right)
+        slLab  := label.new(bar_index, pl, "SL", style = label.style_none, textcolor = colStruct, size = size.small)
+    if not crossedH and not na(lastH) and close > lastH
+        crossedH := true
+        swingTrend := 1
+        line.delete(shLine)
+        label.delete(shLab)
+    if not crossedL and not na(lastL) and close < lastL
+        crossedL := true
+        swingTrend := -1
+        line.delete(slLine)
+        label.delete(slLab)
+
+// ═══════════════════════════════════════════════════════ ▲ / ▼ swing signals
+
+sigH = ta.pivothigh(high, sigLen, sigLen)
+sigL = ta.pivotlow(low, sigLen, sigLen)
+plotshape(not na(sigH), "Swing high signal", shape.triangledown, location.abovebar, color = colBear, size = size.small, offset = -sigLen)
+plotshape(not na(sigL), "Swing low signal", shape.triangleup, location.belowbar, color = colBull, size = size.small, offset = -sigLen)
+
+// ═══════════════════════════════════════════════════════ SMT divergence
+
+compLow  = request.security(smtSym, timeframe.period, low)
+compHigh = request.security(smtSym, timeframe.period, high)
+
+var float prevPl     = na
+var float prevPlComp = na
+var int   prevPlBar  = na
+var float prevPh     = na
+var float prevPhComp = na
+var int   prevPhBar  = na
+
+if barstate.isconfirmed and showSMT
+    if not na(pl)
+        compAt = compLow[swingLen]
+        if not na(prevPl) and not na(prevPlComp) and not na(compAt)
+            if pl < prevPl and compAt > prevPlComp
+                line.new(prevPlBar, prevPl, bar_index - swingLen, pl, color = colBull)
+                label.new(bar_index - swingLen, pl, "SMT " + smtSym, style = label.style_label_up, color = color(na), textcolor = colBull, size = size.small)
+        prevPl := pl
+        prevPlComp := compAt
+        prevPlBar := bar_index - swingLen
+    if not na(ph)
+        compAt = compHigh[swingLen]
+        if not na(prevPh) and not na(prevPhComp) and not na(compAt)
+            if ph > prevPh and compAt < prevPhComp
+                line.new(prevPhBar, prevPh, bar_index - swingLen, ph, color = colBear)
+                label.new(bar_index - swingLen, ph, "SMT " + smtSym, style = label.style_label_down, color = color(na), textcolor = colBear, size = size.small)
+        prevPh := ph
+        prevPhComp := compAt
+        prevPhBar := bar_index - swingLen
+
+// ═══════════════════════════════════════════════════════ HTF / MTF bias + dashboard
+
+htfCisd = request.security(syminfo.tickerid, htfTf, f_cisd())
+mtfCisd = request.security(syminfo.tickerid, mtfTf, f_cisd())
+htfOpen = request.security(syminfo.tickerid, htfTf, close >= open ? 1 : -1)
+mtfOpen = request.security(syminfo.tickerid, mtfTf, close >= open ? 1 : -1)
+
+var table dash = table.new(position.bottom_left, 2, 5, border_width = 1, border_color = color.new(color.black, 40), frame_color = color.new(color.black, 40), frame_width = 1)
+
+if showDash and barstate.islast
+    htfName = f_tfTxt(htfTf)
+    mtfName = f_tfTxt(mtfTf)
+    table.cell(dash, 0, 0, syminfo.ticker + " " + timeframe.period, bgcolor = #f8f9fb, text_color = #111111, text_size = size.small)
+    table.cell(dash, 1, 0, "Profit Gang v1.0", bgcolor = #f8f9fb, text_color = #111111, text_size = size.small)
+    table.cell(dash, 0, 1, "Swing Status", bgcolor = #4b5563, text_color = #f3f4f6, text_size = size.small)
+    table.cell(dash, 1, 1, f_biasTxt("Swing", swingTrend), bgcolor = color.white, text_color = f_biasCol(swingTrend), text_size = size.small)
+    table.cell(dash, 0, 2, "CISD Status", bgcolor = #4b5563, text_color = #f3f4f6, text_size = size.small)
+    table.cell(dash, 1, 2, f_biasTxt("CISD", cisdState), bgcolor = color.white, text_color = f_biasCol(cisdState), text_size = size.small)
+    table.cell(dash, 0, 3, "HTF/MTF CISD Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = size.small)
+    table.cell(dash, 1, 3, f_biasTxt("HTF " + htfName, htfCisd) + "  |  " + f_biasTxt("MTF " + mtfName, mtfCisd), bgcolor = #efdcb9, text_color = #1f2937, text_size = size.small)
+    table.cell(dash, 0, 4, "HTF/MTF Open Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = size.small)
+    table.cell(dash, 1, 4, f_biasTxt("HTF " + htfName, htfOpen) + "  |  " + f_biasTxt("MTF " + mtfName, mtfOpen), bgcolor = #cde8cf, text_color = #1f2937, text_size = size.small)
