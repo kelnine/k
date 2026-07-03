@@ -18,6 +18,10 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **Profit Gang v1.0** — an ICT-style execution overlay: CISD (change in the
+  state of delivery) levels and zones, ▲/▼ swing signals, unbroken external
+  structure high/low (SH/SL) rays, and a pinned bias dashboard with live
+  Swing/CISD status plus HTF (daily) and MTF (h1) CISD & open bias.
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.

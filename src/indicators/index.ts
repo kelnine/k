@@ -1,4 +1,5 @@
 import type { Candle } from '../data/types'
+import { makeProfitGang } from './profitgang'
 import { makeSmc } from './smc'
 
 export type PlotStyle = 'line' | 'hist'
@@ -49,9 +50,33 @@ export interface ShapeMarker {
   text: string
   color: string
   place: 'above' | 'below'
+  /** font size in px (default 10) */
+  size?: number
 }
 
 export type IndicatorShape = ShapeBox | ShapeLine | ShapeMarker
+
+/**
+ * A status dashboard pinned to the bottom-left of the main pane (used by
+ * Profit Gang for its bias table). The engine adds a `symbol · tf` header
+ * cell next to the title.
+ */
+export interface TablePart {
+  text: string
+  color?: string
+}
+
+export interface TableRow {
+  label: string
+  parts: TablePart[]
+  /** value-cell background (default white) */
+  bg?: string
+}
+
+export interface IndicatorTable {
+  title: string
+  rows: TableRow[]
+}
 
 export interface IndicatorResult {
   plots: Plot[]
@@ -63,6 +88,8 @@ export interface IndicatorResult {
   fills?: { a: string; b: string; color: string }[]
   /** free-form overlay primitives (boxes / lines / markers) */
   shapes?: IndicatorShape[]
+  /** status dashboard pinned to the bottom-left of the main pane */
+  table?: IndicatorTable
   /** custom legend chips (used when an indicator has no numeric plots) */
   legend?: { color: string; value: string }[]
 }
@@ -255,6 +282,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeProfitGang(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {
