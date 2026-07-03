@@ -1,0 +1,108 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Dashboard — v1.0.0
+// Multi-timeframe overview panel for the current symbol: trend (EMA stack),
+// RSI, momentum (MACD histogram), volatility state, and a composite score per
+// timeframe (5m → 1D). Timeframes: any · Markets: all.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Dashboard", shorttitle = "FF Dash", overlay = true)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gTF = "Timeframes"
+tf1 = input.timeframe("5",   "TF 1", group = gTF)
+tf2 = input.timeframe("15",  "TF 2", group = gTF)
+tf3 = input.timeframe("60",  "TF 3", group = gTF)
+tf4 = input.timeframe("240", "TF 4", group = gTF)
+tf5 = input.timeframe("D",   "TF 5", group = gTF)
+
+gDisp = "Display"
+pos      = input.string("top_right", "Panel position", options = ["top_right", "top_left", "bottom_right", "bottom_left"], group = gDisp)
+compact  = input.bool(false, "Compact mode (trend + score only)", group = gDisp)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+DARK  = #111113
+
+// ── Per-timeframe engine (computed in the TF's own context) ──────────────────
+// Returns confirmed (prior-bar) values only, so higher timeframes never repaint.
+f_metrics() =>
+    emaF = ta.ema(close, 21)
+    emaS = ta.ema(close, 55)
+    trendV = emaF > emaS and close > emaS ? 1 : emaF < emaS and close < emaS ? -1 : 0
+    rsiV   = ta.rsi(close, 14)
+    [m, s, _] = ta.macd(close, 12, 26, 9)
+    momV   = m - s
+    bbw    = 4 * ta.stdev(close, 20) / ta.sma(close, 20)
+    bbwAvg = ta.sma(bbw, 100)
+    volState = bbw > bbwAvg * 1.25 ? 1 : bbw < bbwAvg * 0.75 ? -1 : 0   // expanding / quiet / normal
+    [trendV[1], rsiV[1], momV[1], volState[1]]
+
+f_get(string tf) =>
+    request.security(syminfo.tickerid, tf, f_metrics(), lookahead = barmerge.lookahead_off)
+
+[t1, r1, m1, v1] = f_get(tf1)
+[t2, r2, m2, v2] = f_get(tf2)
+[t3, r3, m3, v3] = f_get(tf3)
+[t4, r4, m4, v4] = f_get(tf4)
+[t5, r5, m5, v5] = f_get(tf5)
+
+// composite score per TF: trend 50% + momentum 25% + RSI side 25%  → −100…+100
+f_score(int t, float r, float m) =>
+    int(t * 50 + (m > 0 ? 25 : m < 0 ? -25 : 0) + (r > 55 ? 25 : r < 45 ? -25 : 0))
+
+// ── Panel ────────────────────────────────────────────────────────────────────
+panelPos = pos == "top_right" ? position.top_right : pos == "top_left" ? position.top_left :
+     pos == "bottom_right" ? position.bottom_right : position.bottom_left
+var table dash = table.new(panelPos, 6, 8, bgcolor = color.new(DARK, 10),
+     border_color = color.new(MUTED, 75), border_width = 1)
+
+f_trendTxt(int t) => t == 1 ? "▲" : t == -1 ? "▼" : "—"
+f_trendCol(int t) => t == 1 ? BULL : t == -1 ? BEAR : MUTED
+f_volTxt(int v)   => v == 1 ? "EXPAND" : v == -1 ? "QUIET" : "NORMAL"
+f_rsiCol(float r) => r >= 70 or r <= 30 ? GOLD : color.white
+
+f_row(int row, string name, int t, float r, float m, int v) =>
+    sc = f_score(t, r, m)
+    table.cell(dash, 0, row, name, text_color = MUTED, text_size = size.small)
+    table.cell(dash, 1, row, f_trendTxt(t), text_color = f_trendCol(t), text_size = size.small)
+    if not compact
+        table.cell(dash, 2, row, str.tostring(r, "#"), text_color = f_rsiCol(r), text_size = size.small)
+        table.cell(dash, 3, row, m > 0 ? "+" : m < 0 ? "−" : "·", text_color = m > 0 ? BULL : m < 0 ? BEAR : MUTED, text_size = size.small)
+        table.cell(dash, 4, row, f_volTxt(v), text_color = v == 1 ? GOLD : MUTED, text_size = size.tiny)
+    table.cell(dash, 5, row, (sc > 0 ? "+" : "") + str.tostring(sc),
+         text_color = sc >= 50 ? BULL : sc <= -50 ? BEAR : sc > 0 ? color.new(BULL, 30) : sc < 0 ? color.new(BEAR, 30) : MUTED,
+         text_size = size.small)
+
+if barstate.islast
+    // header
+    table.cell(dash, 0, 0, "FUTUREFI", text_color = GOLD, text_size = size.small)
+    table.cell(dash, 1, 0, "TR",  text_color = MUTED, text_size = size.tiny)
+    if not compact
+        table.cell(dash, 2, 0, "RSI", text_color = MUTED, text_size = size.tiny)
+        table.cell(dash, 3, 0, "MOM", text_color = MUTED, text_size = size.tiny)
+        table.cell(dash, 4, 0, "VOL", text_color = MUTED, text_size = size.tiny)
+    table.cell(dash, 5, 0, "SCORE", text_color = MUTED, text_size = size.tiny)
+    // rows
+    f_row(1, tf1, t1, r1, m1, v1)
+    f_row(2, tf2, t2, r2, m2, v2)
+    f_row(3, tf3, t3, r3, m3, v3)
+    f_row(4, tf4, t4, r4, m4, v4)
+    f_row(5, tf5, t5, r5, m5, v5)
+    // consensus row
+    total = f_score(t1, r1, m1) + f_score(t2, r2, m2) + f_score(t3, r3, m3) + f_score(t4, r4, m4) + f_score(t5, r5, m5)
+    avg   = total / 5
+    verdict = avg >= 50 ? "STRONG BULL" : avg >= 20 ? "BULLISH" : avg <= -50 ? "STRONG BEAR" : avg <= -20 ? "BEARISH" : "MIXED"
+    table.cell(dash, 0, 6, "CONSENSUS", text_color = MUTED, text_size = size.tiny)
+    table.merge_cells(dash, 1, 6, 5, 6)
+    table.cell(dash, 1, 6, verdict + "  (" + (avg > 0 ? "+" : "") + str.tostring(avg, "#") + ")",
+         text_color = avg >= 20 ? BULL : avg <= -20 ? BEAR : MUTED, text_size = size.small)
+
+// ── Alerts: all-timeframe alignment ──────────────────────────────────────────
+allBull = t1 == 1 and t2 == 1 and t3 == 1 and t4 == 1 and t5 == 1
+allBear = t1 == -1 and t2 == -1 and t3 == -1 and t4 == -1 and t5 == -1
+alertcondition(allBull and not allBull[1], "FF Dash — Full bullish alignment", '{"product":"dashboard","event":"align_bull","symbol":"{{ticker}}"}')
+alertcondition(allBear and not allBear[1], "FF Dash — Full bearish alignment", '{"product":"dashboard","event":"align_bear","symbol":"{{ticker}}"}')

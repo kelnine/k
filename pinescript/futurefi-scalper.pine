@@ -1,0 +1,86 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Scalper — v1.0.0
+// Fast lower-timeframe entries: EMA ribbon direction + VWAP bias filter +
+// stochastic momentum trigger, optional session filter, tight ATR targets.
+// Timeframes: 1m–15m · Markets: crypto, forex, indices.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Scalper", shorttitle = "FF Scalp", overlay = true,
+     max_labels_count = 300, max_lines_count = 300)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gSig = "Signals"
+ribbonFast = input.int(8,  "Ribbon fast EMA", minval = 3,  group = gSig)
+ribbonMid  = input.int(13, "Ribbon mid EMA",  minval = 5,  group = gSig)
+ribbonSlow = input.int(21, "Ribbon slow EMA", minval = 8,  group = gSig)
+useVwap    = input.bool(true, "Require VWAP bias (long above / short below)", group = gSig)
+stochK     = input.int(14, "Stoch %K", minval = 3, group = gSig)
+stochOS    = input.int(25, "Trigger zone (oversold / 100-x overbought)", minval = 10, maxval = 40, group = gSig)
+cooldown   = input.int(5,  "Signal cooldown (bars)", minval = 0, group = gSig)
+
+gRisk = "Risk"
+atrLen  = input.int(14,    "ATR length", minval = 1, group = gRisk)
+slMult  = input.float(1.0, "Stop = ATR ×", minval = 0.3, step = 0.1, group = gRisk)
+tp1Mult = input.float(1.0, "TP1 = ATR ×",  minval = 0.3, step = 0.1, group = gRisk)
+tp2Mult = input.float(2.0, "TP2 = ATR ×",  minval = 0.5, step = 0.1, group = gRisk)
+
+gSes = "Session filter (exchange time)"
+useSes = input.bool(false, "Only signal inside session", group = gSes)
+ses    = input.session("0800-1700", "Active session", group = gSes)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+
+// ── Engine ───────────────────────────────────────────────────────────────────
+e1 = ta.ema(close, ribbonFast)
+e2 = ta.ema(close, ribbonMid)
+e3 = ta.ema(close, ribbonSlow)
+ribUp = e1 > e2 and e2 > e3
+ribDn = e1 < e2 and e2 < e3
+
+vwapV    = ta.vwap(hlc3)
+biasLong  = not useVwap or close > vwapV
+biasShort = not useVwap or close < vwapV
+
+k = ta.sma(ta.stoch(close, high, low, stochK), 3)
+trigLong  = ta.crossover(k, stochOS)          // momentum turning up out of oversold
+trigShort = ta.crossunder(k, 100 - stochOS)
+
+inSession = not useSes or not na(time(timeframe.period, ses))
+
+var int lastSig = -100000
+canFire = bar_index - lastSig > cooldown
+
+longFire  = ribUp and biasLong  and trigLong  and inSession and canFire and barstate.isconfirmed
+shortFire = ribDn and biasShort and trigShort and inSession and canFire and barstate.isconfirmed
+if longFire or shortFire
+    lastSig := bar_index
+
+// ── Targets ──────────────────────────────────────────────────────────────────
+atrV = ta.atr(atrLen)
+if longFire or shortFire
+    dir = longFire ? 1 : -1
+    c   = longFire ? BULL : BEAR
+    x2  = bar_index + 12
+    line.new(bar_index, close, x2, close, color = GOLD, width = 2)
+    line.new(bar_index, close - dir * atrV * slMult,  x2, close - dir * atrV * slMult,  color = BEAR, style = line.style_dashed)
+    line.new(bar_index, close + dir * atrV * tp1Mult, x2, close + dir * atrV * tp1Mult, color = c, style = line.style_dotted)
+    line.new(bar_index, close + dir * atrV * tp2Mult, x2, close + dir * atrV * tp2Mult, color = c, style = line.style_dashed)
+
+// ── Plots ────────────────────────────────────────────────────────────────────
+p1 = plot(e1, "EMA fast", color.new(ribUp ? BULL : ribDn ? BEAR : MUTED, 0))
+p3 = plot(e3, "EMA slow", color.new(ribUp ? BULL : ribDn ? BEAR : MUTED, 40))
+fill(p1, p3, color = color.new(ribUp ? BULL : ribDn ? BEAR : MUTED, 88), title = "Ribbon")
+plot(useVwap ? vwapV : na, "VWAP", color.new(#4C7DFF, 20), 2)
+
+plotshape(longFire,  "Long",  shape.triangleup,   location.belowbar, BULL, size = size.small)
+plotshape(shortFire, "Short", shape.triangledown, location.abovebar, BEAR, size = size.small)
+bgcolor(useSes and inSession ? color.new(GOLD, 96) : na, title = "Session")
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(longFire,  "FF Scalper — Long",  '{"product":"scalper","side":"long","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
+alertcondition(shortFire, "FF Scalper — Short", '{"product":"scalper","side":"short","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')

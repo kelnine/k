@@ -1,0 +1,219 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Smart Money Pro — v1.0.0
+// Full SMC engine: swing structure (HH/HL/LH/LL), BOS/CHoCH, order blocks with
+// mitigation, fair-value gaps with fill tracking, equal highs/lows (liquidity).
+// Direct port of the KCharts "Phantom Flow" engine (src/indicators/smc.ts) —
+// same fractal rule, same last-opposite-candle OB, same 3-candle FVG.
+// Timeframes: 1m–1W · Markets: all.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Smart Money Pro", shorttitle = "FF SMC", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ── Inputs (defaults mirror SmcOptions in smc.ts) ────────────────────────────
+gStr = "Structure"
+swingL   = input.int(5,     "Swing strength (bars each side)", minval = 2, group = gStr)
+showSw   = input.bool(true, "Swing labels (HH/HL/LH/LL)",      group = gStr)
+showBOS  = input.bool(true, "BOS / CHoCH lines",               group = gStr)
+
+gZone = "Zones"
+showOB   = input.bool(true,  "Order blocks",     group = gZone)
+maxOB    = input.int(6,      "Max OB per side",  minval = 1, maxval = 20, group = gZone)
+showFVG  = input.bool(true,  "Fair value gaps",  group = gZone)
+maxFVG   = input.int(14,     "Max FVGs",         minval = 2, maxval = 40, group = gZone)
+showEQ   = input.bool(true,  "Equal highs/lows (EQH/EQL)", group = gZone)
+eqTolPct = input.float(0.1,  "EQ tolerance (%)", minval = 0.01, step = 0.01, group = gZone)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+MUTED = #8B93A3
+
+// ── Swing detection — exact port of detectSwings():
+// high[L] strictly above the L bars to its LEFT, >= the L bars to its RIGHT
+// (mirrored for lows). Confirms L bars after the pivot, like confirm = idx + L.
+f_swingHigh() =>
+    ok = bar_index >= swingL * 2
+    if ok
+        for k = 1 to swingL
+            if not (high[swingL] > high[swingL + k] and high[swingL] >= high[swingL - k])
+                ok := false
+                break
+    ok
+
+f_swingLow() =>
+    ok = bar_index >= swingL * 2
+    if ok
+        for k = 1 to swingL
+            if not (low[swingL] < low[swingL + k] and low[swingL] <= low[swingL - k])
+                ok := false
+                break
+    ok
+
+newSH = f_swingHigh()
+newSL = f_swingLow()
+
+// ── Structure state (mirrors the trend/lastH/lastL/crossed walk) ─────────────
+var float lastHprice = na, var int lastHbar = na, var bool crossedH = false
+var float lastLprice = na, var int lastLbar = na, var bool crossedL = false
+var int   trend      = 0                       // 1 bull, -1 bear
+var float prevHigh   = na, var float prevLow = na
+
+if newSH
+    lastHprice := high[swingL]
+    lastHbar   := bar_index - swingL
+    crossedH   := false
+    if showSw
+        t = na(prevHigh) or high[swingL] > prevHigh ? "HH" : "LH"
+        label.new(lastHbar, lastHprice, t, style = label.style_none, textcolor = MUTED, size = size.small)
+    prevHigh := high[swingL]
+if newSL
+    lastLprice := low[swingL]
+    lastLbar   := bar_index - swingL
+    crossedL   := false
+    if showSw
+        t = na(prevLow) or low[swingL] < prevLow ? "LL" : "HL"
+        label.new(lastLbar, lastLprice, t, style = label.style_none, textcolor = MUTED, size = size.small)
+    prevLow := low[swingL]
+
+// ── Order blocks: last opposite candle before the structure break ────────────
+var array<box>   obBull = array.new<box>()
+var array<box>   obBear = array.new<box>()
+
+f_lastOppositeOB(bool bullBreak, int fromBar) =>
+    // walk back from the bar before the break to the swing bar (lastBullOB/lastBearOB)
+    int found = na
+    maxBack = math.min(bar_index - fromBar + 1, 200)
+    for j = 1 to maxBack
+        if bullBreak ? close[j] < open[j] : close[j] > open[j]
+            found := j
+            break
+    found
+
+f_pushOB(array<box> arr, box b, int cap) =>
+    array.push(arr, b)
+    if array.size(arr) > cap
+        box.delete(array.shift(arr))
+
+// ── Structure breaks (BOS continuation / CHoCH reversal), close-confirmed ────
+bullBreak = not na(lastHprice) and not crossedH and close > lastHprice and barstate.isconfirmed
+bearBreak = not na(lastLprice) and not crossedL and close < lastLprice and barstate.isconfirmed
+
+bullChoch = bullBreak and trend == -1
+bearChoch = bearBreak and trend == 1
+
+if bullBreak
+    if showBOS
+        line.new(lastHbar, lastHprice, bar_index, lastHprice, color = color.new(BULL, 10),
+             style = bullChoch ? line.style_dashed : line.style_solid)
+        label.new(bar_index, lastHprice, bullChoch ? "CHoCH" : "BOS",
+             style = label.style_none, textcolor = BULL, size = size.small)
+    if showOB
+        j = f_lastOppositeOB(true, lastHbar)
+        if not na(j)
+            f_pushOB(obBull, box.new(bar_index - j, high[j], bar_index, low[j],
+                 bgcolor = color.new(BULL, 86), border_color = color.new(BULL, 45),
+                 text = "OB", text_color = color.new(BULL, 5), text_size = size.tiny,
+                 extend = extend.right), maxOB)
+    crossedH := true
+    trend    := 1
+
+if bearBreak
+    if showBOS
+        line.new(lastLbar, lastLprice, bar_index, lastLprice, color = color.new(BEAR, 10),
+             style = bearChoch ? line.style_dashed : line.style_solid)
+        label.new(bar_index, lastLprice, bearChoch ? "CHoCH" : "BOS",
+             style = label.style_none, textcolor = BEAR, size = size.small)
+    if showOB
+        j = f_lastOppositeOB(false, lastLbar)
+        if not na(j)
+            f_pushOB(obBear, box.new(bar_index - j, high[j], bar_index, low[j],
+                 bgcolor = color.new(BEAR, 86), border_color = color.new(BEAR, 45),
+                 text = "OB", text_color = color.new(BEAR, 5), text_size = size.tiny,
+                 extend = extend.right), maxOB)
+    crossedL := true
+    trend    := -1
+
+// mitigation: price trades back into the zone → freeze the box (makeOB x2 rule)
+f_mitigate(array<box> arr, bool isBull) =>
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            b = array.get(arr, i)
+            hit = isBull ? low <= box.get_top(b) and bar_index > box.get_right(b)
+                 : high >= box.get_bottom(b) and bar_index > box.get_right(b)
+            if hit
+                box.set_extend(b, extend.none)
+                box.set_right(b, bar_index)
+                array.remove(arr, i)
+
+f_mitigate(obBull, true)
+f_mitigate(obBear, false)
+
+// ── Fair value gaps: 3-candle imbalance, drawn until filled ──────────────────
+var array<box>   fvgs    = array.new<box>()
+var array<float> fvgLvl  = array.new<float>()   // fill trigger level
+var array<bool>  fvgBull = array.new<bool>()
+
+bullFVG = showFVG and low > high[2]             // gap: prev high .. next low (at middle bar i = bar-1)
+bearFVG = showFVG and high < low[2]
+
+f_addFVG(bool isBull) =>
+    top = isBull ? low     : low[2]
+    bot = isBull ? high[2] : high
+    b = box.new(bar_index - 2, top, bar_index, bot,
+         bgcolor = color.new(isBull ? BULL : BEAR, 93), border_color = color.new(MUTED, 80),
+         extend = extend.right)
+    array.push(fvgs, b)
+    array.push(fvgLvl, isBull ? bot : top)
+    array.push(fvgBull, isBull)
+    if array.size(fvgs) > maxFVG
+        box.delete(array.shift(fvgs))
+        array.shift(fvgLvl)
+        array.shift(fvgBull)
+
+if bullFVG
+    f_addFVG(true)
+if bearFVG
+    f_addFVG(false)
+
+if array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        filled = array.get(fvgBull, i) ? low <= array.get(fvgLvl, i) : high >= array.get(fvgLvl, i)
+        if filled and bar_index > box.get_right(array.get(fvgs, i))
+            b = array.get(fvgs, i)
+            box.set_extend(b, extend.none)
+            box.set_right(b, bar_index)
+            array.remove(fvgs, i)
+            array.remove(fvgLvl, i)
+            array.remove(fvgBull, i)
+
+// ── Equal highs / lows (resting liquidity), tolerance as % of price ──────────
+var float eqPrevH = na, var int eqPrevHbar = na
+var float eqPrevL = na, var int eqPrevLbar = na
+if showEQ and newSH
+    if not na(eqPrevH) and math.abs(high[swingL] - eqPrevH) / ((high[swingL] + eqPrevH) / 2) <= eqTolPct / 100
+        avg = (high[swingL] + eqPrevH) / 2
+        line.new(eqPrevHbar, avg, bar_index - swingL, avg, color = color.new(MUTED, 35), style = line.style_dotted)
+        label.new(bar_index - swingL, avg, "EQH", style = label.style_none, textcolor = MUTED, size = size.tiny)
+    eqPrevH    := high[swingL]
+    eqPrevHbar := bar_index - swingL
+if showEQ and newSL
+    if not na(eqPrevL) and math.abs(low[swingL] - eqPrevL) / ((low[swingL] + eqPrevL) / 2) <= eqTolPct / 100
+        avg = (low[swingL] + eqPrevL) / 2
+        line.new(eqPrevLbar, avg, bar_index - swingL, avg, color = color.new(MUTED, 35), style = line.style_dotted)
+        label.new(bar_index - swingL, avg, "EQL", style = label.style_none, textcolor = MUTED, size = size.tiny)
+    eqPrevL    := low[swingL]
+    eqPrevLbar := bar_index - swingL
+
+// ── Trend read-out (legend chip in KCharts) ──────────────────────────────────
+var table hud = table.new(position.top_right, 1, 1)
+if barstate.islast
+    table.cell(hud, 0, 0, trend == 1 ? "▲ Bullish" : trend == -1 ? "▼ Bearish" : "— Neutral",
+         text_color = trend == 1 ? BULL : trend == -1 ? BEAR : MUTED,
+         bgcolor = color.new(#111113, 20), text_size = size.small)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(bullBreak, "FF SMC — Bullish structure break", '{"product":"smart-money-pro","event":"bull_break","symbol":"{{ticker}}","tf":"{{interval}}"}')
+alertcondition(bearBreak, "FF SMC — Bearish structure break", '{"product":"smart-money-pro","event":"bear_break","symbol":"{{ticker}}","tf":"{{interval}}"}')
+alertcondition(bullChoch or bearChoch, "FF SMC — CHoCH (reversal)", '{"product":"smart-money-pro","event":"choch","symbol":"{{ticker}}","tf":"{{interval}}"}')

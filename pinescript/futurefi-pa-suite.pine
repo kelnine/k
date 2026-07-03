@@ -1,0 +1,117 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi PA Suite — v1.0.0
+// Price-action toolkit: candlestick patterns, auto S/R zones, session boxes,
+// round-number levels. Timeframes: any · Markets: all.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi PA Suite", shorttitle = "FF PA", overlay = true,
+     max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gPat = "Patterns"
+showEngulf = input.bool(true,  "Engulfing",   group = gPat)
+showPin    = input.bool(true,  "Pin bars",    group = gPat)
+showInside = input.bool(false, "Inside bars", group = gPat)
+pinRatio   = input.float(2.0,  "Pin wick ≥ body ×", minval = 1.0, step = 0.25, group = gPat)
+
+gSR = "Support / Resistance"
+showSR   = input.bool(true, "Auto S/R zones",         group = gSR)
+srPivot  = input.int(15,   "Pivot strength (bars)",   minval = 3,  group = gSR)
+srMax    = input.int(6,    "Max zones",               minval = 2, maxval = 12, group = gSR)
+srWidthA = input.float(0.25, "Zone height (ATR ×)",   minval = 0.05, step = 0.05, group = gSR)
+
+gSes = "Sessions (exchange time)"
+showSes  = input.bool(false, "Highlight sessions", group = gSes)
+sesLondon = input.session("0800-1630", "London",   group = gSes)
+sesNY     = input.session("0930-1600", "New York", group = gSes)
+
+gRN = "Round numbers"
+showRN  = input.bool(false, "Round-number levels", group = gRN)
+rnStep  = input.float(0.0,  "Step (0 = auto)", minval = 0.0, group = gRN)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+atrV  = ta.atr(14)
+
+// ── Candlestick patterns (confirmed on close) ────────────────────────────────
+body     = math.abs(close - open)
+upWick   = high - math.max(open, close)
+dnWick   = math.min(open, close) - low
+
+bullEngulf = showEngulf and close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and body > body[1] and barstate.isconfirmed
+bearEngulf = showEngulf and close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and body > body[1] and barstate.isconfirmed
+bullPin    = showPin and dnWick >= body * pinRatio and dnWick > upWick * 2 and close > open and barstate.isconfirmed
+bearPin    = showPin and upWick >= body * pinRatio and upWick > dnWick * 2 and close < open and barstate.isconfirmed
+insideBar  = showInside and high < high[1] and low > low[1] and barstate.isconfirmed
+
+plotshape(bullEngulf, "Bull engulfing", shape.labelup,   location.belowbar, color.new(BULL, 20), text = "E", textcolor = color.white, size = size.tiny)
+plotshape(bearEngulf, "Bear engulfing", shape.labeldown, location.abovebar, color.new(BEAR, 20), text = "E", textcolor = color.white, size = size.tiny)
+plotshape(bullPin,    "Bull pin",       shape.labelup,   location.belowbar, color.new(BULL, 45), text = "P", textcolor = color.white, size = size.tiny)
+plotshape(bearPin,    "Bear pin",       shape.labeldown, location.abovebar, color.new(BEAR, 45), text = "P", textcolor = color.white, size = size.tiny)
+plotshape(insideBar,  "Inside bar",     shape.circle,    location.abovebar, color.new(MUTED, 40), size = size.tiny)
+
+// ── Auto S/R zones from HTF-strength pivots ─────────────────────────────────
+// A pivot high/low of strength `srPivot` spawns a zone; zones merge when they
+// overlap and are dropped once price closes decisively through them.
+var array<box> srZones = array.new<box>()
+
+f_addZone(float lvl, bool isRes) =>
+    h = atrV * srWidthA
+    // merge: if an existing zone contains the level, just refresh its edge
+    merged = false
+    for b in srZones
+        if lvl <= box.get_top(b) + h and lvl >= box.get_bottom(b) - h
+            box.set_right(b, bar_index)
+            merged := true
+            break
+    if not merged
+        c = isRes ? BEAR : BULL
+        z = box.new(bar_index - srPivot, lvl + h, bar_index, lvl - h,
+             bgcolor = color.new(c, 88), border_color = color.new(c, 55), extend = extend.right)
+        array.push(srZones, z)
+        if array.size(srZones) > srMax
+            box.delete(array.shift(srZones))
+
+ph = ta.pivothigh(high, srPivot, srPivot)
+pl = ta.pivotlow(low, srPivot, srPivot)
+if showSR and not na(ph)
+    f_addZone(ph, true)
+if showSR and not na(pl)
+    f_addZone(pl, false)
+
+// invalidate zones price has closed through (two consecutive closes beyond)
+if showSR and barstate.isconfirmed and array.size(srZones) > 0
+    for i = array.size(srZones) - 1 to 0
+        b = array.get(srZones, i)
+        t = box.get_top(b)
+        btm = box.get_bottom(b)
+        broken = (close > t and close[1] > t) or (close < btm and close[1] < btm)
+        if broken
+            box.set_extend(b, extend.none)
+            box.set_right(b, bar_index)
+            array.remove(srZones, i)
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+inLondon = showSes and not na(time(timeframe.period, sesLondon))
+inNY     = showSes and not na(time(timeframe.period, sesNY))
+bgcolor(inLondon ? color.new(#4C7DFF, 94) : na, title = "London")
+bgcolor(inNY     ? color.new(GOLD,     94) : na, title = "New York")
+
+// ── Round numbers ────────────────────────────────────────────────────────────
+var line rnUp = na
+var line rnDn = na
+if showRN and barstate.islast
+    step = rnStep > 0 ? rnStep : math.pow(10, math.floor(math.log10(close))) / 10
+    base = math.round(close / step) * step
+    line.delete(rnUp)
+    line.delete(rnDn)
+    rnUp := line.new(bar_index - 50, base + step, bar_index, base + step, color = color.new(MUTED, 40), style = line.style_dotted, extend = extend.right)
+    rnDn := line.new(bar_index - 50, base,        bar_index, base,        color = color.new(MUTED, 40), style = line.style_dotted, extend = extend.right)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(bullEngulf or bullPin, "FF PA — Bullish pattern", '{"product":"pa-suite","side":"long","symbol":"{{ticker}}","tf":"{{interval}}"}')
+alertcondition(bearEngulf or bearPin, "FF PA — Bearish pattern", '{"product":"pa-suite","side":"short","symbol":"{{ticker}}","tf":"{{interval}}"}')

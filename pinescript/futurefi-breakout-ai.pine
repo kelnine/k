@@ -1,0 +1,105 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Breakout AI — v1.0.0
+// Detects volatility squeezes, then scores potential breakouts with an adaptive
+// multi-factor model (momentum, volume expansion, volatility release, range
+// position). Fires only above a confidence threshold; marks the retest zone.
+// Timeframes: 15m–1D · Markets: crypto, forex, indices, gold.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Breakout AI", shorttitle = "FF Breakout", overlay = true,
+     max_boxes_count = 200, max_labels_count = 200)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gSq = "Squeeze detection"
+rangeLen   = input.int(20,   "Consolidation lookback (bars)", minval = 10, group = gSq)
+sqPct      = input.float(30, "Squeeze threshold (percentile of BB width)", minval = 5, maxval = 60, group = gSq,
+     tooltip = "Bollinger band width must be in this bottom percentile of the last 200 bars to qualify as a squeeze.")
+minSqBars  = input.int(6,    "Min bars in squeeze", minval = 2, group = gSq)
+
+gAI = "Breakout scoring"
+minScore   = input.int(70,   "Min confidence score (0–100)", minval = 40, maxval = 95, group = gAI)
+volLen     = input.int(20,   "Volume baseline (bars)", minval = 5, group = gAI)
+showScore  = input.bool(true, "Show score label", group = gAI)
+showRetest = input.bool(true, "Draw retest zone",  group = gAI)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+
+// ── Squeeze: BB width percentile + Donchian range ────────────────────────────
+basis   = ta.sma(close, 20)
+dev     = 2.0 * ta.stdev(close, 20)
+bbWidth = (2 * dev) / basis
+sqLevel = ta.percentile_linear_interpolation(bbWidth, 200, sqPct)
+inSqueeze = bbWidth <= sqLevel
+
+var int sqBars = 0
+sqBars := inSqueeze ? sqBars + 1 : 0
+armed  = sqBars[1] >= minSqBars                 // squeeze mature on the prior bar
+
+rangeHi = ta.highest(high, rangeLen)[1]
+rangeLo = ta.lowest(low,  rangeLen)[1]
+
+// ── Adaptive score: four normalized factors, weighted ────────────────────────
+// 1. Momentum thrust — candle body vs recent ATR
+atrV    = ta.atr(14)
+fMom    = math.min(math.abs(close - open) / (atrV * 1.5), 1.0)
+// 2. Volume expansion — current vs baseline mean (guard zero-volume feeds)
+volBase = ta.sma(volume, volLen)
+fVol    = volBase > 0 ? math.min(volume / (volBase * 2.0), 1.0) : 0.5
+// 3. Volatility release — BB width expanding off the squeeze floor
+fRel    = sqLevel > 0 ? math.min(math.max(bbWidth / sqLevel - 1.0, 0) , 1.0) : 0.0
+// 4. Range position — closing beyond the box, scaled by box height
+boxH    = math.max(rangeHi - rangeLo, syminfo.mintick)
+fPosUp  = math.min(math.max((close - rangeHi) / (boxH * 0.25), 0), 1.0)
+fPosDn  = math.min(math.max((rangeLo - close) / (boxH * 0.25), 0), 1.0)
+
+scoreUp = math.round((fMom * 30 + fVol * 25 + fRel * 15 + fPosUp * 30))
+scoreDn = math.round((fMom * 30 + fVol * 25 + fRel * 15 + fPosDn * 30))
+
+// ── Signals: breakout from a mature squeeze, close-confirmed, scored ─────────
+longBreak  = armed and close > rangeHi and scoreUp >= minScore and barstate.isconfirmed
+shortBreak = armed and close < rangeLo and scoreDn >= minScore and barstate.isconfirmed
+
+if longBreak or shortBreak
+    sqBars := 0                                  // disarm until a new squeeze forms
+
+// consolidation box while armed
+var box sqBox = na
+if armed and na(sqBox)
+    sqBox := box.new(bar_index - rangeLen, rangeHi, bar_index, rangeLo,
+         bgcolor = color.new(GOLD, 92), border_color = color.new(GOLD, 55))
+if not na(sqBox)
+    if armed and not (longBreak or shortBreak)
+        box.set_right(sqBox, bar_index)
+        box.set_top(sqBox, rangeHi)
+        box.set_bottom(sqBox, rangeLo)
+    else
+        sqBox := na                              // freeze the box where it ended
+
+// retest zone: the broken boundary ± 0.25 ATR
+if showRetest and (longBreak or shortBreak)
+    lvl = longBreak ? rangeHi : rangeLo
+    c   = longBreak ? BULL : BEAR
+    box.new(bar_index, lvl + atrV * 0.25, bar_index + 15, lvl - atrV * 0.25,
+         bgcolor = color.new(c, 90), border_color = color.new(c, 55),
+         text = "RETEST", text_color = color.new(c, 20), text_size = size.tiny)
+
+if showScore and longBreak
+    label.new(bar_index, low, "BREAKOUT " + str.tostring(scoreUp) + "%",
+         style = label.style_label_up, color = color.new(BULL, 15), textcolor = color.white, size = size.small)
+if showScore and shortBreak
+    label.new(bar_index, high, "BREAKDOWN " + str.tostring(scoreDn) + "%",
+         style = label.style_label_down, color = color.new(BEAR, 15), textcolor = color.white, size = size.small)
+
+plotshape(longBreak,  "Breakout long",  shape.triangleup,   location.belowbar, BULL, size = size.small)
+plotshape(shortBreak, "Breakout short", shape.triangledown, location.abovebar, BEAR, size = size.small)
+barcolor(inSqueeze ? color.new(GOLD, 55) : na, title = "Squeeze bars")
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(longBreak,  "FF Breakout — Long",  '{"product":"breakout-ai","side":"long","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
+alertcondition(shortBreak, "FF Breakout — Short", '{"product":"breakout-ai","side":"short","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
+alertcondition(armed and not armed[1], "FF Breakout — Squeeze armed", '{"product":"breakout-ai","event":"squeeze","symbol":"{{ticker}}","tf":"{{interval}}"}')

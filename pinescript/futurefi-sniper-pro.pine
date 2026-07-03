@@ -1,0 +1,107 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Sniper Pro — v1.0.0
+// Trend-filtered pullback entries with automatic SL / TP1 / TP2 and R:R label.
+// Timeframes: 5m–4H · Markets: forex, crypto, gold, indices
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Sniper Pro", shorttitle = "FF Sniper", overlay = true,
+     max_labels_count = 200, max_lines_count = 300)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gSig      = "Signals"
+emaFastLen = input.int(21,  "Fast EMA (trend)",       minval = 5,  group = gSig)
+emaSlowLen = input.int(55,  "Slow EMA (trend)",       minval = 10, group = gSig)
+rsiLen     = input.int(14,  "RSI length",             minval = 2,  group = gSig)
+rsiPull    = input.int(45,  "Max RSI at long pullback", minval = 20, maxval = 60, group = gSig,
+     tooltip = "Long setups require RSI to have dipped below this during the pullback (mirrored for shorts).")
+cooldown   = input.int(10,  "Signal cooldown (bars)", minval = 0,  group = gSig)
+
+gRisk     = "Risk"
+atrLen     = input.int(14,   "ATR length",   minval = 1,   group = gRisk)
+slMult     = input.float(1.5, "Stop = ATR ×", minval = 0.5, step = 0.1, group = gRisk)
+tp1R       = input.float(1.0, "TP1 (R)",      minval = 0.5, step = 0.5, group = gRisk)
+tp2R       = input.float(2.0, "TP2 (R)",      minval = 1.0, step = 0.5, group = gRisk)
+
+gDisp     = "Display"
+showLevels = input.bool(true, "Draw entry / SL / TP levels", group = gDisp)
+showTrend  = input.bool(true, "Color trend EMAs",            group = gDisp)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+
+// ── Engine ───────────────────────────────────────────────────────────────────
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiV    = ta.rsi(close, rsiLen)
+atrV    = ta.atr(atrLen)
+
+trendUp   = emaFast > emaSlow and close > emaSlow
+trendDown = emaFast < emaSlow and close < emaSlow
+
+// Pullback state: in an uptrend, price tags the fast EMA while RSI cools off.
+var bool pulledLong  = false
+var bool pulledShort = false
+if trendUp
+    pulledShort := false
+    if low <= emaFast and rsiV < rsiPull
+        pulledLong := true
+else
+    pulledLong := false
+if trendDown
+    pulledLong := false
+    if high >= emaFast and rsiV > (100 - rsiPull)
+        pulledShort := true
+else
+    pulledShort := false
+
+// Trigger: momentum resumes in trend direction (close back above/below fast EMA
+// with a directional candle), confirmed on close.
+var int lastSig = -100000
+canFire   = bar_index - lastSig > cooldown
+longFire  = trendUp   and pulledLong  and close > emaFast and close > open and barstate.isconfirmed and canFire
+shortFire = trendDown and pulledShort and close < emaFast and close < open and barstate.isconfirmed and canFire
+
+if longFire or shortFire
+    lastSig    := bar_index
+    pulledLong := false
+    pulledShort := false
+
+// ── Levels ───────────────────────────────────────────────────────────────────
+f_levels(bool isLong) =>
+    entry = close
+    risk  = atrV * slMult
+    sl    = isLong ? entry - risk : entry + risk
+    tp1   = isLong ? entry + risk * tp1R : entry - risk * tp1R
+    tp2   = isLong ? entry + risk * tp2R : entry - risk * tp2R
+    [entry, sl, tp1, tp2]
+
+f_drawTrade(bool isLong) =>
+    [entry, sl, tp1, tp2] = f_levels(isLong)
+    if showLevels
+        x2 = bar_index + 20
+        line.new(bar_index, entry, x2, entry, color = GOLD,  width = 2)
+        line.new(bar_index, sl,    x2, sl,    color = BEAR,  style = line.style_dashed)
+        line.new(bar_index, tp1,   x2, tp1,   color = BULL,  style = line.style_dotted)
+        line.new(bar_index, tp2,   x2, tp2,   color = BULL,  style = line.style_dashed)
+        label.new(x2, tp2, str.format("TP2 · {0,number,#.#####}", tp2), style = label.style_label_left, color = color.new(BULL, 85), textcolor = BULL,  size = size.small)
+        label.new(x2, sl,  str.format("SL · {0,number,#.#####}",  sl),  style = label.style_label_left, color = color.new(BEAR, 85), textcolor = BEAR,  size = size.small)
+
+if longFire
+    f_drawTrade(true)
+if shortFire
+    f_drawTrade(false)
+
+// ── Plots ────────────────────────────────────────────────────────────────────
+plot(emaFast, "Fast EMA", showTrend ? (trendUp ? BULL : trendDown ? BEAR : MUTED) : MUTED, 2)
+plot(emaSlow, "Slow EMA", color.new(MUTED, 30), 2)
+
+plotshape(longFire,  "Long",  shape.triangleup,   location.belowbar, BULL, size = size.small, text = "SNIPE", textcolor = BULL)
+plotshape(shortFire, "Short", shape.triangledown, location.abovebar, BEAR, size = size.small, text = "SNIPE", textcolor = BEAR)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(longFire,  "FF Sniper — Long",  '{"product":"sniper-pro","side":"long","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
+alertcondition(shortFire, "FF Sniper — Short", '{"product":"sniper-pro","side":"short","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')

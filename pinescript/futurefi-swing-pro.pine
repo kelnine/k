@@ -1,0 +1,115 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// FutureFi Swing Pro — v1.0.0
+// Higher-timeframe bias (MTF EMA stack) + structure-break swing entries with
+// wide ATR stops and a live trade-plan table.
+// Timeframes: 4H–1W · Markets: all.
+// © FutureFi — invite-only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("FutureFi Swing Pro", shorttitle = "FF Swing", overlay = true,
+     max_labels_count = 200, max_lines_count = 200)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+gBias = "Higher-timeframe bias"
+htf     = input.timeframe("D", "Bias timeframe", group = gBias)
+biasLen = input.int(50, "Bias EMA length", minval = 10, group = gBias)
+
+gSig = "Entries"
+pivotL   = input.int(8,  "Swing pivot strength (bars)", minval = 3, group = gSig)
+cooldown = input.int(15, "Signal cooldown (bars)",      minval = 0, group = gSig)
+
+gRisk = "Risk"
+atrLen  = input.int(14,    "ATR length",  minval = 1,   group = gRisk)
+slMult  = input.float(2.5, "Stop = ATR ×", minval = 1.0, step = 0.25, group = gRisk)
+tp1R    = input.float(1.5, "TP1 (R)",      minval = 0.5, step = 0.25, group = gRisk)
+tp2R    = input.float(3.0, "TP2 (R)",      minval = 1.0, step = 0.5,  group = gRisk)
+showPlan = input.bool(true, "Show trade-plan table", group = gRisk)
+
+// ── FF palette ───────────────────────────────────────────────────────────────
+BULL  = #22C57A
+BEAR  = #F4506A
+GOLD  = #E8B84B
+MUTED = #8B93A3
+
+// ── HTF bias (close-confirmed HTF values only — no repaint) ──────────────────
+[htfClose, htfEma] = request.security(syminfo.tickerid, htf,
+     [close[1], ta.ema(close, biasLen)[1]], lookahead = barmerge.lookahead_off)
+biasUp = htfClose > htfEma
+biasDn = htfClose < htfEma
+
+// ── Structure: break of the last confirmed swing in the bias direction ───────
+ph = ta.pivothigh(high, pivotL, pivotL)
+pl = ta.pivotlow(low,  pivotL, pivotL)
+var float lastSwingH = na
+var float lastSwingL = na
+var bool  brokeH = false
+var bool  brokeL = false
+if not na(ph)
+    lastSwingH := ph
+    brokeH := false
+if not na(pl)
+    lastSwingL := pl
+    brokeL := false
+
+var int lastSig = -100000
+canFire = bar_index - lastSig > cooldown
+
+longFire  = biasUp and not na(lastSwingH) and not brokeH and close > lastSwingH and canFire and barstate.isconfirmed
+shortFire = biasDn and not na(lastSwingL) and not brokeL and close < lastSwingL and canFire and barstate.isconfirmed
+if longFire
+    brokeH := true
+    lastSig := bar_index
+if shortFire
+    brokeL := true
+    lastSig := bar_index
+
+// ── Trade plan ───────────────────────────────────────────────────────────────
+atrV = ta.atr(atrLen)
+var float planEntry = na, var float planSL = na, var float planTP1 = na, var float planTP2 = na
+var string planSide = na
+if longFire or shortFire
+    dir      = longFire ? 1 : -1
+    risk     = atrV * slMult
+    planSide := longFire ? "LONG" : "SHORT"
+    planEntry := close
+    planSL    := close - dir * risk
+    planTP1   := close + dir * risk * tp1R
+    planTP2   := close + dir * risk * tp2R
+    c = longFire ? BULL : BEAR
+    x2 = bar_index + 30
+    line.new(bar_index, planEntry, x2, planEntry, color = GOLD, width = 2)
+    line.new(bar_index, planSL,  x2, planSL,  color = BEAR, style = line.style_dashed)
+    line.new(bar_index, planTP1, x2, planTP1, color = c,    style = line.style_dotted)
+    line.new(bar_index, planTP2, x2, planTP2, color = c,    style = line.style_dashed)
+    label.new(bar_index, longFire ? low : high, planSide,
+         style = longFire ? label.style_label_up : label.style_label_down,
+         color = color.new(c, 15), textcolor = color.white, size = size.small)
+
+// ── Plan table ───────────────────────────────────────────────────────────────
+var table plan = table.new(position.bottom_right, 2, 6, bgcolor = color.new(#111113, 15),
+     border_color = color.new(MUTED, 70), border_width = 1)
+if showPlan and barstate.islast
+    fmt(float v) => str.tostring(v, format.mintick)
+    table.cell(plan, 0, 0, "FF SWING",   text_color = GOLD,  text_size = size.small)
+    table.cell(plan, 1, 0, na(planSide) ? "—" : planSide,
+         text_color = planSide == "LONG" ? BULL : planSide == "SHORT" ? BEAR : MUTED, text_size = size.small)
+    table.cell(plan, 0, 1, "HTF bias",   text_color = MUTED, text_size = size.small)
+    table.cell(plan, 1, 1, biasUp ? "▲ Bullish" : biasDn ? "▼ Bearish" : "—",
+         text_color = biasUp ? BULL : biasDn ? BEAR : MUTED, text_size = size.small)
+    table.cell(plan, 0, 2, "Entry", text_color = MUTED, text_size = size.small)
+    table.cell(plan, 1, 2, na(planEntry) ? "—" : fmt(planEntry), text_color = color.white, text_size = size.small)
+    table.cell(plan, 0, 3, "Stop",  text_color = MUTED, text_size = size.small)
+    table.cell(plan, 1, 3, na(planSL) ? "—" : fmt(planSL),   text_color = BEAR, text_size = size.small)
+    table.cell(plan, 0, 4, "TP1",   text_color = MUTED, text_size = size.small)
+    table.cell(plan, 1, 4, na(planTP1) ? "—" : fmt(planTP1), text_color = BULL, text_size = size.small)
+    table.cell(plan, 0, 5, "TP2",   text_color = MUTED, text_size = size.small)
+    table.cell(plan, 1, 5, na(planTP2) ? "—" : fmt(planTP2), text_color = BULL, text_size = size.small)
+
+// ── Plots ────────────────────────────────────────────────────────────────────
+plotshape(longFire,  "Swing long",  shape.triangleup,   location.belowbar, BULL, size = size.small)
+plotshape(shortFire, "Swing short", shape.triangledown, location.abovebar, BEAR, size = size.small)
+bgcolor(biasUp ? color.new(BULL, 97) : biasDn ? color.new(BEAR, 97) : na, title = "HTF bias tint")
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(longFire,  "FF Swing — Long",  '{"product":"swing-pro","side":"long","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
+alertcondition(shortFire, "FF Swing — Short", '{"product":"swing-pro","side":"short","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}"}')
