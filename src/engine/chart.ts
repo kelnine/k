@@ -641,10 +641,10 @@ export class ChartEngine {
 
   /** draws one table with its bottom edge at `bottom`; returns its top edge */
   private drawTable(ctx: CanvasRenderingContext2D, table: IndicatorTable, x: number, bottom: number): number {
-    const rowH = 19
-    const pad = 9
-    const font = '11px system-ui, sans-serif'
-    const boldFont = '600 11px system-ui, sans-serif'
+    const rowH = 15
+    const pad = 6
+    const font = '9.5px system-ui, sans-serif'
+    const boldFont = '600 9.5px system-ui, sans-serif'
     const header = `${this.symbol} · ${tfLabel(this.tfMs)}`
 
     ctx.save()
