@@ -1,5 +1,5 @@
 //@version=6
-indicator("Profit Gang v1.0", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+indicator("K Gang v1.0", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // ═══════════════════════════════════════════════════════ inputs
 
@@ -49,8 +49,12 @@ f_cisd() =>
 f_tfTxt(string tf) =>
     tf == "60" ? "h1" : tf == "120" ? "h2" : tf == "240" ? "h4" : tf == "1D" ? "D" : tf
 
-f_biasTxt(string prefix, int b) =>
-    prefix + ": " + (b > 0 ? "Bullish" : b < 0 ? "Bearish" : "—")
+f_biasWord(int b) =>
+    b > 0 ? "Bullish" : b < 0 ? "Bearish" : "—"
+
+// abbreviated form for the compact bias rows
+f_biasShort(string prefix, int b) =>
+    prefix + ": " + (b > 0 ? "Bull" : b < 0 ? "Bear" : "—")
 
 f_biasCol(int b) =>
     b > 0 ? colBull : b < 0 ? colBear : color.gray
@@ -244,12 +248,12 @@ if showDash and barstate.islast
     htfName = f_tfTxt(htfTf)
     mtfName = f_tfTxt(mtfTf)
     table.cell(dash, 0, 0, syminfo.ticker + " " + timeframe.period, bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
-    table.cell(dash, 1, 0, "Profit Gang v1.0", bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
-    table.cell(dash, 0, 1, "Swing Status", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
-    table.cell(dash, 1, 1, f_biasTxt("Swing", swingTrend), bgcolor = color.white, text_color = f_biasCol(swingTrend), text_size = dashTextSize)
-    table.cell(dash, 0, 2, "CISD Status", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
-    table.cell(dash, 1, 2, f_biasTxt("CISD", cisdState), bgcolor = color.white, text_color = f_biasCol(cisdState), text_size = dashTextSize)
-    table.cell(dash, 0, 3, "HTF/MTF CISD Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
-    table.cell(dash, 1, 3, f_biasTxt("HTF " + htfName, htfCisd) + "  |  " + f_biasTxt("MTF " + mtfName, mtfCisd), bgcolor = #efdcb9, text_color = #1f2937, text_size = dashTextSize)
-    table.cell(dash, 0, 4, "HTF/MTF Open Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
-    table.cell(dash, 1, 4, f_biasTxt("HTF " + htfName, htfOpen) + "  |  " + f_biasTxt("MTF " + mtfName, mtfOpen), bgcolor = #cde8cf, text_color = #1f2937, text_size = dashTextSize)
+    table.cell(dash, 1, 0, "K Gang v1.0", bgcolor = #f8f9fb, text_color = #111111, text_size = dashTextSize)
+    table.cell(dash, 0, 1, "Swing", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
+    table.cell(dash, 1, 1, f_biasWord(swingTrend), bgcolor = color.white, text_color = f_biasCol(swingTrend), text_size = dashTextSize)
+    table.cell(dash, 0, 2, "CISD", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
+    table.cell(dash, 1, 2, f_biasWord(cisdState), bgcolor = color.white, text_color = f_biasCol(cisdState), text_size = dashTextSize)
+    table.cell(dash, 0, 3, "CISD Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
+    table.cell(dash, 1, 3, f_biasShort(htfName, htfCisd) + " | " + f_biasShort(mtfName, mtfCisd), bgcolor = #efdcb9, text_color = #1f2937, text_size = dashTextSize)
+    table.cell(dash, 0, 4, "Open Bias", bgcolor = #4b5563, text_color = #f3f4f6, text_size = dashTextSize)
+    table.cell(dash, 1, 4, f_biasShort(htfName, htfOpen) + " | " + f_biasShort(mtfName, mtfOpen), bgcolor = #cde8cf, text_color = #1f2937, text_size = dashTextSize)
