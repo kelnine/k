@@ -58,3 +58,9 @@ src/
   indicators/  pure-function indicator library + registry
   ui/          React shell: toolbar, layouts, watchlist, search
 ```
+
+## TradingView
+
+`pine/kcharts-setup.pine` is a Pine Script v6 port of the core setup — pullback
+EMA band, anchored VWAP, and automatic 1H/4H highs and lows — for use on
+TradingView. See [`pine/README.md`](pine/README.md).

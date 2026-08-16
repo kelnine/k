@@ -1,0 +1,180 @@
+//@version=6
+// KCharts Setup — pullback EMA band + anchored VWAP + 1H/4H highs and lows.
+// Everything is one overlay so it can sit on a clean chart with no other tools.
+indicator("KCharts Setup — PB EMA + VWAP + 1H/4H Levels", "KCharts Setup", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+const string G_EMA  = "Pullback EMA"
+const string G_VWAP = "VWAP"
+const string G_LVL  = "1H / 4H levels"
+
+// Pullback EMA band
+bool   emaShow  = input.bool(true,    "Show EMA band",          group = G_EMA)
+float  emaSrc   = input.source(close, "Source",                 group = G_EMA)
+int    emaFastL = input.int(9,        "Fast length",  minval = 1, group = G_EMA, inline = "len")
+int    emaSlowL = input.int(21,       "Slow length",  minval = 1, group = G_EMA, inline = "len")
+bool   emaFill  = input.bool(true,    "Shade the band",         group = G_EMA)
+bool   pbSignal = input.bool(true,    "Mark pullback taps",     group = G_EMA, tooltip = "Triangle when price dips into the band with the trend and closes back out of it.")
+color  emaUpCol = input.color(color.new(#26a69a, 0),  "Up",   group = G_EMA, inline = "c")
+color  emaDnCol = input.color(color.new(#ef5350, 0),  "Down", group = G_EMA, inline = "c")
+
+// VWAP
+bool   vwapShow  = input.bool(true, "Show VWAP", group = G_VWAP)
+string vwapAnch  = input.string("Session", "Anchor", options = ["Session", "Week", "Month", "Quarter", "Year"], group = G_VWAP)
+float  vwapSrc   = input.source(hlc3, "Source", group = G_VWAP)
+bool   vwapBands = input.bool(false, "Show ±σ bands", group = G_VWAP)
+float  vwapMult1 = input.float(1.0, "σ ×", minval = 0.1, step = 0.1, group = G_VWAP, inline = "b")
+float  vwapMult2 = input.float(2.0, "and", minval = 0.1, step = 0.1, group = G_VWAP, inline = "b")
+color  vwapCol   = input.color(color.new(#2962ff, 0), "Color", group = G_VWAP)
+
+// Higher timeframe levels
+string tf1       = input.timeframe("60",  "Timeframe A", group = G_LVL, inline = "tf")
+string tf2       = input.timeframe("240", "Timeframe B", group = G_LVL, inline = "tf")
+bool   showTf1   = input.bool(true, "A levels", group = G_LVL, inline = "on")
+bool   showTf2   = input.bool(true, "B levels", group = G_LVL, inline = "on")
+bool   showPrev  = input.bool(true, "Previous period high / low", group = G_LVL)
+bool   showCurr  = input.bool(true, "Current period high / low",  group = G_LVL, tooltip = "The developing high and low of the period in progress. Updates live, so it moves within the bar by design.")
+bool   showMid   = input.bool(false, "Previous period midpoint",  group = G_LVL)
+int    lvlKeep   = input.int(1,  "Periods kept", minval = 1, maxval = 50, group = G_LVL, tooltip = "How many past periods stay drawn. 1 shows only the live level.")
+int    lvlExt    = input.int(12, "Extend right (bars)", minval = 0, maxval = 500, group = G_LVL)
+bool   lvlLabels = input.bool(true, "Labels", group = G_LVL)
+int    lvlWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_LVL)
+string prevStyle = input.string("Solid",  "Previous style", options = ["Solid", "Dashed", "Dotted"], group = G_LVL)
+string currStyle = input.string("Dotted", "Current style",  options = ["Solid", "Dashed", "Dotted"], group = G_LVL)
+color  tf1Col    = input.color(color.new(#ff9800, 0), "A color", group = G_LVL, inline = "lc")
+color  tf2Col    = input.color(color.new(#ab47bc, 0), "B color", group = G_LVL, inline = "lc")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_style(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// "60" -> "1H", "240" -> "4H", "15" -> "15m"
+f_tfName(simple string tf) =>
+    int secs = timeframe.in_seconds(tf)
+    string name = secs % 86400 == 0 ? str.tostring(secs / 86400) + "D" :
+                  secs % 3600  == 0 ? str.tostring(secs / 3600)  + "H" :
+                  secs % 60    == 0 ? str.tostring(secs / 60)    + "m" : str.tostring(secs) + "s"
+    name
+
+// Draws one horizontal level that restarts at the top of every higher-timeframe
+// period. Each call site keeps its own line history via `var`.
+f_level(bool show, bool fresh, float price, color col, string txt, string sty) =>
+    var array<line> lns = array.new<line>()
+    var label lbl = na
+    if not show or na(price)
+        if array.size(lns) > 0
+            for i = 0 to array.size(lns) - 1
+                line.delete(array.get(lns, i))
+            array.clear(lns)
+        label.delete(lbl)
+        lbl := na
+    else
+        if fresh or array.size(lns) == 0
+            if array.size(lns) > 0
+                line.set_x2(array.get(lns, array.size(lns) - 1), bar_index)
+            array.push(lns, line.new(bar_index, price, bar_index + lvlExt, price, xloc = xloc.bar_index, color = col, width = lvlWidth, style = sty))
+            while array.size(lns) > lvlKeep
+                line.delete(array.shift(lns))
+        line cur = array.get(lns, array.size(lns) - 1)
+        line.set_xy1(cur, line.get_x1(cur), price)
+        line.set_xy2(cur, bar_index + lvlExt, price)
+        label.delete(lbl)
+        lbl := barstate.islast and lvlLabels ? label.new(bar_index + lvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.small) : na
+    price
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pullback EMA band
+// ─────────────────────────────────────────────────────────────────────────────
+float emaFast = ta.ema(emaSrc, emaFastL)
+float emaSlow = ta.ema(emaSrc, emaSlowL)
+
+bool trendUp = emaFast > emaSlow and close > emaSlow
+bool trendDn = emaFast < emaSlow and close < emaSlow
+color bandCol = trendUp ? emaUpCol : trendDn ? emaDnCol : color.gray
+
+pFast = plot(emaShow ? emaFast : na, "EMA fast", color = color.new(bandCol, 20), linewidth = 1)
+pSlow = plot(emaShow ? emaSlow : na, "EMA slow", color = color.new(bandCol, 20), linewidth = 2)
+fill(pFast, pSlow, color = emaShow and emaFill ? color.new(bandCol, 88) : na, title = "EMA band")
+
+// A tap is a wick into the band that closes back on the trend side of it.
+bool pbUp = trendUp and low  <= emaFast and close > emaFast
+bool pbDn = trendDn and high >= emaFast and close < emaFast
+
+plotshape(pbSignal and pbUp, "Pullback tap up",   style = shape.triangleup,   location = location.belowbar, color = emaUpCol, size = size.tiny)
+plotshape(pbSignal and pbDn, "Pullback tap down", style = shape.triangledown, location = location.abovebar, color = emaDnCol, size = size.tiny)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anchored VWAP
+// ─────────────────────────────────────────────────────────────────────────────
+bool vwapReset = switch vwapAnch
+    "Week"    => timeframe.change("W")
+    "Month"   => timeframe.change("M")
+    "Quarter" => timeframe.change("3M")
+    "Year"    => timeframe.change("12M")
+    => timeframe.change("D")
+
+[vw, vwUp1, vwDn1] = ta.vwap(vwapSrc, vwapReset, vwapMult1)
+[_vw2, vwUp2, vwDn2] = ta.vwap(vwapSrc, vwapReset, vwapMult2)
+
+plot(vwapShow ? vw : na, "VWAP", color = vwapCol, linewidth = 2)
+plot(vwapShow and vwapBands ? vwUp1 : na, "VWAP +σ1", color = color.new(vwapCol, 55))
+plot(vwapShow and vwapBands ? vwDn1 : na, "VWAP -σ1", color = color.new(vwapCol, 55))
+plot(vwapShow and vwapBands ? vwUp2 : na, "VWAP +σ2", color = color.new(vwapCol, 75))
+plot(vwapShow and vwapBands ? vwDn2 : na, "VWAP -σ2", color = color.new(vwapCol, 75))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1H / 4H highs and lows
+// ─────────────────────────────────────────────────────────────────────────────
+// `lookahead_on` together with the `[1]` offset is the non-repainting way to read
+// the *completed* higher-timeframe bar. The developing values are read without
+// lookahead — they move inside the period on purpose.
+[prevH1, prevL1] = request.security(syminfo.tickerid, tf1, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[prevH2, prevL2] = request.security(syminfo.tickerid, tf2, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[currH1, currL1] = request.security(syminfo.tickerid, tf1, [high, low])
+[currH2, currL2] = request.security(syminfo.tickerid, tf2, [high, low])
+
+// First chart bar of each higher-timeframe period.
+bool new1 = na(time(tf1)[1]) or time(tf1) != time(tf1)[1]
+bool new2 = na(time(tf2)[1]) or time(tf2) != time(tf2)[1]
+
+// Nothing sensible to draw once the chart timeframe is at or above the level's.
+bool fits1 = timeframe.in_seconds() <= timeframe.in_seconds(tf1)
+bool fits2 = timeframe.in_seconds() <= timeframe.in_seconds(tf2)
+
+string n1 = f_tfName(tf1)
+string n2 = f_tfName(tf2)
+
+string prevSty = f_style(prevStyle)
+string currSty = f_style(currStyle)
+
+f_level(showTf1 and fits1 and showPrev, new1, prevH1, tf1Col, n1 + " PH", prevSty)
+f_level(showTf1 and fits1 and showPrev, new1, prevL1, tf1Col, n1 + " PL", prevSty)
+f_level(showTf2 and fits2 and showPrev, new2, prevH2, tf2Col, n2 + " PH", prevSty)
+f_level(showTf2 and fits2 and showPrev, new2, prevL2, tf2Col, n2 + " PL", prevSty)
+
+f_level(showTf1 and fits1 and showCurr, new1, currH1, tf1Col, n1 + " H", currSty)
+f_level(showTf1 and fits1 and showCurr, new1, currL1, tf1Col, n1 + " L", currSty)
+f_level(showTf2 and fits2 and showCurr, new2, currH2, tf2Col, n2 + " H", currSty)
+f_level(showTf2 and fits2 and showCurr, new2, currL2, tf2Col, n2 + " L", currSty)
+
+f_level(showTf1 and fits1 and showMid, new1, math.avg(prevH1, prevL1), color.new(tf1Col, 40), n1 + " EQ", line.style_dashed)
+f_level(showTf2 and fits2 and showMid, new2, math.avg(prevH2, prevL2), color.new(tf2Col, 40), n2 + " EQ", line.style_dashed)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(pbUp, "Pullback tap (up)",   "Price tapped the EMA band in an uptrend and closed back above it")
+alertcondition(pbDn, "Pullback tap (down)", "Price tapped the EMA band in a downtrend and closed back below it")
+alertcondition(ta.crossover(close, prevH1),  "Close above previous A high", "Close crossed above the previous timeframe-A high")
+alertcondition(ta.crossunder(close, prevL1), "Close below previous A low",  "Close crossed below the previous timeframe-A low")
+alertcondition(ta.crossover(close, prevH2),  "Close above previous B high", "Close crossed above the previous timeframe-B high")
+alertcondition(ta.crossunder(close, prevL2), "Close below previous B low",  "Close crossed below the previous timeframe-B low")
+alertcondition(vwapShow and ta.crossover(close, vw),  "Close above VWAP", "Close crossed above VWAP")
+alertcondition(vwapShow and ta.crossunder(close, vw), "Close below VWAP", "Close crossed below VWAP")
