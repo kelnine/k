@@ -17,7 +17,7 @@ tuned for index futures on a 5–15 m chart.
 | **PD / PW / PM** | Previous day, week and month high & low, anchored at the start of the current period. |
 | **Fair value gaps** | Three-bar gaps on the chart timeframe plus a second set from a higher timeframe (default 1 H). Boxes extend until mitigated — mitigation rule is `Touch`, `50%`, or `Full fill`. |
 | **Buy / sell zones** | Premium & discount OTE bands (default 0.62–0.79) off the live dealing range between the last confirmed swing high and low, with a 50 % equilibrium line. |
-| **ORB** | Opening-range box for a configurable window (default 09:30–09:45 NY), extended high/low lines, and `ORB ▲` / `ORB ▼` breakout markers graded by runway (below). Markers sit on the breakout bar itself. |
+| **ORB** | The first candle of the NY session: its **open** (dotted), high and low (dashed), all extended. `ORB ▲` / `ORB ▼` breakout markers and `ORB REJ` rejection markers, graded by runway, sweep and volume (below). Markers sit on the signal bar itself. |
 | **Gap fill** | Box spanning the prior day's close to today's open; it greys out and alerts the moment price trades back through the old close. |
 | **Range table** | Per-session range with that range as a % of its own trailing average, plus PD / PW / PM rows. Green ≥ 100 %, amber ≥ 75 %. |
 
@@ -72,13 +72,41 @@ fade is the trade. Two definitions, selectable under *Rejection signal*:
   a later close back inside.
 
 `ORB REJ ▼` is a top-side rejection (a short), `ORB REJ ▲` a bottom-side one (a
-long). Because a rejection fades the level, it is graded against a target on the
-**opposite** side to the break it refused — a top-side rejection needs runway
-*below*. Same greyed-with-`?` treatment when it fails the test, same tooltip.
+long). Same greyed-with-`?` treatment when it fails the test, same tooltip.
+
+**Target.** A refused break aims at the *other side of the opening range* — a
+top-side rejection targets the ORB low. That is the default. Switch *Rejection
+target* to `Nearest liquidity` to grade rejections the same way breakouts are,
+against the next unswept pool instead.
+
+**Sweep.** The strength of a rejection is usually in what the failed probe took
+out on its way — a previous day high, a session high. The tooltip always reports
+this as *Swept on the probe*, listing every level caught between the ORB edge and
+the furthest point the probe reached. Turn on *Rejection requires a liquidity
+sweep* to only confirm rejections that swept something.
 
 Rejections fire at most once per side per day and are independent of the breakout
 markers, so a break followed by a reclaim gives you both: `ORB ▲` then
 `ORB REJ ▼`.
+
+### Bias
+
+The table's **BIAS** row tracks the running read the opening range gives you:
+holding above the range is `LONG`, refused and back inside is `SHORT`, and it
+flips as breaks and rejections fire. The third column shows the range itself
+(high / low). It is a state read-out, not a signal — the markers are the signals.
+
+### Fib pullback filter on FVGs
+
+Marking every gap buries the few worth watching. *Only gaps in the fib pullback
+zone* hides any FVG that isn't sitting in the retracement band of the current
+dealing range — by default 0.5–0.62, measured from both ends of the range so it
+catches a pullback in either direction.
+
+The band moves as the dealing range does, so a gap can drift into and out of it
+over its lifetime; the filter is re-evaluated every bar rather than fixed at
+detection. Hidden gaps are still tracked — mitigation and the breakout
+obstacle count use every gap, visible or not.
 
 ### Keeping the chart readable
 

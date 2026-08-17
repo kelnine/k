@@ -8,7 +8,8 @@
 //    • Fair value gaps on the chart timeframe and on a higher timeframe,
 //      auto-extended until mitigated
 //    • Premium / discount (OTE) buy & sell zones off the live dealing range
-//    • Opening range breakout box with breakout markers
+//    • Opening range: the first candle's open, high and low, with breakouts
+//      and rejections graded by runway, sweep and volume, plus a bias read-out
 //    • Overnight gap box that closes itself once the gap fills
 //    • Range table: each session's range vs its own average, plus PD / PW / PM
 //
@@ -74,6 +75,9 @@ fvgMinTick = input.int(0,  "Min gap size (ticks)", minval = 0, group = G_FVG)
 fvgBullCol = input.color(#26a69a, "Bullish", group = G_FVG, inline = "fc")
 fvgBearCol = input.color(#ef5350, "Bearish", group = G_FVG, inline = "fc")
 fvgOpacity = input.int(78, "Zone opacity", minval = 0, maxval = 95, group = G_FVG)
+fvgFibOnly = input.bool(false, "Only gaps in the fib pullback zone", group = G_FVG, tooltip = "Hide gaps that don't sit in the retracement band of the current dealing range. Marking every gap buries the few that matter; this keeps the ones price is actually likely to react from.")
+fvgFibLo   = input.float(0.5,  "Fib zone from", minval = 0.1, maxval = 0.9, step = 0.01, group = G_FVG, inline = "fib")
+fvgFibHi   = input.float(0.62, "to",            minval = 0.1, maxval = 0.9, step = 0.01, group = G_FVG, inline = "fib")
 
 // ── Buy / sell zones ──
 zoneOn    = input.bool(true, "Show premium / discount zones", group = G_ZONE)
@@ -86,10 +90,13 @@ sellCol   = input.color(#e91e63, "Sell zone", group = G_ZONE, inline = "zc")
 alertZone = input.bool(true, "Alert on zone tap", group = G_ZONE)
 
 // ── ORB ──
-orbOn   = input.bool(true, "Show opening range", group = G_ORB)
-orbSpec = input.session("0930-0945", "Opening range window", group = G_ORB)
-orbCol  = input.color(#ffa726, "Colour", group = G_ORB)
-orbBrk  = input.bool(true, "Mark breakouts", group = G_ORB)
+orbOn      = input.bool(true, "Show opening range", group = G_ORB)
+orbSpec    = input.session("0930-0945", "Opening range window", group = G_ORB, tooltip = "Defaults to the first 15-minute candle of the NY session.")
+orbCol     = input.color(#ffa726, "Colour", group = G_ORB)
+orbBrk     = input.bool(true, "Mark breakouts", group = G_ORB)
+orbShowOpen = input.bool(true, "Show the opening candle's open", group = G_ORB, tooltip = "The open of the first candle, drawn alongside its high and low — the third line of the reference setup.")
+orbRejTgt  = input.string("Opposite ORB edge", "Rejection target", options = ["Opposite ORB edge", "Nearest liquidity"], group = G_ORB, tooltip = "A refused break normally targets the other side of the opening range, not the next pool of liquidity. Switch to Nearest liquidity to grade rejections the same way breakouts are graded.")
+orbReqSweep = input.bool(false, "Rejection requires a liquidity sweep", group = G_ORB, tooltip = "Only confirm a rejection when the failed probe took out a level on its way — previous day high, a session high, and so on. The sweep is reported in the tooltip either way.")
 orbFilter     = input.bool(true, "Filter breakouts by runway", group = G_ORB, tooltip = "Only confirm a break that has an unswept target ahead of it and a clear enough path to reach it. Breaks that fail the test print greyed with a '?'.")
 orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step = 0.1, group = G_ORB)
 orbMaxBlock   = input.int(3, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
@@ -109,6 +116,7 @@ tblOn   = input.bool(true, "Show range table", group = G_TBL)
 tblPos  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"], group = G_TBL)
 avgLen  = input.int(14, "Average length", minval = 2, maxval = 100, group = G_TBL, tooltip = "How many prior instances feed the average that the % column compares against.")
 tblSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_TBL)
+tblBias = input.bool(true, "Show ORB bias row", group = G_TBL, tooltip = "Holding above the opening range reads LONG, refused and back inside reads SHORT — the running bias, not a signal on its own.")
 
 // ── Labels ──
 lblFvg  = input.bool(false, "Label FVG boxes", group = G_LBL, tooltip = "Off by default — the coloured box already says what it is, and one label per gap is most of the clutter on the right-hand edge.")
@@ -316,14 +324,42 @@ drawLevel(showPW, pwL, "PWL", lvlCol, line.style_dotted, weekStart)
 drawLevel(showPM, pmH, "PMH", lvlCol, line.style_dotted, monthStart)
 drawLevel(showPM, pmL, "PML", lvlCol, line.style_dotted, monthStart)
 
+// ═══════════════════════════ DEALING RANGE ══════════════════════════════════
+// The last confirmed swing high and low. Feeds both the premium/discount zones
+// and the fib-pullback filter on fair value gaps, so it is resolved before
+// either of them.
+float ph = ta.pivothigh(pivLen, pivLen)
+float pl = ta.pivotlow(pivLen, pivLen)
+
+var float swHi = na
+var float swLo = na
+if not na(ph)
+    swHi := ph
+if not na(pl)
+    swLo := pl
+
+bool  rangeOk = not na(swHi) and not na(swLo) and swHi > swLo
+float rangeSz = rangeOk ? swHi - swLo : na
+
+// The retracement band price is expected to pull back into, measured from both
+// ends of the range so it covers a pullback in either direction: with the
+// defaults, 0.5–0.62 from the low and 0.5–0.62 from the high union to a single
+// band straddling equilibrium.
+float fibTop = rangeOk ? swLo + rangeSz * math.max(fvgFibLo, fvgFibHi) : na
+float fibBot = rangeOk ? swLo + rangeSz * (1.0 - math.max(fvgFibLo, fvgFibHi)) : na
+
+inFibZone(float top, float bot) =>
+    not fvgFibOnly or not rangeOk ? true : top >= fibBot and bot <= fibTop
+
 // ═══════════════════════════ FAIR VALUE GAPS ════════════════════════════════
 type Gap
-    box   bx
-    label lb
-    float top
-    float bot
-    bool  bull
-    bool  dead = false
+    box    bx
+    label  lb
+    float  top
+    float  bot
+    bool   bull
+    string tag  = ""
+    bool   dead = false
 
 var array<Gap> GAPS = array.new<Gap>()
 
@@ -336,7 +372,7 @@ addGap(bool bull, float top, float bot, int leftT, string tag) =>
         label l    = na
         if lblFvg
             l := label.new(x2, math.avg(top, bot), tag, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(base, 100), textcolor = color.new(base, 20), size = size.tiny)
-        GAPS.push(Gap.new(bx = b, lb = l, top = top, bot = bot, bull = bull))
+        GAPS.push(Gap.new(bx = b, lb = l, top = top, bot = bot, bull = bull, tag = tag))
 
         // trim the oldest gap in this direction once past the cap
         int n = 0
@@ -390,20 +426,17 @@ if GAPS.size() > 0
                     GAPS.remove(i)
             else
                 box.set_right(g.bx, x2)
+                // re-tested every bar: the dealing range moves, so a gap can
+                // drift into and out of the pullback band over its lifetime
+                bool  shown = inFibZone(g.top, g.bot)
+                color base  = g.bull ? fvgBullCol : fvgBearCol
+                box.set_bgcolor(g.bx, color.new(base, shown ? fvgOpacity : 100))
+                box.set_border_color(g.bx, color.new(base, shown ? 60 : 100))
                 if not na(g.lb)
                     label.set_xy(g.lb, x2, math.avg(g.top, g.bot))
+                    labelVis(g.lb, shown, g.tag, color.new(base, 20), color.new(base, 100))
 
 // ═══════════════════════ PREMIUM / DISCOUNT ZONES ═══════════════════════════
-float ph = ta.pivothigh(pivLen, pivLen)
-float pl = ta.pivotlow(pivLen, pivLen)
-
-var float swHi = na
-var float swLo = na
-if not na(ph)
-    swHi := ph
-if not na(pl)
-    swLo := pl
-
 var box   buyBox     = na
 var box   sellBox    = na
 var label buyLbl     = na
@@ -536,6 +569,30 @@ nearestTarget(int dir, float px, float minDist) =>
             t.name  := "GAP FILL"
     t
 
+// Names of the key levels caught inside a price band — used to report what a
+// failed breakout swept on its way out of the range.
+levelsInBand(float lo, float hi) =>
+    string s = ""
+    if not na(lo) and not na(hi) and hi > lo
+        for i = 0 to SESSIONS.size() - 1
+            Sess ss = SESSIONS.get(i)
+            if ss.enabled and not ss.inS
+                if not na(ss.hi) and ss.hi > lo and ss.hi <= hi
+                    s := s + (s == "" ? "" : ", ") + ss.name + " HIGH"
+                if not na(ss.lo) and ss.lo > lo and ss.lo <= hi
+                    s := s + (s == "" ? "" : ", ") + ss.name + " LOW"
+        if showPD
+            if not na(pdH) and pdH > lo and pdH <= hi
+                s := s + (s == "" ? "" : ", ") + "PDH"
+            if not na(pdL) and pdL > lo and pdL <= hi
+                s := s + (s == "" ? "" : ", ") + "PDL"
+        if showPW
+            if not na(pwH) and pwH > lo and pwH <= hi
+                s := s + (s == "" ? "" : ", ") + "PWH"
+            if not na(pwL) and pwL > lo and pwL <= hi
+                s := s + (s == "" ? "" : ", ") + "PWL"
+    s
+
 // Unmitigated FVGs sitting between px and the target.
 blockersBetween(int dir, float px, float tgt) =>
     int n = 0
@@ -552,15 +609,22 @@ blockersBetween(int dir, float px, float tgt) =>
 // ═══════════════════════════ OPENING RANGE (ORB) ════════════════════════════
 var float orbH   = na
 var float orbL   = na
+var float orbO   = na
 var int   orbT0  = na
 var box   orbBox = na
 var line  orbHl  = na
 var line  orbLl  = na
+var line  orbOl  = na
 var bool  orbUp  = false
 var bool  orbDn  = false
 var bool  orbWas = false
 var bool  orbRejUp = false
 var bool  orbRejDn = false
+// how far past each edge the day has probed, for reporting what a failed
+// break swept before it turned back
+var float orbProbeHi = na
+var float orbProbeLo = na
+var string orbBias   = "—"
 
 bool inOrb = not na(time(timeframe.period, orbSpec, tzIn))
 
@@ -571,16 +635,23 @@ if orbOn
         box.delete(orbBox)
         line.delete(orbHl)
         line.delete(orbLl)
+        line.delete(orbOl)
         orbH   := high
         orbL   := low
+        orbO   := open          // the opening candle's open, not just its range
         orbT0  := time
         orbUp  := false
         orbDn  := false
         orbRejUp := false
         orbRejDn := false
+        orbProbeHi := na
+        orbProbeLo := na
+        orbBias := "—"
         orbBox := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = orbCol, bgcolor = color.new(orbCol, 88))
         orbHl  := line.new(time, high, time, high, xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
         orbLl  := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
+        if orbShowOpen
+            orbOl := line.new(time, open, time, open, xloc = xloc.bar_time, color = orbCol, style = line.style_dotted)
 
     if inOrb and not na(orbBox)
         orbH := math.max(orbH, high)
@@ -595,11 +666,22 @@ if orbOn
         line.set_xy2(orbHl, x2, orbH)
         line.set_xy1(orbLl, orbT0, orbL)
         line.set_xy2(orbLl, x2, orbL)
+        if not na(orbOl)
+            line.set_xy1(orbOl, orbT0, orbO)
+            line.set_xy2(orbOl, x2, orbO)
+
+    // track how far each side has been probed once the range is set
+    if not inOrb and not na(orbH)
+        if high > orbH
+            orbProbeHi := na(orbProbeHi) ? high : math.max(orbProbeHi, high)
+        if low < orbL
+            orbProbeLo := na(orbProbeLo) ? low : math.min(orbProbeLo, low)
 
     if orbBrk and not inOrb and not na(orbH)
         // ── upside break ──
         if not orbUp and close > orbH
             orbUp := true
+            orbBias := "LONG"
             float  minD = na(atrVal) ? 0.0 : orbMinRun * atrVal
             Target tg   = nearestTarget(1, close, minD)
             int    blk  = blockersBetween(1, close, tg.price)
@@ -615,6 +697,7 @@ if orbOn
         // ── downside break ──
         if not orbDn and close < orbL
             orbDn := true
+            orbBias := "SHORT"
             float  dMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
             Target dTg   = nearestTarget(-1, close, dMinD)
             int    dBlk  = blockersBetween(-1, close, dTg.price)
@@ -639,37 +722,47 @@ if orbOn
         // ── top-side rejection → short ──
         if not orbRejUp and (wickTop or failTop)
             orbRejUp := true
-            float  rMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
-            Target rTg   = nearestTarget(-1, close, rMinD)
-            int    rBlk  = blockersBetween(-1, close, rTg.price)
-            float  rRun  = na(rTg.price) or na(atrVal) or atrVal == 0 ? na : (close - rTg.price) / atrVal
-            bool   rOk   = (not orbFilter or (not na(rTg.price) and rBlk <= orbMaxBlock)) and volConfirmed
-            string rKind = failTop ? "failed break" : "wick rejection"
-            string rTip  = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below." : "Target: " + rTg.name + " " + fmt(rTg.price) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk)) + volTxt
+            orbBias := "SHORT"
+            float  rMinD  = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            // a refused break aims at the other side of the range, not the
+            // next pool of liquidity beyond it
+            Target rLiq   = nearestTarget(-1, close, rMinD)
+            float  rPrice = orbRejTgt == "Opposite ORB edge" ? orbL : rLiq.price
+            string rName  = orbRejTgt == "Opposite ORB edge" ? "ORB LOW" : rLiq.name
+            int    rBlk   = blockersBetween(-1, close, rPrice)
+            float  rRun   = na(rPrice) or na(atrVal) or atrVal == 0 ? na : (close - rPrice) / atrVal
+            string rSwept = levelsInBand(orbH, orbProbeHi)
+            bool   rOk    = (not orbFilter or (not na(rPrice) and rRun >= orbMinRun and rBlk <= orbMaxBlock)) and volConfirmed and (not orbReqSweep or rSwept != "")
+            string rKind  = failTop ? "failed break" : "wick rejection"
+            string rTip   = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rPrice) ? "No target below." : "Target: " + rName + " " + fmt(rPrice) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk)) + (rSwept == "" ? "\nSwept on the probe: nothing" : "\nSwept on the probe: " + rSwept) + volTxt
             if rOk or orbShowBlocked
                 label.new(time, high, rOk ? "ORB REJ ▼" : "ORB REJ ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = rOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = rOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = rTip)
             if rOk
-                alert("ORB top-side " + rKind + " at " + fmt(orbH) + " — " + (na(rTg.price) ? "no target" : rTg.name + " " + fmt(rTg.price) + ", " + str.tostring(rBlk) + " FVG in path"), alert.freq_once_per_bar)
+                alert("ORB top-side " + rKind + " at " + fmt(orbH) + " — target " + rName + " " + fmt(rPrice) + (rSwept == "" ? "" : ", swept " + rSwept), alert.freq_once_per_bar)
 
         // ── bottom-side rejection → long ──
         if not orbRejDn and (wickBot or failBot)
             orbRejDn := true
-            float  sMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
-            Target sTg   = nearestTarget(1, close, sMinD)
-            int    sBlk  = blockersBetween(1, close, sTg.price)
-            float  sRun  = na(sTg.price) or na(atrVal) or atrVal == 0 ? na : (sTg.price - close) / atrVal
-            bool   sOk   = (not orbFilter or (not na(sTg.price) and sBlk <= orbMaxBlock)) and volConfirmed
-            string sKind = failBot ? "failed break" : "wick rejection"
-            string sTip  = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above." : "Target: " + sTg.name + " " + fmt(sTg.price) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk)) + volTxt
+            orbBias := "LONG"
+            float  sMinD  = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target sLiq   = nearestTarget(1, close, sMinD)
+            float  sPrice = orbRejTgt == "Opposite ORB edge" ? orbH : sLiq.price
+            string sName  = orbRejTgt == "Opposite ORB edge" ? "ORB HIGH" : sLiq.name
+            int    sBlk   = blockersBetween(1, close, sPrice)
+            float  sRun   = na(sPrice) or na(atrVal) or atrVal == 0 ? na : (sPrice - close) / atrVal
+            string sSwept = levelsInBand(orbProbeLo, orbL)
+            bool   sOk    = (not orbFilter or (not na(sPrice) and sRun >= orbMinRun and sBlk <= orbMaxBlock)) and volConfirmed and (not orbReqSweep or sSwept != "")
+            string sKind  = failBot ? "failed break" : "wick rejection"
+            string sTip   = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sPrice) ? "No target above." : "Target: " + sName + " " + fmt(sPrice) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk)) + (sSwept == "" ? "\nSwept on the probe: nothing" : "\nSwept on the probe: " + sSwept) + volTxt
             if sOk or orbShowBlocked
                 label.new(time, low, sOk ? "ORB REJ ▲" : "ORB REJ ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = sOk ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = sOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = sTip)
             if sOk
-                alert("ORB bottom-side " + sKind + " at " + fmt(orbL) + " — " + (na(sTg.price) ? "no target" : sTg.name + " " + fmt(sTg.price) + ", " + str.tostring(sBlk) + " FVG in path"), alert.freq_once_per_bar)
+                alert("ORB bottom-side " + sKind + " at " + fmt(orbL) + " — target " + sName + " " + fmt(sPrice) + (sSwept == "" ? "" : ", swept " + sSwept), alert.freq_once_per_bar)
 
     orbWas := inOrb
 
 // ═══════════════════════════════ RANGE TABLE ════════════════════════════════
-var table rt = table.new(tablePos(), 3, 10, border_width = 1, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 70))
+var table rt = table.new(tablePos(), 3, 12, border_width = 1, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 70))
 
 if tblOn and barstate.islast
     table.cell(rt, 0, 0, "",      bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
@@ -691,3 +784,9 @@ if tblOn and barstate.islast
     statRow(rt, row,     "PD", na(pdH) or na(pdL) ? na : pdH - pdL, pdAvg, color.new(lvlCol, 60))
     statRow(rt, row + 1, "PW", na(pwH) or na(pwL) ? na : pwH - pwL, pwAvg, color.new(lvlCol, 60))
     statRow(rt, row + 2, "PM", na(pmH) or na(pmL) ? na : pmH - pmL, pmAvg, color.new(lvlCol, 60))
+
+    if tblBias
+        color biasBg = orbBias == "LONG" ? color.new(#26a69a, 25) : orbBias == "SHORT" ? color.new(#ef5350, 25) : color.new(color.gray, 45)
+        table.cell(rt, 0, row + 3, "BIAS",    bgcolor = color.new(orbCol, 60),  text_color = color.white, text_size = txtSize())
+        table.cell(rt, 1, row + 3, orbBias,   bgcolor = biasBg,                 text_color = color.white, text_size = txtSize())
+        table.cell(rt, 2, row + 3, na(orbH) ? "—" : fmt(orbH) + " / " + fmt(orbL), bgcolor = color.new(#1e222d, 20), text_color = color.new(color.silver, 10), text_size = txtSize())
