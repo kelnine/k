@@ -1,0 +1,530 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  Phantom Flow — Sessions, Zones & Gaps
+//
+//  One overlay that draws the whole session playbook:
+//    • Asia / London / NY AM / NY Lunch / NY PM ranges, highs, lows + sweeps
+//    • Previous day / week / month high & low
+//    • Fair value gaps on the chart timeframe and on a higher timeframe,
+//      auto-extended until mitigated
+//    • Premium / discount (OTE) buy & sell zones off the live dealing range
+//    • Opening range breakout box with breakout markers
+//    • Overnight gap box that closes itself once the gap fills
+//    • Range table: each session's range vs its own average, plus PD / PW / PM
+//
+//  Drawings are created once per instance and updated in place, so the script
+//  stays well inside the 500-object budget even on deep history.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Phantom Flow — Sessions, Zones & Gaps", "PF Sessions", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════ GROUPS ═════════════════════════════════════
+G_SESS = "Sessions"
+G_LVL  = "Previous day / week / month"
+G_FVG  = "Fair value gaps"
+G_ZONE = "Buy / sell zones"
+G_ORB  = "Opening range (ORB)"
+G_GAP  = "Gap fill"
+G_TBL  = "Range table"
+
+// ═══════════════════════════════ INPUTS ═════════════════════════════════════
+// ── Sessions ──
+tzIn        = input.string("America/New_York", "Timezone", options = ["America/New_York", "America/Chicago", "Europe/London", "Asia/Tokyo", "UTC"], group = G_SESS)
+showBoxes   = input.bool(true,  "Shade session range",          group = G_SESS)
+showLevels  = input.bool(true,  "High / low levels",            group = G_SESS)
+showSessLbl = input.bool(true,  "Level labels",                 group = G_SESS)
+keepPrev    = input.bool(false, "Keep previous days' drawings", group = G_SESS, tooltip = "Off = only the most recent instance of each session stays on the chart.")
+extendBars  = input.int(12,     "Extend levels (bars)", minval = 0, maxval = 200, group = G_SESS)
+alertSweep  = input.bool(true,  "Alert on session sweep",       group = G_SESS)
+
+asiaOn   = input.bool(true,  "Asia",     group = G_SESS, inline = "asia")
+asiaSpec = input.session("1800-0000",    "", group = G_SESS, inline = "asia")
+asiaCol  = input.color(#7e57c2,          "", group = G_SESS, inline = "asia")
+
+lndnOn   = input.bool(true,  "London",   group = G_SESS, inline = "lndn")
+lndnSpec = input.session("0200-0500",    "", group = G_SESS, inline = "lndn")
+lndnCol  = input.color(#26a69a,          "", group = G_SESS, inline = "lndn")
+
+nyamOn   = input.bool(true,  "NY AM",    group = G_SESS, inline = "nyam")
+nyamSpec = input.session("0930-1200",    "", group = G_SESS, inline = "nyam")
+nyamCol  = input.color(#42a5f5,          "", group = G_SESS, inline = "nyam")
+
+lnchOn   = input.bool(false, "NY Lunch", group = G_SESS, inline = "lnch")
+lnchSpec = input.session("1200-1300",    "", group = G_SESS, inline = "lnch")
+lnchCol  = input.color(#8d6e63,          "", group = G_SESS, inline = "lnch")
+
+nypmOn   = input.bool(true,  "NY PM",    group = G_SESS, inline = "nypm")
+nypmSpec = input.session("1300-1600",    "", group = G_SESS, inline = "nypm")
+nypmCol  = input.color(#ef5350,          "", group = G_SESS, inline = "nypm")
+
+// ── Previous day / week / month ──
+showPD = input.bool(true,  "Previous day high / low",   group = G_LVL)
+showPW = input.bool(true,  "Previous week high / low",  group = G_LVL)
+showPM = input.bool(false, "Previous month high / low", group = G_LVL)
+lvlCol = input.color(#78909c, "Level colour",           group = G_LVL)
+
+// ── Fair value gaps ──
+fvgOn      = input.bool(true, "Chart-timeframe FVG",  group = G_FVG)
+fvgHtfOn   = input.bool(true, "Higher-timeframe FVG", group = G_FVG, inline = "htf")
+fvgHtf     = input.timeframe("60", "",                group = G_FVG, inline = "htf")
+fvgFill    = input.string("Full fill", "Mitigate on", options = ["Touch", "50%", "Full fill"], group = G_FVG)
+fvgKeep    = input.bool(false, "Keep mitigated gaps (greyed)", group = G_FVG)
+fvgMax     = input.int(12, "Max gaps per direction", minval = 1, maxval = 40, group = G_FVG)
+fvgMinTick = input.int(0,  "Min gap size (ticks)", minval = 0, group = G_FVG)
+fvgBullCol = input.color(#26a69a, "Bullish", group = G_FVG, inline = "fc")
+fvgBearCol = input.color(#ef5350, "Bearish", group = G_FVG, inline = "fc")
+fvgOpacity = input.int(78, "Zone opacity", minval = 0, maxval = 95, group = G_FVG)
+
+// ── Buy / sell zones ──
+zoneOn    = input.bool(true, "Show premium / discount zones", group = G_ZONE)
+pivLen    = input.int(10, "Swing length", minval = 2, group = G_ZONE)
+oteLo     = input.float(0.62, "OTE from", minval = 0.50, maxval = 0.95, step = 0.01, group = G_ZONE)
+oteHi     = input.float(0.79, "OTE to",   minval = 0.51, maxval = 0.99, step = 0.01, group = G_ZONE)
+showEq    = input.bool(true, "Equilibrium (50%)", group = G_ZONE)
+buyCol    = input.color(#2962ff, "Buy zone",  group = G_ZONE, inline = "zc")
+sellCol   = input.color(#e91e63, "Sell zone", group = G_ZONE, inline = "zc")
+alertZone = input.bool(true, "Alert on zone tap", group = G_ZONE)
+
+// ── ORB ──
+orbOn   = input.bool(true, "Show opening range", group = G_ORB)
+orbSpec = input.session("0930-0945", "Opening range window", group = G_ORB)
+orbCol  = input.color(#ffa726, "Colour", group = G_ORB)
+orbBrk  = input.bool(true, "Mark breakouts", group = G_ORB)
+
+// ── Gap ──
+gapOn    = input.bool(true, "Show overnight gap", group = G_GAP)
+gapTicks = input.int(4, "Minimum gap (ticks)", minval = 1, group = G_GAP)
+gapCol   = input.color(#ab47bc, "Colour", group = G_GAP)
+
+// ── Table ──
+tblOn   = input.bool(true, "Show range table", group = G_TBL)
+tblPos  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"], group = G_TBL)
+avgLen  = input.int(14, "Average length", minval = 2, maxval = 100, group = G_TBL, tooltip = "How many prior instances feed the average that the % column compares against.")
+tblSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_TBL)
+
+// ═══════════════════════════════ HELPERS ════════════════════════════════════
+int barMs = timeframe.in_seconds(timeframe.period) * 1000
+int extMs = barMs * extendBars
+
+fmt(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
+
+pctTxt(float p) =>
+    na(p) ? "—" : str.tostring(p, "#") + "%"
+
+pctCol(float p) =>
+    na(p) ? color.new(color.gray, 45) : p >= 100 ? color.new(#26a69a, 25) : p >= 75 ? color.new(#ffa726, 30) : color.new(#78909c, 45)
+
+txtSize() =>
+    tblSize == "Tiny" ? size.tiny : tblSize == "Normal" ? size.normal : size.small
+
+tablePos() =>
+    switch tblPos
+        "Top left"     => position.top_left
+        "Bottom right" => position.bottom_right
+        "Bottom left"  => position.bottom_left
+        "Middle right" => position.middle_right
+        =>                position.top_right
+
+// Rolling history capped at `cap` entries.
+pushCapped(array<float> a, float v, int cap) =>
+    if not na(v)
+        a.push(v)
+        if a.size() > cap
+            a.shift()
+
+// One table row: name | range | range as % of its own average.
+statRow(table t, int row, string name, float rng, float avg, color nameBg) =>
+    float pct = na(rng) or na(avg) or avg == 0 ? na : rng / avg * 100.0
+    table.cell(t, 0, row, name,     bgcolor = nameBg,                  text_color = color.white, text_size = txtSize())
+    table.cell(t, 1, row, fmt(rng), bgcolor = color.new(#1e222d, 20),  text_color = color.white, text_size = txtSize())
+    table.cell(t, 2, row, pctTxt(pct), bgcolor = pctCol(pct),          text_color = color.white, text_size = txtSize())
+
+// A persistent horizontal level owning its own line + label, updated in place.
+drawLevel(bool show, float price, string txt, color col, string style, int anchor) =>
+    var line  ln = na
+    var label lb = na
+    if show and not na(price) and not na(anchor)
+        int x2 = time + extMs + barMs
+        if na(ln)
+            ln := line.new(anchor, price, x2, price, xloc = xloc.bar_time, color = col, style = style, width = 1)
+            lb := label.new(x2, price, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.tiny)
+        line.set_xy1(ln, anchor, price)
+        line.set_xy2(ln, x2, price)
+        label.set_xy(lb, x2, price)
+        label.set_text(lb, txt + "  " + fmt(price))
+
+// ═══════════════════════════════ SESSIONS ═══════════════════════════════════
+type Sess
+    string       name
+    string       abbr
+    color        col
+    bool         enabled
+    float        hi     = na
+    float        lo     = na
+    int          t0     = na
+    bool         inS    = false
+    bool         sweptH = false
+    bool         sweptL = false
+    float        rng    = na
+    line         hLine
+    line         lLine
+    label        hLbl
+    label        lLbl
+    box          bx
+    array<float> hist
+
+var array<Sess> SESSIONS = array.from(
+     Sess.new(name = "ASIA",     abbr = "ASIA", col = asiaCol, enabled = asiaOn, hist = array.new<float>()),
+     Sess.new(name = "LONDON",   abbr = "LNDN", col = lndnCol, enabled = lndnOn, hist = array.new<float>()),
+     Sess.new(name = "NY AM",    abbr = "NYAM", col = nyamCol, enabled = nyamOn, hist = array.new<float>()),
+     Sess.new(name = "NY LUNCH", abbr = "LNCH", col = lnchCol, enabled = lnchOn, hist = array.new<float>()),
+     Sess.new(name = "NY PM",    abbr = "NYPM", col = nypmCol, enabled = nypmOn, hist = array.new<float>()))
+
+// time() needs a simple-qualified session string, so membership is resolved
+// here at global scope and handed to the loop by index.
+var array<bool> IN_NOW = array.new<bool>(5, false)
+IN_NOW.set(0, not na(time(timeframe.period, asiaSpec, tzIn)))
+IN_NOW.set(1, not na(time(timeframe.period, lndnSpec, tzIn)))
+IN_NOW.set(2, not na(time(timeframe.period, nyamSpec, tzIn)))
+IN_NOW.set(3, not na(time(timeframe.period, lnchSpec, tzIn)))
+IN_NOW.set(4, not na(time(timeframe.period, nypmSpec, tzIn)))
+
+for i = 0 to SESSIONS.size() - 1
+    Sess s = SESSIONS.get(i)
+    if s.enabled
+        bool inNow  = IN_NOW.get(i)
+        bool opened = inNow and not s.inS
+        bool closed = s.inS and not inNow
+
+        // ── new instance: clear the old one, seed a fresh range ──
+        if opened
+            if not keepPrev
+                box.delete(s.bx)
+                line.delete(s.hLine)
+                line.delete(s.lLine)
+                label.delete(s.hLbl)
+                label.delete(s.lLbl)
+            s.hi     := high
+            s.lo     := low
+            s.t0     := time
+            s.sweptH := false
+            s.sweptL := false
+            // built with plain `if`s, not ternaries — a ternary would still
+            // evaluate the drawing call on the branch that is not taken
+            if showBoxes
+                s.bx := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(s.col, 55), bgcolor = color.new(s.col, 90))
+            if showLevels
+                s.hLine := line.new(time, high, time, high, xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+                s.lLine := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+            if showSessLbl
+                s.hLbl := label.new(time, high, s.name + " HIGH", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(s.col, 90), textcolor = s.col, size = size.tiny)
+                s.lLbl := label.new(time, low,  s.name + " LOW",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(s.col, 90), textcolor = s.col, size = size.tiny)
+
+        // ── live range ──
+        if inNow
+            s.hi := na(s.hi) ? high : math.max(s.hi, high)
+            s.lo := na(s.lo) ? low  : math.min(s.lo, low)
+            if not na(s.bx)
+                box.set_top(s.bx, s.hi)
+                box.set_bottom(s.bx, s.lo)
+                box.set_right(s.bx, time + barMs)
+
+        // ── close out: bank the range so the table has an average to work with ──
+        if closed
+            s.rng := s.hi - s.lo
+            pushCapped(s.hist, s.rng, avgLen)
+
+        // ── keep levels running out to the right of price ──
+        if not na(s.hi)
+            int x2 = time + extMs + barMs
+            if not na(s.hLine)
+                line.set_xy1(s.hLine, s.t0, s.hi)
+                line.set_xy2(s.hLine, x2, s.hi)
+            if not na(s.lLine)
+                line.set_xy1(s.lLine, s.t0, s.lo)
+                line.set_xy2(s.lLine, x2, s.lo)
+            if not na(s.hLbl)
+                label.set_xy(s.hLbl, x2, s.hi)
+            if not na(s.lLbl)
+                label.set_xy(s.lLbl, x2, s.lo)
+
+        // ── sweeps: first trade through a closed session's extreme ──
+        if not inNow and not na(s.hi)
+            if not s.sweptH and high > s.hi
+                s.sweptH := true
+                if not na(s.hLine)
+                    line.set_style(s.hLine, line.style_dotted)
+                if alertSweep
+                    alert(s.name + " HIGH swept at " + fmt(s.hi), alert.freq_once_per_bar)
+            if not s.sweptL and low < s.lo
+                s.sweptL := true
+                if not na(s.lLine)
+                    line.set_style(s.lLine, line.style_dotted)
+                if alertSweep
+                    alert(s.name + " LOW swept at " + fmt(s.lo), alert.freq_once_per_bar)
+
+        s.inS := inNow
+
+// ═══════════════════ PREVIOUS DAY / WEEK / MONTH LEVELS ═════════════════════
+[pdH, pdL, pdAvg] = request.security(syminfo.tickerid, "D", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+[pwH, pwL, pwAvg] = request.security(syminfo.tickerid, "W", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+[pmH, pmL, pmAvg] = request.security(syminfo.tickerid, "M", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+
+int dayStart   = time("D")
+int weekStart  = time("W")
+int monthStart = time("M")
+
+drawLevel(showPD, pdH, "PDH", lvlCol, line.style_dashed, dayStart)
+drawLevel(showPD, pdL, "PDL", lvlCol, line.style_dashed, dayStart)
+drawLevel(showPW, pwH, "PWH", lvlCol, line.style_dotted, weekStart)
+drawLevel(showPW, pwL, "PWL", lvlCol, line.style_dotted, weekStart)
+drawLevel(showPM, pmH, "PMH", lvlCol, line.style_dotted, monthStart)
+drawLevel(showPM, pmL, "PML", lvlCol, line.style_dotted, monthStart)
+
+// ═══════════════════════════ FAIR VALUE GAPS ════════════════════════════════
+type Gap
+    box   bx
+    label lb
+    float top
+    float bot
+    bool  bull
+    bool  dead = false
+
+var array<Gap> GAPS = array.new<Gap>()
+
+addGap(bool bull, float top, float bot, int leftT, string tag) =>
+    if top > bot and top - bot >= syminfo.mintick * fvgMinTick
+        color base = bull ? fvgBullCol : fvgBearCol
+        color fill = color.new(base, fvgOpacity)
+        int   x2   = time + extMs + barMs
+        box   b    = box.new(leftT, top, x2, bot, xloc = xloc.bar_time, border_color = color.new(base, 60), bgcolor = fill)
+        label l    = label.new(x2, math.avg(top, bot), tag, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(base, 100), textcolor = color.new(base, 20), size = size.tiny)
+        GAPS.push(Gap.new(bx = b, lb = l, top = top, bot = bot, bull = bull))
+
+        // trim the oldest gap in this direction once past the cap
+        int n = 0
+        for i = 0 to GAPS.size() - 1
+            if GAPS.get(i).bull == bull
+                n += 1
+        if n > fvgMax
+            for i = 0 to GAPS.size() - 1
+                Gap g = GAPS.get(i)
+                if g.bull == bull
+                    box.delete(g.bx)
+                    label.delete(g.lb)
+                    GAPS.remove(i)
+                    break
+
+// ── chart timeframe, confirmed bars only, so nothing repaints ──
+if fvgOn and barstate.isconfirmed
+    if low > high[2]
+        addGap(true, low, high[2], time[2], "FVG")
+    if high < low[2]
+        addGap(false, low[2], high, time[2], "FVG")
+
+// ── higher timeframe, evaluated once per new HTF bar ──
+bool htfValid  = fvgHtfOn and timeframe.in_seconds(fvgHtf) >= timeframe.in_seconds(timeframe.period)
+[hC, lC, hA, lA, tA] = request.security(syminfo.tickerid, fvgHtf, [high[1], low[1], high[3], low[3], time[3]], lookahead = barmerge.lookahead_off)
+bool newHtfBar = nz(ta.change(time(fvgHtf))) != 0
+
+if htfValid and newHtfBar and not na(hA) and not na(tA)
+    if lC > hA
+        addGap(true, lC, hA, tA, fvgHtf + " FVG")
+    if hC < lA
+        addGap(false, lA, hC, tA, fvgHtf + " FVG")
+
+// ── mitigation + right-edge maintenance ──
+if GAPS.size() > 0
+    int x2 = time + extMs + barMs
+    for i = GAPS.size() - 1 to 0
+        Gap g = GAPS.get(i)
+        if not g.dead
+            float trigger = fvgFill == "Touch" ? (g.bull ? g.top : g.bot) : fvgFill == "50%" ? math.avg(g.top, g.bot) : (g.bull ? g.bot : g.top)
+            bool  hit     = g.bull ? low <= trigger : high >= trigger
+            if hit
+                g.dead := true
+                label.delete(g.lb)
+                if fvgKeep
+                    box.set_right(g.bx, time)
+                    box.set_bgcolor(g.bx, color.new(color.gray, 92))
+                    box.set_border_color(g.bx, color.new(color.gray, 75))
+                else
+                    box.delete(g.bx)
+                    GAPS.remove(i)
+            else
+                box.set_right(g.bx, x2)
+                label.set_xy(g.lb, x2, math.avg(g.top, g.bot))
+
+// ═══════════════════════ PREMIUM / DISCOUNT ZONES ═══════════════════════════
+float ph = ta.pivothigh(pivLen, pivLen)
+float pl = ta.pivotlow(pivLen, pivLen)
+
+var float swHi = na
+var float swLo = na
+if not na(ph)
+    swHi := ph
+if not na(pl)
+    swLo := pl
+
+var box   buyBox     = na
+var box   sellBox    = na
+var label buyLbl     = na
+var label sellLbl    = na
+var line  eqLine     = na
+var bool  buyTapped  = false
+var bool  sellTapped = false
+
+if zoneOn and not na(swHi) and not na(swLo) and swHi > swLo
+    float rng   = swHi - swLo
+    float buyT  = swLo + rng * (1.0 - oteLo)
+    float buyB  = swLo + rng * (1.0 - oteHi)
+    float sellB = swLo + rng * oteLo
+    float sellT = swLo + rng * oteHi
+    float eq    = math.avg(swHi, swLo)
+    int   xL    = time - barMs * pivLen
+    int   xR    = time + extMs + barMs
+
+    if na(buyBox)
+        buyBox  := box.new(xL, buyT,  xR, buyB,  xloc = xloc.bar_time, border_color = color.new(buyCol, 40),  bgcolor = color.new(buyCol, 82))
+        sellBox := box.new(xL, sellT, xR, sellB, xloc = xloc.bar_time, border_color = color.new(sellCol, 40), bgcolor = color.new(sellCol, 82))
+        buyLbl  := label.new(xR, buyB,  "BUY ZONE",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(buyCol, 100),  textcolor = buyCol,  size = size.tiny)
+        sellLbl := label.new(xR, sellT, "SELL ZONE", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(sellCol, 100), textcolor = sellCol, size = size.tiny)
+        eqLine  := line.new(xL, eq, xR, eq, xloc = xloc.bar_time, color = color.new(color.gray, 40), style = line.style_dashed)
+
+    box.set_lefttop(buyBox, xL, buyT)
+    box.set_rightbottom(buyBox, xR, buyB)
+    box.set_lefttop(sellBox, xL, sellT)
+    box.set_rightbottom(sellBox, xR, sellB)
+    label.set_xy(buyLbl, xR, buyB)
+    label.set_xy(sellLbl, xR, sellT)
+    line.set_xy1(eqLine, xL, eq)
+    line.set_xy2(eqLine, xR, eq)
+    line.set_color(eqLine, showEq ? color.new(color.gray, 40) : color.new(color.gray, 100))
+
+    // a new dealing range re-arms both taps
+    if ta.change(swHi) != 0 or ta.change(swLo) != 0
+        buyTapped  := false
+        sellTapped := false
+
+    if alertZone
+        if not buyTapped and low <= buyT and high >= buyB
+            buyTapped := true
+            alert("Price tapped the BUY zone (" + fmt(buyB) + " – " + fmt(buyT) + ")", alert.freq_once_per_bar)
+        if not sellTapped and high >= sellB and low <= sellT
+            sellTapped := true
+            alert("Price tapped the SELL zone (" + fmt(sellB) + " – " + fmt(sellT) + ")", alert.freq_once_per_bar)
+
+// ═══════════════════════════ OPENING RANGE (ORB) ════════════════════════════
+var float orbH   = na
+var float orbL   = na
+var int   orbT0  = na
+var box   orbBox = na
+var line  orbHl  = na
+var line  orbLl  = na
+var bool  orbUp  = false
+var bool  orbDn  = false
+var bool  orbWas = false
+
+bool inOrb = not na(time(timeframe.period, orbSpec, tzIn))
+
+if orbOn
+    bool orbNew = inOrb and not orbWas
+
+    if orbNew
+        box.delete(orbBox)
+        line.delete(orbHl)
+        line.delete(orbLl)
+        orbH   := high
+        orbL   := low
+        orbT0  := time
+        orbUp  := false
+        orbDn  := false
+        orbBox := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = orbCol, bgcolor = color.new(orbCol, 88))
+        orbHl  := line.new(time, high, time, high, xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
+        orbLl  := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
+
+    if inOrb and not na(orbBox)
+        orbH := math.max(orbH, high)
+        orbL := math.min(orbL, low)
+        box.set_top(orbBox, orbH)
+        box.set_bottom(orbBox, orbL)
+        box.set_right(orbBox, time + barMs)
+
+    if not na(orbH) and not na(orbHl)
+        int x2 = time + extMs + barMs
+        line.set_xy1(orbHl, orbT0, orbH)
+        line.set_xy2(orbHl, x2, orbH)
+        line.set_xy1(orbLl, orbT0, orbL)
+        line.set_xy2(orbLl, x2, orbL)
+
+    if orbBrk and not inOrb and not na(orbH)
+        if not orbUp and close > orbH
+            orbUp := true
+            label.new(time, orbL, "ORB ▲", xloc = xloc.bar_time, style = label.style_label_up, color = color.new(#26a69a, 20), textcolor = color.white, size = size.tiny)
+            alert("ORB breakout up through " + fmt(orbH), alert.freq_once_per_bar)
+        if not orbDn and close < orbL
+            orbDn := true
+            label.new(time, orbH, "ORB ▼", xloc = xloc.bar_time, style = label.style_label_down, color = color.new(#ef5350, 20), textcolor = color.white, size = size.tiny)
+            alert("ORB breakout down through " + fmt(orbL), alert.freq_once_per_bar)
+
+    orbWas := inOrb
+
+// ═══════════════════════════════ GAP FILL ═══════════════════════════════════
+[dOpen, dPrevClose] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead = barmerge.lookahead_on)
+
+var box   gapBox  = na
+var label gapLbl  = na
+var bool  gapDone = true
+
+if gapOn
+    bool newDay = nz(ta.change(time("D"))) != 0
+
+    if newDay and not na(dOpen) and not na(dPrevClose)
+        box.delete(gapBox)
+        label.delete(gapLbl)
+        gapBox  := na
+        gapLbl  := na
+        gapDone := true
+        if math.abs(dOpen - dPrevClose) >= syminfo.mintick * gapTicks
+            float t  = math.max(dOpen, dPrevClose)
+            float b  = math.min(dOpen, dPrevClose)
+            int   x2 = time + extMs + barMs
+            gapBox  := box.new(time, t, x2, b, xloc = xloc.bar_time, border_color = color.new(gapCol, 45), bgcolor = color.new(gapCol, 80))
+            gapLbl  := label.new(x2, math.avg(t, b), "GAP FILL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(gapCol, 100), textcolor = gapCol, size = size.tiny)
+            gapDone := false
+
+    if not gapDone and not na(gapBox)
+        int x2 = time + extMs + barMs
+        box.set_right(gapBox, x2)
+        label.set_x(gapLbl, x2)
+        if low <= dPrevClose and high >= dPrevClose
+            gapDone := true
+            box.set_right(gapBox, time)
+            box.set_bgcolor(gapBox, color.new(color.gray, 92))
+            box.set_border_color(gapBox, color.new(color.gray, 75))
+            label.delete(gapLbl)
+            alert("Overnight gap filled at " + fmt(dPrevClose), alert.freq_once_per_bar)
+
+// ═══════════════════════════════ RANGE TABLE ════════════════════════════════
+var table rt = table.new(tablePos(), 3, 10, border_width = 1, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 70))
+
+if tblOn and barstate.islast
+    table.cell(rt, 0, 0, "",      bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+    table.cell(rt, 1, 0, "Range", bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+    table.cell(rt, 2, 0, "%",     bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+
+    int row = 1
+    for i = 0 to SESSIONS.size() - 1
+        Sess s = SESSIONS.get(i)
+        if s.enabled
+            float live = na(s.hi) or na(s.lo) ? na : s.hi - s.lo
+            // while a session is open the table tracks it live; once it has
+            // closed the frozen range stays up until the session runs again
+            float r    = (s.inS or na(s.rng)) ? live : s.rng
+            float avg  = s.hist.size() > 0 ? s.hist.avg() : na
+            statRow(rt, row, s.abbr, r, avg, color.new(s.col, 70))
+            row += 1
+
+    statRow(rt, row,     "PD", na(pdH) or na(pdL) ? na : pdH - pdL, pdAvg, color.new(lvlCol, 60))
+    statRow(rt, row + 1, "PW", na(pwH) or na(pwL) ? na : pwH - pwL, pwAvg, color.new(lvlCol, 60))
+    statRow(rt, row + 2, "PM", na(pmH) or na(pmL) ? na : pmH - pmL, pmAvg, color.new(lvlCol, 60))

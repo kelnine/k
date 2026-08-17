@@ -31,6 +31,15 @@ fully custom canvas rendering engine, with no third-party charting library.
   - `DemoAdapter` — deterministic synthetic feed used automatically when the
     exchange is unreachable, so the app always works
 
+## Pine Script
+
+`pine/phantom-flow-sessions.pine` is a standalone TradingView indicator
+(`//@version=6`) covering the same ideas from the other side of the screen:
+session ranges and sweeps (Asia / London / NY AM / Lunch / PM), PD-PW-PM levels,
+chart- and higher-timeframe fair value gaps, premium/discount OTE zones, an
+opening-range breakout box, an overnight gap-fill box, and a session range table.
+See [`pine/README.md`](pine/README.md) for the settings and alert list.
+
 ## Run it
 
 ```sh
