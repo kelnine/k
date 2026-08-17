@@ -28,11 +28,15 @@ first closes beyond the opening range, the script measures:
 
 1. **Target** — the nearest level in the break's direction that price is plausibly
    drawn to: an **unswept** session high/low, PDH/PDL, or an unfilled overnight
-   gap. Levels you have switched off are not considered.
-2. **Runway** — distance from the breakout close to that target, in ATR(14)
-   multiples. Must be ≥ *Minimum runway* (default 1.0×).
+   gap. Only sessions that have *closed* count, since a session still in progress
+   has its high and low pinned to current price. Levels you have switched off are
+   not considered.
+2. **Runway** — the target must be at least *Minimum runway* ATR(14) multiples away
+   (default 1.0×). This is applied while searching, so a level sitting right on top
+   of price can't mask a good target behind it.
 3. **Obstacles** — how many live, unmitigated FVGs sit between the break and the
-   target. Must be ≤ *Max unfilled FVGs in path* (default 1).
+   target. Must be ≤ *Max unfilled FVGs in path* (default 3 — index futures on
+   fast timeframes print FVGs constantly, so 1 rejects almost everything).
 
 Pass both and you get a solid `ORB ▲` / `ORB ▼` plus an alert. Fail either and the
 marker prints grey with a `?` and **no alert fires** — that is the "broke into a

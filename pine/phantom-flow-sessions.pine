@@ -91,7 +91,7 @@ orbCol  = input.color(#ffa726, "Colour", group = G_ORB)
 orbBrk  = input.bool(true, "Mark breakouts", group = G_ORB)
 orbFilter     = input.bool(true, "Filter breakouts by runway", group = G_ORB, tooltip = "Only confirm a break that has an unswept target ahead of it and a clear enough path to reach it. Breaks that fail the test print greyed with a '?'.")
 orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step = 0.1, group = G_ORB)
-orbMaxBlock   = input.int(1, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
+orbMaxBlock   = input.int(3, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
 orbShowBlocked = input.bool(true, "Show filtered breaks (greyed)", group = G_ORB)
 
 // ── Gap ──
@@ -467,30 +467,39 @@ type Target
     float  price = na
     string name  = ""
 
-// dir: +1 looks up from px, -1 looks down.
-nearestTarget(int dir, float px) =>
-    Target t = Target.new()
+// Nearest qualifying target in `dir` (+1 up, -1 down) from `px`.
+//
+// `minDist` is applied during the search, not after it. Picking the closest
+// level and *then* testing the distance lets a level sitting right on top of
+// price mask a perfectly good target behind it — which is exactly what a
+// session that is still running does, since its high and low track price.
+// Live sessions are skipped entirely for the same reason: only a session that
+// has closed leaves resting liquidity worth targeting.
+nearestTarget(int dir, float px, float minDist) =>
+    Target t  = Target.new()
+    float  up = px + minDist
+    float  dn = px - minDist
     for i = 0 to SESSIONS.size() - 1
         Sess s = SESSIONS.get(i)
-        if s.enabled
-            if dir > 0 and not na(s.hi) and not s.sweptH and s.hi > px and (na(t.price) or s.hi < t.price)
+        if s.enabled and not s.inS
+            if dir > 0 and not na(s.hi) and not s.sweptH and s.hi >= up and (na(t.price) or s.hi < t.price)
                 t.price := s.hi
                 t.name  := s.name + " HIGH"
-            if dir < 0 and not na(s.lo) and not s.sweptL and s.lo < px and (na(t.price) or s.lo > t.price)
+            if dir < 0 and not na(s.lo) and not s.sweptL and s.lo <= dn and (na(t.price) or s.lo > t.price)
                 t.price := s.lo
                 t.name  := s.name + " LOW"
     if showPD
-        if dir > 0 and not na(pdH) and pdH > px and (na(t.price) or pdH < t.price)
+        if dir > 0 and not na(pdH) and pdH >= up and (na(t.price) or pdH < t.price)
             t.price := pdH
             t.name  := "PDH"
-        if dir < 0 and not na(pdL) and pdL < px and (na(t.price) or pdL > t.price)
+        if dir < 0 and not na(pdL) and pdL <= dn and (na(t.price) or pdL > t.price)
             t.price := pdL
             t.name  := "PDL"
     if gapOn and not gapDone and not na(dPrevClose)
-        if dir > 0 and dPrevClose > px and (na(t.price) or dPrevClose < t.price)
+        if dir > 0 and dPrevClose >= up and (na(t.price) or dPrevClose < t.price)
             t.price := dPrevClose
             t.name  := "GAP FILL"
-        if dir < 0 and dPrevClose < px and (na(t.price) or dPrevClose > t.price)
+        if dir < 0 and dPrevClose <= dn and (na(t.price) or dPrevClose > t.price)
             t.price := dPrevClose
             t.name  := "GAP FILL"
     t
@@ -555,11 +564,12 @@ if orbOn
         // ── upside break ──
         if not orbUp and close > orbH
             orbUp := true
-            Target tg  = nearestTarget(1, close)
-            int    blk = blockersBetween(1, close, tg.price)
-            float  run = na(tg.price) or na(atrVal) or atrVal == 0 ? na : (tg.price - close) / atrVal
-            bool   ok  = not orbFilter or (not na(run) and run >= orbMinRun and blk <= orbMaxBlock)
-            string tip = na(tg.price) ? "No unswept target above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)
+            float  minD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target tg   = nearestTarget(1, close, minD)
+            int    blk  = blockersBetween(1, close, tg.price)
+            float  run  = na(tg.price) or na(atrVal) or atrVal == 0 ? na : (tg.price - close) / atrVal
+            bool   ok   = not orbFilter or (not na(tg.price) and blk <= orbMaxBlock)
+            string tip  = na(tg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)
             if ok or orbShowBlocked
                 // anchored on the breakout bar itself, not the range edge
                 label.new(time, low, ok ? "ORB ▲" : "ORB ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = ok ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = ok ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = tip)
@@ -569,11 +579,12 @@ if orbOn
         // ── downside break ──
         if not orbDn and close < orbL
             orbDn := true
-            Target dTg  = nearestTarget(-1, close)
-            int    dBlk = blockersBetween(-1, close, dTg.price)
-            float  dRun = na(dTg.price) or na(atrVal) or atrVal == 0 ? na : (close - dTg.price) / atrVal
-            bool   dOk  = not orbFilter or (not na(dRun) and dRun >= orbMinRun and dBlk <= orbMaxBlock)
-            string dTip = na(dTg.price) ? "No unswept target below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)
+            float  dMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target dTg   = nearestTarget(-1, close, dMinD)
+            int    dBlk  = blockersBetween(-1, close, dTg.price)
+            float  dRun  = na(dTg.price) or na(atrVal) or atrVal == 0 ? na : (close - dTg.price) / atrVal
+            bool   dOk   = not orbFilter or (not na(dTg.price) and dBlk <= orbMaxBlock)
+            string dTip  = na(dTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)
             if dOk or orbShowBlocked
                 label.new(time, high, dOk ? "ORB ▼" : "ORB ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = dOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = dOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = dTip)
             if dOk
