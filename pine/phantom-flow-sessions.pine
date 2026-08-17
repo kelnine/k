@@ -95,6 +95,9 @@ orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step =
 orbMaxBlock   = input.int(3, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
 orbShowBlocked = input.bool(true, "Show filtered breaks (greyed)", group = G_ORB)
 orbRejMode    = input.string("Both", "Rejection signal", options = ["Off", "Wick", "Failed break", "Both"], group = G_ORB, tooltip = "Wick: the bar trades through the edge and closes back inside. Failed break: a confirmed break is reclaimed by a later close back inside. Rejections fade the edge, so they are graded against a target on the opposite side.")
+volOn   = input.bool(false, "Require volume confirmation", group = G_ORB, tooltip = "Off by default — it is a second filter stacked on the runway test, so turn it on once you have seen how the runway test alone behaves on your instrument. Symbols with no volume data pass automatically.")
+volMult = input.float(1.5, "Signal bar volume ≥ × average", minval = 0.5, step = 0.1, group = G_ORB)
+volLen  = input.int(20, "Volume average length", minval = 2, group = G_ORB)
 
 // ── Gap ──
 gapOn    = input.bool(true, "Show overnight gap", group = G_GAP)
@@ -116,6 +119,12 @@ lblDist = input.float(3.0,  "Label distance (× ATR)", minval = 0.5, step = 0.5,
 int   barMs  = timeframe.in_seconds(timeframe.period) * 1000
 int   extMs  = barMs * extendBars
 float atrVal = ta.atr(14)
+float volAvg = ta.sma(volume, volLen)
+
+// Did the signal bar actually carry participation? Instruments with no volume
+// feed pass rather than silently blocking every signal.
+bool volConfirmed = not volOn ? true : na(volume) or na(volAvg) or volAvg == 0 ? true : volume >= volAvg * volMult
+string volTxt = na(volume) or na(volAvg) or volAvg == 0 ? "" : "\nVolume: " + str.tostring(volume / volAvg, "#.##") + "× avg"
 
 // Is this level close enough to price to be worth naming?
 nearPrice(float price) =>
@@ -595,8 +604,8 @@ if orbOn
             Target tg   = nearestTarget(1, close, minD)
             int    blk  = blockersBetween(1, close, tg.price)
             float  run  = na(tg.price) or na(atrVal) or atrVal == 0 ? na : (tg.price - close) / atrVal
-            bool   ok   = not orbFilter or (not na(tg.price) and blk <= orbMaxBlock)
-            string tip  = na(tg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)
+            bool   ok   = (not orbFilter or (not na(tg.price) and blk <= orbMaxBlock)) and volConfirmed
+            string tip  = (na(tg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)) + volTxt
             if ok or orbShowBlocked
                 // anchored on the breakout bar itself, not the range edge
                 label.new(time, low, ok ? "ORB ▲" : "ORB ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = ok ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = ok ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = tip)
@@ -610,8 +619,8 @@ if orbOn
             Target dTg   = nearestTarget(-1, close, dMinD)
             int    dBlk  = blockersBetween(-1, close, dTg.price)
             float  dRun  = na(dTg.price) or na(atrVal) or atrVal == 0 ? na : (close - dTg.price) / atrVal
-            bool   dOk   = not orbFilter or (not na(dTg.price) and dBlk <= orbMaxBlock)
-            string dTip  = na(dTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)
+            bool   dOk   = (not orbFilter or (not na(dTg.price) and dBlk <= orbMaxBlock)) and volConfirmed
+            string dTip  = (na(dTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)) + volTxt
             if dOk or orbShowBlocked
                 label.new(time, high, dOk ? "ORB ▼" : "ORB ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = dOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = dOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = dTip)
             if dOk
@@ -634,9 +643,9 @@ if orbOn
             Target rTg   = nearestTarget(-1, close, rMinD)
             int    rBlk  = blockersBetween(-1, close, rTg.price)
             float  rRun  = na(rTg.price) or na(atrVal) or atrVal == 0 ? na : (close - rTg.price) / atrVal
-            bool   rOk   = not orbFilter or (not na(rTg.price) and rBlk <= orbMaxBlock)
+            bool   rOk   = (not orbFilter or (not na(rTg.price) and rBlk <= orbMaxBlock)) and volConfirmed
             string rKind = failTop ? "failed break" : "wick rejection"
-            string rTip  = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below." : "Target: " + rTg.name + " " + fmt(rTg.price) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk))
+            string rTip  = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below." : "Target: " + rTg.name + " " + fmt(rTg.price) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk)) + volTxt
             if rOk or orbShowBlocked
                 label.new(time, high, rOk ? "ORB REJ ▼" : "ORB REJ ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = rOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = rOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = rTip)
             if rOk
@@ -649,9 +658,9 @@ if orbOn
             Target sTg   = nearestTarget(1, close, sMinD)
             int    sBlk  = blockersBetween(1, close, sTg.price)
             float  sRun  = na(sTg.price) or na(atrVal) or atrVal == 0 ? na : (sTg.price - close) / atrVal
-            bool   sOk   = not orbFilter or (not na(sTg.price) and sBlk <= orbMaxBlock)
+            bool   sOk   = (not orbFilter or (not na(sTg.price) and sBlk <= orbMaxBlock)) and volConfirmed
             string sKind = failBot ? "failed break" : "wick rejection"
-            string sTip  = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above." : "Target: " + sTg.name + " " + fmt(sTg.price) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk))
+            string sTip  = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above." : "Target: " + sTg.name + " " + fmt(sTg.price) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk)) + volTxt
             if sOk or orbShowBlocked
                 label.new(time, low, sOk ? "ORB REJ ▲" : "ORB REJ ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = sOk ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = sOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = sTip)
             if sOk

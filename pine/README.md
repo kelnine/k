@@ -49,6 +49,19 @@ test off with *Filter breakouts by runway* to get raw breaks back.
 Note that both directions can still fire on the same day — the range genuinely
 broke twice. The filter grades each break, it does not predict which one holds.
 
+### Volume confirmation
+
+*Require volume confirmation* adds a second gate on every ORB signal: the signal
+bar's volume must be at least *× average* (default 1.5×) of the trailing average
+(default 20 bars). It applies independently of the runway filter, so you can run
+either, both, or neither. Symbols with no volume feed pass automatically rather
+than blocking every signal.
+
+Off by default — it stacks on top of the runway test, so switch it on once you
+know how the runway test alone behaves on your instrument. Every marker tooltip
+reports the bar's volume as a multiple of average whether the gate is on or not,
+which is the cheap way to find the right threshold before enabling it.
+
 ### ORB rejections
 
 The other side of the same level: the edge holds instead of giving way, and the
