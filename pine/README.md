@@ -67,6 +67,20 @@ Rejections fire at most once per side per day and are independent of the breakou
 markers, so a break followed by a reclaim gives you both: `ORB ▲` then
 `ORB REJ ▼`.
 
+### Keeping the chart readable
+
+With every session, PD/PW/PM level and FVG labelled at once, the right-hand edge
+turns into a stack of overlapping text. Two controls under **Labels & clutter**:
+
+- **Label FVG boxes** — off by default. The coloured box already identifies itself,
+  and one label per gap is most of the noise.
+- **Only label levels near price** with **Label distance (× ATR)** (default 3×) —
+  session and PD/PW/PM levels further away than that draw as bare lines. The line
+  never moves; only its text hides, and it comes back as price approaches.
+
+Neither affects detection — sweeps, targets and the runway filter all still use
+every level, labelled or not.
+
 ### Settings that matter most
 
 - **Timezone** — every session string is evaluated in this zone. `America/New_York`

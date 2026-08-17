@@ -25,6 +25,7 @@ G_ZONE = "Buy / sell zones"
 G_ORB  = "Opening range (ORB)"
 G_GAP  = "Gap fill"
 G_TBL  = "Range table"
+G_LBL  = "Labels & clutter"
 
 // ═══════════════════════════════ INPUTS ═════════════════════════════════════
 // ── Sessions ──
@@ -106,9 +107,27 @@ tblPos  = input.string("Top right", "Position", options = ["Top right", "Top lef
 avgLen  = input.int(14, "Average length", minval = 2, maxval = 100, group = G_TBL, tooltip = "How many prior instances feed the average that the % column compares against.")
 tblSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_TBL)
 
+// ── Labels ──
+lblFvg  = input.bool(false, "Label FVG boxes", group = G_LBL, tooltip = "Off by default — the coloured box already says what it is, and one label per gap is most of the clutter on the right-hand edge.")
+lblNear = input.bool(true,  "Only label levels near price", group = G_LBL)
+lblDist = input.float(3.0,  "Label distance (× ATR)", minval = 0.5, step = 0.5, group = G_LBL, tooltip = "Session and PD/PW/PM levels further than this from the last price draw as bare lines. Their line stays put — only the text is hidden.")
+
 // ═══════════════════════════════ HELPERS ════════════════════════════════════
-int barMs = timeframe.in_seconds(timeframe.period) * 1000
-int extMs = barMs * extendBars
+int   barMs  = timeframe.in_seconds(timeframe.period) * 1000
+int   extMs  = barMs * extendBars
+float atrVal = ta.atr(14)
+
+// Is this level close enough to price to be worth naming?
+nearPrice(float price) =>
+    not lblNear or na(atrVal) or na(price) ? true : math.abs(price - close) <= lblDist * atrVal
+
+// Show or hide a label's text without destroying and rebuilding it as price
+// drifts in and out of range — a fully transparent bubble renders as nothing.
+labelVis(label lb, bool vis, string txt, color txtCol, color bgCol) =>
+    if not na(lb)
+        label.set_text(lb, vis ? txt : "")
+        label.set_textcolor(lb, vis ? txtCol : color.new(color.white, 100))
+        label.set_color(lb, vis ? bgCol : color.new(color.white, 100))
 
 fmt(float v) =>
     na(v) ? "—" : str.tostring(v, format.mintick)
@@ -156,7 +175,7 @@ drawLevel(bool show, float price, string txt, color col, string style, int ancho
         line.set_xy1(ln, anchor, price)
         line.set_xy2(ln, x2, price)
         label.set_xy(lb, x2, price)
-        label.set_text(lb, txt + "  " + fmt(price))
+        labelVis(lb, nearPrice(price), txt + "  " + fmt(price), col, color.new(col, 88))
 
 // ═══════════════════════════════ SESSIONS ═══════════════════════════════════
 type Sess
@@ -250,8 +269,10 @@ for i = 0 to SESSIONS.size() - 1
                 line.set_xy2(s.lLine, x2, s.lo)
             if not na(s.hLbl)
                 label.set_xy(s.hLbl, x2, s.hi)
+                labelVis(s.hLbl, nearPrice(s.hi), s.name + " HIGH", s.col, color.new(s.col, 90))
             if not na(s.lLbl)
                 label.set_xy(s.lLbl, x2, s.lo)
+                labelVis(s.lLbl, nearPrice(s.lo), s.name + " LOW", s.col, color.new(s.col, 90))
 
         // ── sweeps: first trade through a closed session's extreme ──
         if not inNow and not na(s.hi)
@@ -303,7 +324,9 @@ addGap(bool bull, float top, float bot, int leftT, string tag) =>
         color fill = color.new(base, fvgOpacity)
         int   x2   = time + extMs + barMs
         box   b    = box.new(leftT, top, x2, bot, xloc = xloc.bar_time, border_color = color.new(base, 60), bgcolor = fill)
-        label l    = label.new(x2, math.avg(top, bot), tag, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(base, 100), textcolor = color.new(base, 20), size = size.tiny)
+        label l    = na
+        if lblFvg
+            l := label.new(x2, math.avg(top, bot), tag, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(base, 100), textcolor = color.new(base, 20), size = size.tiny)
         GAPS.push(Gap.new(bx = b, lb = l, top = top, bot = bot, bull = bull))
 
         // trim the oldest gap in this direction once past the cap
@@ -358,7 +381,8 @@ if GAPS.size() > 0
                     GAPS.remove(i)
             else
                 box.set_right(g.bx, x2)
-                label.set_xy(g.lb, x2, math.avg(g.top, g.bot))
+                if not na(g.lb)
+                    label.set_xy(g.lb, x2, math.avg(g.top, g.bot))
 
 // ═══════════════════════ PREMIUM / DISCOUNT ZONES ═══════════════════════════
 float ph = ta.pivothigh(pivLen, pivLen)
@@ -462,8 +486,6 @@ if gapOn
 // the nearest level in the break's direction that price is likely drawn to:
 // an unswept session extreme, PDH/PDL, or an unfilled overnight gap. Anything
 // in between — live, unmitigated FVGs — is counted as an obstacle.
-float atrVal = ta.atr(14)
-
 type Target
     float  price = na
     string name  = ""
