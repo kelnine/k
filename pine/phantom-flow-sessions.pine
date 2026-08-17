@@ -89,6 +89,10 @@ orbOn   = input.bool(true, "Show opening range", group = G_ORB)
 orbSpec = input.session("0930-0945", "Opening range window", group = G_ORB)
 orbCol  = input.color(#ffa726, "Colour", group = G_ORB)
 orbBrk  = input.bool(true, "Mark breakouts", group = G_ORB)
+orbFilter     = input.bool(true, "Filter breakouts by runway", group = G_ORB, tooltip = "Only confirm a break that has an unswept target ahead of it and a clear enough path to reach it. Breaks that fail the test print greyed with a '?'.")
+orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step = 0.1, group = G_ORB)
+orbMaxBlock   = input.int(1, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
+orbShowBlocked = input.bool(true, "Show filtered breaks (greyed)", group = G_ORB)
 
 // ── Gap ──
 gapOn    = input.bool(true, "Show overnight gap", group = G_GAP)
@@ -414,6 +418,96 @@ if zoneOn and not na(swHi) and not na(swLo) and swHi > swLo
             sellTapped := true
             alert("Price tapped the SELL zone (" + fmt(sellB) + " – " + fmt(sellT) + ")", alert.freq_once_per_bar)
 
+// ═══════════════════════════════ GAP FILL ═══════════════════════════════════
+// Sits above the ORB block because the breakout filter uses an unfilled gap as
+// one of its runway targets.
+[dOpen, dPrevClose] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead = barmerge.lookahead_on)
+
+var box   gapBox  = na
+var label gapLbl  = na
+var bool  gapDone = true
+
+if gapOn
+    bool newDay = nz(ta.change(time("D"))) != 0
+
+    if newDay and not na(dOpen) and not na(dPrevClose)
+        box.delete(gapBox)
+        label.delete(gapLbl)
+        gapBox  := na
+        gapLbl  := na
+        gapDone := true
+        if math.abs(dOpen - dPrevClose) >= syminfo.mintick * gapTicks
+            float t  = math.max(dOpen, dPrevClose)
+            float b  = math.min(dOpen, dPrevClose)
+            int   x2 = time + extMs + barMs
+            gapBox  := box.new(time, t, x2, b, xloc = xloc.bar_time, border_color = color.new(gapCol, 45), bgcolor = color.new(gapCol, 80))
+            gapLbl  := label.new(x2, math.avg(t, b), "GAP FILL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(gapCol, 100), textcolor = gapCol, size = size.tiny)
+            gapDone := false
+
+    if not gapDone and not na(gapBox)
+        int x2 = time + extMs + barMs
+        box.set_right(gapBox, x2)
+        label.set_x(gapLbl, x2)
+        if low <= dPrevClose and high >= dPrevClose
+            gapDone := true
+            box.set_right(gapBox, time)
+            box.set_bgcolor(gapBox, color.new(color.gray, 92))
+            box.set_border_color(gapBox, color.new(color.gray, 75))
+            label.delete(gapLbl)
+            alert("Overnight gap filled at " + fmt(dPrevClose), alert.freq_once_per_bar)
+
+// ═══════════════════════════ BREAKOUT RUNWAY ════════════════════════════════
+// A break is only worth marking if it has somewhere to go. "Somewhere" =
+// the nearest level in the break's direction that price is likely drawn to:
+// an unswept session extreme, PDH/PDL, or an unfilled overnight gap. Anything
+// in between — live, unmitigated FVGs — is counted as an obstacle.
+float atrVal = ta.atr(14)
+
+type Target
+    float  price = na
+    string name  = ""
+
+// dir: +1 looks up from px, -1 looks down.
+nearestTarget(int dir, float px) =>
+    Target t = Target.new()
+    for i = 0 to SESSIONS.size() - 1
+        Sess s = SESSIONS.get(i)
+        if s.enabled
+            if dir > 0 and not na(s.hi) and not s.sweptH and s.hi > px and (na(t.price) or s.hi < t.price)
+                t.price := s.hi
+                t.name  := s.name + " HIGH"
+            if dir < 0 and not na(s.lo) and not s.sweptL and s.lo < px and (na(t.price) or s.lo > t.price)
+                t.price := s.lo
+                t.name  := s.name + " LOW"
+    if showPD
+        if dir > 0 and not na(pdH) and pdH > px and (na(t.price) or pdH < t.price)
+            t.price := pdH
+            t.name  := "PDH"
+        if dir < 0 and not na(pdL) and pdL < px and (na(t.price) or pdL > t.price)
+            t.price := pdL
+            t.name  := "PDL"
+    if gapOn and not gapDone and not na(dPrevClose)
+        if dir > 0 and dPrevClose > px and (na(t.price) or dPrevClose < t.price)
+            t.price := dPrevClose
+            t.name  := "GAP FILL"
+        if dir < 0 and dPrevClose < px and (na(t.price) or dPrevClose > t.price)
+            t.price := dPrevClose
+            t.name  := "GAP FILL"
+    t
+
+// Unmitigated FVGs sitting between px and the target.
+blockersBetween(int dir, float px, float tgt) =>
+    int n = 0
+    if GAPS.size() > 0 and not na(tgt)
+        for i = 0 to GAPS.size() - 1
+            Gap g = GAPS.get(i)
+            if not g.dead
+                if dir > 0 and g.bot > px and g.bot < tgt
+                    n += 1
+                if dir < 0 and g.top < px and g.top > tgt
+                    n += 1
+    n
+
 // ═══════════════════════════ OPENING RANGE (ORB) ════════════════════════════
 var float orbH   = na
 var float orbL   = na
@@ -458,52 +552,34 @@ if orbOn
         line.set_xy2(orbLl, x2, orbL)
 
     if orbBrk and not inOrb and not na(orbH)
+        // ── upside break ──
         if not orbUp and close > orbH
             orbUp := true
-            label.new(time, orbL, "ORB ▲", xloc = xloc.bar_time, style = label.style_label_up, color = color.new(#26a69a, 20), textcolor = color.white, size = size.tiny)
-            alert("ORB breakout up through " + fmt(orbH), alert.freq_once_per_bar)
+            Target tg  = nearestTarget(1, close)
+            int    blk = blockersBetween(1, close, tg.price)
+            float  run = na(tg.price) or na(atrVal) or atrVal == 0 ? na : (tg.price - close) / atrVal
+            bool   ok  = not orbFilter or (not na(run) and run >= orbMinRun and blk <= orbMaxBlock)
+            string tip = na(tg.price) ? "No unswept target above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)
+            if ok or orbShowBlocked
+                // anchored on the breakout bar itself, not the range edge
+                label.new(time, low, ok ? "ORB ▲" : "ORB ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = ok ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = ok ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = tip)
+            if ok
+                alert("ORB break up through " + fmt(orbH) + " — " + (na(tg.price) ? "no target" : tg.name + " " + fmt(tg.price) + ", " + str.tostring(blk) + " FVG in path"), alert.freq_once_per_bar)
+
+        // ── downside break ──
         if not orbDn and close < orbL
             orbDn := true
-            label.new(time, orbH, "ORB ▼", xloc = xloc.bar_time, style = label.style_label_down, color = color.new(#ef5350, 20), textcolor = color.white, size = size.tiny)
-            alert("ORB breakout down through " + fmt(orbL), alert.freq_once_per_bar)
+            Target dTg  = nearestTarget(-1, close)
+            int    dBlk = blockersBetween(-1, close, dTg.price)
+            float  dRun = na(dTg.price) or na(atrVal) or atrVal == 0 ? na : (close - dTg.price) / atrVal
+            bool   dOk  = not orbFilter or (not na(dRun) and dRun >= orbMinRun and dBlk <= orbMaxBlock)
+            string dTip = na(dTg.price) ? "No unswept target below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)
+            if dOk or orbShowBlocked
+                label.new(time, high, dOk ? "ORB ▼" : "ORB ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = dOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = dOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = dTip)
+            if dOk
+                alert("ORB break down through " + fmt(orbL) + " — " + (na(dTg.price) ? "no target" : dTg.name + " " + fmt(dTg.price) + ", " + str.tostring(dBlk) + " FVG in path"), alert.freq_once_per_bar)
 
     orbWas := inOrb
-
-// ═══════════════════════════════ GAP FILL ═══════════════════════════════════
-[dOpen, dPrevClose] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead = barmerge.lookahead_on)
-
-var box   gapBox  = na
-var label gapLbl  = na
-var bool  gapDone = true
-
-if gapOn
-    bool newDay = nz(ta.change(time("D"))) != 0
-
-    if newDay and not na(dOpen) and not na(dPrevClose)
-        box.delete(gapBox)
-        label.delete(gapLbl)
-        gapBox  := na
-        gapLbl  := na
-        gapDone := true
-        if math.abs(dOpen - dPrevClose) >= syminfo.mintick * gapTicks
-            float t  = math.max(dOpen, dPrevClose)
-            float b  = math.min(dOpen, dPrevClose)
-            int   x2 = time + extMs + barMs
-            gapBox  := box.new(time, t, x2, b, xloc = xloc.bar_time, border_color = color.new(gapCol, 45), bgcolor = color.new(gapCol, 80))
-            gapLbl  := label.new(x2, math.avg(t, b), "GAP FILL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(gapCol, 100), textcolor = gapCol, size = size.tiny)
-            gapDone := false
-
-    if not gapDone and not na(gapBox)
-        int x2 = time + extMs + barMs
-        box.set_right(gapBox, x2)
-        label.set_x(gapLbl, x2)
-        if low <= dPrevClose and high >= dPrevClose
-            gapDone := true
-            box.set_right(gapBox, time)
-            box.set_bgcolor(gapBox, color.new(color.gray, 92))
-            box.set_border_color(gapBox, color.new(color.gray, 75))
-            label.delete(gapLbl)
-            alert("Overnight gap filled at " + fmt(dPrevClose), alert.freq_once_per_bar)
 
 // ═══════════════════════════════ RANGE TABLE ════════════════════════════════
 var table rt = table.new(tablePos(), 3, 10, border_width = 1, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 70))

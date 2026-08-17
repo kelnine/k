@@ -17,9 +17,33 @@ tuned for index futures on a 5–15 m chart.
 | **PD / PW / PM** | Previous day, week and month high & low, anchored at the start of the current period. |
 | **Fair value gaps** | Three-bar gaps on the chart timeframe plus a second set from a higher timeframe (default 1 H). Boxes extend until mitigated — mitigation rule is `Touch`, `50%`, or `Full fill`. |
 | **Buy / sell zones** | Premium & discount OTE bands (default 0.62–0.79) off the live dealing range between the last confirmed swing high and low, with a 50 % equilibrium line. |
-| **ORB** | Opening-range box for a configurable window (default 09:30–09:45 NY), extended high/low lines, and `ORB ▲` / `ORB ▼` breakout markers. |
+| **ORB** | Opening-range box for a configurable window (default 09:30–09:45 NY), extended high/low lines, and `ORB ▲` / `ORB ▼` breakout markers graded by runway (below). Markers sit on the breakout bar itself. |
 | **Gap fill** | Box spanning the prior day's close to today's open; it greys out and alerts the moment price trades back through the old close. |
 | **Range table** | Per-session range with that range as a % of its own trailing average, plus PD / PW / PM rows. Green ≥ 100 %, amber ≥ 75 %. |
+
+### ORB breakout runway filter
+
+A break only gets a solid marker when it has somewhere to go. On the bar that
+first closes beyond the opening range, the script measures:
+
+1. **Target** — the nearest level in the break's direction that price is plausibly
+   drawn to: an **unswept** session high/low, PDH/PDL, or an unfilled overnight
+   gap. Levels you have switched off are not considered.
+2. **Runway** — distance from the breakout close to that target, in ATR(14)
+   multiples. Must be ≥ *Minimum runway* (default 1.0×).
+3. **Obstacles** — how many live, unmitigated FVGs sit between the break and the
+   target. Must be ≤ *Max unfilled FVGs in path* (default 1).
+
+Pass both and you get a solid `ORB ▲` / `ORB ▼` plus an alert. Fail either and the
+marker prints grey with a `?` and **no alert fires** — that is the "broke into a
+wall of imbalance" case. Hover any marker for the target name, the runway in ATR,
+and the obstacle count that produced the verdict.
+
+A break with no unswept target ahead of it is treated as filtered. Turn the whole
+test off with *Filter breakouts by runway* to get raw breaks back.
+
+Note that both directions can still fire on the same day — the range genuinely
+broke twice. The filter grades each break, it does not predict which one holds.
 
 ### Settings that matter most
 
