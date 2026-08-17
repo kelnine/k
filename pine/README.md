@@ -49,6 +49,24 @@ test off with *Filter breakouts by runway* to get raw breaks back.
 Note that both directions can still fire on the same day — the range genuinely
 broke twice. The filter grades each break, it does not predict which one holds.
 
+### ORB rejections
+
+The other side of the same level: the edge holds instead of giving way, and the
+fade is the trade. Two definitions, selectable under *Rejection signal*:
+
+- **Wick** — the bar trades through the edge and closes back inside the range.
+- **Failed break** — a break already confirmed (closed outside) gets reclaimed by
+  a later close back inside.
+
+`ORB REJ ▼` is a top-side rejection (a short), `ORB REJ ▲` a bottom-side one (a
+long). Because a rejection fades the level, it is graded against a target on the
+**opposite** side to the break it refused — a top-side rejection needs runway
+*below*. Same greyed-with-`?` treatment when it fails the test, same tooltip.
+
+Rejections fire at most once per side per day and are independent of the breakout
+markers, so a break followed by a reclaim gives you both: `ORB ▲` then
+`ORB REJ ▼`.
+
 ### Settings that matter most
 
 - **Timezone** — every session string is evaluated in this zone. `America/New_York`

@@ -93,6 +93,7 @@ orbFilter     = input.bool(true, "Filter breakouts by runway", group = G_ORB, to
 orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step = 0.1, group = G_ORB)
 orbMaxBlock   = input.int(3, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
 orbShowBlocked = input.bool(true, "Show filtered breaks (greyed)", group = G_ORB)
+orbRejMode    = input.string("Both", "Rejection signal", options = ["Off", "Wick", "Failed break", "Both"], group = G_ORB, tooltip = "Wick: the bar trades through the edge and closes back inside. Failed break: a confirmed break is reclaimed by a later close back inside. Rejections fade the edge, so they are graded against a target on the opposite side.")
 
 // ── Gap ──
 gapOn    = input.bool(true, "Show overnight gap", group = G_GAP)
@@ -527,6 +528,8 @@ var line  orbLl  = na
 var bool  orbUp  = false
 var bool  orbDn  = false
 var bool  orbWas = false
+var bool  orbRejUp = false
+var bool  orbRejDn = false
 
 bool inOrb = not na(time(timeframe.period, orbSpec, tzIn))
 
@@ -542,6 +545,8 @@ if orbOn
         orbT0  := time
         orbUp  := false
         orbDn  := false
+        orbRejUp := false
+        orbRejDn := false
         orbBox := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = orbCol, bgcolor = color.new(orbCol, 88))
         orbHl  := line.new(time, high, time, high, xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
         orbLl  := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
@@ -589,6 +594,46 @@ if orbOn
                 label.new(time, high, dOk ? "ORB ▼" : "ORB ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = dOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = dOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = dTip)
             if dOk
                 alert("ORB break down through " + fmt(orbL) + " — " + (na(dTg.price) ? "no target" : dTg.name + " " + fmt(dTg.price) + ", " + str.tostring(dBlk) + " FVG in path"), alert.freq_once_per_bar)
+
+    // ── rejections: the edge holds and pushes price back inside ──
+    // A rejection is a fade, so it is graded against a target on the OPPOSITE
+    // side of the break it just refused: a top-side rejection is a short and
+    // wants runway below.
+    if orbRejMode != "Off" and not inOrb and not na(orbH)
+        bool wickTop = (orbRejMode == "Wick" or orbRejMode == "Both") and high > orbH and close < orbH
+        bool failTop = (orbRejMode == "Failed break" or orbRejMode == "Both") and orbUp and close < orbH
+        bool wickBot = (orbRejMode == "Wick" or orbRejMode == "Both") and low < orbL and close > orbL
+        bool failBot = (orbRejMode == "Failed break" or orbRejMode == "Both") and orbDn and close > orbL
+
+        // ── top-side rejection → short ──
+        if not orbRejUp and (wickTop or failTop)
+            orbRejUp := true
+            float  rMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target rTg   = nearestTarget(-1, close, rMinD)
+            int    rBlk  = blockersBetween(-1, close, rTg.price)
+            float  rRun  = na(rTg.price) or na(atrVal) or atrVal == 0 ? na : (close - rTg.price) / atrVal
+            bool   rOk   = not orbFilter or (not na(rTg.price) and rBlk <= orbMaxBlock)
+            string rKind = failTop ? "failed break" : "wick rejection"
+            string rTip  = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below." : "Target: " + rTg.name + " " + fmt(rTg.price) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk))
+            if rOk or orbShowBlocked
+                label.new(time, high, rOk ? "ORB REJ ▼" : "ORB REJ ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = rOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = rOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = rTip)
+            if rOk
+                alert("ORB top-side " + rKind + " at " + fmt(orbH) + " — " + (na(rTg.price) ? "no target" : rTg.name + " " + fmt(rTg.price) + ", " + str.tostring(rBlk) + " FVG in path"), alert.freq_once_per_bar)
+
+        // ── bottom-side rejection → long ──
+        if not orbRejDn and (wickBot or failBot)
+            orbRejDn := true
+            float  sMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target sTg   = nearestTarget(1, close, sMinD)
+            int    sBlk  = blockersBetween(1, close, sTg.price)
+            float  sRun  = na(sTg.price) or na(atrVal) or atrVal == 0 ? na : (sTg.price - close) / atrVal
+            bool   sOk   = not orbFilter or (not na(sTg.price) and sBlk <= orbMaxBlock)
+            string sKind = failBot ? "failed break" : "wick rejection"
+            string sTip  = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above." : "Target: " + sTg.name + " " + fmt(sTg.price) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk))
+            if sOk or orbShowBlocked
+                label.new(time, low, sOk ? "ORB REJ ▲" : "ORB REJ ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = sOk ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = sOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = sTip)
+            if sOk
+                alert("ORB bottom-side " + sKind + " at " + fmt(orbL) + " — " + (na(sTg.price) ? "no target" : sTg.name + " " + fmt(sTg.price) + ", " + str.tostring(sBlk) + " FVG in path"), alert.freq_once_per_bar)
 
     orbWas := inOrb
 
