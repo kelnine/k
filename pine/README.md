@@ -160,11 +160,14 @@ tells you which event fired:
 
 ## `deliverance-multi-session-orb-v2.pine`
 
-**Deliverance Multi-Session ORB v2** (`//@version=6`). A separate, standalone
-script — it does not read from or modify `phantom-flow-sessions.pine`.
+**Deliverance Multi-Session ORB v2** (`//@version=6`). Standalone — it neither
+reads nor modifies the other scripts here.
 
-Four independent 15-minute ranges, each with its own state, drawings, virtual
-trade and statistics. No session shares state with another.
+v1.0 is carried forward **intact**, not reimplemented: `f_cisd()` is byte-for-byte
+identical, and the CISD delivery legs and zones, SH/SL structure rays, swing
+signals, SMT divergence and the HTF/MTF CISD + open bias rows all keep v1's
+behaviour, inputs and palette. Four independent 15-minute opening ranges are
+layered on top.
 
 | Session | Default window (ET) | Label |
 | --- | --- | --- |
@@ -173,16 +176,16 @@ trade and statistics. No session shares state with another.
 | New York cash open | 09:30–09:45 | `NY ORB` |
 | PM range | 13:45–14:00 | `PM RANGE` |
 
-Every window is user-editable and every session has its own on/off toggle. All
-windows are evaluated in `America/New_York`, so DST is handled by TradingView's
-session engine rather than a hardcoded offset.
+Every window is editable and every session has its own toggle. Windows resolve in
+`America/New_York`, so DST comes from TradingView's session engine.
 
 ### The progression
 
-A basic break is not a signal. Each session walks its own state machine:
+A basic break is not a signal. Each session walks its own state machine, and no
+session reads or writes another's state:
 
 ```
-range forms → break → close outside → retest → CISD/structure → entry
+range forms → break → close outside → retest → CISD confirmation → entry
 ```
 
 | Status | Meaning | Marker |
@@ -194,49 +197,43 @@ range forms → break → close outside → retest → CISD/structure → entry
 | Conf Long / Conf Short | Every enabled requirement met | `CONF LONG` / `CONF SHORT` |
 | Failed | Closed back inside after breaking out | `ORB REJ` |
 
-Three requirement toggles decide how much is needed to reach confirmation:
-*Require candle close outside range*, *Require retest*, *Require CISD/structure
-confirmation*. Turn all three off and confirmation fires on the break itself.
-
-**CISD** is defined here as: the level is the open of the first candle of the
-most recent run of opposing candles, and delivery flips when price *closes*
-through it. Structure confirmation accepts either a CISD flip or a swing
-structure (HH/HL vs LH/LL) already agreeing with the break.
+Requirements are individually switchable: *close outside range*, *retest*,
+*CISD/structure confirmation*, *agreeing SMT*. Confirmation reuses v1 directly —
+it fires when `cisdState` or `swingTrend` already reads in the break's direction.
 
 ### Bias
 
-Daily and intraday (default 1H) bias, each from price against an EMA of that
-timeframe. Both read the **previous closed** higher-timeframe bar, so neither
-repaints as the current one develops.
+Straight from v1: HTF and MTF bias are the **CISD state** of those timeframes via
+`f_cisd()`, alongside v1's open bias row. Both agreeing gives **Strong Long** or
+**Strong Short**; disagreement is **Mixed**.
 
-- Daily bull + intraday bull → **Strong Long**
-- Daily bear + intraday bear → **Strong Short**
-- Disagreement → **Mixed**
-
-By default bias only *grades* a setup — every confirmation is tagged Strong,
-Mixed or Counter in its tooltip and alert, and nothing is blocked. The two bias
-filter inputs turn it into a hard filter if you want that.
+Bias *grades* a setup by default — every confirmation is tagged Strong, Mixed or
+Counter in its tooltip and alert, and nothing is blocked. The two filter inputs
+turn it into a hard gate if you want one.
 
 ### Statistics
 
-Tracked **per session, never pooled** — the point is comparing Globex vs London
-vs NY vs PM on the same instrument.
+Per session, **never pooled** — the point is comparing Globex vs London vs NY vs
+PM on the same instrument.
 
-Columns: setups, wins, losses, win rate, bullish breaks, bearish breaks, failed
-breaks. A virtual trade opens at each confirmation and resolves when price
-reaches the stop or the target. **If one bar spans both, it counts as a loss** —
-the conservative assumption, since bar data cannot say which came first.
+Setups, wins, losses, win rate, bullish breaks, bearish breaks, failed breaks. A
+virtual trade opens at each confirmation and resolves when price reaches the stop
+or the target. **A bar spanning both counts as a loss** — bar data cannot say
+which came first. Stop placement (opposite range side / retest swing / ATR) and
+the R multiple that counts as a win are inputs, so nothing is invented.
 
-Configurable: stop placement (opposite range edge / retest swing / ATR), and
-which of 1R, 2R or 3R counts as a win. Nothing is invented — change the inputs
-and the statistics recompute from the same rules.
+Statistics accumulate from whatever history the chart holds and reset on reload.
+On a 5m chart that is a few months — a small sample for comparing four sessions,
+so treat early win rates as noise.
 
 ### Notes
 
-- **Use a 5m or 15m chart.** The window is 15 minutes wide, so a coarser chart
-  cannot resolve it; the dashboard shows a warning row above 15m.
-- **Clean mode** hides range name labels, early-break and retest markers, the
-  opening print and the statistics table, leaving boxes and confirmed signals.
-- Historical ranges are off by default. When enabled, old drawings are archived
-  and recycled past *Days of history to keep* so the object budget holds.
-- This is an indicator. It marks setups and keeps score; it places no orders.
+- **Use a 5m or 15m chart.** The window is 15 minutes wide; the dashboard shows a
+  warning row above 15m.
+- All progression logic runs on `barstate.isconfirmed`, and both bias reads come
+  from closed higher-timeframe bars, so nothing repaints.
+- **Clean mode** hides range names, early-break and retest markers, the range open
+  and the statistics table, leaving boxes and confirmed signals.
+- Historical ranges are off by default; when on, old drawings are archived and
+  recycled past *Days of history to keep*.
+- An indicator, not a strategy. It marks setups and keeps score; it places no orders.
