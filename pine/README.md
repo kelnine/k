@@ -245,8 +245,11 @@ so treat early win rates as noise.
   warning row above 15m.
 - All progression logic runs on `barstate.isconfirmed`, and both bias reads come
   from closed higher-timeframe bars, so nothing repaints.
-- **Clean mode** hides range names, early-break and retest markers, the range open
-  and the statistics table, leaving boxes and confirmed signals.
+- **Clean mode** declutters the chart — range names, early-break and retest
+  markers and the range open — leaving boxes and confirmed signals. It does not
+  touch the corner panels: the dashboard and statistics table have their own
+  toggles. While testing, turn clean mode off so you can see whether breaks are
+  reaching the retest stage.
 - Historical ranges are off by default; when on, old drawings are archived and
   recycled past *Days of history to keep*.
 - An indicator, not a strategy. It marks setups and keeps score; it places no orders.

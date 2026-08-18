@@ -149,7 +149,9 @@ bool vOpen   = showOpen   and not cleanMode
 bool vEarly  = showEarly  and not cleanMode
 bool vRetest = showRetest and not cleanMode
 bool vTag    = not cleanMode
-bool vStats  = statsOn    and not cleanMode
+// clean mode declutters the CHART, not the corner panels — the dashboard is
+// never hidden by it, and the statistics table has its own toggle
+bool vStats  = statsOn
 
 f_fmt(float v) =>
     na(v) ? "—" : str.tostring(v, format.mintick)
