@@ -1,0 +1,792 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  Phantom Flow — Sessions, Zones & Gaps
+//
+//  One overlay that draws the whole session playbook:
+//    • Asia / London / NY AM / NY Lunch / NY PM ranges, highs, lows + sweeps
+//    • Previous day / week / month high & low
+//    • Fair value gaps on the chart timeframe and on a higher timeframe,
+//      auto-extended until mitigated
+//    • Premium / discount (OTE) buy & sell zones off the live dealing range
+//    • Opening range: the first candle's open, high and low, with breakouts
+//      and rejections graded by runway, sweep and volume, plus a bias read-out
+//    • Overnight gap box that closes itself once the gap fills
+//    • Range table: each session's range vs its own average, plus PD / PW / PM
+//
+//  Drawings are created once per instance and updated in place, so the script
+//  stays well inside the 500-object budget even on deep history.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Phantom Flow — Sessions, Zones & Gaps", "PF Sessions", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════ GROUPS ═════════════════════════════════════
+G_SESS = "Sessions"
+G_LVL  = "Previous day / week / month"
+G_FVG  = "Fair value gaps"
+G_ZONE = "Buy / sell zones"
+G_ORB  = "Opening range (ORB)"
+G_GAP  = "Gap fill"
+G_TBL  = "Range table"
+G_LBL  = "Labels & clutter"
+
+// ═══════════════════════════════ INPUTS ═════════════════════════════════════
+// ── Sessions ──
+tzIn        = input.string("America/New_York", "Timezone", options = ["America/New_York", "America/Chicago", "Europe/London", "Asia/Tokyo", "UTC"], group = G_SESS)
+showBoxes   = input.bool(true,  "Shade session range",          group = G_SESS)
+showLevels  = input.bool(true,  "High / low levels",            group = G_SESS)
+showSessLbl = input.bool(true,  "Level labels",                 group = G_SESS)
+keepPrev    = input.bool(false, "Keep previous days' drawings", group = G_SESS, tooltip = "Off = only the most recent instance of each session stays on the chart.")
+extendBars  = input.int(12,     "Extend levels (bars)", minval = 0, maxval = 200, group = G_SESS)
+alertSweep  = input.bool(true,  "Alert on session sweep",       group = G_SESS)
+
+asiaOn   = input.bool(true,  "Asia",     group = G_SESS, inline = "asia")
+asiaSpec = input.session("1800-0000",    "", group = G_SESS, inline = "asia")
+asiaCol  = input.color(#7e57c2,          "", group = G_SESS, inline = "asia")
+
+lndnOn   = input.bool(true,  "London",   group = G_SESS, inline = "lndn")
+lndnSpec = input.session("0200-0500",    "", group = G_SESS, inline = "lndn")
+lndnCol  = input.color(#26a69a,          "", group = G_SESS, inline = "lndn")
+
+nyamOn   = input.bool(true,  "NY AM",    group = G_SESS, inline = "nyam")
+nyamSpec = input.session("0930-1200",    "", group = G_SESS, inline = "nyam")
+nyamCol  = input.color(#42a5f5,          "", group = G_SESS, inline = "nyam")
+
+lnchOn   = input.bool(false, "NY Lunch", group = G_SESS, inline = "lnch")
+lnchSpec = input.session("1200-1300",    "", group = G_SESS, inline = "lnch")
+lnchCol  = input.color(#8d6e63,          "", group = G_SESS, inline = "lnch")
+
+nypmOn   = input.bool(true,  "NY PM",    group = G_SESS, inline = "nypm")
+nypmSpec = input.session("1300-1600",    "", group = G_SESS, inline = "nypm")
+nypmCol  = input.color(#ef5350,          "", group = G_SESS, inline = "nypm")
+
+// ── Previous day / week / month ──
+showPD = input.bool(true,  "Previous day high / low",   group = G_LVL)
+showPW = input.bool(true,  "Previous week high / low",  group = G_LVL)
+showPM = input.bool(false, "Previous month high / low", group = G_LVL)
+lvlCol = input.color(#78909c, "Level colour",           group = G_LVL)
+
+// ── Fair value gaps ──
+fvgOn      = input.bool(true, "Chart-timeframe FVG",  group = G_FVG)
+fvgHtfOn   = input.bool(true, "Higher-timeframe FVG", group = G_FVG, inline = "htf")
+fvgHtf     = input.timeframe("60", "",                group = G_FVG, inline = "htf")
+fvgFill    = input.string("Full fill", "Mitigate on", options = ["Touch", "50%", "Full fill"], group = G_FVG)
+fvgKeep    = input.bool(false, "Keep mitigated gaps (greyed)", group = G_FVG)
+fvgMax     = input.int(12, "Max gaps per direction", minval = 1, maxval = 40, group = G_FVG)
+fvgMinTick = input.int(0,  "Min gap size (ticks)", minval = 0, group = G_FVG)
+fvgBullCol = input.color(#26a69a, "Bullish", group = G_FVG, inline = "fc")
+fvgBearCol = input.color(#ef5350, "Bearish", group = G_FVG, inline = "fc")
+fvgOpacity = input.int(78, "Zone opacity", minval = 0, maxval = 95, group = G_FVG)
+fvgFibOnly = input.bool(false, "Only gaps in the fib pullback zone", group = G_FVG, tooltip = "Hide gaps that don't sit in the retracement band of the current dealing range. Marking every gap buries the few that matter; this keeps the ones price is actually likely to react from.")
+fvgFibLo   = input.float(0.5,  "Fib zone from", minval = 0.1, maxval = 0.9, step = 0.01, group = G_FVG, inline = "fib")
+fvgFibHi   = input.float(0.62, "to",            minval = 0.1, maxval = 0.9, step = 0.01, group = G_FVG, inline = "fib")
+
+// ── Buy / sell zones ──
+zoneOn    = input.bool(true, "Show premium / discount zones", group = G_ZONE)
+pivLen    = input.int(10, "Swing length", minval = 2, group = G_ZONE)
+oteLo     = input.float(0.62, "OTE from", minval = 0.50, maxval = 0.95, step = 0.01, group = G_ZONE)
+oteHi     = input.float(0.79, "OTE to",   minval = 0.51, maxval = 0.99, step = 0.01, group = G_ZONE)
+showEq    = input.bool(true, "Equilibrium (50%)", group = G_ZONE)
+buyCol    = input.color(#2962ff, "Buy zone",  group = G_ZONE, inline = "zc")
+sellCol   = input.color(#e91e63, "Sell zone", group = G_ZONE, inline = "zc")
+alertZone = input.bool(true, "Alert on zone tap", group = G_ZONE)
+
+// ── ORB ──
+orbOn      = input.bool(true, "Show opening range", group = G_ORB)
+orbSpec    = input.session("0930-0945", "Opening range window", group = G_ORB, tooltip = "Defaults to the first 15-minute candle of the NY session.")
+orbCol     = input.color(#ffa726, "Colour", group = G_ORB)
+orbBrk     = input.bool(true, "Mark breakouts", group = G_ORB)
+orbShowOpen = input.bool(true, "Show the opening candle's open", group = G_ORB, tooltip = "The open of the first candle, drawn alongside its high and low — the third line of the reference setup.")
+orbRejTgt  = input.string("Opposite ORB edge", "Rejection target", options = ["Opposite ORB edge", "Nearest liquidity"], group = G_ORB, tooltip = "A refused break normally targets the other side of the opening range, not the next pool of liquidity. Switch to Nearest liquidity to grade rejections the same way breakouts are graded.")
+orbReqSweep = input.bool(false, "Rejection requires a liquidity sweep", group = G_ORB, tooltip = "Only confirm a rejection when the failed probe took out a level on its way — previous day high, a session high, and so on. The sweep is reported in the tooltip either way.")
+orbFilter     = input.bool(true, "Filter breakouts by runway", group = G_ORB, tooltip = "Only confirm a break that has an unswept target ahead of it and a clear enough path to reach it. Breaks that fail the test print greyed with a '?'.")
+orbMinRun     = input.float(1.0, "Minimum runway (× ATR)", minval = 0.0, step = 0.1, group = G_ORB)
+orbMaxBlock   = input.int(3, "Max unfilled FVGs in path", minval = 0, maxval = 10, group = G_ORB)
+orbShowBlocked = input.bool(true, "Show filtered breaks (greyed)", group = G_ORB)
+orbRejMode    = input.string("Both", "Rejection signal", options = ["Off", "Wick", "Failed break", "Both"], group = G_ORB, tooltip = "Wick: the bar trades through the edge and closes back inside. Failed break: a confirmed break is reclaimed by a later close back inside. Rejections fade the edge, so they are graded against a target on the opposite side.")
+volOn   = input.bool(false, "Require volume confirmation", group = G_ORB, tooltip = "Off by default — it is a second filter stacked on the runway test, so turn it on once you have seen how the runway test alone behaves on your instrument. Symbols with no volume data pass automatically.")
+volMult = input.float(1.5, "Signal bar volume ≥ × average", minval = 0.5, step = 0.1, group = G_ORB)
+volLen  = input.int(20, "Volume average length", minval = 2, group = G_ORB)
+
+// ── Gap ──
+gapOn    = input.bool(true, "Show overnight gap", group = G_GAP)
+gapTicks = input.int(4, "Minimum gap (ticks)", minval = 1, group = G_GAP)
+gapCol   = input.color(#ab47bc, "Colour", group = G_GAP)
+
+// ── Table ──
+tblOn   = input.bool(true, "Show range table", group = G_TBL)
+tblPos  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"], group = G_TBL)
+avgLen  = input.int(14, "Average length", minval = 2, maxval = 100, group = G_TBL, tooltip = "How many prior instances feed the average that the % column compares against.")
+tblSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_TBL)
+tblBias = input.bool(true, "Show ORB bias row", group = G_TBL, tooltip = "Holding above the opening range reads LONG, refused and back inside reads SHORT — the running bias, not a signal on its own.")
+
+// ── Labels ──
+lblFvg  = input.bool(false, "Label FVG boxes", group = G_LBL, tooltip = "Off by default — the coloured box already says what it is, and one label per gap is most of the clutter on the right-hand edge.")
+lblNear = input.bool(true,  "Only label levels near price", group = G_LBL)
+lblDist = input.float(3.0,  "Label distance (× ATR)", minval = 0.5, step = 0.5, group = G_LBL, tooltip = "Session and PD/PW/PM levels further than this from the last price draw as bare lines. Their line stays put — only the text is hidden.")
+
+// ═══════════════════════════════ HELPERS ════════════════════════════════════
+int   barMs  = timeframe.in_seconds(timeframe.period) * 1000
+int   extMs  = barMs * extendBars
+float atrVal = ta.atr(14)
+float volAvg = ta.sma(volume, volLen)
+
+// Did the signal bar actually carry participation? Instruments with no volume
+// feed pass rather than silently blocking every signal.
+bool volConfirmed = not volOn ? true : na(volume) or na(volAvg) or volAvg == 0 ? true : volume >= volAvg * volMult
+string volTxt = na(volume) or na(volAvg) or volAvg == 0 ? "" : "\nVolume: " + str.tostring(volume / volAvg, "#.##") + "× avg"
+
+// Is this level close enough to price to be worth naming?
+nearPrice(float price) =>
+    not lblNear or na(atrVal) or na(price) ? true : math.abs(price - close) <= lblDist * atrVal
+
+// Show or hide a label's text without destroying and rebuilding it as price
+// drifts in and out of range — a fully transparent bubble renders as nothing.
+labelVis(label lb, bool vis, string txt, color txtCol, color bgCol) =>
+    if not na(lb)
+        label.set_text(lb, vis ? txt : "")
+        label.set_textcolor(lb, vis ? txtCol : color.new(color.white, 100))
+        label.set_color(lb, vis ? bgCol : color.new(color.white, 100))
+
+fmt(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
+
+pctTxt(float p) =>
+    na(p) ? "—" : str.tostring(p, "#") + "%"
+
+pctCol(float p) =>
+    na(p) ? color.new(color.gray, 45) : p >= 100 ? color.new(#26a69a, 25) : p >= 75 ? color.new(#ffa726, 30) : color.new(#78909c, 45)
+
+txtSize() =>
+    tblSize == "Tiny" ? size.tiny : tblSize == "Normal" ? size.normal : size.small
+
+tablePos() =>
+    switch tblPos
+        "Top left"     => position.top_left
+        "Bottom right" => position.bottom_right
+        "Bottom left"  => position.bottom_left
+        "Middle right" => position.middle_right
+        =>                position.top_right
+
+// Rolling history capped at `cap` entries.
+pushCapped(array<float> a, float v, int cap) =>
+    if not na(v)
+        a.push(v)
+        if a.size() > cap
+            a.shift()
+
+// One table row: name | range | range as % of its own average.
+statRow(table t, int row, string name, float rng, float avg, color nameBg) =>
+    float pct = na(rng) or na(avg) or avg == 0 ? na : rng / avg * 100.0
+    table.cell(t, 0, row, name,     bgcolor = nameBg,                  text_color = color.white, text_size = txtSize())
+    table.cell(t, 1, row, fmt(rng), bgcolor = color.new(#1e222d, 20),  text_color = color.white, text_size = txtSize())
+    table.cell(t, 2, row, pctTxt(pct), bgcolor = pctCol(pct),          text_color = color.white, text_size = txtSize())
+
+// A persistent horizontal level owning its own line + label, updated in place.
+drawLevel(bool show, float price, string txt, color col, string style, int anchor) =>
+    var line  ln = na
+    var label lb = na
+    if show and not na(price) and not na(anchor)
+        int x2 = time + extMs + barMs
+        if na(ln)
+            ln := line.new(anchor, price, x2, price, xloc = xloc.bar_time, color = col, style = style, width = 1)
+            lb := label.new(x2, price, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.tiny)
+        line.set_xy1(ln, anchor, price)
+        line.set_xy2(ln, x2, price)
+        label.set_xy(lb, x2, price)
+        labelVis(lb, nearPrice(price), txt + "  " + fmt(price), col, color.new(col, 88))
+
+// ═══════════════════════════════ SESSIONS ═══════════════════════════════════
+type Sess
+    string       name
+    string       abbr
+    color        col
+    bool         enabled
+    float        hi     = na
+    float        lo     = na
+    int          t0     = na
+    bool         inS    = false
+    bool         sweptH = false
+    bool         sweptL = false
+    float        rng    = na
+    line         hLine
+    line         lLine
+    label        hLbl
+    label        lLbl
+    box          bx
+    array<float> hist
+
+var array<Sess> SESSIONS = array.from(
+     Sess.new(name = "ASIA",     abbr = "ASIA", col = asiaCol, enabled = asiaOn, hist = array.new<float>()),
+     Sess.new(name = "LONDON",   abbr = "LNDN", col = lndnCol, enabled = lndnOn, hist = array.new<float>()),
+     Sess.new(name = "NY AM",    abbr = "NYAM", col = nyamCol, enabled = nyamOn, hist = array.new<float>()),
+     Sess.new(name = "NY LUNCH", abbr = "LNCH", col = lnchCol, enabled = lnchOn, hist = array.new<float>()),
+     Sess.new(name = "NY PM",    abbr = "NYPM", col = nypmCol, enabled = nypmOn, hist = array.new<float>()))
+
+// time() needs a simple-qualified session string, so membership is resolved
+// here at global scope and handed to the loop by index.
+var array<bool> IN_NOW = array.new<bool>(5, false)
+IN_NOW.set(0, not na(time(timeframe.period, asiaSpec, tzIn)))
+IN_NOW.set(1, not na(time(timeframe.period, lndnSpec, tzIn)))
+IN_NOW.set(2, not na(time(timeframe.period, nyamSpec, tzIn)))
+IN_NOW.set(3, not na(time(timeframe.period, lnchSpec, tzIn)))
+IN_NOW.set(4, not na(time(timeframe.period, nypmSpec, tzIn)))
+
+for i = 0 to SESSIONS.size() - 1
+    Sess s = SESSIONS.get(i)
+    if s.enabled
+        bool inNow  = IN_NOW.get(i)
+        bool opened = inNow and not s.inS
+        bool closed = s.inS and not inNow
+
+        // ── new instance: clear the old one, seed a fresh range ──
+        if opened
+            if not keepPrev
+                box.delete(s.bx)
+                line.delete(s.hLine)
+                line.delete(s.lLine)
+                label.delete(s.hLbl)
+                label.delete(s.lLbl)
+            s.hi     := high
+            s.lo     := low
+            s.t0     := time
+            s.sweptH := false
+            s.sweptL := false
+            // built with plain `if`s, not ternaries — a ternary would still
+            // evaluate the drawing call on the branch that is not taken
+            if showBoxes
+                s.bx := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(s.col, 55), bgcolor = color.new(s.col, 90))
+            if showLevels
+                s.hLine := line.new(time, high, time, high, xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+                s.lLine := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+            if showSessLbl
+                s.hLbl := label.new(time, high, s.name + " HIGH", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(s.col, 90), textcolor = s.col, size = size.tiny)
+                s.lLbl := label.new(time, low,  s.name + " LOW",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(s.col, 90), textcolor = s.col, size = size.tiny)
+
+        // ── live range ──
+        if inNow
+            s.hi := na(s.hi) ? high : math.max(s.hi, high)
+            s.lo := na(s.lo) ? low  : math.min(s.lo, low)
+            if not na(s.bx)
+                box.set_top(s.bx, s.hi)
+                box.set_bottom(s.bx, s.lo)
+                box.set_right(s.bx, time + barMs)
+
+        // ── close out: bank the range so the table has an average to work with ──
+        if closed
+            s.rng := s.hi - s.lo
+            pushCapped(s.hist, s.rng, avgLen)
+
+        // ── keep levels running out to the right of price ──
+        if not na(s.hi)
+            int x2 = time + extMs + barMs
+            if not na(s.hLine)
+                line.set_xy1(s.hLine, s.t0, s.hi)
+                line.set_xy2(s.hLine, x2, s.hi)
+            if not na(s.lLine)
+                line.set_xy1(s.lLine, s.t0, s.lo)
+                line.set_xy2(s.lLine, x2, s.lo)
+            if not na(s.hLbl)
+                label.set_xy(s.hLbl, x2, s.hi)
+                labelVis(s.hLbl, nearPrice(s.hi), s.name + " HIGH", s.col, color.new(s.col, 90))
+            if not na(s.lLbl)
+                label.set_xy(s.lLbl, x2, s.lo)
+                labelVis(s.lLbl, nearPrice(s.lo), s.name + " LOW", s.col, color.new(s.col, 90))
+
+        // ── sweeps: first trade through a closed session's extreme ──
+        if not inNow and not na(s.hi)
+            if not s.sweptH and high > s.hi
+                s.sweptH := true
+                if not na(s.hLine)
+                    line.set_style(s.hLine, line.style_dotted)
+                if alertSweep
+                    alert(s.name + " HIGH swept at " + fmt(s.hi), alert.freq_once_per_bar)
+            if not s.sweptL and low < s.lo
+                s.sweptL := true
+                if not na(s.lLine)
+                    line.set_style(s.lLine, line.style_dotted)
+                if alertSweep
+                    alert(s.name + " LOW swept at " + fmt(s.lo), alert.freq_once_per_bar)
+
+        s.inS := inNow
+
+// ═══════════════════ PREVIOUS DAY / WEEK / MONTH LEVELS ═════════════════════
+[pdH, pdL, pdAvg] = request.security(syminfo.tickerid, "D", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+[pwH, pwL, pwAvg] = request.security(syminfo.tickerid, "W", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+[pmH, pmL, pmAvg] = request.security(syminfo.tickerid, "M", [high[1], low[1], ta.sma(high[1] - low[1], avgLen)], lookahead = barmerge.lookahead_on)
+
+int dayStart   = time("D")
+int weekStart  = time("W")
+int monthStart = time("M")
+
+drawLevel(showPD, pdH, "PDH", lvlCol, line.style_dashed, dayStart)
+drawLevel(showPD, pdL, "PDL", lvlCol, line.style_dashed, dayStart)
+drawLevel(showPW, pwH, "PWH", lvlCol, line.style_dotted, weekStart)
+drawLevel(showPW, pwL, "PWL", lvlCol, line.style_dotted, weekStart)
+drawLevel(showPM, pmH, "PMH", lvlCol, line.style_dotted, monthStart)
+drawLevel(showPM, pmL, "PML", lvlCol, line.style_dotted, monthStart)
+
+// ═══════════════════════════ DEALING RANGE ══════════════════════════════════
+// The last confirmed swing high and low. Feeds both the premium/discount zones
+// and the fib-pullback filter on fair value gaps, so it is resolved before
+// either of them.
+float ph = ta.pivothigh(pivLen, pivLen)
+float pl = ta.pivotlow(pivLen, pivLen)
+
+var float swHi = na
+var float swLo = na
+if not na(ph)
+    swHi := ph
+if not na(pl)
+    swLo := pl
+
+bool  rangeOk = not na(swHi) and not na(swLo) and swHi > swLo
+float rangeSz = rangeOk ? swHi - swLo : na
+
+// The retracement band price is expected to pull back into, measured from both
+// ends of the range so it covers a pullback in either direction: with the
+// defaults, 0.5–0.62 from the low and 0.5–0.62 from the high union to a single
+// band straddling equilibrium.
+float fibTop = rangeOk ? swLo + rangeSz * math.max(fvgFibLo, fvgFibHi) : na
+float fibBot = rangeOk ? swLo + rangeSz * (1.0 - math.max(fvgFibLo, fvgFibHi)) : na
+
+inFibZone(float top, float bot) =>
+    not fvgFibOnly or not rangeOk ? true : top >= fibBot and bot <= fibTop
+
+// ═══════════════════════════ FAIR VALUE GAPS ════════════════════════════════
+type Gap
+    box    bx
+    label  lb
+    float  top
+    float  bot
+    bool   bull
+    string tag  = ""
+    bool   dead = false
+
+var array<Gap> GAPS = array.new<Gap>()
+
+addGap(bool bull, float top, float bot, int leftT, string tag) =>
+    if top > bot and top - bot >= syminfo.mintick * fvgMinTick
+        color base = bull ? fvgBullCol : fvgBearCol
+        color fill = color.new(base, fvgOpacity)
+        int   x2   = time + extMs + barMs
+        box   b    = box.new(leftT, top, x2, bot, xloc = xloc.bar_time, border_color = color.new(base, 60), bgcolor = fill)
+        label l    = na
+        if lblFvg
+            l := label.new(x2, math.avg(top, bot), tag, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(base, 100), textcolor = color.new(base, 20), size = size.tiny)
+        GAPS.push(Gap.new(bx = b, lb = l, top = top, bot = bot, bull = bull, tag = tag))
+
+        // trim the oldest gap in this direction once past the cap
+        int n = 0
+        for i = 0 to GAPS.size() - 1
+            if GAPS.get(i).bull == bull
+                n += 1
+        if n > fvgMax
+            for i = 0 to GAPS.size() - 1
+                Gap g = GAPS.get(i)
+                if g.bull == bull
+                    box.delete(g.bx)
+                    label.delete(g.lb)
+                    GAPS.remove(i)
+                    break
+
+// ── chart timeframe, confirmed bars only, so nothing repaints ──
+if fvgOn and barstate.isconfirmed
+    if low > high[2]
+        addGap(true, low, high[2], time[2], "FVG")
+    if high < low[2]
+        addGap(false, low[2], high, time[2], "FVG")
+
+// ── higher timeframe, evaluated once per new HTF bar ──
+bool htfValid  = fvgHtfOn and timeframe.in_seconds(fvgHtf) >= timeframe.in_seconds(timeframe.period)
+[hC, lC, hA, lA, tA] = request.security(syminfo.tickerid, fvgHtf, [high[1], low[1], high[3], low[3], time[3]], lookahead = barmerge.lookahead_off)
+bool newHtfBar = nz(ta.change(time(fvgHtf))) != 0
+
+if htfValid and newHtfBar and not na(hA) and not na(tA)
+    if lC > hA
+        addGap(true, lC, hA, tA, fvgHtf + " FVG")
+    if hC < lA
+        addGap(false, lA, hC, tA, fvgHtf + " FVG")
+
+// ── mitigation + right-edge maintenance ──
+if GAPS.size() > 0
+    int x2 = time + extMs + barMs
+    for i = GAPS.size() - 1 to 0
+        Gap g = GAPS.get(i)
+        if not g.dead
+            float trigger = fvgFill == "Touch" ? (g.bull ? g.top : g.bot) : fvgFill == "50%" ? math.avg(g.top, g.bot) : (g.bull ? g.bot : g.top)
+            bool  hit     = g.bull ? low <= trigger : high >= trigger
+            if hit
+                g.dead := true
+                label.delete(g.lb)
+                if fvgKeep
+                    box.set_right(g.bx, time)
+                    box.set_bgcolor(g.bx, color.new(color.gray, 92))
+                    box.set_border_color(g.bx, color.new(color.gray, 75))
+                else
+                    box.delete(g.bx)
+                    GAPS.remove(i)
+            else
+                box.set_right(g.bx, x2)
+                // re-tested every bar: the dealing range moves, so a gap can
+                // drift into and out of the pullback band over its lifetime
+                bool  shown = inFibZone(g.top, g.bot)
+                color base  = g.bull ? fvgBullCol : fvgBearCol
+                box.set_bgcolor(g.bx, color.new(base, shown ? fvgOpacity : 100))
+                box.set_border_color(g.bx, color.new(base, shown ? 60 : 100))
+                if not na(g.lb)
+                    label.set_xy(g.lb, x2, math.avg(g.top, g.bot))
+                    labelVis(g.lb, shown, g.tag, color.new(base, 20), color.new(base, 100))
+
+// ═══════════════════════ PREMIUM / DISCOUNT ZONES ═══════════════════════════
+var box   buyBox     = na
+var box   sellBox    = na
+var label buyLbl     = na
+var label sellLbl    = na
+var line  eqLine     = na
+var bool  buyTapped  = false
+var bool  sellTapped = false
+
+if zoneOn and not na(swHi) and not na(swLo) and swHi > swLo
+    float rng   = swHi - swLo
+    float buyT  = swLo + rng * (1.0 - oteLo)
+    float buyB  = swLo + rng * (1.0 - oteHi)
+    float sellB = swLo + rng * oteLo
+    float sellT = swLo + rng * oteHi
+    float eq    = math.avg(swHi, swLo)
+    int   xL    = time - barMs * pivLen
+    int   xR    = time + extMs + barMs
+
+    if na(buyBox)
+        buyBox  := box.new(xL, buyT,  xR, buyB,  xloc = xloc.bar_time, border_color = color.new(buyCol, 40),  bgcolor = color.new(buyCol, 82))
+        sellBox := box.new(xL, sellT, xR, sellB, xloc = xloc.bar_time, border_color = color.new(sellCol, 40), bgcolor = color.new(sellCol, 82))
+        buyLbl  := label.new(xR, buyB,  "BUY ZONE",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(buyCol, 100),  textcolor = buyCol,  size = size.tiny)
+        sellLbl := label.new(xR, sellT, "SELL ZONE", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(sellCol, 100), textcolor = sellCol, size = size.tiny)
+        eqLine  := line.new(xL, eq, xR, eq, xloc = xloc.bar_time, color = color.new(color.gray, 40), style = line.style_dashed)
+
+    box.set_lefttop(buyBox, xL, buyT)
+    box.set_rightbottom(buyBox, xR, buyB)
+    box.set_lefttop(sellBox, xL, sellT)
+    box.set_rightbottom(sellBox, xR, sellB)
+    label.set_xy(buyLbl, xR, buyB)
+    label.set_xy(sellLbl, xR, sellT)
+    line.set_xy1(eqLine, xL, eq)
+    line.set_xy2(eqLine, xR, eq)
+    line.set_color(eqLine, showEq ? color.new(color.gray, 40) : color.new(color.gray, 100))
+
+    // a new dealing range re-arms both taps
+    if ta.change(swHi) != 0 or ta.change(swLo) != 0
+        buyTapped  := false
+        sellTapped := false
+
+    if alertZone
+        if not buyTapped and low <= buyT and high >= buyB
+            buyTapped := true
+            alert("Price tapped the BUY zone (" + fmt(buyB) + " – " + fmt(buyT) + ")", alert.freq_once_per_bar)
+        if not sellTapped and high >= sellB and low <= sellT
+            sellTapped := true
+            alert("Price tapped the SELL zone (" + fmt(sellB) + " – " + fmt(sellT) + ")", alert.freq_once_per_bar)
+
+// ═══════════════════════════════ GAP FILL ═══════════════════════════════════
+// Sits above the ORB block because the breakout filter uses an unfilled gap as
+// one of its runway targets.
+[dOpen, dPrevClose] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead = barmerge.lookahead_on)
+
+var box   gapBox  = na
+var label gapLbl  = na
+var bool  gapDone = true
+
+if gapOn
+    bool newDay = nz(ta.change(time("D"))) != 0
+
+    if newDay and not na(dOpen) and not na(dPrevClose)
+        box.delete(gapBox)
+        label.delete(gapLbl)
+        gapBox  := na
+        gapLbl  := na
+        gapDone := true
+        if math.abs(dOpen - dPrevClose) >= syminfo.mintick * gapTicks
+            float t  = math.max(dOpen, dPrevClose)
+            float b  = math.min(dOpen, dPrevClose)
+            int   x2 = time + extMs + barMs
+            gapBox  := box.new(time, t, x2, b, xloc = xloc.bar_time, border_color = color.new(gapCol, 45), bgcolor = color.new(gapCol, 80))
+            gapLbl  := label.new(x2, math.avg(t, b), "GAP FILL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(gapCol, 100), textcolor = gapCol, size = size.tiny)
+            gapDone := false
+
+    if not gapDone and not na(gapBox)
+        int x2 = time + extMs + barMs
+        box.set_right(gapBox, x2)
+        label.set_x(gapLbl, x2)
+        if low <= dPrevClose and high >= dPrevClose
+            gapDone := true
+            box.set_right(gapBox, time)
+            box.set_bgcolor(gapBox, color.new(color.gray, 92))
+            box.set_border_color(gapBox, color.new(color.gray, 75))
+            label.delete(gapLbl)
+            alert("Overnight gap filled at " + fmt(dPrevClose), alert.freq_once_per_bar)
+
+// ═══════════════════════════ BREAKOUT RUNWAY ════════════════════════════════
+// A break is only worth marking if it has somewhere to go. "Somewhere" =
+// the nearest level in the break's direction that price is likely drawn to:
+// an unswept session extreme, PDH/PDL, or an unfilled overnight gap. Anything
+// in between — live, unmitigated FVGs — is counted as an obstacle.
+type Target
+    float  price = na
+    string name  = ""
+
+// Nearest qualifying target in `dir` (+1 up, -1 down) from `px`.
+//
+// `minDist` is applied during the search, not after it. Picking the closest
+// level and *then* testing the distance lets a level sitting right on top of
+// price mask a perfectly good target behind it — which is exactly what a
+// session that is still running does, since its high and low track price.
+// Live sessions are skipped entirely for the same reason: only a session that
+// has closed leaves resting liquidity worth targeting.
+nearestTarget(int dir, float px, float minDist) =>
+    Target t  = Target.new()
+    float  up = px + minDist
+    float  dn = px - minDist
+    for i = 0 to SESSIONS.size() - 1
+        Sess s = SESSIONS.get(i)
+        if s.enabled and not s.inS
+            if dir > 0 and not na(s.hi) and not s.sweptH and s.hi >= up and (na(t.price) or s.hi < t.price)
+                t.price := s.hi
+                t.name  := s.name + " HIGH"
+            if dir < 0 and not na(s.lo) and not s.sweptL and s.lo <= dn and (na(t.price) or s.lo > t.price)
+                t.price := s.lo
+                t.name  := s.name + " LOW"
+    if showPD
+        if dir > 0 and not na(pdH) and pdH >= up and (na(t.price) or pdH < t.price)
+            t.price := pdH
+            t.name  := "PDH"
+        if dir < 0 and not na(pdL) and pdL <= dn and (na(t.price) or pdL > t.price)
+            t.price := pdL
+            t.name  := "PDL"
+    if gapOn and not gapDone and not na(dPrevClose)
+        if dir > 0 and dPrevClose >= up and (na(t.price) or dPrevClose < t.price)
+            t.price := dPrevClose
+            t.name  := "GAP FILL"
+        if dir < 0 and dPrevClose <= dn and (na(t.price) or dPrevClose > t.price)
+            t.price := dPrevClose
+            t.name  := "GAP FILL"
+    t
+
+// Names of the key levels caught inside a price band — used to report what a
+// failed breakout swept on its way out of the range.
+levelsInBand(float lo, float hi) =>
+    string s = ""
+    if not na(lo) and not na(hi) and hi > lo
+        for i = 0 to SESSIONS.size() - 1
+            Sess ss = SESSIONS.get(i)
+            if ss.enabled and not ss.inS
+                if not na(ss.hi) and ss.hi > lo and ss.hi <= hi
+                    s := s + (s == "" ? "" : ", ") + ss.name + " HIGH"
+                if not na(ss.lo) and ss.lo > lo and ss.lo <= hi
+                    s := s + (s == "" ? "" : ", ") + ss.name + " LOW"
+        if showPD
+            if not na(pdH) and pdH > lo and pdH <= hi
+                s := s + (s == "" ? "" : ", ") + "PDH"
+            if not na(pdL) and pdL > lo and pdL <= hi
+                s := s + (s == "" ? "" : ", ") + "PDL"
+        if showPW
+            if not na(pwH) and pwH > lo and pwH <= hi
+                s := s + (s == "" ? "" : ", ") + "PWH"
+            if not na(pwL) and pwL > lo and pwL <= hi
+                s := s + (s == "" ? "" : ", ") + "PWL"
+    s
+
+// Unmitigated FVGs sitting between px and the target.
+blockersBetween(int dir, float px, float tgt) =>
+    int n = 0
+    if GAPS.size() > 0 and not na(tgt)
+        for i = 0 to GAPS.size() - 1
+            Gap g = GAPS.get(i)
+            if not g.dead
+                if dir > 0 and g.bot > px and g.bot < tgt
+                    n += 1
+                if dir < 0 and g.top < px and g.top > tgt
+                    n += 1
+    n
+
+// ═══════════════════════════ OPENING RANGE (ORB) ════════════════════════════
+var float orbH   = na
+var float orbL   = na
+var float orbO   = na
+var int   orbT0  = na
+var box   orbBox = na
+var line  orbHl  = na
+var line  orbLl  = na
+var line  orbOl  = na
+var bool  orbUp  = false
+var bool  orbDn  = false
+var bool  orbWas = false
+var bool  orbRejUp = false
+var bool  orbRejDn = false
+// how far past each edge the day has probed, for reporting what a failed
+// break swept before it turned back
+var float orbProbeHi = na
+var float orbProbeLo = na
+var string orbBias   = "—"
+
+bool inOrb = not na(time(timeframe.period, orbSpec, tzIn))
+
+if orbOn
+    bool orbNew = inOrb and not orbWas
+
+    if orbNew
+        box.delete(orbBox)
+        line.delete(orbHl)
+        line.delete(orbLl)
+        line.delete(orbOl)
+        orbH   := high
+        orbL   := low
+        orbO   := open          // the opening candle's open, not just its range
+        orbT0  := time
+        orbUp  := false
+        orbDn  := false
+        orbRejUp := false
+        orbRejDn := false
+        orbProbeHi := na
+        orbProbeLo := na
+        orbBias := "—"
+        orbBox := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = orbCol, bgcolor = color.new(orbCol, 88))
+        orbHl  := line.new(time, high, time, high, xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
+        orbLl  := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = orbCol, style = line.style_dashed)
+        if orbShowOpen
+            orbOl := line.new(time, open, time, open, xloc = xloc.bar_time, color = orbCol, style = line.style_dotted)
+
+    if inOrb and not na(orbBox)
+        orbH := math.max(orbH, high)
+        orbL := math.min(orbL, low)
+        box.set_top(orbBox, orbH)
+        box.set_bottom(orbBox, orbL)
+        box.set_right(orbBox, time + barMs)
+
+    if not na(orbH) and not na(orbHl)
+        int x2 = time + extMs + barMs
+        line.set_xy1(orbHl, orbT0, orbH)
+        line.set_xy2(orbHl, x2, orbH)
+        line.set_xy1(orbLl, orbT0, orbL)
+        line.set_xy2(orbLl, x2, orbL)
+        if not na(orbOl)
+            line.set_xy1(orbOl, orbT0, orbO)
+            line.set_xy2(orbOl, x2, orbO)
+
+    // track how far each side has been probed once the range is set
+    if not inOrb and not na(orbH)
+        if high > orbH
+            orbProbeHi := na(orbProbeHi) ? high : math.max(orbProbeHi, high)
+        if low < orbL
+            orbProbeLo := na(orbProbeLo) ? low : math.min(orbProbeLo, low)
+
+    if orbBrk and not inOrb and not na(orbH)
+        // ── upside break ──
+        if not orbUp and close > orbH
+            orbUp := true
+            orbBias := "LONG"
+            float  minD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target tg   = nearestTarget(1, close, minD)
+            int    blk  = blockersBetween(1, close, tg.price)
+            float  run  = na(tg.price) or na(atrVal) or atrVal == 0 ? na : (tg.price - close) / atrVal
+            bool   ok   = (not orbFilter or (not na(tg.price) and blk <= orbMaxBlock)) and volConfirmed
+            string tip  = (na(tg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR above the break." : "Target: " + tg.name + " " + fmt(tg.price) + "\nRunway: " + str.tostring(run, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(blk)) + volTxt
+            if ok or orbShowBlocked
+                // anchored on the breakout bar itself, not the range edge
+                label.new(time, low, ok ? "ORB ▲" : "ORB ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = ok ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = ok ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = tip)
+            if ok
+                alert("ORB break up through " + fmt(orbH) + " — " + (na(tg.price) ? "no target" : tg.name + " " + fmt(tg.price) + ", " + str.tostring(blk) + " FVG in path"), alert.freq_once_per_bar)
+
+        // ── downside break ──
+        if not orbDn and close < orbL
+            orbDn := true
+            orbBias := "SHORT"
+            float  dMinD = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target dTg   = nearestTarget(-1, close, dMinD)
+            int    dBlk  = blockersBetween(-1, close, dTg.price)
+            float  dRun  = na(dTg.price) or na(atrVal) or atrVal == 0 ? na : (close - dTg.price) / atrVal
+            bool   dOk   = (not orbFilter or (not na(dTg.price) and dBlk <= orbMaxBlock)) and volConfirmed
+            string dTip  = (na(dTg.price) ? "No unswept target at least " + str.tostring(orbMinRun, "#.##") + "× ATR below the break." : "Target: " + dTg.name + " " + fmt(dTg.price) + "\nRunway: " + str.tostring(dRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(dBlk)) + volTxt
+            if dOk or orbShowBlocked
+                label.new(time, high, dOk ? "ORB ▼" : "ORB ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = dOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = dOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = dTip)
+            if dOk
+                alert("ORB break down through " + fmt(orbL) + " — " + (na(dTg.price) ? "no target" : dTg.name + " " + fmt(dTg.price) + ", " + str.tostring(dBlk) + " FVG in path"), alert.freq_once_per_bar)
+
+    // ── rejections: the edge holds and pushes price back inside ──
+    // A rejection is a fade, so it is graded against a target on the OPPOSITE
+    // side of the break it just refused: a top-side rejection is a short and
+    // wants runway below.
+    if orbRejMode != "Off" and not inOrb and not na(orbH)
+        bool wickTop = (orbRejMode == "Wick" or orbRejMode == "Both") and high > orbH and close < orbH
+        bool failTop = (orbRejMode == "Failed break" or orbRejMode == "Both") and orbUp and close < orbH
+        bool wickBot = (orbRejMode == "Wick" or orbRejMode == "Both") and low < orbL and close > orbL
+        bool failBot = (orbRejMode == "Failed break" or orbRejMode == "Both") and orbDn and close > orbL
+
+        // ── top-side rejection → short ──
+        if not orbRejUp and (wickTop or failTop)
+            orbRejUp := true
+            orbBias := "SHORT"
+            float  rMinD  = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            // a refused break aims at the other side of the range, not the
+            // next pool of liquidity beyond it
+            Target rLiq   = nearestTarget(-1, close, rMinD)
+            float  rPrice = orbRejTgt == "Opposite ORB edge" ? orbL : rLiq.price
+            string rName  = orbRejTgt == "Opposite ORB edge" ? "ORB LOW" : rLiq.name
+            int    rBlk   = blockersBetween(-1, close, rPrice)
+            float  rRun   = na(rPrice) or na(atrVal) or atrVal == 0 ? na : (close - rPrice) / atrVal
+            string rSwept = levelsInBand(orbH, orbProbeHi)
+            bool   rOk    = (not orbFilter or (not na(rPrice) and rRun >= orbMinRun and rBlk <= orbMaxBlock)) and volConfirmed and (not orbReqSweep or rSwept != "")
+            string rKind  = failTop ? "failed break" : "wick rejection"
+            string rTip   = "Top-side " + rKind + " at " + fmt(orbH) + "\n" + (na(rPrice) ? "No target below." : "Target: " + rName + " " + fmt(rPrice) + "\nRunway: " + str.tostring(rRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(rBlk)) + (rSwept == "" ? "\nSwept on the probe: nothing" : "\nSwept on the probe: " + rSwept) + volTxt
+            if rOk or orbShowBlocked
+                label.new(time, high, rOk ? "ORB REJ ▼" : "ORB REJ ▼ ?", xloc = xloc.bar_time, style = label.style_label_down, color = rOk ? color.new(#ef5350, 20) : color.new(color.gray, 45), textcolor = rOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = rTip)
+            if rOk
+                alert("ORB top-side " + rKind + " at " + fmt(orbH) + " — target " + rName + " " + fmt(rPrice) + (rSwept == "" ? "" : ", swept " + rSwept), alert.freq_once_per_bar)
+
+        // ── bottom-side rejection → long ──
+        if not orbRejDn and (wickBot or failBot)
+            orbRejDn := true
+            orbBias := "LONG"
+            float  sMinD  = na(atrVal) ? 0.0 : orbMinRun * atrVal
+            Target sLiq   = nearestTarget(1, close, sMinD)
+            float  sPrice = orbRejTgt == "Opposite ORB edge" ? orbH : sLiq.price
+            string sName  = orbRejTgt == "Opposite ORB edge" ? "ORB HIGH" : sLiq.name
+            int    sBlk   = blockersBetween(1, close, sPrice)
+            float  sRun   = na(sPrice) or na(atrVal) or atrVal == 0 ? na : (sPrice - close) / atrVal
+            string sSwept = levelsInBand(orbProbeLo, orbL)
+            bool   sOk    = (not orbFilter or (not na(sPrice) and sRun >= orbMinRun and sBlk <= orbMaxBlock)) and volConfirmed and (not orbReqSweep or sSwept != "")
+            string sKind  = failBot ? "failed break" : "wick rejection"
+            string sTip   = "Bottom-side " + sKind + " at " + fmt(orbL) + "\n" + (na(sPrice) ? "No target above." : "Target: " + sName + " " + fmt(sPrice) + "\nRunway: " + str.tostring(sRun, "#.##") + "× ATR\nUnfilled FVGs in path: " + str.tostring(sBlk)) + (sSwept == "" ? "\nSwept on the probe: nothing" : "\nSwept on the probe: " + sSwept) + volTxt
+            if sOk or orbShowBlocked
+                label.new(time, low, sOk ? "ORB REJ ▲" : "ORB REJ ▲ ?", xloc = xloc.bar_time, style = label.style_label_up, color = sOk ? color.new(#26a69a, 20) : color.new(color.gray, 45), textcolor = sOk ? color.white : color.new(color.silver, 15), size = size.tiny, tooltip = sTip)
+            if sOk
+                alert("ORB bottom-side " + sKind + " at " + fmt(orbL) + " — target " + sName + " " + fmt(sPrice) + (sSwept == "" ? "" : ", swept " + sSwept), alert.freq_once_per_bar)
+
+    orbWas := inOrb
+
+// ═══════════════════════════════ RANGE TABLE ════════════════════════════════
+var table rt = table.new(tablePos(), 3, 12, border_width = 1, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 70))
+
+if tblOn and barstate.islast
+    table.cell(rt, 0, 0, "",      bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+    table.cell(rt, 1, 0, "Range", bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+    table.cell(rt, 2, 0, "%",     bgcolor = color.new(#131722, 0), text_color = color.white, text_size = txtSize())
+
+    int row = 1
+    for i = 0 to SESSIONS.size() - 1
+        Sess s = SESSIONS.get(i)
+        if s.enabled
+            float live = na(s.hi) or na(s.lo) ? na : s.hi - s.lo
+            // while a session is open the table tracks it live; once it has
+            // closed the frozen range stays up until the session runs again
+            float r    = (s.inS or na(s.rng)) ? live : s.rng
+            float avg  = s.hist.size() > 0 ? s.hist.avg() : na
+            statRow(rt, row, s.abbr, r, avg, color.new(s.col, 70))
+            row += 1
+
+    statRow(rt, row,     "PD", na(pdH) or na(pdL) ? na : pdH - pdL, pdAvg, color.new(lvlCol, 60))
+    statRow(rt, row + 1, "PW", na(pwH) or na(pwL) ? na : pwH - pwL, pwAvg, color.new(lvlCol, 60))
+    statRow(rt, row + 2, "PM", na(pmH) or na(pmL) ? na : pmH - pmL, pmAvg, color.new(lvlCol, 60))
+
+    if tblBias
+        color biasBg = orbBias == "LONG" ? color.new(#26a69a, 25) : orbBias == "SHORT" ? color.new(#ef5350, 25) : color.new(color.gray, 45)
+        table.cell(rt, 0, row + 3, "BIAS",    bgcolor = color.new(orbCol, 60),  text_color = color.white, text_size = txtSize())
+        table.cell(rt, 1, row + 3, orbBias,   bgcolor = biasBg,                 text_color = color.white, text_size = txtSize())
+        table.cell(rt, 2, row + 3, na(orbH) ? "—" : fmt(orbH) + " / " + fmt(orbL), bgcolor = color.new(#1e222d, 20), text_color = color.new(color.silver, 10), text_size = txtSize())
