@@ -155,3 +155,88 @@ tells you which event fired:
   chart's.
 - Every drawing is created once per instance and then updated in place, which
   keeps the script inside TradingView's 500-box / 500-line / 500-label budget.
+
+---
+
+## `deliverance-multi-session-orb-v2.pine`
+
+**Deliverance Multi-Session ORB v2** (`//@version=6`). A separate, standalone
+script — it does not read from or modify `phantom-flow-sessions.pine`.
+
+Four independent 15-minute ranges, each with its own state, drawings, virtual
+trade and statistics. No session shares state with another.
+
+| Session | Default window (ET) | Label |
+| --- | --- | --- |
+| Globex open | 18:00–18:15 | `GLOBEX ORB` |
+| London open | 03:00–03:15 | `LONDON ORB` |
+| New York cash open | 09:30–09:45 | `NY ORB` |
+| PM range | 13:45–14:00 | `PM RANGE` |
+
+Every window is user-editable and every session has its own on/off toggle. All
+windows are evaluated in `America/New_York`, so DST is handled by TradingView's
+session engine rather than a hardcoded offset.
+
+### The progression
+
+A basic break is not a signal. Each session walks its own state machine:
+
+```
+range forms → break → close outside → retest → CISD/structure → entry
+```
+
+| Status | Meaning | Marker |
+| --- | --- | --- |
+| Waiting | Range fixed, untouched | — |
+| Early Break | Traded through an edge, no close outside | `EARLY ▲/▼` |
+| Confirmed | Closed outside the range | `NY ORB ▲` |
+| Retest | Returned to the broken level and held it | `ORB RETEST` |
+| Conf Long / Conf Short | Every enabled requirement met | `CONF LONG` / `CONF SHORT` |
+| Failed | Closed back inside after breaking out | `ORB REJ` |
+
+Three requirement toggles decide how much is needed to reach confirmation:
+*Require candle close outside range*, *Require retest*, *Require CISD/structure
+confirmation*. Turn all three off and confirmation fires on the break itself.
+
+**CISD** is defined here as: the level is the open of the first candle of the
+most recent run of opposing candles, and delivery flips when price *closes*
+through it. Structure confirmation accepts either a CISD flip or a swing
+structure (HH/HL vs LH/LL) already agreeing with the break.
+
+### Bias
+
+Daily and intraday (default 1H) bias, each from price against an EMA of that
+timeframe. Both read the **previous closed** higher-timeframe bar, so neither
+repaints as the current one develops.
+
+- Daily bull + intraday bull → **Strong Long**
+- Daily bear + intraday bear → **Strong Short**
+- Disagreement → **Mixed**
+
+By default bias only *grades* a setup — every confirmation is tagged Strong,
+Mixed or Counter in its tooltip and alert, and nothing is blocked. The two bias
+filter inputs turn it into a hard filter if you want that.
+
+### Statistics
+
+Tracked **per session, never pooled** — the point is comparing Globex vs London
+vs NY vs PM on the same instrument.
+
+Columns: setups, wins, losses, win rate, bullish breaks, bearish breaks, failed
+breaks. A virtual trade opens at each confirmation and resolves when price
+reaches the stop or the target. **If one bar spans both, it counts as a loss** —
+the conservative assumption, since bar data cannot say which came first.
+
+Configurable: stop placement (opposite range edge / retest swing / ATR), and
+which of 1R, 2R or 3R counts as a win. Nothing is invented — change the inputs
+and the statistics recompute from the same rules.
+
+### Notes
+
+- **Use a 5m or 15m chart.** The window is 15 minutes wide, so a coarser chart
+  cannot resolve it; the dashboard shows a warning row above 15m.
+- **Clean mode** hides range name labels, early-break and retest markers, the
+  opening print and the statistics table, leaving boxes and confirmed signals.
+- Historical ranges are off by default. When enabled, old drawings are archived
+  and recycled past *Days of history to keep* so the object budget holds.
+- This is an indicator. It marks setups and keeps score; it places no orders.

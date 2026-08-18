@@ -1,0 +1,559 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  Deliverance Multi-Session ORB v2
+//
+//  Four independent 15-minute opening ranges — Globex, London, New York and a
+//  custom PM range — each carrying its own state machine:
+//
+//      range forms → break → close outside → retest → CISD confirmation → entry
+//
+//  No session shares state with another. Each tracks its own direction, status,
+//  virtual trade and statistics, so Globex vs London vs NY vs PM can be compared
+//  on the same instrument instead of averaged into one number.
+//
+//  Higher-timeframe bias (daily + 1H) grades each setup Strong / Mixed / Counter
+//  without blocking it, unless the bias filters are explicitly switched on.
+//
+//  Non-repainting: every trigger is evaluated on closed-bar values, and both
+//  HTF bias reads use the previous closed HTF bar.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Deliverance Multi-Session ORB v2", "Deliverance v2", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════ GROUPS ═════════════════════════════════════
+G_SESS = "Sessions"
+G_LOG  = "Setup requirements"
+G_BIAS = "Higher-timeframe bias"
+G_RISK = "Risk & targets"
+G_STAT = "Statistics"
+G_VIS  = "Visuals"
+G_DASH = "Dashboard"
+
+// ═══════════════════════════════ INPUTS ═════════════════════════════════════
+// ── Sessions ──
+tzIn = input.string("America/New_York", "Timezone", options = ["America/New_York", "America/Chicago", "Europe/London", "UTC"], group = G_SESS, tooltip = "All session windows are evaluated in this zone, so DST is handled by TradingView rather than by a hardcoded offset.")
+
+gbxOn   = input.bool(true, "Globex open", group = G_SESS, inline = "gbx")
+gbxSpec = input.session("1800-1815", "", group = G_SESS, inline = "gbx")
+gbxCol  = input.color(#ab47bc, "", group = G_SESS, inline = "gbx")
+
+lonOn   = input.bool(true, "London open", group = G_SESS, inline = "lon")
+lonSpec = input.session("0300-0315", "", group = G_SESS, inline = "lon")
+lonCol  = input.color(#26a69a, "", group = G_SESS, inline = "lon")
+
+nyOn    = input.bool(true, "New York cash open", group = G_SESS, inline = "ny")
+nySpec  = input.session("0930-0945", "", group = G_SESS, inline = "ny")
+nyCol   = input.color(#ffa726, "", group = G_SESS, inline = "ny")
+
+pmOn    = input.bool(true, "PM range", group = G_SESS, inline = "pm")
+pmSpec  = input.session("1345-1400", "", group = G_SESS, inline = "pm")
+pmCol   = input.color(#42a5f5, "", group = G_SESS, inline = "pm")
+
+// ── Setup requirements ──
+reqClose  = input.bool(true, "Require candle close outside range", group = G_LOG, tooltip = "Off = a wick through the edge counts as the break.")
+reqRetest = input.bool(true, "Require retest of the broken level", group = G_LOG)
+reqCisd   = input.bool(true, "Require CISD / structure confirmation", group = G_LOG)
+structLen = input.int(5, "Swing length for structure", minval = 2, group = G_LOG)
+
+// ── Bias ──
+biasLen    = input.int(21, "Bias EMA length", minval = 2, group = G_BIAS)
+biasHtf    = input.timeframe("60", "Intraday bias timeframe", group = G_BIAS)
+filterD    = input.bool(false, "Daily bias filter (block counter setups)", group = G_BIAS)
+filterH    = input.bool(false, "Intraday bias filter (block counter setups)", group = G_BIAS)
+
+// ── Risk & targets ──
+stopMode = input.string("Opposite ORB side", "Stop placement", options = ["Opposite ORB side", "Retest swing", "ATR"], group = G_RISK)
+atrLen   = input.int(14, "ATR length", minval = 2, group = G_RISK)
+atrMult  = input.float(1.0, "ATR stop multiple", minval = 0.1, step = 0.1, group = G_RISK)
+winR     = input.string("2R", "Target that counts as a win", options = ["1R", "2R", "3R"], group = G_RISK)
+showTgts = input.bool(false, "Draw entry / stop / target lines", group = G_RISK)
+
+// ── Statistics ──
+statsOn  = input.bool(true, "Track statistics", group = G_STAT, tooltip = "A virtual trade is opened at each confirmation and resolved by whichever of stop or target price reaches first. If a single bar spans both, it is counted as a loss.")
+statPos  = input.string("Bottom right", "Statistics position", options = ["Bottom right", "Bottom left", "Top left", "Middle right"], group = G_STAT)
+
+// ── Visuals ──
+cleanMode  = input.bool(false, "Clean mode", group = G_VIS, tooltip = "Hides secondary information: range name labels, early-break and retest markers, the opening print and the statistics table. Confirmed signals and the range boxes stay.")
+showBox    = input.bool(true, "Show range boxes", group = G_VIS)
+showLvls   = input.bool(true, "Show range high / low", group = G_VIS)
+showOpen   = input.bool(true, "Show range open", group = G_VIS)
+showEarly  = input.bool(true, "Show early-break labels", group = G_VIS)
+showBrk    = input.bool(true, "Show breakout labels", group = G_VIS)
+showRetest = input.bool(true, "Show retest labels", group = G_VIS)
+showConf   = input.bool(true, "Show confirmed signals", group = G_VIS)
+showFail   = input.bool(true, "Show failed-breakout labels", group = G_VIS)
+histOn     = input.bool(false, "Keep historical ranges", group = G_VIS)
+histDays   = input.int(3, "Days of history to keep", minval = 1, maxval = 20, group = G_VIS)
+extendBars = input.int(24, "Extend levels (bars)", minval = 0, maxval = 300, group = G_VIS)
+
+// ── Dashboard ──
+dashOn  = input.bool(true, "Show dashboard", group = G_DASH)
+dashPos = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Middle right"], group = G_DASH)
+dashSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_DASH)
+
+// ═══════════════════════════════ HELPERS ════════════════════════════════════
+int   barMs  = timeframe.in_seconds(timeframe.period) * 1000
+int   extMs  = barMs * extendBars
+float atrVal = ta.atr(atrLen)
+
+// clean mode collapses the secondary layers
+bool vBox    = showBox
+bool vLvls   = showLvls
+bool vOpen   = showOpen   and not cleanMode
+bool vEarly  = showEarly  and not cleanMode
+bool vRetest = showRetest and not cleanMode
+bool vTag    = not cleanMode
+bool vStats  = statsOn    and not cleanMode
+
+fmt(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
+
+pts(float v) =>
+    na(v) ? "—" : str.tostring(v, "#.##")
+
+txtSize() =>
+    dashSize == "Tiny" ? size.tiny : dashSize == "Normal" ? size.normal : size.small
+
+posOf(string p) =>
+    switch p
+        "Top left"      => position.top_left
+        "Bottom right"  => position.bottom_right
+        "Bottom left"   => position.bottom_left
+        "Middle right"  => position.middle_right
+        =>                 position.top_right
+
+biasTxt(int b) =>
+    b > 0 ? "Bull" : b < 0 ? "Bear" : "Neutral"
+
+biasCol(int b) =>
+    b > 0 ? color.new(#26a69a, 25) : b < 0 ? color.new(#ef5350, 25) : color.new(color.gray, 45)
+
+// ═════════════════════════ MARKET STRUCTURE & CISD ══════════════════════════
+// CISD — change in state of delivery. The level is the open of the first candle
+// of the most recent run of opposing candles; delivery flips when price closes
+// through it. Evaluated on closed bars only, so it never repaints.
+bool bearBar  = close < open
+bool bullBar  = close > open
+bool bearPrev = not na(close[1]) and close[1] < open[1]
+bool bullPrev = not na(close[1]) and close[1] > open[1]
+
+var float cisdBullLvl = na
+var float cisdBearLvl = na
+if bearBar and not bearPrev
+    cisdBullLvl := open
+if bullBar and not bullPrev
+    cisdBearLvl := open
+
+bool cisdUp = not na(cisdBullLvl) and not na(close[1]) and close > cisdBullLvl and close[1] <= cisdBullLvl
+bool cisdDn = not na(cisdBearLvl) and not na(close[1]) and close < cisdBearLvl and close[1] >= cisdBearLvl
+
+// Swing structure: higher highs and higher lows, or lower highs and lower lows.
+float sph = ta.pivothigh(structLen, structLen)
+float spl = ta.pivotlow(structLen, structLen)
+
+var float lastSPH = na
+var float prevSPH = na
+var float lastSPL = na
+var float prevSPL = na
+
+if not na(sph)
+    prevSPH := lastSPH
+    lastSPH := sph
+if not na(spl)
+    prevSPL := lastSPL
+    lastSPL := spl
+
+int structBias = na(lastSPH) or na(prevSPH) or na(lastSPL) or na(prevSPL) ? 0 : lastSPH > prevSPH and lastSPL > prevSPL ? 1 : lastSPH < prevSPH and lastSPL < prevSPL ? -1 : 0
+
+// Structure confirmation accepts either a CISD flip or a structure read that
+// already agrees with the break.
+confirmUp() =>
+    cisdUp or structBias > 0
+
+confirmDn() =>
+    cisdDn or structBias < 0
+
+// ═══════════════════════════ HIGHER-TIMEFRAME BIAS ══════════════════════════
+// [1] on the higher-timeframe series means the value comes from the last CLOSED
+// bar of that timeframe, so the bias cannot repaint as the current one develops.
+float dEma = request.security(syminfo.tickerid, "D", ta.ema(close, biasLen)[1], lookahead = barmerge.lookahead_off)
+float hEma = request.security(syminfo.tickerid, biasHtf, ta.ema(close, biasLen)[1], lookahead = barmerge.lookahead_off)
+
+int dBias = na(dEma) ? 0 : close > dEma ? 1 : close < dEma ? -1 : 0
+int hBias = na(hEma) ? 0 : close > hEma ? 1 : close < hEma ? -1 : 0
+int cBias = dBias == 1 and hBias == 1 ? 1 : dBias == -1 and hBias == -1 ? -1 : 0
+
+string cBiasTxt = cBias > 0 ? "Strong Long" : cBias < 0 ? "Strong Short" : "Mixed"
+
+// ═════════════════════════════ ARCHIVED DRAWINGS ════════════════════════════
+type Arch
+    box   bx
+    line  hiL
+    line  loL
+    line  opL
+    label lb
+
+var array<Arch> ARCH = array.new<Arch>()
+int histMax = histDays * 4
+
+archive(box bx, line hiL, line loL, line opL, label lb) =>
+    bool anyHandle = not na(bx) or not na(hiL) or not na(loL) or not na(opL) or not na(lb)
+    if anyHandle and histOn
+        ARCH.push(Arch.new(bx = bx, hiL = hiL, loL = loL, opL = opL, lb = lb))
+        if ARCH.size() > histMax
+            Arch old = ARCH.shift()
+            box.delete(old.bx)
+            line.delete(old.hiL)
+            line.delete(old.loL)
+            line.delete(old.opL)
+            label.delete(old.lb)
+    else if anyHandle
+        box.delete(bx)
+        line.delete(hiL)
+        line.delete(loL)
+        line.delete(opL)
+        label.delete(lb)
+
+// ══════════════════════════════ SESSION STATE ═══════════════════════════════
+type Sess
+    string key
+    string tag
+    color  col
+    bool   on
+    // range
+    float  hi     = na
+    float  lo     = na
+    float  op     = na
+    int    t0     = na
+    bool   inS    = false
+    bool   formed = false
+    // progression
+    int    dir    = 0
+    bool   early  = false
+    bool   broke  = false
+    bool   retest = false
+    bool   conf   = false
+    bool   failed = false
+    float  brkLvl = na
+    float  swHi   = na
+    float  swLo   = na
+    // virtual trade
+    bool   live   = false
+    int    tDir   = 0
+    float  entry  = na
+    float  stop   = na
+    float  tgt    = na
+    line   eL
+    line   sL
+    line   tL
+    // drawings
+    box    bx
+    line   hiL
+    line   loL
+    line   opL
+    label  tagLbl
+    // statistics
+    int    nSetup = 0
+    int    nWin   = 0
+    int    nLoss  = 0
+    int    nBull  = 0
+    int    nBear  = 0
+    int    nFail  = 0
+
+var array<Sess> SESS = array.from(
+     Sess.new(key = "GLOBEX", tag = "GLOBEX ORB", col = gbxCol, on = gbxOn),
+     Sess.new(key = "LONDON", tag = "LONDON ORB", col = lonCol, on = lonOn),
+     Sess.new(key = "NY",     tag = "NY ORB",     col = nyCol,  on = nyOn),
+     Sess.new(key = "PM",     tag = "PM RANGE",   col = pmCol,  on = pmOn))
+
+// time() needs a simple-qualified session string, so membership is resolved at
+// global scope and handed to the loop by index.
+var array<bool> IN_NOW = array.new<bool>(4, false)
+IN_NOW.set(0, not na(time(timeframe.period, gbxSpec, tzIn)))
+IN_NOW.set(1, not na(time(timeframe.period, lonSpec, tzIn)))
+IN_NOW.set(2, not na(time(timeframe.period, nySpec, tzIn)))
+IN_NOW.set(3, not na(time(timeframe.period, pmSpec, tzIn)))
+
+// status text for the dashboard
+statusOf(Sess s) =>
+    not s.formed ? "No Range" : s.failed ? "Failed" : s.conf ? (s.dir > 0 ? "Conf Long" : "Conf Short") : s.retest ? "Retest" : s.broke ? "Confirmed" : s.early ? "Early Break" : "Waiting"
+
+dirOf(Sess s) =>
+    s.dir > 0 ? "Bullish" : s.dir < 0 ? "Bearish" : "Neutral"
+
+// how a setup sits against the combined higher-timeframe bias
+gradeOf(int dir) =>
+    cBias == 0 ? "Mixed" : cBias == dir ? "Strong" : "Counter"
+
+// ══════════════════════════════ SESSION ENGINE ══════════════════════════════
+string activeName = IN_NOW.get(0) ? "Globex" : IN_NOW.get(1) ? "London" : IN_NOW.get(2) ? "New York" : IN_NOW.get(3) ? "PM" : "—"
+
+for i = 0 to SESS.size() - 1
+    Sess s = SESS.get(i)
+    if s.on
+        bool inNow  = IN_NOW.get(i)
+        bool opened = inNow and not s.inS
+        bool closed = s.inS and not inNow
+
+        // ── a new instance of this session's range ──
+        if opened
+            archive(s.bx, s.hiL, s.loL, s.opL, s.tagLbl)
+            s.bx     := na
+            s.hiL    := na
+            s.loL    := na
+            s.opL    := na
+            s.tagLbl := na
+            s.hi     := high
+            s.lo     := low
+            s.op     := open
+            s.t0     := time
+            s.formed := false
+            s.dir    := 0
+            s.early  := false
+            s.broke  := false
+            s.retest := false
+            s.conf   := false
+            s.failed := false
+            s.brkLvl := na
+            s.swHi   := na
+            s.swLo   := na
+            if vBox
+                s.bx := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(s.col, 40), bgcolor = color.new(s.col, 88))
+            if vLvls
+                s.hiL := line.new(time, high, time, high, xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+                s.loL := line.new(time, low,  time, low,  xloc = xloc.bar_time, color = s.col, style = line.style_solid, width = 1)
+            if vOpen
+                s.opL := line.new(time, open, time, open, xloc = xloc.bar_time, color = color.new(s.col, 35), style = line.style_dotted, width = 1)
+            if vTag
+                s.tagLbl := label.new(time, high, s.tag, xloc = xloc.bar_time, style = label.style_label_down, color = color.new(s.col, 20), textcolor = color.white, size = size.tiny)
+
+        // ── accumulate while the window is open ──
+        if inNow
+            s.hi := na(s.hi) ? high : math.max(s.hi, high)
+            s.lo := na(s.lo) ? low  : math.min(s.lo, low)
+            if not na(s.bx)
+                box.set_top(s.bx, s.hi)
+                box.set_bottom(s.bx, s.lo)
+                box.set_right(s.bx, time + barMs)
+            if not na(s.tagLbl)
+                label.set_xy(s.tagLbl, s.t0, s.hi)
+
+        // ── the range is fixed the moment the window closes ──
+        if closed
+            s.formed := true
+
+        // ── keep the levels running out to the right ──
+        if not na(s.hi)
+            int x2 = time + extMs + barMs
+            if not na(s.hiL)
+                line.set_xy1(s.hiL, s.t0, s.hi)
+                line.set_xy2(s.hiL, x2, s.hi)
+            if not na(s.loL)
+                line.set_xy1(s.loL, s.t0, s.lo)
+                line.set_xy2(s.loL, x2, s.lo)
+            if not na(s.opL)
+                line.set_xy1(s.opL, s.t0, s.op)
+                line.set_xy2(s.opL, x2, s.op)
+
+        // ══════════════ the progression, only once the range is set ═════════
+        if s.formed and not inNow and not na(s.hi)
+            float rngSz = s.hi - s.lo
+
+            // ── 1. early break: traded through, has not closed through ──
+            if not s.broke and not s.early
+                if high > s.hi
+                    s.early := true
+                    s.dir   := 1
+                    if vEarly
+                        label.new(time, low, "EARLY ▲", xloc = xloc.bar_time, style = label.style_label_up, color = color.new(color.gray, 40), textcolor = color.new(color.silver, 10), size = size.tiny, tooltip = s.tag + " probed above " + fmt(s.hi) + " without closing outside.")
+                if low < s.lo
+                    s.early := true
+                    s.dir   := -1
+                    if vEarly
+                        label.new(time, high, "EARLY ▼", xloc = xloc.bar_time, style = label.style_label_down, color = color.new(color.gray, 40), textcolor = color.new(color.silver, 10), size = size.tiny, tooltip = s.tag + " probed below " + fmt(s.lo) + " without closing outside.")
+
+            // ── 2. the break itself ──
+            if not s.broke
+                bool brkUp = reqClose ? close > s.hi : high > s.hi
+                bool brkDn = reqClose ? close < s.lo : low  < s.lo
+                if brkUp
+                    s.broke  := true
+                    s.dir    := 1
+                    s.brkLvl := s.hi
+                    s.swLo   := low
+                    s.nBull := s.nBull + 1
+                    if showBrk
+                        label.new(time, low, s.tag + " ▲", xloc = xloc.bar_time, style = label.style_label_up, color = color.new(s.col, 20), textcolor = color.white, size = size.tiny, tooltip = "Break above " + fmt(s.hi) + "\nRange: " + pts(rngSz) + " pts\nBias: " + cBiasTxt + " (" + gradeOf(1) + ")")
+                    alert(s.tag + " break up through " + fmt(s.hi) + " — " + gradeOf(1) + " vs " + cBiasTxt, alert.freq_once_per_bar)
+                else if brkDn
+                    s.broke  := true
+                    s.dir    := -1
+                    s.brkLvl := s.lo
+                    s.swHi   := high
+                    s.nBear := s.nBear + 1
+                    if showBrk
+                        label.new(time, high, s.tag + " ▼", xloc = xloc.bar_time, style = label.style_label_down, color = color.new(s.col, 20), textcolor = color.white, size = size.tiny, tooltip = "Break below " + fmt(s.lo) + "\nRange: " + pts(rngSz) + " pts\nBias: " + cBiasTxt + " (" + gradeOf(-1) + ")")
+                    alert(s.tag + " break down through " + fmt(s.lo) + " — " + gradeOf(-1) + " vs " + cBiasTxt, alert.freq_once_per_bar)
+
+            // ── 3. after the break: failure, retest, confirmation ──
+            else if not s.conf and not s.failed
+                // track the extreme reached since the break, for the stop
+                s.swLo := na(s.swLo) ? low  : math.min(s.swLo, low)
+                s.swHi := na(s.swHi) ? high : math.max(s.swHi, high)
+
+                // failed breakout — closed back inside the range
+                bool failUp = s.dir > 0 and close < s.brkLvl
+                bool failDn = s.dir < 0 and close > s.brkLvl
+                if failUp or failDn
+                    s.failed := true
+                    s.nFail := s.nFail + 1
+                    if showFail
+                        label.new(time, s.dir > 0 ? high : low, "ORB REJ", xloc = xloc.bar_time, style = s.dir > 0 ? label.style_label_down : label.style_label_up, color = color.new(#ef5350, 25), textcolor = color.white, size = size.tiny, tooltip = s.tag + " reclaimed " + fmt(s.brkLvl) + " — breakout failed.")
+                    alert(s.tag + " breakout failed at " + fmt(s.brkLvl), alert.freq_once_per_bar)
+                else
+                    // retest — came back to the broken level and held it
+                    if not s.retest
+                        bool rtUp = s.dir > 0 and low  <= s.brkLvl and close > s.brkLvl
+                        bool rtDn = s.dir < 0 and high >= s.brkLvl and close < s.brkLvl
+                        if rtUp or rtDn
+                            s.retest := true
+                            if vRetest
+                                label.new(time, s.dir > 0 ? low : high, "ORB RETEST", xloc = xloc.bar_time, style = s.dir > 0 ? label.style_label_up : label.style_label_down, color = color.new(s.col, 45), textcolor = color.white, size = size.tiny, tooltip = s.tag + " retested " + fmt(s.brkLvl) + " and held.")
+                            alert(s.tag + " retest of " + fmt(s.brkLvl), alert.freq_once_per_bar)
+
+                    // confirmation — every enabled requirement satisfied
+                    bool okRetest = not reqRetest or s.retest
+                    bool okStruct = not reqCisd or (s.dir > 0 ? confirmUp() : confirmDn())
+                    bool okDaily  = not filterD or dBias == s.dir
+                    bool okHourly = not filterH or hBias == s.dir
+                    if okRetest and okStruct and okDaily and okHourly
+                        s.conf   := true
+                        s.nSetup := s.nSetup + 1
+
+                        // ── virtual trade for the statistics ──
+                        float st = na
+                        if stopMode == "Opposite ORB side"
+                            st := s.dir > 0 ? s.lo : s.hi
+                        else if stopMode == "Retest swing"
+                            st := s.dir > 0 ? s.swLo : s.swHi
+                        else
+                            st := s.dir > 0 ? close - atrMult * atrVal : close + atrMult * atrVal
+
+                        float risk = math.abs(close - st)
+                        if not na(risk) and risk > 0
+                            float rMult = winR == "1R" ? 1.0 : winR == "3R" ? 3.0 : 2.0
+                            s.live  := true
+                            s.tDir  := s.dir
+                            s.entry := close
+                            s.stop  := st
+                            s.tgt   := s.dir > 0 ? close + rMult * risk : close - rMult * risk
+                            if showTgts
+                                int xr = time + extMs + barMs
+                                s.eL := line.new(time, s.entry, xr, s.entry, xloc = xloc.bar_time, color = color.new(color.silver, 20), style = line.style_dotted)
+                                s.sL := line.new(time, s.stop,  xr, s.stop,  xloc = xloc.bar_time, color = color.new(#ef5350, 30), style = line.style_dotted)
+                                s.tL := line.new(time, s.tgt,   xr, s.tgt,   xloc = xloc.bar_time, color = color.new(#26a69a, 30), style = line.style_dotted)
+
+                        if showConf
+                            string ctxt = s.dir > 0 ? "CONF LONG" : "CONF SHORT"
+                            string ctip = s.tag + "\nEntry " + fmt(close) + "\nStop " + fmt(st) + "\nTarget " + winR + " " + fmt(s.tgt) + "\nBias: " + cBiasTxt + " (" + gradeOf(s.dir) + ")\nRange: " + pts(rngSz) + " pts"
+                            label.new(time, s.dir > 0 ? low : high, ctxt, xloc = xloc.bar_time, style = s.dir > 0 ? label.style_label_up : label.style_label_down, color = s.dir > 0 ? color.new(#26a69a, 10) : color.new(#ef5350, 10), textcolor = color.white, size = size.small, tooltip = ctip)
+                        alert(s.tag + " " + (s.dir > 0 ? "CONFIRMED LONG" : "CONFIRMED SHORT") + " at " + fmt(close) + " — stop " + fmt(st) + ", target " + fmt(s.tgt) + " (" + gradeOf(s.dir) + ")", alert.freq_once_per_bar)
+
+        // ── resolve the virtual trade: stop first when a bar spans both ──
+        if s.live and statsOn and not na(s.stop) and not na(s.tgt)
+            bool hitStop = s.tDir > 0 ? low <= s.stop : high >= s.stop
+            bool hitTgt  = s.tDir > 0 ? high >= s.tgt : low  <= s.tgt
+            if hitStop
+                s.live  := false
+                s.nLoss := s.nLoss + 1
+            else if hitTgt
+                s.live := false
+                s.nWin := s.nWin + 1
+
+        s.inS := inNow
+
+// ═══════════════════════════════ DASHBOARD ══════════════════════════════════
+var table dash = table.new(posOf(dashPos), 4, 9, border_width = 1, frame_color = color.new(color.gray, 55), frame_width = 1, border_color = color.new(color.gray, 70))
+
+if dashOn and barstate.islast
+    color hdrBg = color.new(#131722, 0)
+    color cellBg = color.new(#1e222d, 15)
+    table.cell(dash, 0, 0, "SESSION", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 1, 0, "SIZE",    bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 2, 0, "DIR",     bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 3, 0, "STATUS",  bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+
+    for i = 0 to SESS.size() - 1
+        Sess s = SESS.get(i)
+        int r = i + 1
+        string dTxt = s.on ? dirOf(s) : "off"
+        string sTxt = s.on ? statusOf(s) : "—"
+        color  dCol = not s.on ? color.new(color.gray, 60) : s.dir > 0 ? color.new(#26a69a, 30) : s.dir < 0 ? color.new(#ef5350, 30) : color.new(color.gray, 50)
+        color  sCol = not s.on ? color.new(color.gray, 60) : s.failed ? color.new(#ef5350, 25) : s.conf ? color.new(#26a69a, 15) : s.retest ? color.new(#ffa726, 30) : cellBg
+        table.cell(dash, 0, r, s.key, bgcolor = color.new(s.col, s.on ? 55 : 80), text_color = color.white, text_size = txtSize())
+        table.cell(dash, 1, r, s.on and not na(s.hi) ? pts(s.hi - s.lo) : "—", bgcolor = cellBg, text_color = color.new(color.silver, 5), text_size = txtSize())
+        table.cell(dash, 2, r, dTxt, bgcolor = dCol, text_color = color.white, text_size = txtSize())
+        table.cell(dash, 3, r, sTxt, bgcolor = sCol, text_color = color.white, text_size = txtSize())
+
+    table.cell(dash, 0, 5, "DAILY", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 1, 5, biasTxt(dBias), bgcolor = biasCol(dBias), text_color = color.white, text_size = txtSize())
+    table.cell(dash, 2, 5, biasHtf, bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 3, 5, biasTxt(hBias), bgcolor = biasCol(hBias), text_color = color.white, text_size = txtSize())
+
+    table.cell(dash, 0, 6, "BIAS", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 1, 6, cBiasTxt, bgcolor = biasCol(cBias), text_color = color.white, text_size = txtSize())
+    table.cell(dash, 2, 6, "ACTIVE", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 3, 6, activeName, bgcolor = cellBg, text_color = color.white, text_size = txtSize())
+
+    table.cell(dash, 0, 7, "STRUCT", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 1, 7, biasTxt(structBias), bgcolor = biasCol(structBias), text_color = color.white, text_size = txtSize())
+    table.cell(dash, 2, 7, "TARGET", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(dash, 3, 7, winR + " / " + stopMode, bgcolor = cellBg, text_color = color.new(color.silver, 5), text_size = txtSize())
+
+    // the 15-minute window cannot be resolved on a chart coarser than 15m
+    if timeframe.in_seconds(timeframe.period) > 900
+        table.cell(dash, 0, 8, "⚠", bgcolor = color.new(#ef5350, 15), text_color = color.white, text_size = txtSize())
+        table.cell(dash, 1, 8, "Use 5m or 15m", bgcolor = color.new(#ef5350, 30), text_color = color.white, text_size = txtSize())
+        table.cell(dash, 2, 8, "", bgcolor = color.new(#ef5350, 30), text_color = color.white, text_size = txtSize())
+        table.cell(dash, 3, 8, "range spans >15m", bgcolor = color.new(#ef5350, 30), text_color = color.white, text_size = txtSize())
+
+// ═══════════════════════════════ STATISTICS ═════════════════════════════════
+var table stat = table.new(posOf(statPos), 8, 6, border_width = 1, frame_color = color.new(color.gray, 55), frame_width = 1, border_color = color.new(color.gray, 70))
+
+if vStats and barstate.islast
+    color hdrBg  = color.new(#131722, 0)
+    color cellBg = color.new(#1e222d, 15)
+    table.cell(stat, 0, 0, "SESSION", bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 1, 0, "N",       bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 2, 0, "W",       bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 3, 0, "L",       bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 4, 0, "WIN%",    bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 5, 0, "BULL",    bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 6, 0, "BEAR",    bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+    table.cell(stat, 7, 0, "FAIL",    bgcolor = hdrBg, text_color = color.white, text_size = txtSize())
+
+    int openTrades = 0
+    for i = 0 to SESS.size() - 1
+        Sess s = SESS.get(i)
+        int   r  = i + 1
+        int   dn = s.nWin + s.nLoss
+        float wr = dn == 0 ? na : s.nWin * 100.0 / dn
+        color wc = na(wr) ? color.new(color.gray, 50) : wr >= 60 ? color.new(#26a69a, 25) : wr >= 45 ? color.new(#ffa726, 30) : color.new(#ef5350, 30)
+        table.cell(stat, 0, r, s.key, bgcolor = color.new(s.col, s.on ? 55 : 80), text_color = color.white, text_size = txtSize())
+        table.cell(stat, 1, r, str.tostring(s.nSetup), bgcolor = cellBg, text_color = color.white, text_size = txtSize())
+        table.cell(stat, 2, r, str.tostring(s.nWin),   bgcolor = cellBg, text_color = color.new(#26a69a, 0), text_size = txtSize())
+        table.cell(stat, 3, r, str.tostring(s.nLoss),  bgcolor = cellBg, text_color = color.new(#ef5350, 0), text_size = txtSize())
+        table.cell(stat, 4, r, na(wr) ? "—" : str.tostring(wr, "#") + "%", bgcolor = wc, text_color = color.white, text_size = txtSize())
+        table.cell(stat, 5, r, str.tostring(s.nBull),  bgcolor = cellBg, text_color = color.new(color.silver, 5), text_size = txtSize())
+        table.cell(stat, 6, r, str.tostring(s.nBear),  bgcolor = cellBg, text_color = color.new(color.silver, 5), text_size = txtSize())
+        table.cell(stat, 7, r, str.tostring(s.nFail),  bgcolor = cellBg, text_color = color.new(color.silver, 5), text_size = txtSize())
+        if s.live
+            openTrades := openTrades + 1
+
+    table.cell(stat, 0, 5, "Open", bgcolor = hdrBg, text_color = color.new(color.silver, 20), text_size = size.tiny)
+    table.cell(stat, 1, 5, str.tostring(openTrades), bgcolor = cellBg, text_color = color.new(color.silver, 20), text_size = size.tiny)
+    table.cell(stat, 2, 5, "unresolved trades", bgcolor = cellBg, text_color = color.new(color.silver, 20), text_size = size.tiny)
+    table.cell(stat, 3, 5, "", bgcolor = cellBg, text_size = size.tiny)
+    table.cell(stat, 4, 5, "", bgcolor = cellBg, text_size = size.tiny)
+    table.cell(stat, 5, 5, "", bgcolor = cellBg, text_size = size.tiny)
+    table.cell(stat, 6, 5, "", bgcolor = cellBg, text_size = size.tiny)
+    table.cell(stat, 7, 5, "", bgcolor = cellBg, text_size = size.tiny)
