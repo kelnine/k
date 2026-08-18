@@ -195,11 +195,24 @@ range forms → break → close outside → retest → CISD confirmation → ent
 | Confirmed | Closed outside the range | `NY ORB ▲` |
 | Retest | Returned to the broken level and held it | `ORB RETEST` |
 | Conf Long / Conf Short | Every enabled requirement met | `CONF LONG` / `CONF SHORT` |
-| Failed | Closed back inside after breaking out | `ORB REJ` |
+| Re-armed | A refused break flipped the session onto the other edge | — |
+| Failed | Refused a second time; done for the day | `ORB REJ` |
 
 Requirements are individually switchable: *close outside range*, *retest*,
 *CISD/structure confirmation*, *agreeing SMT*. Confirmation reuses v1 directly —
 it fires when `cisdState` or `swingTrend` already reads in the break's direction.
+
+**Failure is buffered, and it re-arms.** A one-tick reclaim of the broken level
+is noise, not a failed breakout — on fast timeframes price crosses back over a
+level constantly, which kills nearly every break before it can develop. So a
+failure needs the close to get back inside by *Failure buffer* (default 0.15 of
+the range), optionally for several consecutive closes.
+
+When a break does fail, the session does not end its day. With *Failed break
+re-arms the opposite side* on (the default) it flips to hunting the other edge —
+a refused push through the high turns the session into a short looking for the
+low, which is how the setup is actually traded. One re-arm per session per day,
+so it cannot ping-pong.
 
 ### Bias
 

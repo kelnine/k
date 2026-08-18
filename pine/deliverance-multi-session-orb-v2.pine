@@ -70,6 +70,9 @@ reqClose  = input.bool(true,  "Require candle close outside range", group = G_LO
 reqRetest = input.bool(true,  "Require retest of the broken level", group = G_LOG)
 reqCisd   = input.bool(true,  "Require CISD / structure confirmation", group = G_LOG)
 reqSmt    = input.bool(false, "Require agreeing SMT divergence",    group = G_LOG)
+failBuf   = input.float(0.15, "Failure buffer (× range)", minval = 0.0, maxval = 1.0, step = 0.05, group = G_LOG, tooltip = "How far back inside the range a close must go before the break counts as failed, as a fraction of the range. 0 = any reclaim kills it, which on fast timeframes kills nearly every break.")
+failBars  = input.int(1, "Consecutive closes to fail", minval = 1, maxval = 5, group = G_LOG)
+reArm     = input.bool(true, "Failed break re-arms the opposite side", group = G_LOG, tooltip = "A refused break flips the session to hunting the other edge of the range instead of ending its day — one re-arm per session per day.")
 filterHtf = input.bool(false, "HTF bias filter (block counter setups)", group = G_LOG)
 filterMtf = input.bool(false, "MTF bias filter (block counter setups)", group = G_LOG)
 
@@ -414,6 +417,8 @@ type Sess
     bool   retest = false
     bool   conf   = false
     bool   failed = false
+    bool   rearmed = false
+    int    failRun = 0
     float  brkLvl = na
     float  swHi   = na
     float  swLo   = na
@@ -451,7 +456,7 @@ IN_NOW.set(3, not na(time(timeframe.period, pmSpec, tzIn)))
 string activeName = IN_NOW.get(0) ? "Globex" : IN_NOW.get(1) ? "London" : IN_NOW.get(2) ? "New York" : IN_NOW.get(3) ? "PM" : "—"
 
 f_status(Sess s) =>
-    not s.formed ? "No Range" : s.failed ? "Failed" : s.conf ? (s.dir > 0 ? "Conf Long" : "Conf Short") : s.retest ? "Retest" : s.broke ? "Confirmed" : s.early ? "Early Break" : "Waiting"
+    not s.formed ? "No Range" : s.failed ? "Failed" : s.conf ? (s.dir > 0 ? "Conf Long" : "Conf Short") : s.retest ? "Retest" : s.broke ? "Confirmed" : s.rearmed ? "Re-armed" : s.early ? "Early Break" : "Waiting"
 
 // ═══════════════════════════════════════════════════════ session engine
 
@@ -481,6 +486,8 @@ for i = 0 to SESS.size() - 1
             s.retest := false
             s.conf   := false
             s.failed := false
+            s.rearmed := false
+            s.failRun := 0
             s.brkLvl := na
             s.swHi   := na
             s.swLo   := na
@@ -567,15 +574,32 @@ for i = 0 to SESS.size() - 1
                 s.swLo := na(s.swLo) ? low  : math.min(s.swLo, low)
                 s.swHi := na(s.swHi) ? high : math.max(s.swHi, high)
 
-                bool failUp = s.dir > 0 and close < s.brkLvl
-                bool failDn = s.dir < 0 and close > s.brkLvl
-                if failUp or failDn
-                    s.failed := true
-                    s.nFail  := s.nFail + 1
+                // a one-tick reclaim is noise, not a failure: the close has to
+                // get back inside by a slice of the range, and stay there
+                float failPad = failBuf * rngSz
+                bool  backIn  = s.dir > 0 ? close < s.brkLvl - failPad : close > s.brkLvl + failPad
+                s.failRun := backIn ? s.failRun + 1 : 0
+                if s.failRun >= failBars
+                    s.nFail := s.nFail + 1
                     if showFail
-                        label.new(time, s.dir > 0 ? high : low, "ORB REJ", xloc = xloc.bar_time, style = s.dir > 0 ? label.style_label_down : label.style_label_up, color = color.new(colBear, 25), textcolor = color.white, size = size.tiny, tooltip = s.tag + " reclaimed " + f_fmt(s.brkLvl) + " — breakout failed.")
+                        label.new(time, s.dir > 0 ? high : low, "ORB REJ", xloc = xloc.bar_time, style = s.dir > 0 ? label.style_label_down : label.style_label_up, color = color.new(colBear, 25), textcolor = color.white, size = size.tiny, tooltip = s.tag + " reclaimed " + f_fmt(s.brkLvl) + " by " + f_pts(failPad) + " pts — breakout failed." + (reArm and not s.rearmed ? "\nNow hunting the opposite edge." : ""))
                     alert(s.tag + " breakout failed at " + f_fmt(s.brkLvl), alert.freq_once_per_bar)
-                else
+                    if reArm and not s.rearmed
+                        // the refused break flips the session onto the other
+                        // side of the range rather than ending its day
+                        s.rearmed := true
+                        s.failed  := false
+                        s.broke   := false
+                        s.early   := false
+                        s.retest  := false
+                        s.failRun := 0
+                        s.dir     := -s.dir
+                        s.brkLvl  := na
+                        s.swHi    := na
+                        s.swLo    := na
+                    else
+                        s.failed := true
+                else if not na(s.brkLvl)
                     if not s.retest
                         bool rtUp = s.dir > 0 and low  <= s.brkLvl and close > s.brkLvl
                         bool rtDn = s.dir < 0 and high >= s.brkLvl and close < s.brkLvl
