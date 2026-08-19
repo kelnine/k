@@ -1,7 +1,9 @@
 //@version=6
-// KCharts Setup — pullback EMA band + anchored VWAP + 1H/4H highs and lows.
+// KCharts Setup — pullback EMA band, anchored VWAP, 1H/4H highs and lows,
+// and the standard key levels (session opens + prior day/week/month/quarter/year
+// ranges + the Monday range).
 // Everything is one overlay so it can sit on a clean chart with no other tools.
-indicator("KCharts Setup — PB EMA + VWAP + 1H/4H Levels", "KCharts Setup", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("KCharts Setup — PB EMA + VWAP + Key Levels", "KCharts Setup", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -9,6 +11,7 @@ indicator("KCharts Setup — PB EMA + VWAP + 1H/4H Levels", "KCharts Setup", ove
 const string G_EMA  = "Pullback EMA"
 const string G_VWAP = "VWAP"
 const string G_LVL  = "1H / 4H levels"
+const string G_KEY  = "Key levels"
 
 // Pullback EMA band
 bool   emaShow  = input.bool(true,    "Show EMA band",          group = G_EMA)
@@ -37,14 +40,48 @@ bool   showTf2   = input.bool(true, "B levels", group = G_LVL, inline = "on")
 bool   showPrev  = input.bool(true, "Previous period high / low", group = G_LVL)
 bool   showCurr  = input.bool(true, "Current period high / low",  group = G_LVL, tooltip = "The developing high and low of the period in progress. Updates live, so it moves within the bar by design.")
 bool   showMid   = input.bool(false, "Previous period midpoint",  group = G_LVL)
-int    lvlKeep   = input.int(1,  "Periods kept", minval = 1, maxval = 50, group = G_LVL, tooltip = "How many past periods stay drawn. 1 shows only the live level.")
+int    lvlKeep   = input.int(1,  "Periods kept", minval = 1, maxval = 20, group = G_LVL, tooltip = "How many past periods stay drawn. 1 shows only the live level.")
 int    lvlExt    = input.int(12, "Extend right (bars)", minval = 0, maxval = 500, group = G_LVL)
-bool   lvlLabels = input.bool(true, "Labels", group = G_LVL)
+bool   lvlLabels = input.bool(true, "Labels", group = G_LVL, inline = "lbl")
+string lvlLblMode = input.string("Text", "", options = ["Text", "Tag"], group = G_LVL, inline = "lbl", tooltip = "Text draws the name on the line like a hand-drawn level. Tag draws it in a coloured bubble off the right edge.")
 int    lvlWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_LVL)
 string prevStyle = input.string("Solid",  "Previous style", options = ["Solid", "Dashed", "Dotted"], group = G_LVL)
 string currStyle = input.string("Dotted", "Current style",  options = ["Solid", "Dashed", "Dotted"], group = G_LVL)
 color  tf1Col    = input.color(color.new(#ff9800, 0), "A color", group = G_LVL, inline = "lc")
 color  tf2Col    = input.color(color.new(#ab47bc, 0), "B color", group = G_LVL, inline = "lc")
+
+// Key levels — session opens and prior-period ranges
+int    keyWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_KEY, inline = "sty")
+string keyStyle  = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], group = G_KEY, inline = "sty")
+
+bool   kdHL   = input.bool(true,  "Prev day H/L",     group = G_KEY, inline = "d")
+bool   kdMid  = input.bool(false, "mid",              group = G_KEY, inline = "d")
+bool   kdOpen = input.bool(true,  "open",             group = G_KEY, inline = "d")
+color  kdCol  = input.color(color.new(#2196f3, 0), "", group = G_KEY, inline = "d")
+
+bool   kwHL   = input.bool(true,  "Prev week H/L",    group = G_KEY, inline = "w")
+bool   kwMid  = input.bool(true,  "mid",              group = G_KEY, inline = "w")
+bool   kwOpen = input.bool(true,  "open",             group = G_KEY, inline = "w")
+color  kwCol  = input.color(color.new(#ffeb3b, 0), "", group = G_KEY, inline = "w")
+
+bool   kmHL   = input.bool(true,  "Prev month H/L",   group = G_KEY, inline = "m")
+bool   kmMid  = input.bool(true,  "mid",              group = G_KEY, inline = "m")
+bool   kmOpen = input.bool(true,  "open",             group = G_KEY, inline = "m")
+color  kmCol  = input.color(color.new(#26a69a, 0), "", group = G_KEY, inline = "m")
+
+bool   kqHL   = input.bool(false, "Prev quarter H/L", group = G_KEY, inline = "q")
+bool   kqMid  = input.bool(false, "mid",              group = G_KEY, inline = "q")
+bool   kqOpen = input.bool(true,  "open",             group = G_KEY, inline = "q")
+color  kqCol  = input.color(color.new(#ef5350, 0), "", group = G_KEY, inline = "q")
+
+bool   kyHL   = input.bool(false, "Prev year H/L",    group = G_KEY, inline = "y")
+bool   kyMid  = input.bool(false, "mid",              group = G_KEY, inline = "y")
+bool   kyOpen = input.bool(false, "open",             group = G_KEY, inline = "y")
+color  kyCol  = input.color(color.new(#ab47bc, 0), "", group = G_KEY, inline = "y")
+
+bool   knHL   = input.bool(true,  "Monday H/L",       group = G_KEY, inline = "n")
+bool   knMid  = input.bool(true,  "mid",              group = G_KEY, inline = "n")
+color  knCol  = input.color(color.new(#ffffff, 0), "", group = G_KEY, inline = "n", tooltip = "The first trading session of the week - Monday, or Tuesday when Monday is a holiday. On futures it includes the Sunday-evening open.")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -65,7 +102,7 @@ f_tfName(simple string tf) =>
 
 // Draws one horizontal level that restarts at the top of every higher-timeframe
 // period. Each call site keeps its own line history via `var`.
-f_level(bool show, bool fresh, float price, color col, string txt, string sty) =>
+f_level(bool show, bool fresh, float price, color col, string txt, string sty, int keep, int wid) =>
     var array<line> lns = array.new<line>()
     var label lbl = na
     if not show or na(price)
@@ -79,14 +116,15 @@ f_level(bool show, bool fresh, float price, color col, string txt, string sty) =
         if fresh or array.size(lns) == 0
             if array.size(lns) > 0
                 line.set_x2(array.get(lns, array.size(lns) - 1), bar_index)
-            array.push(lns, line.new(bar_index, price, bar_index + lvlExt, price, xloc = xloc.bar_index, color = col, width = lvlWidth, style = sty))
-            while array.size(lns) > lvlKeep
+            array.push(lns, line.new(bar_index, price, bar_index + lvlExt, price, xloc = xloc.bar_index, color = col, width = wid, style = sty))
+            while array.size(lns) > keep
                 line.delete(array.shift(lns))
         line cur = array.get(lns, array.size(lns) - 1)
         line.set_xy1(cur, line.get_x1(cur), price)
         line.set_xy2(cur, bar_index + lvlExt, price)
         label.delete(lbl)
-        lbl := barstate.islast and lvlLabels ? label.new(bar_index + lvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.small) : na
+        bool tag = lvlLblMode == "Tag"
+        lbl := barstate.islast and lvlLabels ? label.new(bar_index + lvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = tag ? label.style_label_left : label.style_none, color = tag ? color.new(col, 88) : color.new(color.black, 100), textcolor = col, size = size.small) : na
     price
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,18 +192,97 @@ string n2 = f_tfName(tf2)
 string prevSty = f_style(prevStyle)
 string currSty = f_style(currStyle)
 
-f_level(showTf1 and fits1 and showPrev, new1, prevH1, tf1Col, n1 + " PH", prevSty)
-f_level(showTf1 and fits1 and showPrev, new1, prevL1, tf1Col, n1 + " PL", prevSty)
-f_level(showTf2 and fits2 and showPrev, new2, prevH2, tf2Col, n2 + " PH", prevSty)
-f_level(showTf2 and fits2 and showPrev, new2, prevL2, tf2Col, n2 + " PL", prevSty)
+f_level(showTf1 and fits1 and showPrev, new1, prevH1, tf1Col, n1 + " PH", prevSty, lvlKeep, lvlWidth)
+f_level(showTf1 and fits1 and showPrev, new1, prevL1, tf1Col, n1 + " PL", prevSty, lvlKeep, lvlWidth)
+f_level(showTf2 and fits2 and showPrev, new2, prevH2, tf2Col, n2 + " PH", prevSty, lvlKeep, lvlWidth)
+f_level(showTf2 and fits2 and showPrev, new2, prevL2, tf2Col, n2 + " PL", prevSty, lvlKeep, lvlWidth)
 
-f_level(showTf1 and fits1 and showCurr, new1, currH1, tf1Col, n1 + " H", currSty)
-f_level(showTf1 and fits1 and showCurr, new1, currL1, tf1Col, n1 + " L", currSty)
-f_level(showTf2 and fits2 and showCurr, new2, currH2, tf2Col, n2 + " H", currSty)
-f_level(showTf2 and fits2 and showCurr, new2, currL2, tf2Col, n2 + " L", currSty)
+f_level(showTf1 and fits1 and showCurr, new1, currH1, tf1Col, n1 + " H", currSty, lvlKeep, lvlWidth)
+f_level(showTf1 and fits1 and showCurr, new1, currL1, tf1Col, n1 + " L", currSty, lvlKeep, lvlWidth)
+f_level(showTf2 and fits2 and showCurr, new2, currH2, tf2Col, n2 + " H", currSty, lvlKeep, lvlWidth)
+f_level(showTf2 and fits2 and showCurr, new2, currL2, tf2Col, n2 + " L", currSty, lvlKeep, lvlWidth)
 
-f_level(showTf1 and fits1 and showMid, new1, math.avg(prevH1, prevL1), color.new(tf1Col, 40), n1 + " EQ", line.style_dashed)
-f_level(showTf2 and fits2 and showMid, new2, math.avg(prevH2, prevL2), color.new(tf2Col, 40), n2 + " EQ", line.style_dashed)
+f_level(showTf1 and fits1 and showMid, new1, math.avg(prevH1, prevL1), color.new(tf1Col, 40), n1 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
+f_level(showTf2 and fits2 and showMid, new2, math.avg(prevH2, prevL2), color.new(tf2Col, 40), n2 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Key levels — session opens and prior-period ranges
+// ─────────────────────────────────────────────────────────────────────────────
+// Prior-period highs and lows use the same non-repainting `[1]` + lookahead_on
+// form. Opens are read without lookahead: a period's open is fixed the moment
+// the period starts, so the developing value is already the final one.
+[pdH, pdL] = request.security(syminfo.tickerid, "D",   [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwH, pwL] = request.security(syminfo.tickerid, "W",   [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pmH, pmL] = request.security(syminfo.tickerid, "M",   [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pqH, pqL] = request.security(syminfo.tickerid, "3M",  [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pyH, pyL] = request.security(syminfo.tickerid, "12M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+float dOpen = request.security(syminfo.tickerid, "D",   open)
+float wOpen = request.security(syminfo.tickerid, "W",   open)
+float mOpen = request.security(syminfo.tickerid, "M",   open)
+float qOpen = request.security(syminfo.tickerid, "3M",  open)
+float yOpen = request.security(syminfo.tickerid, "12M", open)
+
+bool newD = timeframe.change("D")
+bool newW = timeframe.change("W")
+bool newM = timeframe.change("M")
+bool newQ = timeframe.change("3M")
+bool newY = timeframe.change("12M")
+
+// Monday range — tracked live rather than fetched, because "Monday" here means
+// the week's first trading session, which keeps the level honest on holiday
+// weeks and on futures that open Sunday evening.
+var int dayOfWeekIdx = 0
+if newW
+    dayOfWeekIdx := 1
+else if newD
+    dayOfWeekIdx := dayOfWeekIdx + 1
+
+var float monH = na
+var float monL = na
+if newW
+    monH := high
+    monL := low
+else if dayOfWeekIdx == 1
+    monH := na(monH) ? high : math.max(monH, high)
+    monL := na(monL) ? low  : math.min(monL, low)
+
+bool fitsD = timeframe.in_seconds() <= timeframe.in_seconds("D")
+bool fitsW = timeframe.in_seconds() <= timeframe.in_seconds("W")
+bool fitsM = timeframe.in_seconds() <= timeframe.in_seconds("M")
+bool fitsQ = timeframe.in_seconds() <= timeframe.in_seconds("3M")
+bool fitsY = timeframe.in_seconds() <= timeframe.in_seconds("12M")
+
+string keySty = f_style(keyStyle)
+
+f_level(kdHL   and fitsD, newD, pdH, kdCol, "Prev Day High",     keySty, 1, keyWidth)
+f_level(kdHL   and fitsD, newD, pdL, kdCol, "Prev Day Low",      keySty, 1, keyWidth)
+f_level(kdMid  and fitsD, newD, math.avg(pdH, pdL), kdCol, "Prev Day Mid", keySty, 1, keyWidth)
+f_level(kdOpen and fitsD, newD, dOpen, kdCol, "Daily Open",      keySty, 1, keyWidth)
+
+f_level(kwHL   and fitsW, newW, pwH, kwCol, "Prev Week High",    keySty, 1, keyWidth)
+f_level(kwHL   and fitsW, newW, pwL, kwCol, "Prev Week Low",     keySty, 1, keyWidth)
+f_level(kwMid  and fitsW, newW, math.avg(pwH, pwL), kwCol, "Prev Week Mid", keySty, 1, keyWidth)
+f_level(kwOpen and fitsW, newW, wOpen, kwCol, "Weekly Open",     keySty, 1, keyWidth)
+
+f_level(kmHL   and fitsM, newM, pmH, kmCol, "Prev Month High",   keySty, 1, keyWidth)
+f_level(kmHL   and fitsM, newM, pmL, kmCol, "Prev Month Low",    keySty, 1, keyWidth)
+f_level(kmMid  and fitsM, newM, math.avg(pmH, pmL), kmCol, "Prev Month Mid", keySty, 1, keyWidth)
+f_level(kmOpen and fitsM, newM, mOpen, kmCol, "Monthly Open",    keySty, 1, keyWidth)
+
+f_level(kqHL   and fitsQ, newQ, pqH, kqCol, "Prev Quarter High", keySty, 1, keyWidth)
+f_level(kqHL   and fitsQ, newQ, pqL, kqCol, "Prev Quarter Low",  keySty, 1, keyWidth)
+f_level(kqMid  and fitsQ, newQ, math.avg(pqH, pqL), kqCol, "Prev Quarter Mid", keySty, 1, keyWidth)
+f_level(kqOpen and fitsQ, newQ, qOpen, kqCol, "Quarterly Open",  keySty, 1, keyWidth)
+
+f_level(kyHL   and fitsY, newY, pyH, kyCol, "Prev Year High",    keySty, 1, keyWidth)
+f_level(kyHL   and fitsY, newY, pyL, kyCol, "Prev Year Low",     keySty, 1, keyWidth)
+f_level(kyMid  and fitsY, newY, math.avg(pyH, pyL), kyCol, "Prev Year Mid", keySty, 1, keyWidth)
+f_level(kyOpen and fitsY, newY, yOpen, kyCol, "Yearly Open",     keySty, 1, keyWidth)
+
+f_level(knHL  and timeframe.isintraday, newW, monH, knCol, "Monday High", keySty, 1, keyWidth)
+f_level(knHL  and timeframe.isintraday, newW, monL, knCol, "Monday Low",  keySty, 1, keyWidth)
+f_level(knMid and timeframe.isintraday, newW, math.avg(monH, monL), knCol, "Monday Mid", keySty, 1, keyWidth)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Alerts

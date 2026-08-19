@@ -14,6 +14,11 @@ One overlay covering the whole setup, so nothing else needs to be on the chart:
 - **1H / 4H highs and lows** — previous-period high and low, the developing
   high and low of the period in progress, and an optional midpoint. Both
   timeframes are inputs, so the pair can be anything (15m/1H, 4H/1D, …).
+- **Key levels** — the standard reference set: previous day / week / month /
+  quarter / year high, low and midpoint, the daily / weekly / monthly /
+  quarterly / yearly opens, and the Monday high, low and mid. Each row has its
+  own colour and its own high-low / mid / open toggles, so you can run just the
+  handful you actually watch.
 
 ### Installing
 
@@ -32,4 +37,12 @@ One overlay covering the whole setup, so nothing else needs to be on the chart:
 - Levels are hidden when the chart timeframe is above the level's timeframe (a 1H
   level on a daily chart is just the previous bar).
 - `Periods kept` controls how much history stays drawn. It defaults to `1` — only
-  the live level — raise it to leave a trail of old highs and lows behind.
+  the live level — raise it to leave a trail of old highs and lows behind. It
+  applies to the 1H/4H levels; key levels always show the current one only.
+- **Monday** means the week's first trading session, not the calendar day. On a
+  holiday week that is Tuesday, and on futures it includes the Sunday-evening
+  open — which is what you want, since that is the session the range belongs to.
+- Every key level hides itself when the chart timeframe is above its own, so a
+  daily chart drops the previous-day lines instead of drawing the previous bar.
+- Labels have two looks under **1H / 4H levels → Labels**: `Text` writes the name
+  on the line, `Tag` puts it in a coloured bubble past the right edge.
