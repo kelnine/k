@@ -83,6 +83,12 @@ bool   knHL   = input.bool(true,  "Monday H/L",       group = G_KEY, inline = "n
 bool   knMid  = input.bool(true,  "mid",              group = G_KEY, inline = "n")
 color  knCol  = input.color(color.new(#ffffff, 0), "", group = G_KEY, inline = "n", tooltip = "The first trading session of the week - Monday, or Tuesday when Monday is a holiday. On futures it includes the Sunday-evening open.")
 
+// Levels are drawn in time coordinates, not bar_index: a level whose period never
+// rolls over inside the loaded history (a quarterly open on a 1m chart) stays
+// anchored to its first bar, and bar_index drawings cannot be updated once the
+// chart runs ~10k bars past their anchor.
+int lvlExtMs = lvlExt * timeframe.in_seconds() * 1000
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,16 +121,16 @@ f_level(bool show, bool fresh, float price, color col, string txt, string sty, i
     else
         if fresh or array.size(lns) == 0
             if array.size(lns) > 0
-                line.set_x2(array.get(lns, array.size(lns) - 1), bar_index)
-            array.push(lns, line.new(bar_index, price, bar_index + lvlExt, price, xloc = xloc.bar_index, color = col, width = wid, style = sty))
+                line.set_x2(array.get(lns, array.size(lns) - 1), time)
+            array.push(lns, line.new(time, price, time + lvlExtMs, price, xloc = xloc.bar_time, color = col, width = wid, style = sty))
             while array.size(lns) > keep
                 line.delete(array.shift(lns))
         line cur = array.get(lns, array.size(lns) - 1)
         line.set_xy1(cur, line.get_x1(cur), price)
-        line.set_xy2(cur, bar_index + lvlExt, price)
+        line.set_xy2(cur, time + lvlExtMs, price)
         label.delete(lbl)
         bool tag = lvlLblMode == "Tag"
-        lbl := barstate.islast and lvlLabels ? label.new(bar_index + lvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = tag ? label.style_label_left : label.style_none, color = tag ? color.new(col, 88) : color.new(color.black, 100), textcolor = col, size = size.small) : na
+        lbl := barstate.islast and lvlLabels ? label.new(time + lvlExtMs, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_time, style = tag ? label.style_label_left : label.style_none, color = tag ? color.new(col, 88) : color.new(color.black, 100), textcolor = col, size = size.small) : na
     price
 
 // ─────────────────────────────────────────────────────────────────────────────
