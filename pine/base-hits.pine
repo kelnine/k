@@ -1,0 +1,493 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  BASE HITS — Sessions · Liquidity Raids · Session Stats
+//
+//  One overlay that reproduces the "base hits" workflow:
+//    • Killzone session boxes (ASIA / LNDN / NYAM / NYPM) with their highs and
+//      lows extended to the right until price takes them out.
+//    • Previous day / week / month highs, lows and the previous daily close.
+//    • A supertrend-anchored trend cloud (bull = green, bear = pink).
+//    • BUY LR / SELL LR liquidity-raid signals — price sweeps resting liquidity
+//      (a session level, an HTF level or a swing pivot) and closes back inside.
+//    • A projected trade: red risk box to the stop, green reward box to the
+//      target at a fixed R multiple, extended forward until it resolves.
+//    • A stats table: for each session/period, the average range plus how often
+//      its high and its low get swept afterwards.
+//    • Bar-close countdown next to price.
+// ═══════════════════════════════════════════════════════════════════════════
+indicator("Base HITS — Sessions · Liquidity Raids · Stats", "Base HITS", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────── INPUTS ───────────────────────────────────
+string GS = "① Sessions"
+string GL = "② Higher-timeframe levels"
+string GC = "③ Trend cloud"
+string GR = "④ Liquidity-raid signals"
+string GT = "⑤ Trade projection"
+string GB = "⑥ Stats table"
+
+string tzIn        = input.string("America/New_York", "Timezone", group = GS)
+bool   showSessBox = input.bool(true, "Session boxes",      group = GS, inline = "sg")
+bool   showSessLn  = input.bool(true, "Extend high / low",  group = GS, inline = "sg")
+bool   showSessLb  = input.bool(true, "Level labels",       group = GS, inline = "sg")
+int    statN       = input.int(20, "Stat sample size (occurrences)", minval = 3, maxval = 200, group = GS)
+
+bool   asiaOn   = input.bool(true, "ASIA", group = GS, inline = "s1")
+string asiaSpec = input.session("2000-0000", "", group = GS, inline = "s1")
+color  asiaCol  = input.color(#2962ff, "", group = GS, inline = "s1")
+bool   lndnOn   = input.bool(true, "LNDN", group = GS, inline = "s2")
+string lndnSpec = input.session("0200-0500", "", group = GS, inline = "s2")
+color  lndnCol  = input.color(#ff9800, "", group = GS, inline = "s2")
+bool   nyamOn   = input.bool(true, "NYAM", group = GS, inline = "s3")
+string nyamSpec = input.session("0930-1200", "", group = GS, inline = "s3")
+color  nyamCol  = input.color(#26a69a, "", group = GS, inline = "s3")
+bool   nypmOn   = input.bool(true, "NYPM", group = GS, inline = "s4")
+string nypmSpec = input.session("1330-1600", "", group = GS, inline = "s4")
+color  nypmCol  = input.color(#ab47bc, "", group = GS, inline = "s4")
+
+bool  showPD  = input.bool(true,  "Prev day high / low",  group = GL, inline = "l1")
+color pdCol   = input.color(#2196f3, "", group = GL, inline = "l1")
+bool  showPDC = input.bool(true,  "Prev day close",       group = GL, inline = "l2")
+color pdcCol  = input.color(#787b86, "", group = GL, inline = "l2")
+bool  showPW  = input.bool(true,  "Prev week high / low", group = GL, inline = "l3")
+color pwCol   = input.color(#26a69a, "", group = GL, inline = "l3")
+bool  showPM  = input.bool(false, "Prev month high / low",group = GL, inline = "l4")
+color pmCol   = input.color(#ef5350, "", group = GL, inline = "l4")
+
+bool  showCloud = input.bool(true, "Show trend cloud", group = GC)
+int   atrLen    = input.int(10, "ATR length", minval = 1, group = GC)
+float stMult    = input.float(3.0, "Supertrend factor", minval = 0.5, step = 0.1, group = GC)
+float bandMult  = input.float(2.5, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = GC)
+color bullCol   = input.color(color.new(#26a69a, 80), "Bull / bear", group = GC, inline = "c1")
+color bearCol   = input.color(color.new(#e91e63, 80), "",            group = GC, inline = "c1")
+
+bool  useSessLiq = input.bool(true,  "Sweep session highs / lows", group = GR)
+bool  useHtfLiq  = input.bool(true,  "Sweep PD / PW / PM levels",  group = GR)
+bool  usePivLiq  = input.bool(true,  "Sweep swing pivots", group = GR, inline = "p1")
+int   pivLen     = input.int(5, "left/right", minval = 1, group = GR, inline = "p1")
+int   maxLiq     = input.int(20, "Max tracked pivots", minval = 1, maxval = 100, group = GR)
+bool  needClose  = input.bool(true,  "Require rejection close", group = GR)
+bool  needTrend  = input.bool(false, "Require trend alignment", group = GR)
+float minWick    = input.float(20, "Min sweep wick (% of bar)", minval = 0, maxval = 100, group = GR)
+int   coolDown   = input.int(2, "Bars between signals", minval = 0, group = GR)
+color sigCol     = input.color(#ffeb3b, "Signal label", group = GR)
+
+bool  showTrade = input.bool(true, "Show trade projection", group = GT)
+float rrMult    = input.float(2.0, "Reward : risk", minval = 0.1, step = 0.1, group = GT)
+float stopBuf   = input.float(0.25, "Stop buffer (ATR)", minval = 0, step = 0.05, group = GT)
+int   projBars  = input.int(20, "Project forward (bars)", minval = 1, maxval = 400, group = GT)
+color riskCol   = input.color(color.new(#ef5350, 70), "Risk / reward", group = GT, inline = "t1")
+color rewCol    = input.color(color.new(#26a69a, 70), "",              group = GT, inline = "t1")
+bool  showCd    = input.bool(true, "Bar-close countdown", group = GT)
+
+bool   showTbl = input.bool(true, "Show stats table", group = GB)
+string tblPos  = input.string(position.top_right, "Position",
+     options = [position.top_right, position.middle_right, position.bottom_right,
+                position.top_left, position.middle_left, position.bottom_left], group = GB)
+string tblSize = input.string(size.small, "Text size",
+     options = [size.tiny, size.small, size.normal], group = GB)
+bool   showWL  = input.bool(true, "Include signal W/L row", group = GB)
+
+// ──────────────────────────────── TYPES ───────────────────────────────────
+type Sess
+    string name
+    color  col
+    bool   on       = false
+    bool   wasIn    = false
+    float  hi       = na
+    float  lo       = na
+    box    bx       = na
+    float  pHi      = na
+    float  pLo      = na
+    bool   pHiSwept = false
+    bool   pLoSwept = false
+    line   hiLn     = na
+    line   loLn     = na
+    label  hiLb     = na
+    label  loLb     = na
+    array<float> rng
+    array<float> hHit
+    array<float> lHit
+
+type Per
+    string name
+    color  col
+    float  wH   = na
+    float  wL   = na
+    bool   hitH = false
+    bool   hitL = false
+    array<float> rng
+    array<float> hHit
+    array<float> lHit
+
+type Lvl
+    string name
+    color  col
+    line   ln = na
+    label  lb = na
+
+type Trade
+    bool  active = false
+    int   dir    = 0
+    float entry  = na
+    float stop   = na
+    float tgt    = na
+    box   rBx    = na
+    box   tBx    = na
+    label lb     = na
+
+// ────────────────────────────── HELPERS ───────────────────────────────────
+capPush(array<float> a, float v, int cap) =>
+    a.push(v)
+    while a.size() > cap
+        a.shift()
+    a.size()
+
+pad2(int v) =>
+    (v < 10 ? "0" : "") + str.tostring(v)
+
+newLbl(int x, float y, string txt, color c) =>
+    label.new(x, y, txt, xloc.bar_index, yloc.price, color.new(color.black, 100),
+         label.style_label_left, c, size.tiny)
+
+// Session state machine: track the live session, publish its levels when it
+// closes, then watch for the sweep and record the outcome as a statistic.
+method sessStep(Sess s, bool isIn, bool boxOn, bool lnOn, bool lbOn, int cap) =>
+    if s.on
+        if isIn and not s.wasIn
+            if not na(s.pHi)
+                capPush(s.rng,  s.pHi - s.pLo,     cap)
+                capPush(s.hHit, s.pHiSwept ? 1 : 0, cap)
+                capPush(s.lHit, s.pLoSwept ? 1 : 0, cap)
+            s.hi := high
+            s.lo := low
+            if boxOn
+                s.bx := box.new(bar_index, s.hi, bar_index, s.lo,
+                     border_color = color.new(s.col, 55), border_width = 1,
+                     bgcolor = color.new(s.col, 90))
+        else if isIn
+            s.hi := math.max(s.hi, high)
+            s.lo := math.min(s.lo, low)
+            if not na(s.bx)
+                box.set_right(s.bx, bar_index)
+                box.set_top(s.bx, s.hi)
+                box.set_bottom(s.bx, s.lo)
+        else if s.wasIn
+            s.pHi      := s.hi
+            s.pLo      := s.lo
+            s.pHiSwept := false
+            s.pLoSwept := false
+            if not na(s.hiLn)
+                line.delete(s.hiLn)
+            if not na(s.loLn)
+                line.delete(s.loLn)
+            if not na(s.hiLb)
+                label.delete(s.hiLb)
+            if not na(s.loLb)
+                label.delete(s.loLb)
+            if lnOn
+                s.hiLn := line.new(bar_index, s.pHi, bar_index, s.pHi, color = s.col, style = line.style_dotted)
+                s.loLn := line.new(bar_index, s.pLo, bar_index, s.pLo, color = s.col, style = line.style_dotted)
+            if lbOn
+                s.hiLb := newLbl(bar_index, s.pHi, s.name + " High", s.col)
+                s.loLb := newLbl(bar_index, s.pLo, s.name + " Low",  s.col)
+        else if not na(s.pHi)
+            if high > s.pHi
+                s.pHiSwept := true
+            if low < s.pLo
+                s.pLoSwept := true
+            if not s.pHiSwept
+                if not na(s.hiLn)
+                    line.set_x2(s.hiLn, bar_index)
+                if not na(s.hiLb)
+                    label.set_x(s.hiLb, bar_index)
+            if not s.pLoSwept
+                if not na(s.loLn)
+                    line.set_x2(s.loLn, bar_index)
+                if not na(s.loLb)
+                    label.set_x(s.loLb, bar_index)
+    s.wasIn := isIn
+
+// Previous day / week / month: same idea, driven by the HTF rollover.
+method perStep(Per p, bool isNew, float pH, float pL, int cap) =>
+    if isNew
+        if not na(p.wH)
+            capPush(p.rng,  p.wH - p.wL,    cap)
+            capPush(p.hHit, p.hitH ? 1 : 0, cap)
+            capPush(p.lHit, p.hitL ? 1 : 0, cap)
+        p.wH   := pH
+        p.wL   := pL
+        p.hitH := false
+        p.hitL := false
+    if not na(p.wH)
+        if high > p.wH
+            p.hitH := true
+        if low < p.wL
+            p.hitL := true
+
+// Stepped level line: a fresh segment each period, the old one stays frozen.
+method render(Lvl v, bool isNew, float price, bool show) =>
+    if show and not na(price)
+        if isNew or na(v.ln)
+            v.ln := line.new(bar_index, price, bar_index, price, color = v.col, style = line.style_dashed)
+            if not na(v.lb)
+                label.delete(v.lb)
+            v.lb := newLbl(bar_index, price, v.name, v.col)
+        else
+            line.set_y1(v.ln, price)
+            line.set_y2(v.ln, price)
+            line.set_x2(v.ln, bar_index)
+            label.set_xy(v.lb, bar_index, price)
+
+statRow(table t, int r, string nm, color c, array<float> rng, array<float> hh, array<float> ll, string sz) =>
+    float ar = rng.size() > 0 ? rng.avg() : na
+    float hp = hh.size()  > 0 ? hh.avg() * 100 : na
+    float lp = ll.size()  > 0 ? ll.avg() * 100 : na
+    string tip = "samples: " + str.tostring(rng.size())
+    table.cell(t, 0, r, nm, text_color = color.white, bgcolor = color.new(c, 20), text_size = sz, tooltip = tip)
+    table.cell(t, 1, r, na(ar) ? "–" : str.tostring(ar, "#.###"),
+         text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz, tooltip = tip)
+    table.cell(t, 2, r, na(hp) ? "–" : str.tostring(int(math.round(hp))) + "%",
+         text_color = color.white, text_size = sz,
+         bgcolor = color.from_gradient(nz(hp, 0), 0, 100, color.new(#787b86, 85), color.new(#ef5350, 40)), tooltip = tip)
+    table.cell(t, 3, r, na(lp) ? "–" : str.tostring(int(math.round(lp))) + "%",
+         text_color = color.white, text_size = sz,
+         bgcolor = color.from_gradient(nz(lp, 0), 0, 100, color.new(#787b86, 85), color.new(#26a69a, 40)), tooltip = tip)
+
+// ─────────────────────────────── STATE ────────────────────────────────────
+var Sess sAsia = Sess.new(name = "ASIA", col = asiaCol, on = asiaOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var Sess sLndn = Sess.new(name = "LNDN", col = lndnCol, on = lndnOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var Sess sNyam = Sess.new(name = "NYAM", col = nyamCol, on = nyamOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var Sess sNypm = Sess.new(name = "NYPM", col = nypmCol, on = nypmOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var array<Sess> sessArr = array.from(sAsia, sLndn, sNyam, sNypm)
+
+var Per pDay = Per.new(name = "PD", col = pdCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var Per pWk  = Per.new(name = "PW", col = pwCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var Per pMon = Per.new(name = "PM", col = pmCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
+var array<Per> perArr = array.from(pDay, pWk, pMon)
+
+var Lvl lPdH = Lvl.new(name = "PDH",   col = pdCol)
+var Lvl lPdL = Lvl.new(name = "PDL",   col = pdCol)
+var Lvl lPdC = Lvl.new(name = "Close", col = pdcCol)
+var Lvl lPwH = Lvl.new(name = "PWH",   col = pwCol)
+var Lvl lPwL = Lvl.new(name = "PWL",   col = pwCol)
+var Lvl lPmH = Lvl.new(name = "PMH",   col = pmCol)
+var Lvl lPmL = Lvl.new(name = "PML",   col = pmCol)
+
+var array<float> pivHi  = array.new<float>()
+var array<float> pivLo  = array.new<float>()
+var array<bool>  inFlag = array.new<bool>(4, false)
+var Trade tr     = Trade.new()
+var int   wins   = 0
+var int   losses = 0
+var int   lastSig = -100000
+var label cdLb   = na
+var table tbl    = na
+
+// ───────────────────────── MARKET CONTEXT ─────────────────────────────────
+float atrv = ta.atr(atrLen)
+[stVal, stDir] = ta.supertrend(stMult, atrLen)
+int trendDir = stDir < 0 ? 1 : -1
+
+[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+[pwH, pwL]      = request.security(syminfo.tickerid, "W", [high[1], low[1]],           lookahead = barmerge.lookahead_on)
+[pmH, pmL]      = request.security(syminfo.tickerid, "M", [high[1], low[1]],           lookahead = barmerge.lookahead_on)
+
+bool newD = nz(ta.change(time("D")), 0) != 0
+bool newW = nz(ta.change(time("W")), 0) != 0
+bool newM = nz(ta.change(time("M")), 0) != 0
+
+inFlag.set(0, asiaOn and not na(time(timeframe.period, asiaSpec, tzIn)))
+inFlag.set(1, lndnOn and not na(time(timeframe.period, lndnSpec, tzIn)))
+inFlag.set(2, nyamOn and not na(time(timeframe.period, nyamSpec, tzIn)))
+inFlag.set(3, nypmOn and not na(time(timeframe.period, nypmSpec, tzIn)))
+
+// ───────────────────── LIQUIDITY RAID DETECTION ───────────────────────────
+// Every candidate level is read *before* this bar's state updates, so a level
+// only fires once — the first time price reaches through it and closes back.
+float sellLvl = na
+float buyLvl  = na
+
+if useSessLiq
+    for i = 0 to sessArr.size() - 1
+        Sess s = sessArr.get(i)
+        if s.on and not na(s.pHi)
+            if not s.pHiSwept and high > s.pHi and close < s.pHi
+                sellLvl := math.max(nz(sellLvl, s.pHi), s.pHi)
+            if not s.pLoSwept and low < s.pLo and close > s.pLo
+                buyLvl := math.min(nz(buyLvl, s.pLo), s.pLo)
+
+if useHtfLiq
+    for i = 0 to perArr.size() - 1
+        Per p = perArr.get(i)
+        if not na(p.wH) and not p.hitH and high > p.wH and close < p.wH
+            sellLvl := math.max(nz(sellLvl, p.wH), p.wH)
+        if not na(p.wL) and not p.hitL and low < p.wL and close > p.wL
+            buyLvl := math.min(nz(buyLvl, p.wL), p.wL)
+
+if usePivLiq and pivHi.size() > 0
+    for i = 0 to pivHi.size() - 1
+        float L = pivHi.get(i)
+        if high > L and close < L
+            sellLvl := math.max(nz(sellLvl, L), L)
+if usePivLiq and pivLo.size() > 0
+    for i = 0 to pivLo.size() - 1
+        float L = pivLo.get(i)
+        if low < L and close > L
+            buyLvl := math.min(nz(buyLvl, L), L)
+
+float barRng = math.max(high - low, syminfo.mintick)
+bool  wickS  = (high - math.max(open, close)) / barRng * 100 >= minWick
+bool  wickB  = (math.min(open, close) - low)  / barRng * 100 >= minWick
+bool  coolOk = bar_index - lastSig > coolDown
+
+bool sellSig = not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
+bool buySig  = not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
+if sellSig and buySig
+    if trendDir > 0
+        sellSig := false
+    else
+        buySig := false
+
+// ─────────────────────────── STATE UPDATES ────────────────────────────────
+for i = 0 to sessArr.size() - 1
+    Sess sv = sessArr.get(i)
+    sv.sessStep(inFlag.get(i), showSessBox, showSessLn, showSessLb, statN)
+
+pDay.perStep(newD, pdH, pdL, statN)
+pWk.perStep(newW, pwH, pwL, statN)
+pMon.perStep(newM, pmH, pmL, statN)
+
+float ph = ta.pivothigh(pivLen, pivLen)
+float pl = ta.pivotlow(pivLen, pivLen)
+if usePivLiq
+    if pivHi.size() > 0
+        for i = pivHi.size() - 1 to 0
+            if pivHi.get(i) < high
+                pivHi.remove(i)
+    if pivLo.size() > 0
+        for i = pivLo.size() - 1 to 0
+            if pivLo.get(i) > low
+                pivLo.remove(i)
+    if not na(ph)
+        capPush(pivHi, ph, maxLiq)
+    if not na(pl)
+        capPush(pivLo, pl, maxLiq)
+
+lPdH.render(newD, pdH, showPD)
+lPdL.render(newD, pdL, showPD)
+lPdC.render(newD, pdC, showPDC)
+lPwH.render(newW, pwH, showPW)
+lPwL.render(newW, pwL, showPW)
+lPmH.render(newM, pmH, showPM)
+lPmL.render(newM, pmL, showPM)
+
+// ─────────────────────────── SIGNAL LABELS ────────────────────────────────
+if sellSig
+    label.new(bar_index, high + atrv * 0.4, "SELL LR", xloc.bar_index, yloc.price,
+         sigCol, label.style_label_down, color.black, size.tiny,
+         tooltip = "Swept " + str.tostring(sellLvl, format.mintick) + " and closed back below")
+    lastSig := bar_index
+    alert("SELL LR — liquidity raid on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if buySig
+    label.new(bar_index, low - atrv * 0.4, "BUY LR", xloc.bar_index, yloc.price,
+         sigCol, label.style_label_up, color.black, size.tiny,
+         tooltip = "Swept " + str.tostring(buyLvl, format.mintick) + " and closed back above")
+    lastSig := bar_index
+    alert("BUY LR — liquidity raid on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+// ────────────────────────── TRADE PROJECTION ──────────────────────────────
+if tr.active
+    bool stopHit = tr.dir < 0 ? high >= tr.stop : low  <= tr.stop
+    bool tgtHit  = tr.dir < 0 ? low  <= tr.tgt  : high >= tr.tgt
+    if stopHit or tgtHit
+        tr.active := false
+        if stopHit
+            losses += 1
+        else
+            wins += 1
+        if not na(tr.rBx)
+            box.set_right(tr.rBx, bar_index)
+            box.set_bgcolor(tr.rBx, color.new(riskCol, stopHit ? 55 : 90))
+        if not na(tr.tBx)
+            box.set_right(tr.tBx, bar_index)
+            box.set_bgcolor(tr.tBx, color.new(rewCol, tgtHit and not stopHit ? 55 : 90))
+        if not na(tr.lb)
+            label.set_x(tr.lb, bar_index)
+            label.set_text(tr.lb, stopHit ? "SL" : "TP")
+    else
+        if not na(tr.rBx)
+            box.set_right(tr.rBx, bar_index + projBars)
+        if not na(tr.tBx)
+            box.set_right(tr.tBx, bar_index + projBars)
+        if not na(tr.lb)
+            label.set_x(tr.lb, bar_index + projBars)
+
+if showTrade and not tr.active and (sellSig or buySig)
+    int   d    = sellSig ? -1 : 1
+    float lvl  = sellSig ? sellLvl : buyLvl
+    float e    = close
+    float sl   = d < 0 ? math.max(high, lvl) + atrv * stopBuf : math.min(low, lvl) - atrv * stopBuf
+    float risk = math.abs(sl - e)
+    if risk > 0
+        float tp = e + d * risk * rrMult
+        tr.active := true
+        tr.dir    := d
+        tr.entry  := e
+        tr.stop   := sl
+        tr.tgt    := tp
+        tr.rBx := box.new(bar_index, math.max(e, sl), bar_index + projBars, math.min(e, sl),
+             border_color = color.new(riskCol, 40), bgcolor = riskCol)
+        tr.tBx := box.new(bar_index, math.max(e, tp), bar_index + projBars, math.min(e, tp),
+             border_color = color.new(rewCol, 40), bgcolor = rewCol)
+        tr.lb  := newLbl(bar_index + projBars, tp, str.tostring(rrMult, "#.#") + "R", d < 0 ? riskCol : rewCol)
+
+// ───────────────────────────── TREND CLOUD ────────────────────────────────
+float cloudEdge = stVal + (stDir < 0 ? -1 : 1) * atrv * bandMult
+p1 = plot(showCloud ? stVal : na, "Trend line", color = color.new(trendDir > 0 ? bullCol : bearCol, 30))
+p2 = plot(showCloud ? cloudEdge : na, "Cloud edge", color = color.new(color.black, 100))
+fill(p1, p2, color = trendDir > 0 ? bullCol : bearCol, title = "Trend cloud")
+
+// ──────────────────────── COUNTDOWN + STATS TABLE ─────────────────────────
+if barstate.islast
+    if showCd
+        int rem  = int(math.max(0, time_close - timenow) / 1000)
+        int hrs  = int(rem / 3600)
+        int mins = int(rem % 3600 / 60)
+        int secs = int(rem % 60)
+        string cdTxt = timeframe.period + "  " + (hrs > 0 ? str.tostring(hrs) + ":" : "") + pad2(mins) + ":" + pad2(secs)
+        if na(cdLb)
+            cdLb := label.new(bar_index + 3, close, cdTxt, xloc.bar_index, yloc.price,
+                 color.new(color.gray, 25), label.style_label_left, color.white, size.small)
+        else
+            label.set_xy(cdLb, bar_index + 3, close)
+            label.set_text(cdLb, cdTxt)
+
+    if showTbl
+        if na(tbl)
+            tbl := table.new(tblPos, 4, showWL ? 9 : 8, border_width = 1,
+                 frame_width = 1, frame_color = color.new(color.gray, 50), border_color = color.new(color.gray, 60))
+        color hdr = color.new(color.black, 30)
+        table.cell(tbl, 0, 0, "",      bgcolor = hdr)
+        table.cell(tbl, 1, 0, "Range", text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "Average range of the last N occurrences")
+        table.cell(tbl, 2, 0, "High",  text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that high is taken out afterwards")
+        table.cell(tbl, 3, 0, "Low",   text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that low is taken out afterwards")
+        statRow(tbl, 1, "ASIA", asiaCol, sAsia.rng, sAsia.hHit, sAsia.lHit, tblSize)
+        statRow(tbl, 2, "LNDN", lndnCol, sLndn.rng, sLndn.hHit, sLndn.lHit, tblSize)
+        statRow(tbl, 3, "NYAM", nyamCol, sNyam.rng, sNyam.hHit, sNyam.lHit, tblSize)
+        statRow(tbl, 4, "NYPM", nypmCol, sNypm.rng, sNypm.hHit, sNypm.lHit, tblSize)
+        statRow(tbl, 5, "PD",   pdCol,   pDay.rng,  pDay.hHit,  pDay.lHit,  tblSize)
+        statRow(tbl, 6, "PW",   pwCol,   pWk.rng,   pWk.hHit,   pWk.lHit,   tblSize)
+        statRow(tbl, 7, "PM",   pmCol,   pMon.rng,  pMon.hHit,  pMon.lHit,  tblSize)
+        if showWL
+            int   done = wins + losses
+            float wr   = done > 0 ? 100.0 * wins / done : na
+            table.cell(tbl, 0, 8, "LR", text_color = color.white, bgcolor = color.new(sigCol, 40), text_size = tblSize)
+            table.cell(tbl, 1, 8, str.tostring(wins) + "W", text_color = color.white, bgcolor = color.new(#26a69a, 60), text_size = tblSize)
+            table.cell(tbl, 2, 8, str.tostring(losses) + "L", text_color = color.white, bgcolor = color.new(#ef5350, 60), text_size = tblSize)
+            table.cell(tbl, 3, 8, na(wr) ? "–" : str.tostring(int(math.round(wr))) + "%",
+                 text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = tblSize)
+
+// ─────────────────────────────── ALERTS ───────────────────────────────────
+alertcondition(sellSig, "SELL LR", "Base HITS: sell-side liquidity raid")
+alertcondition(buySig,  "BUY LR",  "Base HITS: buy-side liquidity raid")

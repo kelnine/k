@@ -18,6 +18,11 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **Base HITS (TradingView)** — a companion Pine Script v6 indicator in
+  [`pine/`](pine/): killzone session boxes with extended highs/lows, PD/PW/PM
+  levels, a supertrend cloud, `BUY LR` / `SELL LR` liquidity-raid signals with a
+  projected risk/reward box, and a session stats table (average range plus how
+  often each high and low gets swept).
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.
@@ -57,4 +62,5 @@ src/
     utils.ts     axis ticks, price/time formatting
   indicators/  pure-function indicator library + registry
   ui/          React shell: toolbar, layouts, watchlist, search
+pine/        Base HITS — TradingView (Pine Script v6) indicator
 ```
