@@ -238,15 +238,20 @@ bool newY = timeframe.change("12M")
 // Monday range — tracked live rather than fetched, because "Monday" here means
 // the week's first trading session, which keeps the level honest on holiday
 // weeks and on futures that open Sunday evening.
+// The first bar of the loaded history also reports a week change, but a 1m chart
+// usually starts mid-week, so trusting it would label some Wednesday session as
+// Monday. Wait for a real rollover instead and leave the levels off until then.
+bool weekStart = newW and not barstate.isfirst
+
 var int dayOfWeekIdx = 0
-if newW
+if weekStart
     dayOfWeekIdx := 1
-else if newD
+else if newD and dayOfWeekIdx > 0
     dayOfWeekIdx := dayOfWeekIdx + 1
 
 var float monH = na
 var float monL = na
-if newW
+if weekStart
     monH := high
     monL := low
 else if dayOfWeekIdx == 1
@@ -286,9 +291,9 @@ f_level(kyHL   and fitsY, newY, pyL, kyCol, "Prev Year Low",     keySty, 1, keyW
 f_level(kyMid  and fitsY, newY, math.avg(pyH, pyL), kyCol, "Prev Year Mid", keySty, 1, keyWidth)
 f_level(kyOpen and fitsY, newY, yOpen, kyCol, "Yearly Open",     keySty, 1, keyWidth)
 
-f_level(knHL  and timeframe.isintraday, newW, monH, knCol, "Monday High", keySty, 1, keyWidth)
-f_level(knHL  and timeframe.isintraday, newW, monL, knCol, "Monday Low",  keySty, 1, keyWidth)
-f_level(knMid and timeframe.isintraday, newW, math.avg(monH, monL), knCol, "Monday Mid", keySty, 1, keyWidth)
+f_level(knHL  and timeframe.isintraday, weekStart, monH, knCol, "Monday High", keySty, 1, keyWidth)
+f_level(knHL  and timeframe.isintraday, weekStart, monL, knCol, "Monday Low",  keySty, 1, keyWidth)
+f_level(knMid and timeframe.isintraday, weekStart, math.avg(monH, monL), knCol, "Monday Mid", keySty, 1, keyWidth)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Alerts

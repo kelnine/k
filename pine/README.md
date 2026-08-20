@@ -42,6 +42,9 @@ One overlay covering the whole setup, so nothing else needs to be on the chart:
 - **Monday** means the week's first trading session, not the calendar day. On a
   holiday week that is Tuesday, and on futures it includes the Sunday-evening
   open — which is what you want, since that is the session the range belongs to.
+  It is the one level tracked from chart bars rather than fetched, so it needs a
+  real week rollover in the loaded history: on a 1m chart that starts mid-week,
+  the Monday lines stay off until the following Sunday-evening open.
 - Every key level hides itself when the chart timeframe is above its own, so a
   daily chart drops the previous-day lines instead of drawing the previous bar.
 - Labels have two looks under **1H / 4H levels → Labels**: `Text` writes the name
