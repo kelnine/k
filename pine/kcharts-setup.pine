@@ -119,18 +119,31 @@ f_level(bool show, bool fresh, float price, color col, string txt, string sty, i
         label.delete(lbl)
         lbl := na
     else
-        if fresh or array.size(lns) == 0
+        // Touch the drawing only when something about it actually changed. A
+        // settled level moves once per period, so on a 1m chart this is the
+        // difference between a few hundred drawing calls and a few hundred
+        // thousand — enough to blow the runtime's execution budget.
+        var float lastPrice = na
+        bool started = fresh or array.size(lns) == 0
+        bool moved = na(lastPrice) or price != lastPrice
+        lastPrice := price
+
+        if started
             if array.size(lns) > 0
                 line.set_x2(array.get(lns, array.size(lns) - 1), time)
             array.push(lns, line.new(time, price, time + lvlExtMs, price, xloc = xloc.bar_time, color = col, width = wid, style = sty))
             while array.size(lns) > keep
                 line.delete(array.shift(lns))
-        line cur = array.get(lns, array.size(lns) - 1)
-        line.set_xy1(cur, line.get_x1(cur), price)
-        line.set_xy2(cur, time + lvlExtMs, price)
-        label.delete(lbl)
-        bool tag = lvlLblMode == "Tag"
-        lbl := barstate.islast and lvlLabels ? label.new(time + lvlExtMs, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_time, style = tag ? label.style_label_left : label.style_none, color = tag ? color.new(col, 88) : color.new(color.black, 100), textcolor = col, size = size.small) : na
+
+        if moved or barstate.islast
+            line cur = array.get(lns, array.size(lns) - 1)
+            line.set_xy1(cur, line.get_x1(cur), price)
+            line.set_xy2(cur, time + lvlExtMs, price)
+
+        if barstate.islast
+            label.delete(lbl)
+            bool tag = lvlLblMode == "Tag"
+            lbl := lvlLabels ? label.new(time + lvlExtMs, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_time, style = tag ? label.style_label_left : label.style_none, color = tag ? color.new(col, 88) : color.new(color.black, 100), textcolor = col, size = size.small) : na
     price
 
 // ─────────────────────────────────────────────────────────────────────────────
