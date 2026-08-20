@@ -278,6 +278,7 @@ f_add(bool isRes, int x1, float y1, int x2, float y2, float slope, int tc, int v
             t.viol      := vc
             t.score     := sc
             t.lastTouch := lastT
+        created := false
     else
         line nl = line.new(x1, y1, x2, y2, xloc = xloc.bar_index, extend = extend.none,
              color = color.new(isRes ? resCol : supCol, 0), width = 1, style = line.style_solid)
@@ -308,6 +309,7 @@ f_prune(bool isRes) =>
             TL t = array.get(tls, worstI)
             line.delete(t.ln)
             array.remove(tls, worstI)
+            go := true
         else
             go := false
 
@@ -423,7 +425,12 @@ if barOk and array.size(tls) > 0
         float lv = f_val(t.y1, t.slope, t.x1, bar_index)
 
         // ---------------- breakout ----------------
-        if not t.broken and bar_index > t.x2
+        // Independent guarded ifs (no if/else chains) so every block has a
+        // single, uniform return type - Pine type-checks if/else branches.
+        bool doBreak  = not t.broken and bar_index > t.x2
+        bool doRetest = t.broken and enableRetest and not t.failed and bar_index > t.brokeBar and bar_index - t.brokeBar <= retestWindow
+
+        if doBreak
             bool pierce = t.isRes
                  ? (breakMode == "Aggressive" ? high > lv + brkDist : close > lv + brkDist)
                  : (breakMode == "Aggressive" ? low  < lv - brkDist : close < lv - brkDist)
@@ -431,16 +438,14 @@ if barOk and array.size(tls) > 0
             bool filtOk  = volOk and bodyOk and (t.isRes ? emaBullOk : emaBearOk)
             bool raw     = pierce and closeOk and filtOk
             bool confirm = false
-            if raw
-                if secondConf
-                    if not t.pending
-                        t.pending    := true
-                        t.pendingBar := bar_index
-                    else if bar_index > t.pendingBar
-                        confirm := true
-                else
-                    confirm := true
-            else if t.pending and bar_index > t.pendingBar
+            if raw and not secondConf
+                confirm := true
+            if raw and secondConf and not t.pending
+                t.pending    := true
+                t.pendingBar := bar_index
+            if raw and secondConf and t.pending and bar_index > t.pendingBar
+                confirm := true
+            if not raw and t.pending and bar_index > t.pendingBar
                 t.pending := false
 
             if confirm
@@ -449,66 +454,53 @@ if barOk and array.size(tls) > 0
                 t.pending  := false
                 setupBar   := bar_index
                 setupIdx   := i
+                setupTxt   := t.isRes ? "BREAKOUT" : "BREAKDOWN"
                 if t.isRes
                     alBullBreak := true
-                    setupTxt    := "BREAKOUT"
-                    if showBrkLbl
-                        f_pushLabel(bar_index, low - atrNow * 0.6, "BREAKOUT", resCol, true)
                 else
                     alBearBreak := true
-                    setupTxt    := "BREAKDOWN"
-                    if showBrkLbl
-                        f_pushLabel(bar_index, high + atrNow * 0.6, "BREAKDOWN", supCol, false)
+                if showBrkLbl
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.6 : high + atrNow * 0.6, setupTxt, t.isRes ? resCol : supCol, t.isRes)
 
         // ---------------- retest ----------------
-        else if t.broken and enableRetest and not t.failed and bar_index > t.brokeBar and bar_index - t.brokeBar <= retestWindow
+        if doRetest
             float rtol = atrNow * retestTolATR
-            if t.isRes
-                // bullish: broken resistance should now act as support
-                if close < lv - rtol
-                    t.failed := true
-                else if not t.retestSeen
-                    if low <= lv + rtol
-                        t.retestSeen := true
-                        t.retestBar  := bar_index
-                        alBullRetest := true
-                        setupTxt     := "BULL RETEST"
-                        setupBar     := bar_index
-                        setupIdx     := i
-                        if showRtLbl
-                            f_pushLabel(bar_index, low - atrNow * 0.5, "RETEST", color.new(#2962ff, 0), true)
-                else if not t.retestConf and bar_index > t.retestBar
-                    if close > lv + rtol * 0.5 and close > open and emaBullOk
-                        t.retestConf := true
-                        alBullConf   := true
-                        setupTxt     := "BULL RETEST ✓"
-                        setupBar     := bar_index
-                        setupIdx     := i
-                        if showRtLbl
-                            f_pushLabel(bar_index, low - atrNow * 0.7, "CONFIRMED RETEST", color.new(#26a69a, 0), true)
-            else
-                // bearish: broken support should now act as resistance
-                if close > lv + rtol
-                    t.failed := true
-                else if not t.retestSeen
-                    if high >= lv - rtol
-                        t.retestSeen := true
-                        t.retestBar  := bar_index
-                        alBearRetest := true
-                        setupTxt     := "BEAR RETEST"
-                        setupBar     := bar_index
-                        setupIdx     := i
-                        if showRtLbl
-                            f_pushLabel(bar_index, high + atrNow * 0.5, "RETEST", color.new(#2962ff, 0), false)
-                else if not t.retestConf and bar_index > t.retestBar
-                    if close < lv - rtol * 0.5 and close < open and emaBearOk
-                        t.retestConf := true
-                        alBearConf   := true
-                        setupTxt     := "BEAR RETEST ✓"
-                        setupBar     := bar_index
-                        setupIdx     := i
-                        if showRtLbl
-                            f_pushLabel(bar_index, high + atrNow * 0.7, "CONFIRMED RETEST", color.new(#ef5350, 0), false)
+
+            // breakout invalidated - price closed back through the line
+            bool failNow = t.isRes ? close < lv - rtol : close > lv + rtol
+            if failNow
+                t.failed := true
+
+            // first return into the broken line
+            bool hit = t.isRes ? low <= lv + rtol : high >= lv - rtol
+            if not t.failed and not t.retestSeen and hit
+                t.retestSeen := true
+                t.retestBar  := bar_index
+                setupBar     := bar_index
+                setupIdx     := i
+                setupTxt     := t.isRes ? "BULL RETEST" : "BEAR RETEST"
+                if t.isRes
+                    alBullRetest := true
+                else
+                    alBearRetest := true
+                if showRtLbl
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.5 : high + atrNow * 0.5, "RETEST", color.new(#2962ff, 0), t.isRes)
+
+            // the line held - retest confirmed (never on the retest bar itself)
+            bool confOk = t.isRes
+                 ? (close > lv + rtol * 0.5 and close > open and emaBullOk)
+                 : (close < lv - rtol * 0.5 and close < open and emaBearOk)
+            if not t.failed and t.retestSeen and not t.retestConf and bar_index > t.retestBar and confOk
+                t.retestConf := true
+                setupBar     := bar_index
+                setupIdx     := i
+                setupTxt     := t.isRes ? "BULL RETEST OK" : "BEAR RETEST OK"
+                if t.isRes
+                    alBullConf := true
+                else
+                    alBearConf := true
+                if showRtLbl
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.7 : high + atrNow * 0.7, "CONFIRMED RETEST", t.isRes ? color.new(#26a69a, 0) : color.new(#ef5350, 0), t.isRes)
 
 // Setup goes stale
 if barOk and setupTxt != "None" and bar_index - setupBar > math.max(20, retestWindow)
@@ -558,6 +550,7 @@ if barOk and array.size(tls) > 0
             if setupIdx == oldI
                 setupIdx := -1
             array.remove(tls, oldI)
+            go := true
         else
             go := false
 
