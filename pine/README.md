@@ -26,6 +26,13 @@ One overlay covering the whole setup, so nothing else needs to be on the chart:
 2. Paste the contents of `kcharts-setup.pine`, replacing the template.
 3. **Save**, then **Add to chart**.
 
+### Turning things off
+
+Each block has a master switch at the top of its settings group — **Show EMA
+band**, **Show VWAP**, **Show 1H / 4H levels**, **Show key levels** — so the
+whole overlay can be pared back to one piece without touching the rest. Inside
+the key-levels group each row also has its own high-low / mid / open toggles.
+
 ### Notes
 
 - Previous-period levels are read with `request.security(..., high[1], lookahead_on)`,

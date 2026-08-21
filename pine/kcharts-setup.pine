@@ -33,6 +33,7 @@ float  vwapMult2 = input.float(2.0, "and", minval = 0.1, step = 0.1, group = G_V
 color  vwapCol   = input.color(color.new(#2962ff, 0), "Color", group = G_VWAP)
 
 // Higher timeframe levels
+bool   lvlOn     = input.bool(true, "Show 1H / 4H levels", group = G_LVL)
 string tf1       = input.timeframe("60",  "Timeframe A", group = G_LVL, inline = "tf")
 string tf2       = input.timeframe("240", "Timeframe B", group = G_LVL, inline = "tf")
 bool   showTf1   = input.bool(true, "A levels", group = G_LVL, inline = "on")
@@ -51,6 +52,7 @@ color  tf1Col    = input.color(color.new(#ff9800, 0), "A color", group = G_LVL, 
 color  tf2Col    = input.color(color.new(#ab47bc, 0), "B color", group = G_LVL, inline = "lc")
 
 // Key levels — session opens and prior-period ranges
+bool   keyOn     = input.bool(true, "Show key levels", group = G_KEY)
 int    keyWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_KEY, inline = "sty")
 string keyStyle  = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], group = G_KEY, inline = "sty")
 
@@ -211,18 +213,18 @@ string n2 = f_tfName(tf2)
 string prevSty = f_style(prevStyle)
 string currSty = f_style(currStyle)
 
-f_level(showTf1 and fits1 and showPrev, new1, prevH1, tf1Col, n1 + " PH", prevSty, lvlKeep, lvlWidth)
-f_level(showTf1 and fits1 and showPrev, new1, prevL1, tf1Col, n1 + " PL", prevSty, lvlKeep, lvlWidth)
-f_level(showTf2 and fits2 and showPrev, new2, prevH2, tf2Col, n2 + " PH", prevSty, lvlKeep, lvlWidth)
-f_level(showTf2 and fits2 and showPrev, new2, prevL2, tf2Col, n2 + " PL", prevSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf1 and fits1 and showPrev, new1, prevH1, tf1Col, n1 + " PH", prevSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf1 and fits1 and showPrev, new1, prevL1, tf1Col, n1 + " PL", prevSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf2 and fits2 and showPrev, new2, prevH2, tf2Col, n2 + " PH", prevSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf2 and fits2 and showPrev, new2, prevL2, tf2Col, n2 + " PL", prevSty, lvlKeep, lvlWidth)
 
-f_level(showTf1 and fits1 and showCurr, new1, currH1, tf1Col, n1 + " H", currSty, lvlKeep, lvlWidth)
-f_level(showTf1 and fits1 and showCurr, new1, currL1, tf1Col, n1 + " L", currSty, lvlKeep, lvlWidth)
-f_level(showTf2 and fits2 and showCurr, new2, currH2, tf2Col, n2 + " H", currSty, lvlKeep, lvlWidth)
-f_level(showTf2 and fits2 and showCurr, new2, currL2, tf2Col, n2 + " L", currSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf1 and fits1 and showCurr, new1, currH1, tf1Col, n1 + " H", currSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf1 and fits1 and showCurr, new1, currL1, tf1Col, n1 + " L", currSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf2 and fits2 and showCurr, new2, currH2, tf2Col, n2 + " H", currSty, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf2 and fits2 and showCurr, new2, currL2, tf2Col, n2 + " L", currSty, lvlKeep, lvlWidth)
 
-f_level(showTf1 and fits1 and showMid, new1, math.avg(prevH1, prevL1), color.new(tf1Col, 40), n1 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
-f_level(showTf2 and fits2 and showMid, new2, math.avg(prevH2, prevL2), color.new(tf2Col, 40), n2 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf1 and fits1 and showMid, new1, math.avg(prevH1, prevL1), color.new(tf1Col, 40), n1 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
+f_level(lvlOn and showTf2 and fits2 and showMid, new2, math.avg(prevH2, prevL2), color.new(tf2Col, 40), n2 + " EQ", line.style_dashed, lvlKeep, lvlWidth)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Key levels — session opens and prior-period ranges
@@ -279,34 +281,34 @@ bool fitsY = timeframe.in_seconds() <= timeframe.in_seconds("12M")
 
 string keySty = f_style(keyStyle)
 
-f_level(kdHL   and fitsD, newD, pdH, kdCol, "Prev Day High",     keySty, 1, keyWidth)
-f_level(kdHL   and fitsD, newD, pdL, kdCol, "Prev Day Low",      keySty, 1, keyWidth)
-f_level(kdMid  and fitsD, newD, math.avg(pdH, pdL), kdCol, "Prev Day Mid", keySty, 1, keyWidth)
-f_level(kdOpen and fitsD, newD, dOpen, kdCol, "Daily Open",      keySty, 1, keyWidth)
+f_level(keyOn and kdHL   and fitsD, newD, pdH, kdCol, "Prev Day High",     keySty, 1, keyWidth)
+f_level(keyOn and kdHL   and fitsD, newD, pdL, kdCol, "Prev Day Low",      keySty, 1, keyWidth)
+f_level(keyOn and kdMid  and fitsD, newD, math.avg(pdH, pdL), kdCol, "Prev Day Mid", keySty, 1, keyWidth)
+f_level(keyOn and kdOpen and fitsD, newD, dOpen, kdCol, "Daily Open",      keySty, 1, keyWidth)
 
-f_level(kwHL   and fitsW, newW, pwH, kwCol, "Prev Week High",    keySty, 1, keyWidth)
-f_level(kwHL   and fitsW, newW, pwL, kwCol, "Prev Week Low",     keySty, 1, keyWidth)
-f_level(kwMid  and fitsW, newW, math.avg(pwH, pwL), kwCol, "Prev Week Mid", keySty, 1, keyWidth)
-f_level(kwOpen and fitsW, newW, wOpen, kwCol, "Weekly Open",     keySty, 1, keyWidth)
+f_level(keyOn and kwHL   and fitsW, newW, pwH, kwCol, "Prev Week High",    keySty, 1, keyWidth)
+f_level(keyOn and kwHL   and fitsW, newW, pwL, kwCol, "Prev Week Low",     keySty, 1, keyWidth)
+f_level(keyOn and kwMid  and fitsW, newW, math.avg(pwH, pwL), kwCol, "Prev Week Mid", keySty, 1, keyWidth)
+f_level(keyOn and kwOpen and fitsW, newW, wOpen, kwCol, "Weekly Open",     keySty, 1, keyWidth)
 
-f_level(kmHL   and fitsM, newM, pmH, kmCol, "Prev Month High",   keySty, 1, keyWidth)
-f_level(kmHL   and fitsM, newM, pmL, kmCol, "Prev Month Low",    keySty, 1, keyWidth)
-f_level(kmMid  and fitsM, newM, math.avg(pmH, pmL), kmCol, "Prev Month Mid", keySty, 1, keyWidth)
-f_level(kmOpen and fitsM, newM, mOpen, kmCol, "Monthly Open",    keySty, 1, keyWidth)
+f_level(keyOn and kmHL   and fitsM, newM, pmH, kmCol, "Prev Month High",   keySty, 1, keyWidth)
+f_level(keyOn and kmHL   and fitsM, newM, pmL, kmCol, "Prev Month Low",    keySty, 1, keyWidth)
+f_level(keyOn and kmMid  and fitsM, newM, math.avg(pmH, pmL), kmCol, "Prev Month Mid", keySty, 1, keyWidth)
+f_level(keyOn and kmOpen and fitsM, newM, mOpen, kmCol, "Monthly Open",    keySty, 1, keyWidth)
 
-f_level(kqHL   and fitsQ, newQ, pqH, kqCol, "Prev Quarter High", keySty, 1, keyWidth)
-f_level(kqHL   and fitsQ, newQ, pqL, kqCol, "Prev Quarter Low",  keySty, 1, keyWidth)
-f_level(kqMid  and fitsQ, newQ, math.avg(pqH, pqL), kqCol, "Prev Quarter Mid", keySty, 1, keyWidth)
-f_level(kqOpen and fitsQ, newQ, qOpen, kqCol, "Quarterly Open",  keySty, 1, keyWidth)
+f_level(keyOn and kqHL   and fitsQ, newQ, pqH, kqCol, "Prev Quarter High", keySty, 1, keyWidth)
+f_level(keyOn and kqHL   and fitsQ, newQ, pqL, kqCol, "Prev Quarter Low",  keySty, 1, keyWidth)
+f_level(keyOn and kqMid  and fitsQ, newQ, math.avg(pqH, pqL), kqCol, "Prev Quarter Mid", keySty, 1, keyWidth)
+f_level(keyOn and kqOpen and fitsQ, newQ, qOpen, kqCol, "Quarterly Open",  keySty, 1, keyWidth)
 
-f_level(kyHL   and fitsY, newY, pyH, kyCol, "Prev Year High",    keySty, 1, keyWidth)
-f_level(kyHL   and fitsY, newY, pyL, kyCol, "Prev Year Low",     keySty, 1, keyWidth)
-f_level(kyMid  and fitsY, newY, math.avg(pyH, pyL), kyCol, "Prev Year Mid", keySty, 1, keyWidth)
-f_level(kyOpen and fitsY, newY, yOpen, kyCol, "Yearly Open",     keySty, 1, keyWidth)
+f_level(keyOn and kyHL   and fitsY, newY, pyH, kyCol, "Prev Year High",    keySty, 1, keyWidth)
+f_level(keyOn and kyHL   and fitsY, newY, pyL, kyCol, "Prev Year Low",     keySty, 1, keyWidth)
+f_level(keyOn and kyMid  and fitsY, newY, math.avg(pyH, pyL), kyCol, "Prev Year Mid", keySty, 1, keyWidth)
+f_level(keyOn and kyOpen and fitsY, newY, yOpen, kyCol, "Yearly Open",     keySty, 1, keyWidth)
 
-f_level(knHL  and timeframe.isintraday, weekStart, monH, knCol, "Monday High", keySty, 1, keyWidth)
-f_level(knHL  and timeframe.isintraday, weekStart, monL, knCol, "Monday Low",  keySty, 1, keyWidth)
-f_level(knMid and timeframe.isintraday, weekStart, math.avg(monH, monL), knCol, "Monday Mid", keySty, 1, keyWidth)
+f_level(keyOn and knHL  and timeframe.isintraday, weekStart, monH, knCol, "Monday High", keySty, 1, keyWidth)
+f_level(keyOn and knHL  and timeframe.isintraday, weekStart, monL, knCol, "Monday Low",  keySty, 1, keyWidth)
+f_level(keyOn and knMid and timeframe.isintraday, weekStart, math.avg(monH, monL), knCol, "Monday Mid", keySty, 1, keyWidth)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Alerts
