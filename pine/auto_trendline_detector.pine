@@ -35,15 +35,17 @@ gX = "6 · Dashboard"
 pivotLenIn   = input.int(8,    "Pivot Length (swing sensitivity)",  minval = 2, maxval = 60,  group = gT, tooltip = "Left/right bars used to confirm a swing. Higher = fewer, bigger swings. Signals are delayed by this many bars - that is the honest, non-repainting cost of pivots.")
 autoAdapt    = input.bool(true,"Auto-adapt pivot length to timeframe",                        group = gT, tooltip = "Uses a tuned pivot length per timeframe (1m..D) instead of the value above.")
 minTouches   = input.int(2,    "Minimum touches",                    minval = 2, maxval = 6,  group = gT, tooltip = "2 = the two anchors only. 3+ requires genuine extra reactions on the line.")
-maxPerSide   = input.int(3,    "Maximum active trendlines (per side)",minval = 1, maxval = 8, group = gT)
+maxPerSide   = input.int(2,    "Maximum active trendlines (per side)",minval = 1, maxval = 8, group = gT)
 maxAnalyze   = input.int(400,  "Maximum bars to analyze",            minval = 80, maxval = 1000, group = gT, tooltip = "Lookback window for anchors and touch validation. Cost per confirmed swing is roughly (pairing depth x this value), so very large values combined with a deep pairing depth can slow the script down.")
 minPivotDist = input.int(10,   "Minimum distance between pivots (bars)", minval = 2, maxval = 300, group = gT)
 strongThr    = input.float(60, "Strength threshold (Strong)",        minval = 10, maxval = 100, step = 1, group = gT)
-minScoreIn   = input.float(35, "Minimum score to keep a line",       minval = 0,  maxval = 100, step = 1, group = gT)
+minScoreIn   = input.float(45, "Minimum score to keep a line",       minval = 0,  maxval = 100, step = 1, group = gT)
 tolATR       = input.float(0.35,"Touch tolerance (ATR x)",           minval = 0.05, maxval = 2.0, step = 0.05, group = gT)
 pairDepth    = input.int(6,    "Anchor pairing depth",               minval = 2, maxval = 14, group = gT, tooltip = "How many previous swings the newest swing is paired against when building candidate lines.")
 maxViolIn    = input.int(1,    "Max allowed violations",             minval = 0, maxval = 6,  group = gT, tooltip = "Closes beyond the line between the two anchors. 0 = perfectly respected lines only.")
 slopeMode    = input.string("Classic", "Slope filter", options = ["Classic", "Any Slope"],    group = gT, tooltip = "Classic = descending/flat resistance and ascending/flat support only.")
+flatTol      = input.float(0.25,"Counter-slope tolerance (ATR x)",  minval = 0.0, maxval = 2.0, step = 0.05, group = gT, tooltip = "How far the newer anchor may sit the WRONG way from the older one, as a fraction of ATR. This is measured anchor-to-anchor, not per bar, so it behaves identically on 1m and Daily.")
+maxDistATR   = input.float(5.0, "Max line distance from price (ATR x)", minval = 1.0, maxval = 30.0, step = 0.5, group = gT, tooltip = "Lines further than this from price are dropped - they are no longer actionable.")
 
 breakMode    = input.string("Confirmed", "Breakout mode", options = ["Aggressive", "Confirmed"], group = gB, tooltip = "Aggressive = wick pierces the line. Confirmed = candle closes beyond it.")
 requireClose = input.bool(true,  "Candle close confirmation",        group = gB)
@@ -51,6 +53,7 @@ secondConf   = input.bool(false, "Second-candle confirmation",       group = gB)
 enableRetest = input.bool(true,  "Retest detection",                 group = gB)
 retestTolATR = input.float(0.30, "Retest tolerance (ATR x)",         minval = 0.05, maxval = 2.0, step = 0.05, group = gB)
 retestWindow = input.int(30,     "Retest window (bars)",             minval = 3, maxval = 200, group = gB)
+signalStrong = input.bool(true,  "Signal only on strong lines",      group = gB, tooltip = "Weak lines still break and are still tracked, but produce no label and no alert. This is the single biggest chart-clutter control.")
 
 useATRf      = input.bool(true,  "ATR breakout distance filter",     group = gF)
 atrBreakMult = input.float(0.25, "    ATR distance (x ATR)",         minval = 0.0, maxval = 3.0, step = 0.05, group = gF)
@@ -69,12 +72,13 @@ showE200     = input.bool(true,  "Show EMA 200", inline = "e2", group = gE)
 showRes      = input.bool(true,  "Resistance trendlines", inline = "d1", group = gD)
 showSup      = input.bool(true,  "Support trendlines",    inline = "d1", group = gD)
 brokenPolicy = input.string("Keep most recent", "Broken trendlines", options = ["Hide", "Keep", "Keep most recent"], group = gD)
-keepBrokenN  = input.int(2,      "    Keep N most recent broken",  minval = 1, maxval = 8, group = gD)
+keepBrokenN  = input.int(1,      "    Keep N most recent broken",  minval = 1, maxval = 8, group = gD)
 showSwings   = input.bool(false, "Swing point markers",   inline = "d2", group = gD)
 showBrkLbl   = input.bool(true,  "Breakout labels",       inline = "d3", group = gD)
 showRtLbl    = input.bool(true,  "Retest labels",         inline = "d3", group = gD)
 cleanMode    = input.bool(false, "CLEAN MODE (best S/R + active setup only)", group = gD)
-extendBars   = input.int(8,      "Project active lines forward (bars)", minval = 0, maxval = 100, group = gD)
+extendBars   = input.int(5,      "Project active lines forward (bars)", minval = 0, maxval = 100, group = gD)
+lblGapIn     = input.int(0,      "Minimum bars between labels (0 = auto)", minval = 0, maxval = 200, group = gD, tooltip = "Auto uses half the pivot length, which keeps labels from stacking on fast timeframes.")
 resCol       = input.color(color.new(#ef5350, 0), "Resistance", inline = "c1", group = gD)
 supCol       = input.color(color.new(#26a69a, 0), "Support",    inline = "c1", group = gD)
 brokenCol    = input.color(color.new(#787b86, 0), "Broken",     inline = "c1", group = gD)
@@ -91,6 +95,7 @@ adaptLen = tfSec <= 60 ? 12 : tfSec <= 300 ? 10 : tfSec <= 900 ? 9 : tfSec <= 36
 L        = math.max(2, autoAdapt ? adaptLen : pivotLenIn)
 minDist  = math.max(minPivotDist, L)          // anchors can never be closer than one swing width
 clusterG = math.max(2, L)                     // two touches inside this many bars = ONE touch
+lblGap   = lblGapIn > 0 ? lblGapIn : math.max(2, L / 2)
 
 float atrSeries = ta.atr(14)
 float atrNow    = nz(atrSeries, high - low)
@@ -155,6 +160,7 @@ type TL
 // ============================================================================
 var array<TL>    tls   = array.new<TL>()
 var array<label> labs  = array.new<label>()
+var int lastLblBar = -100000   // shared spacing gate so labels cannot stack
 
 var array<int>   phBar = array.new<int>()
 var array<float> phPx  = array.new<float>()
@@ -238,7 +244,7 @@ f_pushLabel(int b, float y, string txt, color c, bool below) =>
          color = color.new(c, 12), textcolor = color.white, size = size.tiny,
          style = below ? label.style_label_up : label.style_label_down)
     array.push(labs, lb)
-    if array.size(labs) > 30
+    if array.size(labs) > 16
         label.delete(array.shift(labs))
 
 // Trim pivot buffers: drop anything older than the analysis window, cap length.
@@ -260,9 +266,15 @@ f_add(bool isRes, int x1, float y1, int x2, float y2, float slope, int tc, int v
         for i = 0 to array.size(tls) - 1
             TL t = array.get(tls, i)
             if t.isRes == isRes and not t.broken
+                // Compare where the two lines actually sit at two separate bars.
+                // Comparing raw slopes needs an ATR-per-bar tolerance, which is
+                // meaningless across timeframes.
+                int   bOld = bar_index - math.min(maxAnalyze, 150)
                 float v1 = f_val(t.y1, t.slope, t.x1, bar_index)
                 float v2 = f_val(y1, slope, x1, bar_index)
-                if math.abs(v1 - v2) <= atrNow * 0.5 and math.abs(t.slope - slope) <= atrNow * 0.08
+                float w1 = f_val(t.y1, t.slope, t.x1, bOld)
+                float w2 = f_val(y1, slope, x1, bOld)
+                if math.abs(v1 - v2) <= atrNow * 0.6 and math.abs(w1 - w2) <= atrNow * 0.6
                     found := i
                     break
     bool created = false
@@ -351,7 +363,10 @@ if barOk and not na(ph)
                 if span >= minDist and ab >= bar_index - maxAnalyze
                     float slope = (pv - ap) / span
                     // Classic: resistance must be descending or flat.
-                    bool slopeOk = slopeMode == "Any Slope" or slope <= atrNow * 0.02
+                    // Flatness is measured anchor-to-anchor, NOT per bar. A per-bar
+                    // ATR tolerance lets a long span drift arbitrarily far the wrong
+                    // way, which is how "descending support" lines appeared on Daily.
+                    bool slopeOk = slopeMode == "Any Slope" or pv <= ap + atrNow * flatTol
                     if slopeOk
                         int   tc    = f_validate(ab, ap, slope, true, pb, tolATR, clusterG)
                         int   vc    = array.get(vI, 1)
@@ -390,7 +405,7 @@ if barOk and not na(pl)
                 if span >= minDist and ab >= bar_index - maxAnalyze
                     float slope = (pv - ap) / span
                     // Classic: support must be ascending or flat.
-                    bool slopeOk = slopeMode == "Any Slope" or slope >= -atrNow * 0.02
+                    bool slopeOk = slopeMode == "Any Slope" or pv >= ap - atrNow * flatTol
                     if slopeOk
                         int   tc    = f_validate(ab, ap, slope, false, pb, tolATR, clusterG)
                         int   vc    = array.get(vI, 1)
@@ -423,6 +438,8 @@ if barOk and array.size(tls) > 0
     for i = 0 to array.size(tls) - 1
         TL t = array.get(tls, i)
         float lv = f_val(t.y1, t.slope, t.x1, bar_index)
+        // Weak lines are still tracked and still break - they just stay silent.
+        bool sigOk = not signalStrong or t.score >= strongThr
 
         // ---------------- breakout ----------------
         // Independent guarded ifs (no if/else chains) so every block has a
@@ -452,6 +469,7 @@ if barOk and array.size(tls) > 0
                 t.broken   := true
                 t.brokeBar := bar_index
                 t.pending  := false
+            if confirm and sigOk
                 setupBar   := bar_index
                 setupIdx   := i
                 setupTxt   := t.isRes ? "BREAKOUT" : "BREAKDOWN"
@@ -459,8 +477,9 @@ if barOk and array.size(tls) > 0
                     alBullBreak := true
                 else
                     alBearBreak := true
-                if showBrkLbl
-                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.6 : high + atrNow * 0.6, setupTxt, t.isRes ? resCol : supCol, t.isRes)
+                if showBrkLbl and bar_index - lastLblBar >= lblGap
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.8 : high + atrNow * 0.8, setupTxt, t.isRes ? resCol : supCol, t.isRes)
+                    lastLblBar := bar_index
 
         // ---------------- retest ----------------
         if doRetest
@@ -476,6 +495,7 @@ if barOk and array.size(tls) > 0
             if not t.failed and not t.retestSeen and hit
                 t.retestSeen := true
                 t.retestBar  := bar_index
+            if not t.failed and t.retestSeen and t.retestBar == bar_index and sigOk
                 setupBar     := bar_index
                 setupIdx     := i
                 setupTxt     := t.isRes ? "BULL RETEST" : "BEAR RETEST"
@@ -483,15 +503,18 @@ if barOk and array.size(tls) > 0
                     alBullRetest := true
                 else
                     alBearRetest := true
-                if showRtLbl
-                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.5 : high + atrNow * 0.5, "RETEST", color.new(#2962ff, 0), t.isRes)
+                if showRtLbl and bar_index - lastLblBar >= lblGap
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.8 : high + atrNow * 0.8, "RETEST", color.new(#2962ff, 0), t.isRes)
+                    lastLblBar := bar_index
 
             // the line held - retest confirmed (never on the retest bar itself)
             bool confOk = t.isRes
                  ? (close > lv + rtol * 0.5 and close > open and emaBullOk)
                  : (close < lv - rtol * 0.5 and close < open and emaBearOk)
-            if not t.failed and t.retestSeen and not t.retestConf and bar_index > t.retestBar and confOk
+            bool confNow = not t.failed and t.retestSeen and not t.retestConf and bar_index > t.retestBar and confOk
+            if confNow
                 t.retestConf := true
+            if confNow and sigOk
                 setupBar     := bar_index
                 setupIdx     := i
                 setupTxt     := t.isRes ? "BULL RETEST OK" : "BEAR RETEST OK"
@@ -499,8 +522,9 @@ if barOk and array.size(tls) > 0
                     alBullConf := true
                 else
                     alBearConf := true
-                if showRtLbl
-                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 0.7 : high + atrNow * 0.7, "CONFIRMED RETEST", t.isRes ? color.new(#26a69a, 0) : color.new(#ef5350, 0), t.isRes)
+                if showRtLbl and bar_index - lastLblBar >= lblGap
+                    f_pushLabel(bar_index, t.isRes ? low - atrNow * 1.1 : high + atrNow * 1.1, "RETEST OK", t.isRes ? color.new(#26a69a, 0) : color.new(#ef5350, 0), t.isRes)
+                    lastLblBar := bar_index
 
 // Setup goes stale
 if barOk and setupTxt != "None" and bar_index - setupBar > math.max(20, retestWindow)
@@ -522,7 +546,7 @@ if barOk and array.size(tls) > 0
                 kill := true
             if not t.broken
                 float lv = f_val(t.y1, t.slope, t.x1, bar_index)
-                if math.abs(lv - close) > atrNow * 20
+                if math.abs(lv - close) > atrNow * maxDistATR
                     kill := true       // line has drifted out of any useful range
             if kill
                 line.delete(t.ln)
