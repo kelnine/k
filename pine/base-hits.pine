@@ -153,59 +153,69 @@ newLbl(int x, float y, string txt, color c) =>
 // Session state machine: track the live session, publish its levels when it
 // closes, then watch for the sweep and record the outcome as a statistic.
 method sessStep(Sess s, bool isIn, bool boxOn, bool lnOn, bool lbOn, int cap) =>
-    if s.on
-        if isIn and not s.wasIn
-            if not na(s.pHi)
-                capPush(s.rng,  s.pHi - s.pLo,     cap)
-                capPush(s.hHit, s.pHiSwept ? 1 : 0, cap)
-                capPush(s.lHit, s.pLoSwept ? 1 : 0, cap)
-            s.hi := high
-            s.lo := low
-            if boxOn
-                s.bx := box.new(bar_index, s.hi, bar_index, s.lo,
-                     border_color = color.new(s.col, 55), border_width = 1,
-                     bgcolor = color.new(s.col, 90))
-        else if isIn
-            s.hi := math.max(s.hi, high)
-            s.lo := math.min(s.lo, low)
-            if not na(s.bx)
-                box.set_right(s.bx, bar_index)
-                box.set_top(s.bx, s.hi)
-                box.set_bottom(s.bx, s.lo)
-        else if s.wasIn
-            s.pHi      := s.hi
-            s.pLo      := s.lo
-            s.pHiSwept := false
-            s.pLoSwept := false
-            if not na(s.hiLn)
-                line.delete(s.hiLn)
-            if not na(s.loLn)
-                line.delete(s.loLn)
-            if not na(s.hiLb)
-                label.delete(s.hiLb)
-            if not na(s.loLb)
-                label.delete(s.loLb)
-            if lnOn
-                s.hiLn := line.new(bar_index, s.pHi, bar_index, s.pHi, color = s.col, style = line.style_dotted)
-                s.loLn := line.new(bar_index, s.pLo, bar_index, s.pLo, color = s.col, style = line.style_dotted)
-            if lbOn
-                s.hiLb := newLbl(bar_index, s.pHi, s.name + " High", s.col)
-                s.loLb := newLbl(bar_index, s.pLo, s.name + " Low",  s.col)
-        else if not na(s.pHi)
-            if high > s.pHi
-                s.pHiSwept := true
-            if low < s.pLo
-                s.pLoSwept := true
-            if not s.pHiSwept
-                if not na(s.hiLn)
-                    line.set_x2(s.hiLn, bar_index)
-                if not na(s.hiLb)
-                    label.set_x(s.hiLb, bar_index)
-            if not s.pLoSwept
-                if not na(s.loLn)
-                    line.set_x2(s.loLn, bar_index)
-                if not na(s.loLb)
-                    label.set_x(s.loLb, bar_index)
+    bool opens   = s.on and isIn and not s.wasIn
+    bool runs    = s.on and isIn and s.wasIn
+    bool closes  = s.on and not isIn and s.wasIn
+    bool watches = s.on and not isIn and not s.wasIn and not na(s.pHi)
+
+    // session opens → bank the previous instance as a statistic, start fresh
+    if opens
+        if not na(s.pHi)
+            capPush(s.rng,  s.pHi - s.pLo,      cap)
+            capPush(s.hHit, s.pHiSwept ? 1 : 0, cap)
+            capPush(s.lHit, s.pLoSwept ? 1 : 0, cap)
+        s.hi := high
+        s.lo := low
+        if boxOn
+            s.bx := box.new(bar_index, s.hi, bar_index, s.lo,
+                 border_color = color.new(s.col, 55), border_width = 1,
+                 bgcolor = color.new(s.col, 90))
+
+    // session running → stretch the box with the range
+    if runs
+        s.hi := math.max(s.hi, high)
+        s.lo := math.min(s.lo, low)
+        if not na(s.bx)
+            box.set_right(s.bx, bar_index)
+            box.set_top(s.bx, s.hi)
+            box.set_bottom(s.bx, s.lo)
+
+    // session closes → publish its high and low as levels
+    if closes
+        s.pHi      := s.hi
+        s.pLo      := s.lo
+        s.pHiSwept := false
+        s.pLoSwept := false
+        if not na(s.hiLn)
+            line.delete(s.hiLn)
+        if not na(s.loLn)
+            line.delete(s.loLn)
+        if not na(s.hiLb)
+            label.delete(s.hiLb)
+        if not na(s.loLb)
+            label.delete(s.loLb)
+        if lnOn
+            s.hiLn := line.new(bar_index, s.pHi, bar_index, s.pHi, color = s.col, style = line.style_dotted)
+            s.loLn := line.new(bar_index, s.pLo, bar_index, s.pLo, color = s.col, style = line.style_dotted)
+        if lbOn
+            s.hiLb := newLbl(bar_index, s.pHi, s.name + " High", s.col)
+            s.loLb := newLbl(bar_index, s.pLo, s.name + " Low",  s.col)
+
+    // outside the session → extend the levels until price takes them
+    if watches
+        if high > s.pHi
+            s.pHiSwept := true
+        if low < s.pLo
+            s.pLoSwept := true
+        if not s.pHiSwept and not na(s.hiLn)
+            line.set_x2(s.hiLn, bar_index)
+        if not s.pHiSwept and not na(s.hiLb)
+            label.set_x(s.hiLb, bar_index)
+        if not s.pLoSwept and not na(s.loLn)
+            line.set_x2(s.loLn, bar_index)
+        if not s.pLoSwept and not na(s.loLb)
+            label.set_x(s.loLb, bar_index)
+
     s.wasIn := isIn
 
 // Previous day / week / month: same idea, driven by the HTF rollover.
@@ -228,12 +238,13 @@ method perStep(Per p, bool isNew, float pH, float pL, int cap) =>
 // Stepped level line: a fresh segment each period, the old one stays frozen.
 method render(Lvl v, bool isNew, float price, bool show) =>
     if show and not na(price)
-        if isNew or na(v.ln)
-            v.ln := line.new(bar_index, price, bar_index, price, color = v.col, style = line.style_dashed)
+        bool fresh = isNew or na(v.ln)
+        if fresh
             if not na(v.lb)
                 label.delete(v.lb)
+            v.ln := line.new(bar_index, price, bar_index, price, color = v.col, style = line.style_dashed)
             v.lb := newLbl(bar_index, price, v.name, v.col)
-        else
+        if not fresh
             line.set_y1(v.ln, price)
             line.set_y2(v.ln, price)
             line.set_x2(v.ln, bar_index)
@@ -400,7 +411,8 @@ if buySig
 if tr.active
     bool stopHit = tr.dir < 0 ? high >= tr.stop : low  <= tr.stop
     bool tgtHit  = tr.dir < 0 ? low  <= tr.tgt  : high >= tr.tgt
-    if stopHit or tgtHit
+    bool resolved = stopHit or tgtHit
+    if resolved
         tr.active := false
         if stopHit
             losses += 1
@@ -415,7 +427,7 @@ if tr.active
         if not na(tr.lb)
             label.set_x(tr.lb, bar_index)
             label.set_text(tr.lb, stopHit ? "SL" : "TP")
-    else
+    if not resolved
         if not na(tr.rBx)
             box.set_right(tr.rBx, bar_index + projBars)
         if not na(tr.tBx)
@@ -459,9 +471,8 @@ if barstate.islast
         if na(cdLb)
             cdLb := label.new(bar_index + 3, close, cdTxt, xloc.bar_index, yloc.price,
                  color.new(color.gray, 25), label.style_label_left, color.white, size.small)
-        else
-            label.set_xy(cdLb, bar_index + 3, close)
-            label.set_text(cdLb, cdTxt)
+        label.set_xy(cdLb, bar_index + 3, close)
+        label.set_text(cdLb, cdTxt)
 
     if showTbl
         if na(tbl)
