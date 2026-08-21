@@ -19,12 +19,24 @@ indicator("Base HITS — Sessions · Liquidity Raids · Stats", "Base HITS", ove
      max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ─────────────────────────────── INPUTS ───────────────────────────────────
-string GS = "① Sessions"
-string GL = "② Higher-timeframe levels"
-string GC = "③ Trend cloud"
-string GR = "④ Liquidity-raid signals"
-string GT = "⑤ Trade projection"
-string GB = "⑥ Stats table"
+string GD = "① Bias of the day"
+string GS = "② Sessions"
+string GL = "③ Higher-timeframe levels"
+string GC = "④ Trend cloud"
+string GR = "⑤ Liquidity-raid signals"
+string GT = "⑥ Trade projection"
+string GB = "⑦ Stats table"
+
+// The day gets one direction. Signals against it are suppressed, so a buy day
+// only ever prints BUY LR and a sell day only ever prints SELL LR.
+string biasMode = input.string("Sweep of a session", "How the bias is set",
+     options = ["Sweep of a session", "Prior-day equilibrium", "Prior-day direction", "Daily EMA trend", "Manual"], group = GD)
+string biasSrc  = input.string("ASIA", "Sweep source",
+     options = ["ASIA", "LNDN", "NYAM", "NYPM", "Prior day"], group = GD)
+int    biasEma  = input.int(20, "Daily EMA length", minval = 1, group = GD)
+string manBias  = input.string("Both", "Manual bias", options = ["Buy only", "Sell only", "Both"], group = GD)
+bool   allowNtr = input.bool(false, "Allow signals before the bias is set", group = GD)
+bool   showBias = input.bool(true, "Bias label on chart", group = GD)
 
 string tzIn        = input.string("America/New_York", "Timezone", group = GS)
 bool   showSessBox = input.bool(true, "Session boxes",      group = GS, inline = "sg")
@@ -99,6 +111,7 @@ type Sess
     box    bx       = na
     float  pHi      = na
     float  pLo      = na
+    int    pAt      = na
     bool   pHiSwept = false
     bool   pLoSwept = false
     line   hiLn     = na
@@ -184,6 +197,7 @@ method sessStep(Sess s, bool isIn, bool boxOn, bool lnOn, bool lbOn, int cap) =>
     if closes
         s.pHi      := s.hi
         s.pLo      := s.lo
+        s.pAt      := bar_index
         s.pHiSwept := false
         s.pLoSwept := false
         if not na(s.hiLn)
@@ -313,6 +327,68 @@ inFlag.set(1, lndnOn and not na(time(timeframe.period, lndnSpec, tzIn)))
 inFlag.set(2, nyamOn and not na(time(timeframe.period, nyamSpec, tzIn)))
 inFlag.set(3, nypmOn and not na(time(timeframe.period, nypmSpec, tzIn)))
 
+// ───────────────────────── BIAS OF THE DAY ────────────────────────────────
+// One direction per day. It is set once — by the first sweep of the chosen
+// session range, or from prior-day context — and then locked until the next
+// day, so only signals that agree with it are allowed to print.
+[pdO, pdCl] = request.security(syminfo.tickerid, "D", [open[1], close[1]], lookahead = barmerge.lookahead_on)
+float dEma  = request.security(syminfo.tickerid, "D", ta.ema(close, biasEma)[1], lookahead = barmerge.lookahead_on)
+float pdMid = na(pdH) or na(pdL) ? na : (pdH + pdL) / 2
+
+// The range whose sweep decides the day (read before this bar's session update,
+// so the very bar that grabs the liquidity is already on the right side).
+float bsHi = biasSrc == "ASIA" ? sAsia.pHi : biasSrc == "LNDN" ? sLndn.pHi : biasSrc == "NYAM" ? sNyam.pHi : biasSrc == "NYPM" ? sNypm.pHi : pdH
+float bsLo = biasSrc == "ASIA" ? sAsia.pLo : biasSrc == "LNDN" ? sLndn.pLo : biasSrc == "NYAM" ? sNyam.pLo : biasSrc == "NYPM" ? sNypm.pLo : pdL
+int   bsAt = biasSrc == "ASIA" ? sAsia.pAt : biasSrc == "LNDN" ? sLndn.pAt : biasSrc == "NYAM" ? sNyam.pAt : biasSrc == "NYPM" ? sNypm.pAt : na
+
+var int dayStart = 0
+if newD
+    dayStart := bar_index
+
+// Yesterday's session range is not today's bias — the range has to have closed
+// inside the current day before its sweep counts.
+bool bsFresh = biasSrc == "Prior day" or (not na(bsAt) and bsAt >= dayStart)
+
+var int    biasDir = 0
+var string biasWhy = "not set yet"
+
+if newD
+    biasDir := 0
+    biasWhy := "not set yet"
+
+if biasMode == "Manual"
+    biasDir := manBias == "Buy only" ? 1 : manBias == "Sell only" ? -1 : 0
+    biasWhy := "set manually"
+
+// A grab of the low is buy-side fuel, a grab of the high is sell-side fuel.
+if biasMode == "Sweep of a session" and biasDir == 0 and bsFresh and not na(bsHi) and not na(bsLo)
+    bool tookLo = low < bsLo
+    bool tookHi = high > bsHi
+    if tookLo and not tookHi
+        biasDir := 1
+        biasWhy := biasSrc + " low swept → buys only"
+    if tookHi and not tookLo
+        biasDir := -1
+        biasWhy := biasSrc + " high swept → sells only"
+    if tookHi and tookLo
+        biasDir := close > (bsHi + bsLo) / 2 ? 1 : -1
+        biasWhy := biasSrc + " range swept both ways → closed " + (close > (bsHi + bsLo) / 2 ? "up" : "down")
+
+if biasMode == "Prior-day equilibrium" and biasDir == 0 and not na(pdMid)
+    biasDir := close > pdMid ? 1 : -1
+    biasWhy := close > pdMid ? "above prior-day equilibrium" : "below prior-day equilibrium"
+
+if biasMode == "Prior-day direction" and biasDir == 0 and not na(pdO) and not na(pdCl)
+    biasDir := pdCl > pdO ? 1 : -1
+    biasWhy := pdCl > pdO ? "prior day closed up" : "prior day closed down"
+
+if biasMode == "Daily EMA trend" and biasDir == 0 and not na(dEma) and not na(pdCl)
+    biasDir := pdCl > dEma ? 1 : -1
+    biasWhy := pdCl > dEma ? "daily close above EMA" : "daily close below EMA"
+
+bool allowBuy  = biasDir > 0 or (biasDir == 0 and allowNtr)
+bool allowSell = biasDir < 0 or (biasDir == 0 and allowNtr)
+
 // ───────────────────── LIQUIDITY RAID DETECTION ───────────────────────────
 // Every candidate level is read *before* this bar's state updates, so a level
 // only fires once — the first time price reaches through it and closes back.
@@ -352,13 +428,12 @@ bool  wickS  = (high - math.max(open, close)) / barRng * 100 >= minWick
 bool  wickB  = (math.min(open, close) - low)  / barRng * 100 >= minWick
 bool  coolOk = bar_index - lastSig > coolDown
 
-bool sellSig = not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
-bool buySig  = not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
+bool sellSig = allowSell and not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
+bool buySig  = allowBuy  and not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
 if sellSig and buySig
-    if trendDir > 0
-        sellSig := false
-    else
-        buySig := false
+    bool preferSell = biasDir != 0 ? biasDir < 0 : trendDir < 0
+    sellSig := preferSell
+    buySig  := not preferSell
 
 // ─────────────────────────── STATE UPDATES ────────────────────────────────
 for i = 0 to sessArr.size() - 1
@@ -462,24 +537,32 @@ fill(p1, p2, color = trendDir > 0 ? bullCol : bearCol, title = "Trend cloud")
 
 // ──────────────────────── COUNTDOWN + STATS TABLE ─────────────────────────
 if barstate.islast
-    if showCd
+    if showCd or showBias
         int rem  = int(math.max(0, time_close - timenow) / 1000)
         int hrs  = int(rem / 3600)
         int mins = int(rem % 3600 / 60)
         int secs = int(rem % 60)
         string cdTxt = timeframe.period + "  " + (hrs > 0 ? str.tostring(hrs) + ":" : "") + pad2(mins) + ":" + pad2(secs)
+        string bTxt  = biasDir > 0 ? "BUY BIAS" : biasDir < 0 ? "SELL BIAS" : "NO BIAS"
+        string sTxt  = showBias and showCd ? bTxt + "\n" + cdTxt : showBias ? bTxt : cdTxt
+        color  sBg   = biasDir > 0 ? color.new(#26a69a, 20) : biasDir < 0 ? color.new(#ef5350, 20) : color.new(color.gray, 25)
         if na(cdLb)
-            cdLb := label.new(bar_index + 3, close, cdTxt, xloc.bar_index, yloc.price,
-                 color.new(color.gray, 25), label.style_label_left, color.white, size.small)
+            cdLb := label.new(bar_index + 3, close, sTxt, xloc.bar_index, yloc.price,
+                 sBg, label.style_label_left, color.white, size.small)
         label.set_xy(cdLb, bar_index + 3, close)
-        label.set_text(cdLb, cdTxt)
+        label.set_text(cdLb, sTxt)
+        label.set_color(cdLb, sBg)
+        label.set_tooltip(cdLb, "Bias: " + biasWhy)
 
     if showTbl
         if na(tbl)
             tbl := table.new(tblPos, 4, showWL ? 9 : 8, border_width = 1,
                  frame_width = 1, frame_color = color.new(color.gray, 50), border_color = color.new(color.gray, 60))
         color hdr = color.new(color.black, 30)
-        table.cell(tbl, 0, 0, "",      bgcolor = hdr)
+        table.cell(tbl, 0, 0, biasDir > 0 ? "BUY" : biasDir < 0 ? "SELL" : "—",
+             text_color = color.white, text_size = tblSize,
+             bgcolor = biasDir > 0 ? color.new(#26a69a, 35) : biasDir < 0 ? color.new(#ef5350, 35) : hdr,
+             tooltip = "Bias of the day: " + biasWhy)
         table.cell(tbl, 1, 0, "Range", text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "Average range of the last N occurrences")
         table.cell(tbl, 2, 0, "High",  text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that high is taken out afterwards")
         table.cell(tbl, 3, 0, "Low",   text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that low is taken out afterwards")

@@ -21,10 +21,32 @@ a few hundred bars back).
 | **Session levels** | When a session closes, its high and low are extended to the right as dotted lines with `ASIA High` / `NYPM Low` style labels. The line stops extending the moment price takes it out. |
 | **HTF levels** | Previous day high/low + previous daily close (`PDH` / `PDL` / `Close`), previous week (`PWH` / `PWL`) and previous month (`PMH` / `PML`). Each period draws a fresh segment, so history stays stepped. |
 | **Trend cloud** | A supertrend line with an ATR-deep band filled behind it — green under price in an uptrend, pink above price in a downtrend. |
-| **`SELL LR` / `BUY LR`** | Liquidity-raid signals: price trades *through* a resting level and closes back on the other side of it. |
+| **Bias of the day** | One direction per day. A buy day only ever prints `BUY LR`, a sell day only ever prints `SELL LR` — everything against the bias is suppressed. |
+| **`SELL LR` / `BUY LR`** | Liquidity-raid signals: price trades *through* a resting level and closes back on the other side of it, **in the direction of the day's bias**. |
 | **Trade projection** | On a signal, a red risk box (entry → stop) and a green reward box (entry → target) extend forward until the trade resolves; the box then freezes at the bar that hit, labelled `SL` or `TP`. |
 | **Stats table** | Per session and per period: average range, and how often that high / that low is swept afterwards. |
 | **Countdown** | Timeframe + time remaining on the current bar, pinned next to price. |
+
+## Bias of the day
+
+The bias is set **once per day** and then locked until the next day, so the
+indicator only ever signals one direction on a given day. `Bias label on chart`
+shows it next to price (green `BUY BIAS` / red `SELL BIAS`) and the table's
+corner cell mirrors it — hover either for the reason it was set.
+
+| Mode | How the day gets its direction |
+| --- | --- |
+| **Sweep of a session** *(default)* | Whichever side of the chosen range gets grabbed first decides the day: the **low** taken → buy day, the **high** taken → sell day. Source is selectable (ASIA / LNDN / NYAM / NYPM / prior day); the range must have closed inside the current day, so yesterday's Asia never sets today's bias. If both sides get swept on the same bar, the close inside the range breaks the tie. |
+| **Prior-day equilibrium** | Locked on the day's first bar: trading above the midpoint of the previous day's range → buy day, below → sell day. |
+| **Prior-day direction** | Previous daily candle closed up → buy day, closed down → sell day. |
+| **Daily EMA trend** | Previous daily close above the daily EMA → buy day, below → sell day. |
+| **Manual** | You call it: *Buy only*, *Sell only*, or *Both*. |
+
+Until the bias is set — before the session has been swept, typically — signals
+are held back. Flip `Allow signals before the bias is set` if you would rather
+see both sides in that window. When the raid that sets the bias *is* the entry,
+it still counts: the bias is evaluated before the signal on the same bar, so
+the sweep bar can print its `LR` label.
 
 ## How a liquidity raid is defined
 
@@ -41,9 +63,9 @@ selectable independently:
 A **SELL LR** prints when, on one bar: `high > level` **and** `close < level`,
 the upper wick is at least *Min sweep wick %* of the bar's range, the bar
 closes down (*Require rejection close*), the cooldown since the last signal has
-elapsed, and — optionally — the trend cloud is bearish. **BUY LR** is the
-mirror image. When both sides trigger on the same bar, the one aligned with the
-trend wins.
+elapsed, **the day's bias is a sell bias**, and — optionally — the trend cloud
+is bearish. **BUY LR** is the mirror image. When both sides trigger on the same
+bar, the bias breaks the tie (the trend cloud does it if there is no bias yet).
 
 Stop placement uses the swept extreme (`max(high, level)` for a sell) plus an
 ATR buffer; the target is a fixed R multiple of that risk.
@@ -76,7 +98,10 @@ bar close.
 * **Timezone / session times** default to `America/New_York` with
   Asia `2000-0000`, London `0200-0500`, NY AM `0930-1200`, NY PM `1330-1600`.
   Adjust to your instrument's killzones.
-* **Require trend alignment** is off by default — turn it on to only take raids
-  in the direction of the cloud.
+* **Bias mode** defaults to *Sweep of a session* off the **ASIA** range — the
+  classic "they grabbed the Asia low, so we're only buying today" read. Switch
+  the source or the mode if your day starts somewhere else.
+* **Require trend alignment** is off by default — it's a second, intrabar
+  filter on top of the daily bias, not a replacement for it.
 * **Reward : risk** defaults to 2.0; **Project forward** controls how far the
   boxes run ahead of price.
