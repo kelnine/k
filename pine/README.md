@@ -21,6 +21,8 @@ a few hundred bars back).
 | **Session levels** | When a session closes, its high and low are extended to the right as dotted lines with `ASIA High` / `NYPM Low` style labels. The line stops extending the moment price takes it out. |
 | **HTF levels** | Previous day high/low + previous daily close (`PDH` / `PDL` / `Close`), previous week (`PWH` / `PWL`) and previous month (`PMH` / `PML`). Each period draws a fresh segment, so history stays stepped. |
 | **Session opens** | The price at 09:30 (`NY Open`), 12:00 (`Midday`) and 00:00 (`Midnight`), held for the day, with a dotted vertical divider on the bar that stamps each one. |
+| **Midpoints** | `PDM` / `PWM` / `PMM` — the middle of the previous day's, week's and month's range. |
+| **Dealing range** | The last confirmed swing high to swing low, split at equilibrium: red tint above (premium), green tint below (discount), with `0.75` / `EQ` / `0.25` marked. |
 | **Trend cloud** | A supertrend line with an ATR-deep band filled behind it — green under price in an uptrend, pink above price in a downtrend. |
 | **Bias of the day** | One direction per day. A buy day only ever prints `BUY LR`, a sell day only ever prints `SELL LR` — everything against the bias is suppressed. |
 | **`SELL LR` / `BUY LR`** | Liquidity-raid signals: price trades *through* a resting level and closes back on the other side of it, **in the direction of the day's bias**. |
@@ -72,6 +74,10 @@ bar, the bias breaks the tie (the trend cloud does it if there is no bias yet).
 
 Stop placement uses the swept extreme (`max(high, level)` for a sell) plus an
 ATR buffer; the target is a fixed R multiple of that risk.
+
+`Only sell in premium, only buy in discount` (off by default) adds the dealing
+range as a location filter on top of the bias: sells only above equilibrium,
+buys only below it.
 
 ## Reading the stats table
 

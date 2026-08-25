@@ -67,6 +67,7 @@ bool  showPM  = input.bool(false, "Prev month high / low",group = GL, inline = "
 color pmCol   = input.color(#ef5350, "", group = GL, inline = "l4")
 bool  showOpn = input.bool(true,  "Session opens",        group = GL, inline = "l5")
 color opnCol  = input.color(#5d606b, "", group = GL, inline = "l5")
+bool  showMid = input.bool(true,  "Midpoints (PDM / PWM / PMM)", group = GL)
 bool  showDiv = input.bool(true,  "Vertical dividers at those opens", group = GL)
 string nyoSpec = input.session("0930-0935", "NY open",  group = GL, inline = "l6")
 string midSpec = input.session("1200-1205", "Midday",   group = GL, inline = "l7")
@@ -107,7 +108,15 @@ string tblSize = input.string(size.small, "Text size",
      options = [size.tiny, size.small, size.normal], group = GB)
 bool   showWL  = input.bool(true, "Include signal W/L row", group = GB)
 
-string GH = "⑧ Projected HTF candle"
+string GX = "⑧ Dealing range (premium / discount)"
+bool  showDR   = input.bool(true, "Show the range", group = GX)
+color premCol  = input.color(color.new(#ef5350, 88), "Premium / discount", group = GX, inline = "x1")
+color discCol  = input.color(color.new(#26a69a, 88), "", group = GX, inline = "x1")
+bool  showDRq  = input.bool(true, "0.25 / EQ / 0.75 lines", group = GX)
+int   drExt    = input.int(10, "Extend right (bars)", minval = 0, maxval = 200, group = GX)
+bool  needPrem = input.bool(false, "Only sell in premium, only buy in discount", group = GX)
+
+string GH = "⑨ Projected HTF candle"
 bool   showHtf = input.bool(true, "Show the developing candle", group = GH)
 string htfTf   = input.timeframe("15", "Timeframe", group = GH)
 int    htfGap  = input.int(6, "Bars to the right", minval = 1, maxval = 100, group = GH, inline = "h1")
@@ -321,6 +330,21 @@ var float nyoPx = na
 var float midPx = na
 var float mnoPx = na
 
+var Lvl lPdM = Lvl.new(name = "PDM", col = pdCol)
+var Lvl lPwM = Lvl.new(name = "PWM", col = pwCol)
+var Lvl lPmM = Lvl.new(name = "PMM", col = pmCol)
+
+var float drHi   = na
+var float drLo   = na
+var int   drHiAt = na
+var int   drLoAt = na
+var box   drPrem = na
+var box   drDisc = na
+var line  drEq   = na
+var line  dr75   = na
+var line  dr25   = na
+var label drEqLb = na
+
 var box   htfBody = na
 var line  htfWick = na
 var label htfTag  = na
@@ -460,8 +484,13 @@ bool  wickS  = (high - math.max(open, close)) / barRng * 100 >= minWick
 bool  wickB  = (math.min(open, close) - low)  / barRng * 100 >= minWick
 bool  coolOk = bar_index - lastSig > coolDown
 
-bool sellSig = allowSell and not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
-bool buySig  = allowBuy  and not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
+// equilibrium of the current dealing range (as of the previous bar)
+float drMid  = na(drHi) or na(drLo) ? na : (drHi + drLo) / 2
+bool  premOk = not needPrem or (not na(drMid) and close > drMid)
+bool  discOk = not needPrem or (not na(drMid) and close < drMid)
+
+bool sellSig = allowSell and premOk and not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
+bool buySig  = allowBuy  and discOk and not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
 if sellSig and buySig
     bool preferSell = biasDir != 0 ? biasDir < 0 : trendDir < 0
     sellSig := preferSell
@@ -492,6 +521,14 @@ if usePivLiq
     if not na(pl)
         capPush(pivLo, pl, maxLiq)
 
+// The dealing range is simply the last confirmed swing high and swing low.
+if not na(ph)
+    drHi   := ph
+    drHiAt := bar_index - pivLen
+if not na(pl)
+    drLo   := pl
+    drLoAt := bar_index - pivLen
+
 lPdH.render(newD, pdH, showPD)
 lPdL.render(newD, pdL, showPD)
 lPdC.render(newD, pdC, showPDC)
@@ -499,6 +536,9 @@ lPwH.render(newW, pwH, showPW)
 lPwL.render(newW, pwL, showPW)
 lPmH.render(newM, pmH, showPM)
 lPmL.render(newM, pmL, showPM)
+lPdM.render(newD, na(pdH) or na(pdL) ? na : (pdH + pdL) / 2, showMid and showPD)
+lPwM.render(newW, na(pwH) or na(pwL) ? na : (pwH + pwL) / 2, showMid and showPW)
+lPmM.render(newM, na(pmH) or na(pmL) ? na : (pmH + pmL) / 2, showMid and showPM)
 
 // ── session opens: the price at 09:30 / 12:00 / 00:00, held for the day, and
 //    a vertical divider on the bar that stamps each one.
@@ -628,6 +668,36 @@ if barstate.islast
         label.set_text(cdLb, sTxt)
         label.set_color(cdLb, sBg)
         label.set_tooltip(cdLb, "Bias: " + biasWhy)
+
+    // ── dealing range: premium above equilibrium, discount below
+    if showDR and not na(drHi) and not na(drLo) and drHi > drLo
+        int   dl  = math.min(nz(drHiAt, bar_index), nz(drLoAt, bar_index))
+        int   dr  = bar_index + drExt
+        float eq  = (drHi + drLo) / 2
+        float q75 = drLo + (drHi - drLo) * 0.75
+        float q25 = drLo + (drHi - drLo) * 0.25
+        if na(drPrem)
+            drPrem := box.new(dl, drHi, dr, eq, border_color = color.new(premCol, 60), bgcolor = premCol)
+            drDisc := box.new(dl, eq, dr, drLo, border_color = color.new(discCol, 60), bgcolor = discCol)
+            drEq   := line.new(dl, eq, dr, eq, color = color.new(color.gray, 30), style = line.style_dashed)
+            dr75   := line.new(dl, q75, dr, q75, color = color.new(color.gray, 60), style = line.style_dotted)
+            dr25   := line.new(dl, q25, dr, q25, color = color.new(color.gray, 60), style = line.style_dotted)
+            drEqLb := newLbl(dr, eq, "EQ", color.gray)
+        box.set_lefttop(drPrem, dl, drHi)
+        box.set_rightbottom(drPrem, dr, eq)
+        box.set_lefttop(drDisc, dl, eq)
+        box.set_rightbottom(drDisc, dr, drLo)
+        line.set_xy1(drEq, dl, eq)
+        line.set_xy2(drEq, dr, eq)
+        line.set_xy1(dr75, dl, q75)
+        line.set_xy2(dr75, dr, q75)
+        line.set_xy1(dr25, dl, q25)
+        line.set_xy2(dr25, dr, q25)
+        line.set_color(dr75, color.new(color.gray, showDRq ? 60 : 100))
+        line.set_color(dr25, color.new(color.gray, showDRq ? 60 : 100))
+        line.set_color(drEq, color.new(color.gray, showDRq ? 30 : 100))
+        label.set_xy(drEqLb, dr, eq)
+        label.set_textcolor(drEqLb, color.new(color.gray, showDRq ? 0 : 100))
 
     // ── the developing HTF candle, parked to the right of the last bar
     if showHtf and not na(hO)
