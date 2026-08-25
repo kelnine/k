@@ -20,10 +20,13 @@ a few hundred bars back).
 | **Session boxes** | ASIA / LNDN / NYAM / NYPM shaded from the session's own high to its low, updated live while the session runs. |
 | **Session levels** | When a session closes, its high and low are extended to the right as dotted lines with `ASIA High` / `NYPM Low` style labels. The line stops extending the moment price takes it out. |
 | **HTF levels** | Previous day high/low + previous daily close (`PDH` / `PDL` / `Close`), previous week (`PWH` / `PWL`) and previous month (`PMH` / `PML`). Each period draws a fresh segment, so history stays stepped. |
+| **Session opens** | The price at 09:30 (`NY Open`), 12:00 (`Midday`) and 00:00 (`Midnight`), held for the day, with a dotted vertical divider on the bar that stamps each one. |
 | **Trend cloud** | A supertrend line with an ATR-deep band filled behind it — green under price in an uptrend, pink above price in a downtrend. |
 | **Bias of the day** | One direction per day. A buy day only ever prints `BUY LR`, a sell day only ever prints `SELL LR` — everything against the bias is suppressed. |
 | **`SELL LR` / `BUY LR`** | Liquidity-raid signals: price trades *through* a resting level and closes back on the other side of it, **in the direction of the day's bias**. |
-| **Trade projection** | On a signal, a red risk box (entry → stop) and a green reward box (entry → target) extend forward until the trade resolves; the box then freezes at the bar that hit, labelled `SL` or `TP`. |
+| **Trade projection** | On a signal, a red risk box (entry → stop) and a green reward box (entry → target) extend forward until the trade resolves; the box then freezes at the bar that hit, labelled `SL`, `TP` or `BE`. |
+| **Breakeven** | Once the trade is up *Move stop to breakeven at* R (1R by default), the stop snaps to entry — the risk box collapses to a grey line and the trade can no longer lose. Breakevens are counted separately from wins and losses. |
+| **Projected HTF candle** | The higher-timeframe candle currently being built (15m by default) drawn to the right of the last bar, with its own countdown underneath — the `15m 02:08` block. |
 | **Stats table** | Per session and per period: average range, and how often that high / that low is swept afterwards. |
 | **Countdown** | Timeframe + time remaining on the current bar, pinned next to price. |
 
@@ -84,8 +87,8 @@ A high `High` percentage means that level rarely survives — it is a magnet, no
 a wall. Both columns start empty and fill in as the chart replays history, so
 scroll back far enough for the numbers to settle.
 
-The last row (`LR`) tallies how the indicator's own projected trades resolved:
-wins, losses, and win rate at the configured R:R.
+The last row (`LR`) tallies how the indicator's own projected trades resolved —
+wins, losses, and breakevens. Hover it for the win rate excluding breakevens.
 
 ## Alerts
 
@@ -104,4 +107,8 @@ bar close.
 * **Require trend alignment** is off by default — it's a second, intrabar
   filter on top of the daily bias, not a replacement for it.
 * **Reward : risk** defaults to 2.0; **Project forward** controls how far the
-  boxes run ahead of price.
+  boxes run ahead of price; **Move stop to breakeven at** defaults to 1R — set
+  it to 0 if you would rather let every trade run to the stop.
+* **Projected HTF candle** defaults to 15m. On a 5m chart that gives the
+  familiar "three of these make the candle I actually care about" read; set the
+  timeframe, its distance from price and its width to taste.
