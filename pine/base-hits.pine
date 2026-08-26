@@ -95,6 +95,7 @@ bool  showTrade = input.bool(true, "Show trade projection", group = GT)
 float rrMult    = input.float(2.0, "Reward : risk", minval = 0.1, step = 0.1, group = GT)
 float stopBuf   = input.float(0.25, "Stop buffer (ATR)", minval = 0, step = 0.05, group = GT)
 int   projBars  = input.int(20, "Project forward (bars)", minval = 1, maxval = 400, group = GT)
+float tp1AtR    = input.float(1.0, "Partial target at (R, 0 = off)", minval = 0, step = 0.1, group = GT)
 float beAtR     = input.float(1.0, "Move stop to breakeven at (R, 0 = off)", minval = 0, step = 0.1, group = GT)
 color riskCol   = input.color(color.new(#ef5350, 70), "Risk / reward", group = GT, inline = "t1")
 color rewCol    = input.color(color.new(#26a69a, 70), "",              group = GT, inline = "t1")
@@ -114,6 +115,8 @@ color premCol  = input.color(color.new(#ef5350, 88), "Premium / discount", group
 color discCol  = input.color(color.new(#26a69a, 88), "", group = GX, inline = "x1")
 bool  showDRq  = input.bool(true, "0.25 / EQ / 0.75 lines", group = GX)
 int   drExt    = input.int(10, "Extend right (bars)", minval = 0, maxval = 200, group = GX)
+bool  showDR2  = input.bool(false, "Nested (shorter) range", group = GX, inline = "x2")
+int   drLen2   = input.int(3, "pivot len", minval = 1, group = GX, inline = "x2")
 bool  needPrem = input.bool(false, "Only sell in premium, only buy in discount", group = GX)
 
 string GH = "⑨ Projected HTF candle"
@@ -161,16 +164,28 @@ type Lvl
     line   ln = na
     label  lb = na
 
+type DRange
+    box   prem = na
+    box   disc = na
+    line  eq   = na
+    line  q75  = na
+    line  q25  = na
+    label lb   = na
+
 type Trade
     bool  active = false
     bool  be     = false
+    bool  tp1    = false
     int   dir    = 0
     float entry  = na
     float stop   = na
     float tgt    = na
     float risk   = na
+    float tp1Px  = na
     box   rBx    = na
     box   tBx    = na
+    line  tp1Ln  = na
+    label tp1Lb  = na
     label lb     = na
 
 // ────────────────────────────── HELPERS ───────────────────────────────────
@@ -288,6 +303,38 @@ method render(Lvl v, bool isNew, float price, bool show) =>
             line.set_x2(v.ln, bar_index)
             label.set_xy(v.lb, bar_index, price)
 
+// Premium above equilibrium, discount below, drawn from the swing that opened
+// the range out to the right edge.
+method draw(DRange d, float hi, float lo, int hiAt, int loAt, int ext, color pc, color dc, bool lines, string tag) =>
+    if not na(hi) and not na(lo) and hi > lo
+        int   l   = math.min(nz(hiAt, bar_index), nz(loAt, bar_index))
+        int   r   = bar_index + ext
+        float eqv = (hi + lo) / 2
+        float q75 = lo + (hi - lo) * 0.75
+        float q25 = lo + (hi - lo) * 0.25
+        if na(d.prem)
+            d.prem := box.new(l, hi, r, eqv, border_color = color.new(pc, 60), bgcolor = pc)
+            d.disc := box.new(l, eqv, r, lo, border_color = color.new(dc, 60), bgcolor = dc)
+            d.eq   := line.new(l, eqv, r, eqv, color = color.new(color.gray, 30), style = line.style_dashed)
+            d.q75  := line.new(l, q75, r, q75, color = color.new(color.gray, 60), style = line.style_dotted)
+            d.q25  := line.new(l, q25, r, q25, color = color.new(color.gray, 60), style = line.style_dotted)
+            d.lb   := newLbl(r, eqv, tag, color.gray)
+        box.set_lefttop(d.prem, l, hi)
+        box.set_rightbottom(d.prem, r, eqv)
+        box.set_lefttop(d.disc, l, eqv)
+        box.set_rightbottom(d.disc, r, lo)
+        line.set_xy1(d.eq, l, eqv)
+        line.set_xy2(d.eq, r, eqv)
+        line.set_xy1(d.q75, l, q75)
+        line.set_xy2(d.q75, r, q75)
+        line.set_xy1(d.q25, l, q25)
+        line.set_xy2(d.q25, r, q25)
+        line.set_color(d.q75, color.new(color.gray, lines ? 60 : 100))
+        line.set_color(d.q25, color.new(color.gray, lines ? 60 : 100))
+        line.set_color(d.eq, color.new(color.gray, lines ? 30 : 100))
+        label.set_xy(d.lb, r, eqv)
+        label.set_textcolor(d.lb, color.new(color.gray, lines ? 0 : 100))
+
 statRow(table t, int r, string nm, color c, array<float> rng, array<float> hh, array<float> ll, string sz) =>
     float ar = rng.size() > 0 ? rng.avg() : na
     float hp = hh.size()  > 0 ? hh.avg() * 100 : na
@@ -338,12 +385,12 @@ var float drHi   = na
 var float drLo   = na
 var int   drHiAt = na
 var int   drLoAt = na
-var box   drPrem = na
-var box   drDisc = na
-var line  drEq   = na
-var line  dr75   = na
-var line  dr25   = na
-var label drEqLb = na
+var float dr2Hi   = na
+var float dr2Lo   = na
+var int   dr2HiAt = na
+var int   dr2LoAt = na
+var DRange dr1 = DRange.new()
+var DRange dr2 = DRange.new()
 
 var box   htfBody = na
 var line  htfWick = na
@@ -357,6 +404,7 @@ var Trade tr     = Trade.new()
 var int   wins   = 0
 var int   losses = 0
 var int   bes    = 0
+var int   tp1s   = 0
 var int   lastSig = -100000
 var label cdLb   = na
 var table tbl    = na
@@ -529,6 +577,15 @@ if not na(pl)
     drLo   := pl
     drLoAt := bar_index - pivLen
 
+float ph2 = ta.pivothigh(drLen2, drLen2)
+float pl2 = ta.pivotlow(drLen2, drLen2)
+if not na(ph2)
+    dr2Hi   := ph2
+    dr2HiAt := bar_index - drLen2
+if not na(pl2)
+    dr2Lo   := pl2
+    dr2LoAt := bar_index - drLen2
+
 lPdH.render(newD, pdH, showPD)
 lPdL.render(newD, pdL, showPD)
 lPdC.render(newD, pdC, showPDC)
@@ -597,11 +654,30 @@ if tr.active
         if not na(tr.tBx)
             box.set_right(tr.tBx, bar_index)
             box.set_bgcolor(tr.tBx, color.new(rewCol, tgtHit and not stopHit ? 55 : 90))
+        if not na(tr.tp1Ln)
+            line.set_x2(tr.tp1Ln, bar_index)
+        if not na(tr.tp1Lb)
+            label.set_x(tr.tp1Lb, bar_index)
         if not na(tr.lb)
             label.set_x(tr.lb, bar_index)
             label.set_text(tr.lb, stopHit ? (tr.be ? "BE" : "SL") : "TP")
 
     if not resolved
+        // a piece off the table at the partial, then the stop comes to entry
+        if not tr.tp1 and not na(tr.tp1Px)
+            bool t1Hit = tr.dir < 0 ? low <= tr.tp1Px : high >= tr.tp1Px
+            if t1Hit
+                tr.tp1 := true
+                tp1s   += 1
+                if not na(tr.tp1Ln)
+                    line.set_color(tr.tp1Ln, color.new(color.gray, 35))
+                if not na(tr.tp1Lb)
+                    label.set_text(tr.tp1Lb, "TP1 ✓")
+                    label.set_textcolor(tr.tp1Lb, color.gray)
+        if not na(tr.tp1Ln)
+            line.set_x2(tr.tp1Ln, bar_index + projBars)
+        if not na(tr.tp1Lb)
+            label.set_x(tr.tp1Lb, bar_index + projBars)
         // once the trade has paid for itself, the stop comes to entry
         if beAtR > 0 and not tr.be and not na(tr.risk)
             float trig = tr.entry + tr.dir * tr.risk * beAtR
@@ -643,6 +719,14 @@ if showTrade and not tr.active and (sellSig or buySig)
         tr.tBx := box.new(bar_index, math.max(e, tp), bar_index + projBars, math.min(e, tp),
              border_color = color.new(rewCol, 40), bgcolor = rewCol)
         tr.lb  := newLbl(bar_index + projBars, tp, str.tostring(rrMult, "#.#") + "R", d < 0 ? riskCol : rewCol)
+        tr.tp1   := false
+        tr.tp1Px := tp1AtR > 0 ? e + d * risk * tp1AtR : na
+        tr.tp1Ln := na
+        tr.tp1Lb := na
+        if not na(tr.tp1Px)
+            tr.tp1Ln := line.new(bar_index, tr.tp1Px, bar_index + projBars, tr.tp1Px,
+                 color = color.new(rewCol, 20), style = line.style_dashed)
+            tr.tp1Lb := newLbl(bar_index + projBars, tr.tp1Px, "TP1", rewCol)
 
 // ───────────────────────────── TREND CLOUD ────────────────────────────────
 float cloudEdge = stVal + (stDir < 0 ? -1 : 1) * atrv * bandMult
@@ -670,34 +754,10 @@ if barstate.islast
         label.set_tooltip(cdLb, "Bias: " + biasWhy)
 
     // ── dealing range: premium above equilibrium, discount below
-    if showDR and not na(drHi) and not na(drLo) and drHi > drLo
-        int   dl  = math.min(nz(drHiAt, bar_index), nz(drLoAt, bar_index))
-        int   dr  = bar_index + drExt
-        float eq  = (drHi + drLo) / 2
-        float q75 = drLo + (drHi - drLo) * 0.75
-        float q25 = drLo + (drHi - drLo) * 0.25
-        if na(drPrem)
-            drPrem := box.new(dl, drHi, dr, eq, border_color = color.new(premCol, 60), bgcolor = premCol)
-            drDisc := box.new(dl, eq, dr, drLo, border_color = color.new(discCol, 60), bgcolor = discCol)
-            drEq   := line.new(dl, eq, dr, eq, color = color.new(color.gray, 30), style = line.style_dashed)
-            dr75   := line.new(dl, q75, dr, q75, color = color.new(color.gray, 60), style = line.style_dotted)
-            dr25   := line.new(dl, q25, dr, q25, color = color.new(color.gray, 60), style = line.style_dotted)
-            drEqLb := newLbl(dr, eq, "EQ", color.gray)
-        box.set_lefttop(drPrem, dl, drHi)
-        box.set_rightbottom(drPrem, dr, eq)
-        box.set_lefttop(drDisc, dl, eq)
-        box.set_rightbottom(drDisc, dr, drLo)
-        line.set_xy1(drEq, dl, eq)
-        line.set_xy2(drEq, dr, eq)
-        line.set_xy1(dr75, dl, q75)
-        line.set_xy2(dr75, dr, q75)
-        line.set_xy1(dr25, dl, q25)
-        line.set_xy2(dr25, dr, q25)
-        line.set_color(dr75, color.new(color.gray, showDRq ? 60 : 100))
-        line.set_color(dr25, color.new(color.gray, showDRq ? 60 : 100))
-        line.set_color(drEq, color.new(color.gray, showDRq ? 30 : 100))
-        label.set_xy(drEqLb, dr, eq)
-        label.set_textcolor(drEqLb, color.new(color.gray, showDRq ? 0 : 100))
+    if showDR
+        dr1.draw(drHi, drLo, drHiAt, drLoAt, drExt, premCol, discCol, showDRq, "EQ")
+    if showDR and showDR2
+        dr2.draw(dr2Hi, dr2Lo, dr2HiAt, dr2LoAt, drExt, premCol, discCol, showDRq, "eq")
 
     // ── the developing HTF candle, parked to the right of the last bar
     if showHtf and not na(hO)
@@ -749,7 +809,7 @@ if barstate.islast
         if showWL
             int    done = wins + losses
             float  wr   = done > 0 ? 100.0 * wins / done : na
-            string wrTip = "win rate excluding breakevens: " + (na(wr) ? "–" : str.tostring(int(math.round(wr))) + "%")
+            string wrTip = "win rate excluding breakevens: " + (na(wr) ? "–" : str.tostring(int(math.round(wr))) + "%") + "\npartials reached: " + str.tostring(tp1s)
             table.cell(tbl, 0, 8, "LR", text_color = color.white, bgcolor = color.new(sigCol, 40), text_size = tblSize, tooltip = wrTip)
             table.cell(tbl, 1, 8, str.tostring(wins) + "W", text_color = color.white, bgcolor = color.new(#26a69a, 60), text_size = tblSize, tooltip = wrTip)
             table.cell(tbl, 2, 8, str.tostring(losses) + "L", text_color = color.white, bgcolor = color.new(#ef5350, 60), text_size = tblSize, tooltip = wrTip)
