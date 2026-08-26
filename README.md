@@ -41,6 +41,19 @@ fully custom canvas rendering engine, with no third-party charting library.
   - `DemoAdapter` — deterministic synthetic feed used automatically when the
     exchange is unreachable, so the app always works
 
+## TradingView
+
+`pine/multi_horizon_momentum.pine` is the Multi-Horizon Momentum rubric as a
+Pine Script v6 indicator — the same rules as the built-in `mhm` indicator, for
+people who chart on TradingView. Paste it into the Pine Editor and add it to a
+chart. It plots the −4 … +4 score in its own pane, draws the four trendlines on
+the price chart (`force_overlay`), shows the rating and the volatility-targeted
+position size in a corner table, and ships alert conditions for score changes
+and direction flips. Lookbacks are entered in days and converted from the
+chart's timeframe; two months of history is more bars than Pine can address
+below 1h, so lower timeframes report themselves as unsupported instead of
+mis-scoring.
+
 ## Run it
 
 ```sh

@@ -1,0 +1,229 @@
+//@version=6
+// =============================================================================
+// Multi-Horizon Momentum Rubric
+//
+// A rule-based trend-scoring system in the spirit of the AHL / managed-futures
+// time-series momentum work. It measures trend strength instead of predicting
+// it, and one score sets both direction and exposure.
+//
+//   1. Score the trend. On each of four lookbacks (1 week, 2 weeks, 1 month,
+//      2 months) draw a line from the close that far back to the latest close.
+//      Rising scores +1, falling scores -1. The four readings sum to a single
+//      market score in the range -4 ... +4.
+//   2. Rate it.  +4 fully long | +2 half long | 0 no trade | -2 half short |
+//      -4 fully short.
+//   3. Size it.  position = score weight x (target risk % / annualised vol %)
+//      x portfolio, where annualised volatility is the average daily
+//      close-to-close % move over the last 30 days scaled by sqrt(365) (~19.1).
+//      Calm market -> bigger size, wild market -> smaller size.
+//
+// The rubric is written for a daily chart. Lookbacks and the volatility window
+// are entered in *days* and converted to bars from the chart's timeframe, so
+// the same rules hold on 4h, daily and weekly. Low timeframes need more history
+// than Pine can address (two months of 15m bars is over 5000 bars); those are
+// reported as unsupported rather than silently mis-scored.
+//
+// Educational material, not financial advice. Past performance and backtested
+// results do not guarantee future returns.
+// =============================================================================
+
+indicator("Multi-Horizon Momentum Rubric", shorttitle="MHM", overlay=false,
+          max_lines_count=20, max_labels_count=20, max_bars_back=5000)
+
+// ----------------------------------------------------------------- inputs
+
+const string G_SCORE = "Trend score"
+const string G_SIZE  = "Position sizing"
+const string G_DISP  = "Display"
+
+lbDays1 = input.int(7,  "Lookback 1 (days)", minval=1, group=G_SCORE)
+lbDays2 = input.int(14, "Lookback 2 (days)", minval=1, group=G_SCORE)
+lbDays3 = input.int(30, "Lookback 3 (days)", minval=1, group=G_SCORE)
+lbDays4 = input.int(60, "Lookback 4 (days)", minval=1, group=G_SCORE)
+
+volDays   = input.int(30, "Volatility window (days)", minval=2, group=G_SIZE, tooltip="How many daily close-to-close moves to average.")
+annDays   = input.int(365, "Days per year", minval=1, maxval=365, group=G_SIZE, tooltip="365 for crypto and FX, where a daily bar is a calendar day. Use 252 on a stock chart, where a daily bar is a trading day.")
+riskPct   = input.float(10.0, "Target risk (%)", minval=0.1, step=0.5, group=G_SIZE, tooltip="The % of the account you are genuinely fine losing on this strategy. Pick it once, keep it fixed.")
+portfolio = input.float(100000, "Portfolio", minval=0, step=1000, group=G_SIZE)
+ccy       = input.string("$", "Currency symbol", group=G_SIZE)
+
+showLines = input.bool(true,  "Draw the four trendlines on the price chart", group=G_DISP)
+showTable = input.bool(true,  "Show the rubric read-out", group=G_DISP)
+colorBars = input.bool(false, "Colour price bars by the score", group=G_DISP)
+
+colUp   = input.color(#26a69a, "Uptrend",   group=G_DISP, inline="c")
+colDn   = input.color(#ef5350, "Downtrend", group=G_DISP, inline="c")
+colFlat = input.color(#787b86, "Flat",      group=G_DISP, inline="c")
+
+// ------------------------------------------------------- days <-> bars
+
+// Bar spacing, so the day-based rules can be expressed in bars on any chart.
+barSecs    = timeframe.in_seconds(timeframe.period)
+barsPerDay = nz(barSecs, 0) <= 0 ? 1.0 : 86400.0 / barSecs
+
+daysToBars(days) =>
+    math.max(1, int(math.round(days * barsPerDay)))
+
+lb1 = daysToBars(lbDays1)
+lb2 = daysToBars(lbDays2)
+lb3 = daysToBars(lbDays3)
+lb4 = daysToBars(lbDays4)
+
+// One "daily" volatility step, and how many days it really spans — a weekly
+// chart cannot sample finer than a week, so it annualises from a weekly move.
+stepBars    = math.max(1, int(math.round(barsPerDay)))
+daysPerStep = stepBars / barsPerDay
+
+needed  = math.max(math.max(math.max(lb1, lb2), math.max(lb3, lb4)), stepBars * volDays)
+tooDeep = needed > 4999
+ready   = not tooDeep and bar_index >= needed
+
+// --------------------------------------------------------------- rubric
+
+// 1 — score each horizon: a rising close-to-close line is +1, anything else -1
+reading(lbBars) =>
+    close > nz(close[lbBars], close) ? 1 : -1
+
+r1 = reading(lb1)
+r2 = reading(lb2)
+r3 = reading(lb3)
+r4 = reading(lb4)
+score = r1 + r2 + r3 + r4
+
+// 2 — rate it: the score sets direction and exposure
+weight = math.abs(score) / 4.0
+signal = switch
+    score == 4  => "Fully long"
+    score == 2  => "Half long"
+    score == 0  => "No trade"
+    score == -2 => "Half short"
+    => "Fully short"
+
+// 3 — size it: the average daily close-to-close move is the brake
+avgDailyMove() =>
+    float total = 0.0
+    for i = 0 to volDays - 1
+        cur  = nz(close[i * stepBars], 0.0)
+        prev = nz(close[i * stepBars + stepBars], 0.0)
+        if prev > 0 and cur > 0
+            total += math.abs(cur / prev - 1.0)
+    total / volDays
+
+avgMovePct = avgDailyMove() * 100.0
+annVolPct  = avgMovePct * math.sqrt(annDays / daysPerStep)
+
+float exposure = na
+if ready and annVolPct > 0
+    exposure := weight * (riskPct / annVolPct)
+posSize = exposure * portfolio
+
+tone = score > 0 ? colUp : score < 0 ? colDn : colFlat
+
+// ---------------------------------------------------------------- plots
+
+plot(ready ? score : na, "Score", color=tone, style=plot.style_columns, histbase=0)
+plot(ready and score == 0 ? 0 : na, "Flat", color=colFlat, style=plot.style_circles)
+
+hline(0,  "No trade",    color=color.new(color.gray, 40), linestyle=hline.style_solid)
+hline(2,  "Half long",   color=color.new(#26a69a, 60), linestyle=hline.style_dashed)
+hline(4,  "Fully long",  color=color.new(#26a69a, 30), linestyle=hline.style_dashed)
+hline(-2, "Half short",  color=color.new(#ef5350, 60), linestyle=hline.style_dashed)
+hline(-4, "Fully short", color=color.new(#ef5350, 30), linestyle=hline.style_dashed)
+
+barcolor(colorBars and ready ? tone : na)
+
+// ------------------------------------------------------------ formatting
+
+// Thousands separators, so the position size reads like the worked example.
+commify(v) =>
+    string out = ""
+    if not na(v)
+        digits = str.tostring(int(math.round(math.abs(v))))
+        n = str.length(digits)
+        for i = 0 to n - 1
+            out += str.substring(digits, i, i + 1)
+            rem = n - 1 - i
+            if rem > 0 and rem % 3 == 0
+                out += ","
+        if v < 0
+            out := "-" + out
+    out
+
+signed(v) =>
+    (v > 0 ? "+" : "") + str.tostring(v)
+
+// "1W" / "2W" / "1M" / "2M" / "45D"
+horizon(days) =>
+    string out = str.tostring(days) + "D"
+    if days % 30 == 0
+        out := str.tostring(int(days / 30)) + "M"
+    else if days % 7 == 0
+        out := str.tostring(int(days / 7)) + "W"
+    out
+
+// ------------------------------------------------- trendlines on the price
+
+var line[]  lns = array.new<line>()
+var label[] lbs = array.new<label>()
+
+drawHorizon(lbBars, days) =>
+    up  = close > close[lbBars]
+    col = up ? colUp : colDn
+    array.push(lns, line.new(bar_index - lbBars, close[lbBars], bar_index, close, color=col, width=2, force_overlay=true))
+    txt = horizon(days) + "  " + (up ? "+1" : "-1")
+    lblStyle = up ? label.style_label_up : label.style_label_down
+    array.push(lbs, label.new(bar_index - lbBars, close[lbBars], txt, style=lblStyle, color=color.new(col, 85), textcolor=col, size=size.small, force_overlay=true))
+
+if barstate.islast
+    for l in lns
+        line.delete(l)
+    array.clear(lns)
+    for lb in lbs
+        label.delete(lb)
+    array.clear(lbs)
+    if showLines and ready
+        drawHorizon(lb1, lbDays1)
+        drawHorizon(lb2, lbDays2)
+        drawHorizon(lb3, lbDays3)
+        drawHorizon(lb4, lbDays4)
+
+// ------------------------------------------------------------- read-out
+
+var table rubric = table.new(position.top_right, 2, 8, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+
+row(i, k, v, col) =>
+    table.cell(rubric, 0, i, k, text_color=color.new(color.gray, 20), text_size=size.small, text_halign=text.align_left, bgcolor=color.new(color.black, 80))
+    table.cell(rubric, 1, i, v, text_color=col, text_size=size.small, text_halign=text.align_right, bgcolor=color.new(color.black, 80))
+
+if showTable and barstate.islast
+    table.clear(rubric, 0, 0, 1, 7)
+    if tooDeep
+        row(0, "Timeframe", "unsupported here", colDn)
+        row(1, "Rubric needs", str.tostring(needed) + " bars", colFlat)
+        row(2, "Pine limit", "5000 bars", colFlat)
+        row(3, "Use", "1h or higher", colFlat)
+    else if not ready
+        row(0, "Warming up", str.tostring(needed - bar_index) + " bars to go", colFlat)
+    else
+        readings = horizon(lbDays1) + " " + signed(r1) + "   " + horizon(lbDays2) + " " + signed(r2) + "   " + horizon(lbDays3) + " " + signed(r3) + "   " + horizon(lbDays4) + " " + signed(r4)
+        sizeTxt = na(posSize) ? "—" : str.tostring(exposure * 100, "#.#") + "%   " + ccy + commify(posSize)
+        row(0, "Score", signed(score), tone)
+        row(1, "Signal", signal, tone)
+        row(2, "Horizons", readings, colFlat)
+        row(3, "Score weight", str.tostring(weight, "#.##"), tone)
+        row(4, "Avg daily move", str.tostring(avgMovePct, "#.##") + "%", colFlat)
+        row(5, "Annualised vol", str.tostring(annVolPct, "#.#") + "%", colFlat)
+        row(6, "Target risk", str.tostring(riskPct, "#.##") + "%", colFlat)
+        row(7, "Position size", sizeTxt, tone)
+
+// --------------------------------------------------------------- alerts
+
+// bar_index > needed guarantees the previous bar was scored too
+steady  = ready and bar_index > needed
+changed = steady and score != score[1]
+
+alertcondition(changed, "Score changed", "Multi-Horizon Momentum: score changed")
+alertcondition(changed and score == 4, "Fully long", "Multi-Horizon Momentum: +4, fully long")
+alertcondition(changed and score == -4, "Fully short", "Multi-Horizon Momentum: -4, fully short")
+alertcondition(changed and score == 0, "Flat", "Multi-Horizon Momentum: 0, no trade")
+alertcondition(changed and ((score > 0 and score[1] <= 0) or (score < 0 and score[1] >= 0)), "Direction flipped", "Multi-Horizon Momentum: direction flipped")
