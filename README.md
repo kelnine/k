@@ -14,6 +14,16 @@ fully custom canvas rendering engine, with no third-party charting library.
   you pan back.
 - **Indicators** — MA 20/50/200, EMA 21, Bollinger Bands, daily-anchored VWAP
   (overlays) plus RSI and MACD in their own synced panes.
+- **Multi-Horizon Momentum** — the AHL-style managed-futures trend rubric,
+  from scratch: four close-to-close lookbacks (1 week / 2 weeks / 1 month /
+  2 months) each score +1 or −1, summing to a −4 … +4 market score that sets
+  both direction and exposure (+4 fully long · +2 half long · 0 flat · −2 half
+  short · −4 fully short). A companion overlay draws the four trendlines the
+  rubric asks for, and the score pane reads out annualised volatility (average
+  daily close-to-close move × √365) and the volatility-targeted position size:
+  `score weight × (target risk % / annualised vol %) × portfolio`. Lookbacks are
+  defined in days and converted from the candle spacing, so the daily-chart
+  rules hold on any timeframe.
 - **Phantom Flow SMC** — a from-scratch Smart Money Concepts overlay: swing
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low

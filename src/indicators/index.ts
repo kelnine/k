@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { makeSmc } from './smc'
+import { makeMomentum, makeMomentumLines } from './momentum'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -53,6 +54,11 @@ export interface ShapeMarker {
 
 export type IndicatorShape = ShapeBox | ShapeLine | ShapeMarker
 
+export interface LegendItem {
+  color: string
+  value: string
+}
+
 export interface IndicatorResult {
   plots: Plot[]
   /** horizontal reference lines (oscillator panes) */
@@ -63,8 +69,11 @@ export interface IndicatorResult {
   fills?: { a: string; b: string; color: string }[]
   /** free-form overlay primitives (boxes / lines / markers) */
   shapes?: IndicatorShape[]
-  /** custom legend chips (used when an indicator has no numeric plots) */
-  legend?: { color: string; value: string }[]
+  /**
+   * Custom legend chips, replacing the default per-plot values. Pass a
+   * function to vary them with the hovered candle index.
+   */
+  legend?: LegendItem[] | ((index: number) => LegendItem[])
 }
 
 export interface IndicatorDef {
@@ -255,6 +264,8 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeMomentum(),
+  makeMomentumLines(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {
