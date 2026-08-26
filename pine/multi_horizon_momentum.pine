@@ -14,14 +14,17 @@
 //      -4 fully short.
 //   3. Size it.  position = score weight x (target risk % / annualised vol %)
 //      x portfolio, where annualised volatility is the average daily
-//      close-to-close % move over the last 30 days scaled by sqrt(365) (~19.1).
-//      Calm market -> bigger size, wild market -> smaller size.
+//      close-to-close % move over the last 30 days scaled by sqrt(days per
+//      year). Calm market -> bigger size, wild market -> smaller size.
 //
-// The rubric is written for a daily chart. Lookbacks and the volatility window
-// are entered in *days* and converted to bars from the chart's timeframe, so
-// the same rules hold on 4h, daily and weekly. Low timeframes need more history
-// than Pine can address (two months of 15m bars is over 5000 bars); those are
-// reported as unsupported rather than silently mis-scored.
+// The rubric is a daily-chart tool, so by default it is computed on daily bars
+// via request.security and displayed on whatever timeframe you are looking at:
+// put it on a 5m chart and you still read the daily score. Untick "Score on the
+// chart's timeframe" only if you want the rules re-run on the chart's own bars.
+//
+// Live daily bars: the score reflects the forming daily close, so it can change
+// during the session and settle at the daily close. History does not repaint
+// (lookahead_off).
 //
 // Educational material, not financial advice. Past performance and backtested
 // results do not guarantee future returns.
@@ -40,9 +43,10 @@ lbDays1 = input.int(7,  "Lookback 1 (days)", minval=1, group=G_SCORE)
 lbDays2 = input.int(14, "Lookback 2 (days)", minval=1, group=G_SCORE)
 lbDays3 = input.int(30, "Lookback 3 (days)", minval=1, group=G_SCORE)
 lbDays4 = input.int(60, "Lookback 4 (days)", minval=1, group=G_SCORE)
+useChartTf = input.bool(false, "Score on the chart's timeframe", group=G_SCORE, tooltip="Off (default): the rubric runs on daily bars whatever chart you are on — the way it is meant to be used. On: the rules are re-run on the chart's own bars, which needs more history than Pine can address below 1h.")
 
 volDays   = input.int(30, "Volatility window (days)", minval=2, group=G_SIZE, tooltip="How many daily close-to-close moves to average.")
-annDays   = input.int(365, "Days per year", minval=1, maxval=365, group=G_SIZE, tooltip="365 for crypto and FX, where a daily bar is a calendar day. Use 252 on a stock chart, where a daily bar is a trading day.")
+annMode   = input.string("Auto", "Days per year", options=["Auto", "365 (crypto / FX)", "252 (stocks / futures)"], group=G_SIZE, tooltip="Scales the average daily move into a yearly figure. A crypto daily bar is a calendar day (365); a futures or stock daily bar is a trading day (252).")
 riskPct   = input.float(10.0, "Target risk (%)", minval=0.1, step=0.5, group=G_SIZE, tooltip="The % of the account you are genuinely fine losing on this strategy. Pick it once, keep it fixed.")
 portfolio = input.float(100000, "Portfolio", minval=0, step=1000, group=G_SIZE)
 ccy       = input.string("$", "Currency symbol", group=G_SIZE)
@@ -57,9 +61,11 @@ colFlat = input.color(#787b86, "Flat",      group=G_DISP, inline="c")
 
 // ------------------------------------------------------- days <-> bars
 
-// Bar spacing, so the day-based rules can be expressed in bars on any chart.
-barSecs    = timeframe.in_seconds(timeframe.period)
-barsPerDay = nz(barSecs, 0) <= 0 ? 1.0 : 86400.0 / barSecs
+// The timeframe the rules actually run on, and its bar spacing, so the
+// day-based lookbacks can be expressed in bars of that timeframe.
+rubricTf   = useChartTf ? timeframe.period : "D"
+rubricSecs = timeframe.in_seconds(rubricTf)
+barsPerDay = nz(rubricSecs, 0) <= 0 ? 1.0 : 86400.0 / rubricSecs
 
 daysToBars(days) =>
     math.max(1, int(math.round(days * barsPerDay)))
@@ -74,20 +80,41 @@ lb4 = daysToBars(lbDays4)
 stepBars    = math.max(1, int(math.round(barsPerDay)))
 daysPerStep = stepBars / barsPerDay
 
+// A daily bar is a calendar day on crypto/FX and a trading day everywhere else.
+autoAnnDays = syminfo.type == "crypto" or syminfo.type == "spot" or syminfo.type == "forex" ? 365 : 252
+annDays = switch annMode
+    "365 (crypto / FX)" => 365
+    "252 (stocks / futures)" => 252
+    => autoAnnDays
+
 needed  = math.max(math.max(math.max(lb1, lb2), math.max(lb3, lb4)), stepBars * volDays)
-tooDeep = needed > 4999
-ready   = not tooDeep and bar_index >= needed
+tooDeep = useChartTf and needed > 4999
 
 // --------------------------------------------------------------- rubric
 
-// 1 — score each horizon: a rising close-to-close line is +1, anything else -1
-reading(lbBars) =>
-    close > nz(close[lbBars], close) ? 1 : -1
+// Everything the rubric needs, evaluated in the rubric timeframe's context:
+// the four +1/-1 readings, the average daily move, and each lookback's anchor
+// (price and bar time) so the trendlines can be drawn on any chart.
+rubric(b1, b2, b3, b4, stepB, volN) =>
+    deepest = math.max(math.max(b1, b2), math.max(b3, b4))
+    rdy = bar_index >= math.max(deepest, stepB * volN)
+    x1 = close > close[b1] ? 1 : -1
+    x2 = close > close[b2] ? 1 : -1
+    x3 = close > close[b3] ? 1 : -1
+    x4 = close > close[b4] ? 1 : -1
+    float total = 0.0
+    for i = 0 to volN - 1
+        cur  = nz(close[i * stepB], 0.0)
+        prev = nz(close[i * stepB + stepB], 0.0)
+        if prev > 0 and cur > 0
+            total += math.abs(cur / prev - 1.0)
+    [rdy, x1, x2, x3, x4, total / volN, close[b1], close[b2], close[b3], close[b4], time[b1], time[b2], time[b3], time[b4]]
 
-r1 = reading(lb1)
-r2 = reading(lb2)
-r3 = reading(lb3)
-r4 = reading(lb4)
+[rdy, r1, r2, r3, r4, avgMove, p1, p2, p3, p4, t1, t2, t3, t4] = request.security(syminfo.tickerid, rubricTf, rubric(lb1, lb2, lb3, lb4, stepBars, volDays), lookahead=barmerge.lookahead_off)
+
+ready = not tooDeep and rdy == true
+
+// 1 — the four readings sum to the market score
 score = r1 + r2 + r3 + r4
 
 // 2 — rate it: the score sets direction and exposure
@@ -100,16 +127,7 @@ signal = switch
     => "Fully short"
 
 // 3 — size it: the average daily close-to-close move is the brake
-avgDailyMove() =>
-    float total = 0.0
-    for i = 0 to volDays - 1
-        cur  = nz(close[i * stepBars], 0.0)
-        prev = nz(close[i * stepBars + stepBars], 0.0)
-        if prev > 0 and cur > 0
-            total += math.abs(cur / prev - 1.0)
-    total / volDays
-
-avgMovePct = avgDailyMove() * 100.0
+avgMovePct = avgMove * 100.0
 annVolPct  = avgMovePct * math.sqrt(annDays / daysPerStep)
 
 float exposure = na
@@ -163,16 +181,18 @@ horizon(days) =>
 
 // ------------------------------------------------- trendlines on the price
 
+// Anchors come back from the rubric timeframe as (time, price) pairs, so the
+// lines sit correctly on a 5m chart even though they span two months.
 var line[]  lns = array.new<line>()
 var label[] lbs = array.new<label>()
 
-drawHorizon(lbBars, days) =>
-    up  = close > close[lbBars]
+drawHorizon(anchorTime, anchorPrice, days) =>
+    up  = close > anchorPrice
     col = up ? colUp : colDn
-    array.push(lns, line.new(bar_index - lbBars, close[lbBars], bar_index, close, color=col, width=2, force_overlay=true))
+    array.push(lns, line.new(anchorTime, anchorPrice, time, close, xloc=xloc.bar_time, color=col, width=2, force_overlay=true))
     txt = horizon(days) + "  " + (up ? "+1" : "-1")
     lblStyle = up ? label.style_label_up : label.style_label_down
-    array.push(lbs, label.new(bar_index - lbBars, close[lbBars], txt, style=lblStyle, color=color.new(col, 85), textcolor=col, size=size.small, force_overlay=true))
+    array.push(lbs, label.new(anchorTime, anchorPrice, txt, xloc=xloc.bar_time, style=lblStyle, color=color.new(col, 85), textcolor=col, size=size.small, force_overlay=true))
 
 if barstate.islast
     for l in lns
@@ -182,31 +202,30 @@ if barstate.islast
         label.delete(lb)
     array.clear(lbs)
     if showLines and ready
-        drawHorizon(lb1, lbDays1)
-        drawHorizon(lb2, lbDays2)
-        drawHorizon(lb3, lbDays3)
-        drawHorizon(lb4, lbDays4)
+        drawHorizon(t1, p1, lbDays1)
+        drawHorizon(t2, p2, lbDays2)
+        drawHorizon(t3, p3, lbDays3)
+        drawHorizon(t4, p4, lbDays4)
 
 // ------------------------------------------------------------- read-out
 
-var table rubric = table.new(position.top_right, 2, 8, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+var table rubricTable = table.new(position.top_right, 2, 9, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
 
 row(i, k, v, col) =>
-    table.cell(rubric, 0, i, k, text_color=color.new(color.gray, 20), text_size=size.small, text_halign=text.align_left, bgcolor=color.new(color.black, 80))
-    table.cell(rubric, 1, i, v, text_color=col, text_size=size.small, text_halign=text.align_right, bgcolor=color.new(color.black, 80))
+    table.cell(rubricTable, 0, i, k, text_color=color.new(color.gray, 20), text_size=size.small, text_halign=text.align_left, bgcolor=color.new(color.black, 80))
+    table.cell(rubricTable, 1, i, v, text_color=col, text_size=size.small, text_halign=text.align_right, bgcolor=color.new(color.black, 80))
 
 if showTable and barstate.islast
-    table.clear(rubric, 0, 0, 1, 7)
+    table.clear(rubricTable, 0, 0, 1, 8)
     if tooDeep
-        row(0, "Timeframe", "unsupported here", colDn)
-        row(1, "Rubric needs", str.tostring(needed) + " bars", colFlat)
-        row(2, "Pine limit", "5000 bars", colFlat)
-        row(3, "Use", "1h or higher", colFlat)
+        row(0, "Chart-timeframe scoring", "needs " + str.tostring(needed) + " bars", colDn)
+        row(1, "Pine can address", "5000 bars", colFlat)
+        row(2, "Fix", "untick 'Score on the chart's timeframe'", colFlat)
     else if not ready
-        row(0, "Warming up", str.tostring(needed - bar_index) + " bars to go", colFlat)
+        row(0, "Warming up", "not enough " + rubricTf + " history", colFlat)
     else
         readings = horizon(lbDays1) + " " + signed(r1) + "   " + horizon(lbDays2) + " " + signed(r2) + "   " + horizon(lbDays3) + " " + signed(r3) + "   " + horizon(lbDays4) + " " + signed(r4)
-        sizeTxt = na(posSize) ? "—" : str.tostring(exposure * 100, "#.#") + "%   " + ccy + commify(posSize)
+        sizeTxt = na(posSize) ? "n/a" : str.tostring(exposure * 100, "#.#") + "%   " + ccy + commify(posSize)
         row(0, "Score", signed(score), tone)
         row(1, "Signal", signal, tone)
         row(2, "Horizons", readings, colFlat)
@@ -215,12 +234,11 @@ if showTable and barstate.islast
         row(5, "Annualised vol", str.tostring(annVolPct, "#.#") + "%", colFlat)
         row(6, "Target risk", str.tostring(riskPct, "#.##") + "%", colFlat)
         row(7, "Position size", sizeTxt, tone)
+        row(8, "Scored on", rubricTf + " bars, " + str.tostring(annDays) + "d/yr", colFlat)
 
 // --------------------------------------------------------------- alerts
 
-// bar_index > needed guarantees the previous bar was scored too
-steady  = ready and bar_index > needed
-changed = steady and score != score[1]
+changed = ready and ready[1] == true and score != score[1]
 
 alertcondition(changed, "Score changed", "Multi-Horizon Momentum: score changed")
 alertcondition(changed and score == 4, "Fully long", "Multi-Horizon Momentum: +4, fully long")

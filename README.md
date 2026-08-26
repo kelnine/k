@@ -47,12 +47,18 @@ fully custom canvas rendering engine, with no third-party charting library.
 Pine Script v6 indicator — the same rules as the built-in `mhm` indicator, for
 people who chart on TradingView. Paste it into the Pine Editor and add it to a
 chart. It plots the −4 … +4 score in its own pane, draws the four trendlines on
-the price chart (`force_overlay`), shows the rating and the volatility-targeted
-position size in a corner table, and ships alert conditions for score changes
-and direction flips. Lookbacks are entered in days and converted from the
-chart's timeframe; two months of history is more bars than Pine can address
-below 1h, so lower timeframes report themselves as unsupported instead of
-mis-scoring.
+the price chart (`force_overlay`, anchored by bar time), shows the rating and
+the volatility-targeted position size in a corner table, and ships alert
+conditions for score changes and direction flips.
+
+The rubric is a daily-chart tool, so the rules are evaluated on daily bars via
+`request.security` and displayed on whatever timeframe you are viewing — a 5m
+chart still reads the daily score. Ticking *Score on the chart's timeframe*
+re-runs the rules on the chart's own bars instead, which needs more history than
+Pine can address below 1h and says so rather than mis-scoring. Days-per-year for
+the volatility term defaults to the instrument: 365 for crypto and FX, where a
+daily bar is a calendar day, 252 for stocks and futures, where it is a trading
+day.
 
 ## Run it
 
