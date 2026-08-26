@@ -18,6 +18,12 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **OTE Sniper** — finds the last confirmed impulse leg, auto-anchors a fib
+  (0 at the leg's terminal extreme, 1 at its origin), and flags the
+  0.62 / 0.705 / 0.79 OTE band. Where an unfilled FVG from that same leg
+  overlaps the band, the overlap becomes the entry zone, drawn with entry /
+  stop / target and live R:R, then tracked through tapped → target or stopped.
+  Shipped for TradingView too — see `pine/ote-sniper.pine`.
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.
@@ -39,6 +45,20 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production bundle in dist/
 ```
 
+## TradingView script
+
+`pine/ote-sniper.pine` is a standalone Pine v6 indicator implementing the same
+OTE Sniper rules. Paste it into TradingView's Pine Editor, *Add to chart*, and
+it draws the FVG, the fib ladder, the entry zone and the risk/reward projection
+on any symbol and timeframe. It ships four alerts — new setup, price entered
+the zone, target hit, stopped out — available both as `alert()` messages
+("Any alert() function call") and as named `alertcondition` entries.
+
+Defaults are ICT-style: swing strength 5, an impulse leg of at least 2× ATR(14),
+FVG confluence required, stop beyond the leg origin, target at fib 0. Turn off
+*Require FVG confluence* to trade the raw OTE band, or switch *Target from* to
+*Risk multiple* for a fixed-R target instead of a full retest of the leg.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,
@@ -56,5 +76,7 @@ src/
     drawings.ts  drawing tools: render + hit-testing
     utils.ts     axis ticks, price/time formatting
   indicators/  pure-function indicator library + registry
+    smc.ts       Phantom Flow: structure, order blocks, FVGs, liquidity
+    ote.ts       OTE Sniper: impulse leg -> fib OTE + FVG entry zones
   ui/          React shell: toolbar, layouts, watchlist, search
 ```
