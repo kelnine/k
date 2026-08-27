@@ -56,6 +56,7 @@ showTable = input.bool(true,  "Show the rubric read-out", group=G_DISP)
 compact   = input.bool(false, "Compact read-out", group=G_DISP, tooltip="Only the score, the signal and the position size — the three lines you act on. Useful when the pane is short, as it is on a phone.")
 tablePos  = input.string("Top right", "Read-out corner", options=["Top right", "Top left", "Middle right", "Middle left", "Bottom right", "Bottom left"], group=G_DISP)
 tableSize = input.string("Small", "Read-out text size", options=["Tiny", "Small", "Normal"], group=G_DISP)
+scoreStyle = input.string("Columns", "Score style", options=["Columns", "Step line", "Area"], group=G_DISP, tooltip="A daily score holds one value all session, so on an intraday chart Columns paints a solid block. Step line stays legible there — and stays out of the way if the indicator ends up merged into the price pane.")
 colorBars = input.bool(false, "Colour price bars by the score", group=G_DISP)
 
 colUp   = input.color(#26a69a, "Uptrend",   group=G_DISP, inline="c")
@@ -142,7 +143,12 @@ tone = score > 0 ? colUp : score < 0 ? colDn : colFlat
 
 // ---------------------------------------------------------------- plots
 
-plot(ready ? score : na, "Score", color=tone, style=plot.style_columns, histbase=0)
+// One style is live and the other two plot na — Pine cannot switch a plot's
+// style at runtime.
+scoreVal = ready ? score : na
+plot(scoreStyle == "Columns" ? scoreVal : na, "Score", color=tone, style=plot.style_columns, histbase=0)
+plot(scoreStyle == "Step line" ? scoreVal : na, "Score (step)", color=tone, style=plot.style_stepline, linewidth=2)
+plot(scoreStyle == "Area" ? scoreVal : na, "Score (area)", color=color.new(tone, 65), style=plot.style_area, histbase=0)
 plot(ready and score == 0 ? 0 : na, "Flat", color=colFlat, style=plot.style_circles)
 
 hline(0,  "No trade",    color=color.new(color.gray, 40), linestyle=hline.style_solid)
