@@ -859,13 +859,18 @@ export class ChartEngine {
       return
     }
     const i = Math.max(0, Math.min(n - 1, idx ?? n - 1))
-    const indicators = this.indicators.map((a) => ({
-      name: a.def.name,
-      items: a.result.legend ?? a.result.plots.map((p) => {
-        const v = p.values[i]
-        return { color: p.color, value: v === null || v === undefined ? '—' : formatPrice(v) }
-      }),
-    }))
+    const indicators = this.indicators.map((a) => {
+      const legend = a.result.legend
+      const items =
+        typeof legend === 'function'
+          ? legend(i)
+          : (legend ??
+              a.result.plots.map((p) => {
+                const v = p.values[i]
+                return { color: p.color, value: v === null || v === undefined ? '—' : formatPrice(v) }
+              }))
+      return { name: a.def.name, items }
+    })
     this.opts.onLegend({ candle: this.candles[i], prev: i > 0 ? this.candles[i - 1] : null, indicators })
   }
 

@@ -1,0 +1,285 @@
+//@version=6
+// =============================================================================
+// Multi-Horizon Momentum Rubric
+//
+// A rule-based trend-scoring system in the spirit of the AHL / managed-futures
+// time-series momentum work. It measures trend strength instead of predicting
+// it, and one score sets both direction and exposure.
+//
+//   1. Score the trend. On each of four lookbacks (1 week, 2 weeks, 1 month,
+//      2 months) draw a line from the close that far back to the latest close.
+//      Rising scores +1, falling scores -1. The four readings sum to a single
+//      market score in the range -4 ... +4.
+//   2. Rate it.  +4 fully long | +2 half long | 0 no trade | -2 half short |
+//      -4 fully short.
+//   3. Size it.  position = score weight x (target risk % / annualised vol %)
+//      x portfolio, where annualised volatility is the average daily
+//      close-to-close % move over the last 30 days scaled by sqrt(days per
+//      year). Calm market -> bigger size, wild market -> smaller size.
+//
+// The rubric is a daily-chart tool, so by default it is computed on daily bars
+// via request.security and displayed on whatever timeframe you are looking at:
+// put it on a 5m chart and you still read the daily score. Untick "Score on the
+// chart's timeframe" only if you want the rules re-run on the chart's own bars.
+//
+// Live daily bars: the score reflects the forming daily close, so it can change
+// during the session and settle at the daily close. History does not repaint
+// (lookahead_off).
+//
+// Educational material, not financial advice. Past performance and backtested
+// results do not guarantee future returns.
+// =============================================================================
+
+indicator("Multi-Horizon Momentum Rubric", shorttitle="MHM", overlay=false,
+          max_lines_count=20, max_labels_count=20, max_bars_back=5000)
+
+// ----------------------------------------------------------------- inputs
+
+const string G_SCORE = "Trend score"
+const string G_SIZE  = "Position sizing"
+const string G_DISP  = "Display"
+
+lbDays1 = input.int(7,  "Lookback 1 (days)", minval=1, group=G_SCORE)
+lbDays2 = input.int(14, "Lookback 2 (days)", minval=1, group=G_SCORE)
+lbDays3 = input.int(30, "Lookback 3 (days)", minval=1, group=G_SCORE)
+lbDays4 = input.int(60, "Lookback 4 (days)", minval=1, group=G_SCORE)
+useChartTf = input.bool(false, "Score on the chart's timeframe", group=G_SCORE, tooltip="Off (default): the rubric runs on daily bars whatever chart you are on — the way it is meant to be used. On: the rules are re-run on the chart's own bars, which needs more history than Pine can address below 1h.")
+
+volDays   = input.int(30, "Volatility window (days)", minval=2, group=G_SIZE, tooltip="How many daily close-to-close moves to average.")
+annMode   = input.string("Auto", "Days per year", options=["Auto", "365 (crypto / FX)", "252 (stocks / futures)"], group=G_SIZE, tooltip="Scales the average daily move into a yearly figure. A crypto daily bar is a calendar day (365); a futures or stock daily bar is a trading day (252).")
+riskPct   = input.float(10.0, "Target risk (%)", minval=0.1, step=0.5, group=G_SIZE, tooltip="The % of the account you are genuinely fine losing on this strategy. Pick it once, keep it fixed.")
+portfolio = input.float(100000, "Portfolio", minval=0, step=1000, group=G_SIZE)
+ccy       = input.string("$", "Currency symbol", group=G_SIZE)
+
+showLines = input.bool(true,  "Draw the four trendlines on the price chart", group=G_DISP, tooltip="The lines span up to two months, so they are only visible on a chart where that much history fits — daily or 4h. On a 1m chart their anchors sit far off the left edge.")
+showTable = input.bool(true,  "Show the rubric read-out", group=G_DISP)
+compact   = input.bool(false, "Compact read-out", group=G_DISP, tooltip="Only the score, the signal and the position size — the three lines you act on. Useful when the pane is short, as it is on a phone.")
+tablePos  = input.string("Top right", "Read-out corner", options=["Top right", "Top left", "Middle right", "Middle left", "Bottom right", "Bottom left"], group=G_DISP)
+tableSize = input.string("Small", "Read-out text size", options=["Tiny", "Small", "Normal"], group=G_DISP)
+scoreStyle = input.string("Columns", "Score style", options=["Columns", "Step line", "Area"], group=G_DISP, tooltip="A daily score holds one value all session, so on an intraday chart Columns paints a solid block. Step line stays legible there — and stays out of the way if the indicator ends up merged into the price pane.")
+colorBars = input.bool(false, "Colour price bars by the score", group=G_DISP)
+
+colUp   = input.color(#26a69a, "Uptrend",   group=G_DISP, inline="c")
+colDn   = input.color(#ef5350, "Downtrend", group=G_DISP, inline="c")
+colFlat = input.color(#787b86, "Flat",      group=G_DISP, inline="c")
+
+// ------------------------------------------------------- days <-> bars
+
+// The timeframe the rules actually run on, and its bar spacing, so the
+// day-based lookbacks can be expressed in bars of that timeframe.
+rubricTf   = useChartTf ? timeframe.period : "D"
+rubricSecs = timeframe.in_seconds(rubricTf)
+barsPerDay = nz(rubricSecs, 0) <= 0 ? 1.0 : 86400.0 / rubricSecs
+
+daysToBars(days) =>
+    math.max(1, int(math.round(days * barsPerDay)))
+
+lb1 = daysToBars(lbDays1)
+lb2 = daysToBars(lbDays2)
+lb3 = daysToBars(lbDays3)
+lb4 = daysToBars(lbDays4)
+
+// One "daily" volatility step, and how many days it really spans — a weekly
+// chart cannot sample finer than a week, so it annualises from a weekly move.
+stepBars    = math.max(1, int(math.round(barsPerDay)))
+daysPerStep = stepBars / barsPerDay
+
+// A daily bar is a calendar day on crypto/FX and a trading day everywhere else.
+autoAnnDays = syminfo.type == "crypto" or syminfo.type == "spot" or syminfo.type == "forex" ? 365 : 252
+annDays = switch annMode
+    "365 (crypto / FX)" => 365
+    "252 (stocks / futures)" => 252
+    => autoAnnDays
+
+needed  = math.max(math.max(math.max(lb1, lb2), math.max(lb3, lb4)), stepBars * volDays)
+tooDeep = useChartTf and needed > 4999
+
+// --------------------------------------------------------------- rubric
+
+// Everything the rubric needs, evaluated in the rubric timeframe's context:
+// the four +1/-1 readings, the average daily move, and each lookback's anchor
+// (price and bar time) so the trendlines can be drawn on any chart.
+rubric(b1, b2, b3, b4, stepB, volN) =>
+    deepest = math.max(math.max(b1, b2), math.max(b3, b4))
+    rdy = bar_index >= math.max(deepest, stepB * volN)
+    x1 = close > close[b1] ? 1 : -1
+    x2 = close > close[b2] ? 1 : -1
+    x3 = close > close[b3] ? 1 : -1
+    x4 = close > close[b4] ? 1 : -1
+    float total = 0.0
+    for i = 0 to volN - 1
+        cur  = nz(close[i * stepB], 0.0)
+        prev = nz(close[i * stepB + stepB], 0.0)
+        if prev > 0 and cur > 0
+            total += math.abs(cur / prev - 1.0)
+    [rdy, x1, x2, x3, x4, total / volN, close[b1], close[b2], close[b3], close[b4], time[b1], time[b2], time[b3], time[b4]]
+
+[rdy, r1, r2, r3, r4, avgMove, p1, p2, p3, p4, t1, t2, t3, t4] = request.security(syminfo.tickerid, rubricTf, rubric(lb1, lb2, lb3, lb4, stepBars, volDays), lookahead=barmerge.lookahead_off)
+
+ready = not tooDeep and rdy == true
+
+// 1 — the four readings sum to the market score
+score = r1 + r2 + r3 + r4
+
+// 2 — rate it: the score sets direction and exposure
+weight = math.abs(score) / 4.0
+signal = switch
+    score == 4  => "Fully long"
+    score == 2  => "Half long"
+    score == 0  => "No trade"
+    score == -2 => "Half short"
+    => "Fully short"
+
+// 3 — size it: the average daily close-to-close move is the brake
+avgMovePct = avgMove * 100.0
+annVolPct  = avgMovePct * math.sqrt(annDays / daysPerStep)
+
+float exposure = na
+if ready and annVolPct > 0
+    exposure := weight * (riskPct / annVolPct)
+posSize = exposure * portfolio
+
+tone = score > 0 ? colUp : score < 0 ? colDn : colFlat
+
+// ---------------------------------------------------------------- plots
+
+// One style is live and the other two plot na — Pine cannot switch a plot's
+// style at runtime.
+scoreVal = ready ? score : na
+plot(scoreStyle == "Columns" ? scoreVal : na, "Score", color=tone, style=plot.style_columns, histbase=0)
+plot(scoreStyle == "Step line" ? scoreVal : na, "Score (step)", color=tone, style=plot.style_stepline, linewidth=2)
+plot(scoreStyle == "Area" ? scoreVal : na, "Score (area)", color=color.new(tone, 65), style=plot.style_area, histbase=0)
+plot(ready and score == 0 ? 0 : na, "Flat", color=colFlat, style=plot.style_circles)
+
+hline(0,  "No trade",    color=color.new(color.gray, 40), linestyle=hline.style_solid)
+hline(2,  "Half long",   color=color.new(#26a69a, 60), linestyle=hline.style_dashed)
+hline(4,  "Fully long",  color=color.new(#26a69a, 30), linestyle=hline.style_dashed)
+hline(-2, "Half short",  color=color.new(#ef5350, 60), linestyle=hline.style_dashed)
+hline(-4, "Fully short", color=color.new(#ef5350, 30), linestyle=hline.style_dashed)
+
+barcolor(colorBars and ready ? tone : na)
+
+// ------------------------------------------------------------ formatting
+
+// Thousands separators, so the position size reads like the worked example.
+commify(v) =>
+    string out = ""
+    if not na(v)
+        digits = str.tostring(int(math.round(math.abs(v))))
+        n = str.length(digits)
+        for i = 0 to n - 1
+            out += str.substring(digits, i, i + 1)
+            rem = n - 1 - i
+            if rem > 0 and rem % 3 == 0
+                out += ","
+        if v < 0
+            out := "-" + out
+    out
+
+signed(v) =>
+    (v > 0 ? "+" : "") + str.tostring(v)
+
+// "1W" / "2W" / "1M" / "2M" / "45D"
+horizon(days) =>
+    string out = str.tostring(days) + "D"
+    if days % 30 == 0
+        out := str.tostring(int(days / 30)) + "M"
+    else if days % 7 == 0
+        out := str.tostring(int(days / 7)) + "W"
+    out
+
+// ------------------------------------------------- trendlines on the price
+
+// Anchors come back from the rubric timeframe as (time, price) pairs, so the
+// lines sit correctly on a 5m chart even though they span two months.
+var line[]  lns = array.new<line>()
+var label[] lbs = array.new<label>()
+
+drawHorizon(anchorTime, anchorPrice, days) =>
+    up  = close > anchorPrice
+    col = up ? colUp : colDn
+    array.push(lns, line.new(anchorTime, anchorPrice, time, close, xloc=xloc.bar_time, color=col, width=2, force_overlay=true))
+    txt = horizon(days) + "  " + (up ? "+1" : "-1")
+    lblStyle = up ? label.style_label_up : label.style_label_down
+    array.push(lbs, label.new(anchorTime, anchorPrice, txt, xloc=xloc.bar_time, style=lblStyle, color=color.new(col, 85), textcolor=col, size=size.small, force_overlay=true))
+
+if barstate.islast
+    for l in lns
+        line.delete(l)
+    array.clear(lns)
+    for lb in lbs
+        label.delete(lb)
+    array.clear(lbs)
+    if showLines and ready
+        drawHorizon(t1, p1, lbDays1)
+        drawHorizon(t2, p2, lbDays2)
+        drawHorizon(t3, p3, lbDays3)
+        drawHorizon(t4, p4, lbDays4)
+
+// ------------------------------------------------------------- read-out
+
+tablePosition = switch tablePos
+    "Top left"      => position.top_left
+    "Middle right"  => position.middle_right
+    "Middle left"   => position.middle_left
+    "Bottom right"  => position.bottom_right
+    "Bottom left"   => position.bottom_left
+    => position.top_right
+
+textSize = switch tableSize
+    "Tiny"   => size.tiny
+    "Normal" => size.normal
+    => size.small
+
+var table rubricTable = table.new(tablePosition, 2, 9, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+
+// Nearly opaque, so the dashed rating lines do not read as minus signs
+// through the numbers.
+const color CELL_BG = #14161acc
+
+row(idx, name, value, col) =>
+    table.cell(rubricTable, 0, idx, name, text_color=color.new(color.gray, 20), text_size=textSize, text_halign=text.align_left, bgcolor=CELL_BG)
+    table.cell(rubricTable, 1, idx, value, text_color=col, text_size=textSize, text_halign=text.align_right, bgcolor=CELL_BG)
+
+if showTable and barstate.islast
+    table.clear(rubricTable, 0, 0, 1, 8)
+    if tooDeep
+        row(0, "Chart-timeframe scoring", "needs " + str.tostring(needed) + " bars", colDn)
+        row(1, "Pine can address", "5000 bars", colFlat)
+        row(2, "Fix", "untick 'Score on the chart's timeframe'", colFlat)
+    else if not ready
+        row(0, "Warming up", "not enough " + rubricTf + " history", colFlat)
+    else
+        readings = horizon(lbDays1) + " " + signed(r1) + "   " + horizon(lbDays2) + " " + signed(r2) + "   " + horizon(lbDays3) + " " + signed(r3) + "   " + horizon(lbDays4) + " " + signed(r4)
+        sizeTxt = na(posSize) ? "n/a" : str.tostring(exposure * 100, "#.#") + "%   " + ccy + commify(posSize)
+        // the three rows you act on come first, so a short pane clips detail
+        // rather than the answer
+        int k = 0
+        row(k, "Score", signed(score), tone)
+        k += 1
+        row(k, "Signal", signal, tone)
+        k += 1
+        row(k, "Position size", sizeTxt, tone)
+        k += 1
+        if not compact
+            row(k, "Score weight", str.tostring(weight, "#.##"), tone)
+            k += 1
+            row(k, "Horizons", readings, colFlat)
+            k += 1
+            row(k, "Avg daily move", str.tostring(avgMovePct, "#.##") + "%", colFlat)
+            k += 1
+            row(k, "Annualised vol", str.tostring(annVolPct, "#.#") + "%", colFlat)
+            k += 1
+            row(k, "Target risk", str.tostring(riskPct, "#.##") + "%", colFlat)
+            k += 1
+        row(k, "Scored on", rubricTf + " bars, " + str.tostring(annDays) + "d/yr", colFlat)
+
+// --------------------------------------------------------------- alerts
+
+changed = ready and ready[1] == true and score != score[1]
+
+alertcondition(changed, "Score changed", "Multi-Horizon Momentum: score changed")
+alertcondition(changed and score == 4, "Fully long", "Multi-Horizon Momentum: +4, fully long")
+alertcondition(changed and score == -4, "Fully short", "Multi-Horizon Momentum: -4, fully short")
+alertcondition(changed and score == 0, "Flat", "Multi-Horizon Momentum: 0, no trade")
+alertcondition(changed and ((score > 0 and score[1] <= 0) or (score < 0 and score[1] >= 0)), "Direction flipped", "Multi-Horizon Momentum: direction flipped")
