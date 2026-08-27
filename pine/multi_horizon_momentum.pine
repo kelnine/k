@@ -51,8 +51,11 @@ riskPct   = input.float(10.0, "Target risk (%)", minval=0.1, step=0.5, group=G_S
 portfolio = input.float(100000, "Portfolio", minval=0, step=1000, group=G_SIZE)
 ccy       = input.string("$", "Currency symbol", group=G_SIZE)
 
-showLines = input.bool(true,  "Draw the four trendlines on the price chart", group=G_DISP)
+showLines = input.bool(true,  "Draw the four trendlines on the price chart", group=G_DISP, tooltip="The lines span up to two months, so they are only visible on a chart where that much history fits — daily or 4h. On a 1m chart their anchors sit far off the left edge.")
 showTable = input.bool(true,  "Show the rubric read-out", group=G_DISP)
+compact   = input.bool(false, "Compact read-out", group=G_DISP, tooltip="Only the score, the signal and the position size — the three lines you act on. Useful when the pane is short, as it is on a phone.")
+tablePos  = input.string("Top right", "Read-out corner", options=["Top right", "Top left", "Middle right", "Middle left", "Bottom right", "Bottom left"], group=G_DISP)
+tableSize = input.string("Small", "Read-out text size", options=["Tiny", "Small", "Normal"], group=G_DISP)
 colorBars = input.bool(false, "Colour price bars by the score", group=G_DISP)
 
 colUp   = input.color(#26a69a, "Uptrend",   group=G_DISP, inline="c")
@@ -209,11 +212,28 @@ if barstate.islast
 
 // ------------------------------------------------------------- read-out
 
-var table rubricTable = table.new(position.top_right, 2, 9, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+tablePosition = switch tablePos
+    "Top left"      => position.top_left
+    "Middle right"  => position.middle_right
+    "Middle left"   => position.middle_left
+    "Bottom right"  => position.bottom_right
+    "Bottom left"   => position.bottom_left
+    => position.top_right
 
-row(i, k, v, col) =>
-    table.cell(rubricTable, 0, i, k, text_color=color.new(color.gray, 20), text_size=size.small, text_halign=text.align_left, bgcolor=color.new(color.black, 80))
-    table.cell(rubricTable, 1, i, v, text_color=col, text_size=size.small, text_halign=text.align_right, bgcolor=color.new(color.black, 80))
+textSize = switch tableSize
+    "Tiny"   => size.tiny
+    "Normal" => size.normal
+    => size.small
+
+var table rubricTable = table.new(tablePosition, 2, 9, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+
+// Nearly opaque, so the dashed rating lines do not read as minus signs
+// through the numbers.
+const color CELL_BG = #14161acc
+
+row(idx, name, value, col) =>
+    table.cell(rubricTable, 0, idx, name, text_color=color.new(color.gray, 20), text_size=textSize, text_halign=text.align_left, bgcolor=CELL_BG)
+    table.cell(rubricTable, 1, idx, value, text_color=col, text_size=textSize, text_halign=text.align_right, bgcolor=CELL_BG)
 
 if showTable and barstate.islast
     table.clear(rubricTable, 0, 0, 1, 8)
@@ -226,15 +246,27 @@ if showTable and barstate.islast
     else
         readings = horizon(lbDays1) + " " + signed(r1) + "   " + horizon(lbDays2) + " " + signed(r2) + "   " + horizon(lbDays3) + " " + signed(r3) + "   " + horizon(lbDays4) + " " + signed(r4)
         sizeTxt = na(posSize) ? "n/a" : str.tostring(exposure * 100, "#.#") + "%   " + ccy + commify(posSize)
-        row(0, "Score", signed(score), tone)
-        row(1, "Signal", signal, tone)
-        row(2, "Horizons", readings, colFlat)
-        row(3, "Score weight", str.tostring(weight, "#.##"), tone)
-        row(4, "Avg daily move", str.tostring(avgMovePct, "#.##") + "%", colFlat)
-        row(5, "Annualised vol", str.tostring(annVolPct, "#.#") + "%", colFlat)
-        row(6, "Target risk", str.tostring(riskPct, "#.##") + "%", colFlat)
-        row(7, "Position size", sizeTxt, tone)
-        row(8, "Scored on", rubricTf + " bars, " + str.tostring(annDays) + "d/yr", colFlat)
+        // the three rows you act on come first, so a short pane clips detail
+        // rather than the answer
+        int k = 0
+        row(k, "Score", signed(score), tone)
+        k += 1
+        row(k, "Signal", signal, tone)
+        k += 1
+        row(k, "Position size", sizeTxt, tone)
+        k += 1
+        if not compact
+            row(k, "Score weight", str.tostring(weight, "#.##"), tone)
+            k += 1
+            row(k, "Horizons", readings, colFlat)
+            k += 1
+            row(k, "Avg daily move", str.tostring(avgMovePct, "#.##") + "%", colFlat)
+            k += 1
+            row(k, "Annualised vol", str.tostring(annVolPct, "#.#") + "%", colFlat)
+            k += 1
+            row(k, "Target risk", str.tostring(riskPct, "#.##") + "%", colFlat)
+            k += 1
+        row(k, "Scored on", rubricTf + " bars, " + str.tostring(annDays) + "d/yr", colFlat)
 
 // --------------------------------------------------------------- alerts
 
