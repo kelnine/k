@@ -389,8 +389,8 @@ function render(
         x2,
         yTop: s.gap.top,
         yBottom: s.gap.bot,
-        fill: `rgba(${C.fvg},0.16)`,
-        stroke: `rgba(${C.fvg},0.4)`,
+        fill: `rgba(${C.fvg},0.24)`,
+        stroke: `rgba(${C.fvg},0.75)`,
         label: 'FVG',
         labelColor: `rgba(${C.fvg},0.95)`,
       })
@@ -402,8 +402,8 @@ function render(
       x2,
       yTop: s.zoneTop,
       yBottom: s.zoneBot,
-      fill: `rgba(${col},${detail ? 0.16 : 0.05})`,
-      stroke: `rgba(${col},${detail ? 0.6 : 0.22})`,
+      fill: `rgba(${col},${detail ? 0.28 : 0.07})`,
+      stroke: `rgba(${col},${detail ? 0.95 : 0.35})`,
       label: detail ? statusText(s) : undefined,
       labelColor: `rgba(${col},0.95)`,
     })
@@ -416,7 +416,7 @@ function render(
         x2,
         yTop: Math.max(s.entry, s.stop),
         yBottom: Math.min(s.entry, s.stop),
-        fill: `rgba(${C.bear},0.07)`,
+        fill: `rgba(${C.bear},0.12)`,
         label: `STOP ${fmt(s.stop)}`,
         labelColor: `rgba(${C.bear},0.8)`,
       })
@@ -426,7 +426,7 @@ function render(
         x2,
         yTop: Math.max(s.entry, s.target),
         yBottom: Math.min(s.entry, s.target),
-        fill: `rgba(${C.bull},0.07)`,
+        fill: `rgba(${C.bull},0.12)`,
         label: `TP ${fmt(s.target)} · ${((Math.abs(s.target - s.entry) / s.entry) * 100).toFixed(1)}%`,
         labelColor: `rgba(${C.bull},0.8)`,
       })
@@ -461,10 +461,10 @@ function render(
         x2: null,
         y1: p,
         y2: p,
-        color: `rgba(${C.fib},${edge ? 0.35 : 0.6})`,
+        color: `rgba(${C.fib},${edge ? 0.5 : 0.95})`,
         dash: edge ? [6, 4] : undefined,
         label: clash ? undefined : `${v} (${fmt(p)})`,
-        labelColor: `rgba(${C.fib},${edge ? 0.6 : 0.9})`,
+        labelColor: `rgba(${C.fib},${edge ? 0.7 : 1})`,
       })
     }
   }

@@ -63,6 +63,18 @@ bullCol = input.color(color.rgb(38, 166, 154), "Bull", group = gD, inline = "c")
 bearCol = input.color(color.rgb(239, 83, 80),  "Bear", group = gD, inline = "c")
 fvgCol  = input.color(color.rgb(22, 122, 122), "FVG",  group = gD, inline = "c")
 fibCol  = input.color(color.rgb(239, 83, 80),  "Fib",  group = gD, inline = "c")
+txtSize  = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large", "Huge"],
+     group = gD, tooltip = "Bump this on a phone — the defaults are sized for a desktop chart.")
+zoneFill = input.int(35, "Zone fill strength", minval = 0, maxval = 70, group = gD,
+     tooltip = "Higher = more solid zones. They stay translucent so candles still read through.")
+lineW    = input.int(2, "Line width", minval = 1, maxval = 4, group = gD)
+
+tSize = txtSize == "Tiny" ? size.tiny : txtSize == "Small" ? size.small :
+     txtSize == "Large" ? size.large : txtSize == "Huge" ? size.huge : size.normal
+zoneT = 100 - zoneFill                                  // entry-zone fill
+fvgT  = int(100 - math.round(zoneFill * 0.75))          // FVG sits under the zone
+rrT   = int(100 - math.round(zoneFill * 0.5))           // projection, lightest of all
+histT = int(math.min(96, 100 - math.round(zoneFill * 0.3)))
 
 // ────────────────────────────────────────────────────────────────── types ─
 type Fvg
@@ -131,9 +143,9 @@ var int   lastPLbar = na
 if barstate.isfirst
     for i = 0 to 4
         array.push(fibLines, line.new(bar_index, close, bar_index, close,
-             color = color.new(fibCol, 40), width = 1))
+             color = color.new(fibCol, 40), width = lineW))
         array.push(fibLabels, label.new(bar_index, close, "", style = label.style_label_left,
-             color = color.new(color.black, 100), textcolor = color.new(fibCol, 15), size = size.small))
+             color = color.new(color.black, 100), textcolor = color.new(fibCol, 0), size = tSize))
 
 bool fireNew = false
 bool fireTap = false
@@ -263,23 +275,23 @@ if newLeg
 
             if hasF
                 s.bxFvg := box.new(bBar, bTop, bar_index, bBot,
-                     border_color = color.new(fvgCol, 55), bgcolor = color.new(fvgCol, 72),
-                     text = "FVG", text_color = color.new(fvgCol, 10), text_size = size.small,
+                     border_color = color.new(fvgCol, 15), bgcolor = color.new(fvgCol, fvgT),
+                     text = "FVG", text_color = color.new(fvgCol, 0), text_size = tSize,
                      text_halign = text.align_right, text_valign = text.align_top)
 
             s.bxZone := box.new(nTermBar, zTop, bar_index, zBot,
-                 border_color = color.new(col, 35), border_width = 1, bgcolor = color.new(col, 82),
-                 text_color = color.new(col, 10), text_size = size.small,
+                 border_color = color.new(col, 0), border_width = lineW, bgcolor = color.new(col, zoneT),
+                 text_color = color.new(col, 0), text_size = tSize,
                  text_halign = text.align_left, text_valign = text.align_bottom)
 
             if showRR
                 s.bxRisk := box.new(bar_index, math.max(entPx, stpPx), bar_index, math.min(entPx, stpPx),
-                     border_color = color.new(bearCol, 70), bgcolor = color.new(bearCol, 88),
-                     text_color = color.new(bearCol, 20), text_size = size.tiny, text_halign = text.align_left,
+                     border_color = color.new(bearCol, 35), bgcolor = color.new(bearCol, rrT),
+                     text_color = color.new(bearCol, 0), text_size = tSize, text_halign = text.align_left,
                      text_valign = nDir == 1 ? text.align_bottom : text.align_top)
                 s.bxRwd := box.new(bar_index, math.max(entPx, tgtPx), bar_index, math.min(entPx, tgtPx),
-                     border_color = color.new(bullCol, 70), bgcolor = color.new(bullCol, 88),
-                     text_color = color.new(bullCol, 20), text_size = size.tiny, text_halign = text.align_left,
+                     border_color = color.new(bullCol, 35), bgcolor = color.new(bullCol, rrT),
+                     text_color = color.new(bullCol, 0), text_size = tSize, text_halign = text.align_left,
                      text_valign = nDir == 1 ? text.align_top : text.align_bottom)
 
             array.push(setups, s)
@@ -369,9 +381,9 @@ if array.size(setups) > 0
             else
                 box.set_lefttop(s.bxZone, s.termBar, s.zoneTop)
                 box.set_rightbottom(s.bxZone, rx, s.zoneBot)
-                box.set_border_color(s.bxZone, color.new(col, detail ? 35 : 80))
-                box.set_bgcolor(s.bxZone, color.new(col, detail ? 82 : 94))
-                box.set_text_color(s.bxZone, color.new(col, 10))
+                box.set_border_color(s.bxZone, color.new(col, detail ? 0 : 55))
+                box.set_bgcolor(s.bxZone, color.new(col, detail ? zoneT : histT))
+                box.set_text_color(s.bxZone, color.new(col, 0))
                 box.set_text(s.bxZone, detail ? statusText(s) : "")
 
         if live
@@ -398,10 +410,10 @@ if showFib and barstate.islast
                  (math.abs(p - liveSetup.tgt) < atr * 0.5 or math.abs(p - liveSetup.stp) < atr * 0.5)
             line.set_xy1(ln, liveSetup.termBar, p)
             line.set_xy2(ln, bar_index + futureBars, p)
-            line.set_color(ln, color.new(fibCol, edge ? 55 : 25))
+            line.set_color(ln, color.new(fibCol, edge ? 40 : 0))
             label.set_xy(lb, bar_index + futureBars, p)
             label.set_text(lb, clash ? "" : str.tostring(v) + "  (" + px(p) + ")")
-            label.set_textcolor(lb, color.new(fibCol, edge ? 45 : 15))
+            label.set_textcolor(lb, color.new(fibCol, edge ? 30 : 0))
 
 // ──────────────────────────────────────────────────────────── info panel ──
 tblCorner = tablePos == "Bottom right" ? position.bottom_right :
@@ -412,29 +424,29 @@ var table tbl = table.new(tblCorner, 2, 7, border_width = 1,
      frame_color = color.new(color.gray, 60), frame_width = 1)
 
 row(int r, string k, string v, color c) =>
-    table.cell(tbl, 0, r, k, text_color = color.new(color.gray, 15), text_size = size.small,
-         text_halign = text.align_left, bgcolor = color.new(color.black, 15))
-    table.cell(tbl, 1, r, v, text_color = c, text_size = size.small,
-         text_halign = text.align_right, bgcolor = color.new(color.black, 15))
+    table.cell(tbl, 0, r, k, text_color = color.new(color.silver, 0), text_size = tSize,
+         text_halign = text.align_left, bgcolor = color.new(color.black, 10))
+    table.cell(tbl, 1, r, v, text_color = c, text_size = tSize,
+         text_halign = text.align_right, bgcolor = color.new(color.black, 10))
 
 if showTable and barstate.islast
     table.clear(tbl, 0, 0, 1, 6)
     if na(liveSetup)
-        row(0, "OTE Sniper", "no live setup", color.new(color.gray, 20))
-        row(1, "Why", rejectMsg == "" ? "last setup resolved" : rejectMsg, color.new(color.gray, 10))
+        row(0, "OTE Sniper", "no live setup", color.new(color.silver, 0))
+        row(1, "Why", rejectMsg == "" ? "last setup resolved" : rejectMsg, color.new(color.silver, 0))
         row(2, "Last leg", na(lastLegBar) ? "none yet" :
-             str.tostring(bar_index - lastLegBar) + " bars ago", color.new(color.gray, 10))
+             str.tostring(bar_index - lastLegBar) + " bars ago", color.new(color.silver, 0))
         row(3, "Pivot needs", str.tostring(swingLen) + " closed bars past the extreme",
-             color.new(color.gray, 30))
+             color.new(color.gray, 10))
     else
         c = liveSetup.dir == 1 ? bullCol : bearCol
         row(0, "Bias",   liveSetup.dir == 1 ? "LONG" : "SHORT", c)
-        row(1, "Status", liveSetup.state == 0 ? "waiting for retrace" : "in zone", color.new(color.gray, 10))
+        row(1, "Status", liveSetup.state == 0 ? "waiting for retrace" : "in zone", color.new(color.silver, 0))
         row(2, "Zone",   px(liveSetup.zoneBot) + " – " + px(liveSetup.zoneTop) + (liveSetup.hasFvg ? "  (FVG)" : ""), c)
-        row(3, "Entry",  px(liveSetup.ent), color.new(color.gray, 10))
+        row(3, "Entry",  px(liveSetup.ent), color.new(color.silver, 0))
         row(4, "Stop",   px(liveSetup.stp), bearCol)
         row(5, "Target", px(liveSetup.tgt), bullCol)
-        row(6, "R:R",    str.tostring(liveSetup.rr, "#.##") + "R", color.new(color.gray, 10))
+        row(6, "R:R",    str.tostring(liveSetup.rr, "#.##") + "R", color.new(color.silver, 0))
 
 // ─────────────────────────────────────────────────────────────── alerts ───
 int newDir = 0
@@ -464,6 +476,6 @@ alertcondition(fireWin, "Target hit",    "OTE Sniper: target reached")
 alertcondition(fireOut, "Stopped out",   "OTE Sniper: stop level breached")
 
 plotshape(newDir ==  1, "New long setup",  shape.triangleup,   location.belowbar,
-     color.new(bullCol, 20), size = size.tiny)
+     color.new(bullCol, 0), size = size.small)
 plotshape(newDir == -1, "New short setup", shape.triangledown, location.abovebar,
-     color.new(bearCol, 20), size = size.tiny)
+     color.new(bearCol, 0), size = size.small)

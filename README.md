@@ -61,6 +61,11 @@ colour-coded by outcome (*Past setups*: `Faded` / `Labelled` / `Hide`), which
 keeps an intraday chart readable. The info panel corner is configurable for
 mobile.
 
+Three controls handle legibility — **Text size** (bump it to Large on a phone),
+**Zone fill strength**, and **Line width**. When there is no live setup the info
+panel names the gate that rejected the last impulse leg, rather than leaving you
+to guess whether the script is working.
+
 Defaults are ICT-style: swing strength 5, an impulse leg of at least 2× ATR(14),
 FVG confluence required, stop beyond the leg origin, target at fib 0. Turn off
 *Require FVG confluence* to trade the raw OTE band, or switch *Target from* to
