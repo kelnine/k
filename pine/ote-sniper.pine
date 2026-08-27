@@ -121,6 +121,10 @@ var array<label> fibLabels = array.new<label>()
 
 var float lastPH    = na
 var int   lastPHbar = na
+// why the most recent impulse leg produced no setup — surfaced in the panel,
+// so "no live setup" says which gate rejected it rather than nothing at all
+var string rejectMsg  = "no impulse leg yet"
+var int    lastLegBar = na
 var float lastPL    = na
 var int   lastPLbar = na
 
@@ -190,7 +194,11 @@ if not na(ph)
 
 // ───────────────────────────────────────────────────────── setup creation ─
 if newLeg
+    lastLegBar := bar_index
     legSize = math.abs(nOrig - nTerm)
+    if legSize <= 0 or legSize < minLegATR * atr
+        rejectMsg := atr > 0 ? "leg only " + str.tostring(legSize / atr, "#.#") + "x ATR (needs " +
+             str.tostring(minLegATR) + "x)" : "leg too small"
     if legSize > 0 and legSize >= minLegATR * atr
         lvlA   = fibAt(nTerm, nOrig, oteA)
         lvlB   = fibAt(nTerm, nOrig, oteB)
@@ -230,7 +238,14 @@ if newLeg
         tgtOk  = nDir == -1 ? tgtPx < entPx : tgtPx > entPx
         good   = (hasF or not requireFVG) and not past and riskPx > 0 and zoneOk and tgtOk
 
+        if not good
+            rejectMsg := not (hasF or not requireFVG) ? "no unfilled FVG in the OTE band" :
+                 past ? "price already retraced through the zone" :
+                 not zoneOk ? "FVG and OTE band do not overlap" :
+                 "target is not beyond entry"
+
         if good
+            rejectMsg := ""
             // a fresh leg supersedes anything still waiting to trigger
             if array.size(setups) > 0
                 for i = 0 to array.size(setups) - 1
@@ -250,12 +265,12 @@ if newLeg
                 s.bxFvg := box.new(bBar, bTop, bar_index, bBot,
                      border_color = color.new(fvgCol, 55), bgcolor = color.new(fvgCol, 72),
                      text = "FVG", text_color = color.new(fvgCol, 10), text_size = size.small,
-                     text_halign = text.align_right, text_valign = text.align_center)
+                     text_halign = text.align_right, text_valign = text.align_top)
 
             s.bxZone := box.new(nTermBar, zTop, bar_index, zBot,
                  border_color = color.new(col, 35), border_width = 1, bgcolor = color.new(col, 82),
                  text_color = color.new(col, 10), text_size = size.small,
-                 text_halign = text.align_left, text_valign = text.align_top)
+                 text_halign = text.align_left, text_valign = text.align_bottom)
 
             if showRR
                 s.bxRisk := box.new(bar_index, math.max(entPx, stpPx), bar_index, math.min(entPx, stpPx),
@@ -402,6 +417,11 @@ if showTable and barstate.islast
     table.clear(tbl, 0, 0, 1, 6)
     if na(liveSetup)
         row(0, "OTE Sniper", "no live setup", color.new(color.gray, 20))
+        row(1, "Why", rejectMsg == "" ? "last setup resolved" : rejectMsg, color.new(color.gray, 10))
+        row(2, "Last leg", na(lastLegBar) ? "none yet" :
+             str.tostring(bar_index - lastLegBar) + " bars ago", color.new(color.gray, 10))
+        row(3, "Pivot needs", str.tostring(swingLen) + " closed bars past the extreme",
+             color.new(color.gray, 30))
     else
         c = liveSetup.dir == 1 ? bullCol : bearCol
         row(0, "Bias",   liveSetup.dir == 1 ? "LONG" : "SHORT", c)

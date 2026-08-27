@@ -205,6 +205,8 @@ function compute(candles: Candle[], o: OteOptions): IndicatorResult {
   const setups: Setup[] = []
   let lastH: Pivot | null = null
   let lastL: Pivot | null = null
+  let reason = 'no impulse leg yet'
+  let lastLegBar: number | null = null
 
   for (let t = 0; t < n; t++) {
     // ---- a newly confirmed pivot may complete an impulse leg
@@ -222,8 +224,10 @@ function compute(candles: Candle[], o: OteOptions): IndicatorResult {
         lastH = p
       }
       if (leg) {
-        const s = buildSetup(leg, t, candles, atr, gaps, o)
-        if (s) {
+        lastLegBar = t
+        const built = buildSetup(leg, t, candles, atr, gaps, o)
+        if ('setup' in built) {
+          reason = ''
           // a fresh leg supersedes anything still waiting to trigger
           for (const prev of setups) {
             if (prev.state === 'pending') {
@@ -231,7 +235,9 @@ function compute(candles: Candle[], o: OteOptions): IndicatorResult {
               prev.endBar = t
             }
           }
-          setups.push(s)
+          setups.push(built.setup)
+        } else {
+          reason = built.reason
         }
       }
     }
@@ -261,8 +267,11 @@ function compute(candles: Candle[], o: OteOptions): IndicatorResult {
     }
   }
 
-  return render(setups.slice(-o.maxSetups), o)
+  return render(setups.slice(-o.maxSetups), o, { reason, lastLegBar, bars: n })
 }
+
+/** Either a setup, or the gate that rejected this leg — surfaced in the legend. */
+type Built = { setup: Setup } | { reason: string }
 
 function buildSetup(
   leg: { dir: 1 | -1; origBar: number; orig: number; termBar: number; term: number },
@@ -271,9 +280,12 @@ function buildSetup(
   atr: number[],
   gaps: Gap[],
   o: OteOptions,
-): Setup | null {
+): Built {
   const legSize = Math.abs(leg.orig - leg.term)
-  if (legSize <= 0 || legSize < o.minLegAtr * atr[t]) return null
+  if (legSize <= 0 || legSize < o.minLegAtr * atr[t]) {
+    const mult = atr[t] > 0 ? (legSize / atr[t]).toFixed(1) : '0'
+    return { reason: `leg only ${mult}x ATR (needs ${o.minLegAtr}x)` }
+  }
 
   const lvlA = fibAt(leg.term, leg.orig, o.oteA)
   const lvlB = fibAt(leg.term, leg.orig, o.oteB)
@@ -294,24 +306,26 @@ function buildSetup(
       best = g
     }
   }
-  if (!best && o.requireFvg) return null
+  if (!best && o.requireFvg) return { reason: 'no unfilled FVG in the OTE band' }
 
   const zoneTop = best ? Math.min(oteTop, best.top) : oteTop
   const zoneBot = best ? Math.max(oteBot, best.bot) : oteBot
-  if (zoneTop <= zoneBot) return null
+  if (zoneTop <= zoneBot) return { reason: 'FVG and OTE band do not overlap' }
 
   // premise is gone if price already retraced clean through the zone
   const close = candles[t].close
-  if (leg.dir === -1 ? close > zoneTop : close < zoneBot) return null
+  if (leg.dir === -1 ? close > zoneTop : close < zoneBot)
+    return { reason: 'price already retraced through the zone' }
 
   const entry = Math.min(Math.max(fibAt(leg.term, leg.orig, o.oteMid), zoneBot), zoneTop)
   const stop = leg.orig - leg.dir * o.stopBufAtr * atr[t]
   const risk = Math.abs(entry - stop)
   const target = fibAt(leg.term, leg.orig, o.targetFib)
-  if (risk <= 0) return null
-  if (leg.dir === -1 ? target >= entry : target <= entry) return null
+  if (risk <= 0) return { reason: 'stop sits on the entry' }
+  if (leg.dir === -1 ? target >= entry : target <= entry)
+    return { reason: 'target is not beyond entry' }
 
-  return {
+  const setup: Setup = {
     ...leg,
     zoneTop,
     zoneBot,
@@ -325,6 +339,7 @@ function buildSetup(
     entryBar: t,
     endBar: t,
   }
+  return { setup }
 }
 
 const LIVE: State[] = ['pending', 'zone']
@@ -347,7 +362,11 @@ function statusText(s: Setup): string {
   }
 }
 
-function render(setups: Setup[], o: OteOptions): IndicatorResult {
+function render(
+  setups: Setup[],
+  o: OteOptions,
+  diag: { reason: string; lastLegBar: number | null; bars: number },
+): IndicatorResult {
   const shapes: IndicatorShape[] = []
   let live: Setup | null = null
 
@@ -457,7 +476,17 @@ function render(setups: Setup[], o: OteOptions): IndicatorResult {
           value: live.state === 'pending' ? 'waiting for retrace' : 'in zone',
         },
       ]
-    : [{ color: C.muted, value: 'no live setup' }]
+    : [
+        { color: C.muted, value: 'no live setup' },
+        { color: C.muted, value: diag.reason === '' ? 'last setup resolved' : diag.reason },
+        {
+          color: C.muted,
+          value:
+            diag.lastLegBar === null
+              ? 'no leg yet'
+              : `last leg ${diag.bars - 1 - diag.lastLegBar} bars ago`,
+        },
+      ]
 
   return { plots: [], shapes, legend }
 }
