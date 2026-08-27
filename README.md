@@ -54,6 +54,13 @@ on any symbol and timeframe. It ships four alerts — new setup, price entered
 the zone, target hit, stopped out — available both as `alert()` messages
 ("Any alert() function call") and as named `alertcondition` entries.
 
+Only the live setup is drawn in full — FVG box, fib ladder, entry zone and the
+risk/reward projection, which sits in the empty space to the right of price so
+it never covers candles. Resolved setups keep just their zone, dimmed and
+colour-coded by outcome (*Past setups*: `Faded` / `Labelled` / `Hide`), which
+keeps an intraday chart readable. The info panel corner is configurable for
+mobile.
+
 Defaults are ICT-style: swing strength 5, an impulse leg of at least 2× ATR(14),
 FVG confluence required, stop beyond the leg origin, target at fib 0. Turn off
 *Require FVG confluence* to trade the raw OTE band, or switch *Target from* to

@@ -40,6 +40,8 @@ export interface OteOptions {
   targetFib: number
   /** keep at most this many setups on the chart */
   maxSetups: number
+  /** how resolved setups are drawn: dimmed zone, zone + result text, or nothing */
+  history: 'faded' | 'labelled' | 'hide'
   longs: boolean
   shorts: boolean
 }
@@ -56,6 +58,7 @@ const DEFAULTS: OteOptions = {
   stopBufAtr: 0.25,
   targetFib: 0,
   maxSetups: 3,
+  history: 'faded',
   longs: true,
   shorts: true,
 }
@@ -326,18 +329,41 @@ function buildSetup(
 
 const LIVE: State[] = ['pending', 'zone']
 
+/** Short enough to sit inside the zone box without colliding with anything. */
+function statusText(s: Setup): string {
+  const side = s.dir === 1 ? 'LONG' : 'SHORT'
+  const move = (Math.abs(s.target - s.entry) / s.entry) * 100
+  switch (s.state) {
+    case 'pending':
+      return `${side} · ${s.rr.toFixed(1)}R`
+    case 'zone':
+      return `${side} · IN ZONE · ${s.rr.toFixed(1)}R`
+    case 'target':
+      return `TARGET +${move.toFixed(2)}%`
+    case 'stopped':
+      return 'STOPPED'
+    default:
+      return 'EXPIRED'
+  }
+}
+
 function render(setups: Setup[], o: OteOptions): IndicatorResult {
   const shapes: IndicatorShape[] = []
   let live: Setup | null = null
 
+  // Only a live setup gets the full treatment. Once it resolves the FVG box and
+  // the projection come off the chart and just the zone stays, colour-coded by
+  // outcome — otherwise a session's worth of setups stacks into unreadable soup.
   for (const s of setups) {
     const isLive = LIVE.includes(s.state)
+    if (!isLive && o.history === 'hide') continue
+    const detail = isLive || o.history === 'labelled'
     const x2 = isLive ? null : s.endBar
     const side = s.dir === 1 ? C.bull : C.bear
     const col =
       s.state === 'target' ? C.bull : s.state === 'stopped' ? C.bear : s.state === 'expired' ? '139,147,163' : side
 
-    if (s.gap) {
+    if (s.gap && detail) {
       shapes.push({
         type: 'box',
         x1: s.gap.bar,
@@ -357,13 +383,13 @@ function render(setups: Setup[], o: OteOptions): IndicatorResult {
       x2,
       yTop: s.zoneTop,
       yBottom: s.zoneBot,
-      fill: `rgba(${col},${s.state === 'expired' ? 0.06 : 0.16})`,
-      stroke: `rgba(${col},0.6)`,
-      label: `${s.dir === 1 ? 'BUY' : 'SELL'} ZONE · ${s.rr.toFixed(1)}R`,
+      fill: `rgba(${col},${detail ? 0.16 : 0.05})`,
+      stroke: `rgba(${col},${detail ? 0.6 : 0.22})`,
+      label: detail ? statusText(s) : undefined,
       labelColor: `rgba(${col},0.95)`,
     })
 
-    if (s.state !== 'expired') {
+    if (isLive) {
       const lx = s.state === 'pending' ? s.bornBar : s.entryBar
       shapes.push({
         type: 'box',

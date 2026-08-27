@@ -54,7 +54,11 @@ gD = "Display"
 maxSetups  = input.int(3, "Setups kept on chart", minval = 1, maxval = 10, group = gD)
 futureBars = input.int(20, "Project zones forward (bars)", minval = 0, maxval = 400, group = gD)
 showTable  = input.bool(true, "Show info panel", group = gD)
+tablePos   = input.string("Top right", "Info panel corner",
+     options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = gD)
 showRR     = input.bool(true, "Show risk / reward projection", group = gD)
+histMode   = input.string("Faded", "Past setups", options = ["Faded", "Labelled", "Hide"], group = gD,
+     tooltip = "Resolved setups keep only their zone. 'Faded' dims it, 'Labelled' keeps the result text.")
 bullCol = input.color(color.rgb(38, 166, 154), "Bull", group = gD, inline = "c")
 bearCol = input.color(color.rgb(239, 83, 80),  "Bear", group = gD, inline = "c")
 fvgCol  = input.color(color.rgb(22, 122, 122), "FVG",  group = gD, inline = "c")
@@ -91,7 +95,6 @@ type Setup
     box   bxZone
     box   bxRisk
     box   bxRwd
-    label lbl
 
 // ──────────────────────────────────────────────────────────────── helpers ─
 fibAt(float term, float orig, float v) => term + v * (orig - term)
@@ -102,10 +105,10 @@ statusText(Setup s) =>
     side = s.dir == 1 ? "LONG" : "SHORT"
     move = math.abs(s.tgt - s.ent) / s.ent * 100
     switch s.state
-        0 => side + "  ·  " + px(s.zoneBot) + " – " + px(s.zoneTop) + "  ·  " + str.tostring(s.rr, "#.#") + "R"
-        1 => side + "  ·  IN ZONE @ " + px(s.ent) + "  ·  " + str.tostring(s.rr, "#.#") + "R"
-        2 => "TARGET HIT  ·  +" + str.tostring(move, "#.#") + "%  ·  " + str.tostring(s.rr, "#.#") + "R"
-        3 => "STOPPED  ·  -1R"
+        0 => side + " · " + str.tostring(s.rr, "#.#") + "R"
+        1 => side + " · IN ZONE · " + str.tostring(s.rr, "#.#") + "R"
+        2 => "TARGET +" + str.tostring(move, "#.##") + "%"
+        3 => "STOPPED"
         => "EXPIRED"
 
 // ──────────────────────────────────────────────────────────────── state ───
@@ -251,22 +254,18 @@ if newLeg
 
             s.bxZone := box.new(nTermBar, zTop, bar_index, zBot,
                  border_color = color.new(col, 35), border_width = 1, bgcolor = color.new(col, 82),
-                 text = (nDir == 1 ? "BUY ZONE " : "SELL ZONE ") + str.tostring(oteA) + "–" + str.tostring(oteB),
                  text_color = color.new(col, 10), text_size = size.small,
                  text_halign = text.align_left, text_valign = text.align_top)
 
             if showRR
                 s.bxRisk := box.new(bar_index, math.max(entPx, stpPx), bar_index, math.min(entPx, stpPx),
                      border_color = color.new(bearCol, 70), bgcolor = color.new(bearCol, 88),
-                     text_color = color.new(bearCol, 20), text_size = size.tiny,
-                     text_halign = text.align_center, text_valign = text.align_center)
+                     text_color = color.new(bearCol, 20), text_size = size.tiny, text_halign = text.align_left,
+                     text_valign = nDir == 1 ? text.align_bottom : text.align_top)
                 s.bxRwd := box.new(bar_index, math.max(entPx, tgtPx), bar_index, math.min(entPx, tgtPx),
                      border_color = color.new(bullCol, 70), bgcolor = color.new(bullCol, 88),
-                     text_color = color.new(bullCol, 20), text_size = size.tiny,
-                     text_halign = text.align_center, text_valign = text.align_center)
-
-            s.lbl := label.new(bar_index, (zTop + zBot) / 2, "", style = label.style_label_left,
-                 color = color.new(color.black, 100), textcolor = color.new(col, 10), size = size.small)
+                     text_color = color.new(bullCol, 20), text_size = size.tiny, text_halign = text.align_left,
+                     text_valign = nDir == 1 ? text.align_top : text.align_bottom)
 
             array.push(setups, s)
             fireNew := true
@@ -281,8 +280,6 @@ if newLeg
                     box.delete(d.bxRisk)
                 if not na(d.bxRwd)
                     box.delete(d.bxRwd)
-                if not na(d.lbl)
-                    label.delete(d.lbl)
 
 // ──────────────────────────────────────────── setup tracking + rendering ──
 Setup liveSetup = na
@@ -313,41 +310,54 @@ if array.size(setups) > 0
                 fireWin  := true
 
         // ── geometry ─────────────────────────────────────────────────────
-        live = s.state <= 1
-        rx   = live ? bar_index + futureBars : s.endBar
-        col  = s.state == 2 ? bullCol :
+        //  Only a live setup gets the full treatment. Once it resolves the FVG
+        //  box and the projection come off the chart and just the zone stays,
+        //  colour-coded by outcome — otherwise a session's worth of setups
+        //  stacks into unreadable soup.
+        live   = s.state <= 1
+        detail = live or histMode == "Labelled"
+        rx     = live ? bar_index + futureBars : s.endBar
+        col    = s.state == 2 ? bullCol :
              s.state == 3 ? bearCol :
              s.state == 4 ? color.gray :
              s.dir == 1 ? bullCol : bearCol
 
         if not na(s.bxFvg)
-            box.set_lefttop(s.bxFvg, s.fvgBar, s.fvgTop)
-            box.set_rightbottom(s.bxFvg, rx, s.fvgBot)
-
-        box.set_lefttop(s.bxZone, s.termBar, s.zoneTop)
-        box.set_rightbottom(s.bxZone, rx, s.zoneBot)
-        box.set_border_color(s.bxZone, color.new(col, 35))
-        box.set_bgcolor(s.bxZone, color.new(col, s.state == 4 ? 92 : 82))
-
-        if not na(s.bxRisk)
-            if s.state == 4
-                box.delete(s.bxRisk)
-                box.delete(s.bxRwd)
-                s.bxRisk := na
-                s.bxRwd  := na
+            if detail
+                box.set_lefttop(s.bxFvg, s.fvgBar, s.fvgTop)
+                box.set_rightbottom(s.bxFvg, rx, s.fvgBot)
             else
-                lx = s.state == 0 ? bar_index : s.entryBar
+                box.delete(s.bxFvg)
+                s.bxFvg := na
+
+        // the projection lives in the empty space right of price, never on it
+        if not na(s.bxRisk)
+            if live
+                lx = bar_index + 1
                 box.set_lefttop(s.bxRisk, lx, math.max(s.ent, s.stp))
                 box.set_rightbottom(s.bxRisk, rx, math.min(s.ent, s.stp))
                 box.set_text(s.bxRisk, "STOP " + px(s.stp))
                 box.set_lefttop(s.bxRwd, lx, math.max(s.ent, s.tgt))
                 box.set_rightbottom(s.bxRwd, rx, math.min(s.ent, s.tgt))
-                box.set_text(s.bxRwd, "TP " + px(s.tgt) + "   " +
-                     str.tostring(math.abs(s.tgt - s.ent) / s.ent * 100, "#.#") + "%")
+                box.set_text(s.bxRwd, "TP " + px(s.tgt) + "  " +
+                     str.tostring(math.abs(s.tgt - s.ent) / s.ent * 100, "#.##") + "%")
+            else
+                box.delete(s.bxRisk)
+                box.delete(s.bxRwd)
+                s.bxRisk := na
+                s.bxRwd  := na
 
-        label.set_xy(s.lbl, rx, (s.zoneTop + s.zoneBot) / 2)
-        label.set_text(s.lbl, statusText(s))
-        label.set_textcolor(s.lbl, color.new(col, 10))
+        if not na(s.bxZone)
+            if not live and histMode == "Hide"
+                box.delete(s.bxZone)
+                s.bxZone := na
+            else
+                box.set_lefttop(s.bxZone, s.termBar, s.zoneTop)
+                box.set_rightbottom(s.bxZone, rx, s.zoneBot)
+                box.set_border_color(s.bxZone, color.new(col, detail ? 35 : 80))
+                box.set_bgcolor(s.bxZone, color.new(col, detail ? 82 : 94))
+                box.set_text_color(s.bxZone, color.new(col, 10))
+                box.set_text(s.bxZone, detail ? statusText(s) : "")
 
         if live
             liveSetup := s
@@ -375,14 +385,18 @@ if showFib and barstate.islast
             label.set_textcolor(lb, color.new(fibCol, edge ? 45 : 15))
 
 // ──────────────────────────────────────────────────────────── info panel ──
-var table tbl = table.new(position.top_right, 2, 7, border_width = 1,
-     frame_color = color.new(color.gray, 70), frame_width = 1)
+tblCorner = tablePos == "Bottom right" ? position.bottom_right :
+     tablePos == "Top left" ? position.top_left :
+     tablePos == "Bottom left" ? position.bottom_left : position.top_right
+
+var table tbl = table.new(tblCorner, 2, 7, border_width = 1,
+     frame_color = color.new(color.gray, 60), frame_width = 1)
 
 row(int r, string k, string v, color c) =>
     table.cell(tbl, 0, r, k, text_color = color.new(color.gray, 15), text_size = size.small,
-         text_halign = text.align_left, bgcolor = color.new(color.black, 70))
+         text_halign = text.align_left, bgcolor = color.new(color.black, 15))
     table.cell(tbl, 1, r, v, text_color = c, text_size = size.small,
-         text_halign = text.align_right, bgcolor = color.new(color.black, 70))
+         text_halign = text.align_right, bgcolor = color.new(color.black, 15))
 
 if showTable and barstate.islast
     table.clear(tbl, 0, 0, 1, 6)
