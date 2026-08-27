@@ -448,9 +448,13 @@ function render(
 
   // fib ladder for the newest live setup only — overlapping ladders are noise
   if (live) {
+    const near = Math.abs(live.entry - live.stop) * 0.15
     for (const v of [0, o.oteA, o.oteMid, o.oteB, 1]) {
       const p = fibAt(live.term, live.orig, v)
       const edge = v === 0 || v === 1
+      // the projection already prints these two: the target sits on fib 0 and
+      // the stop one buffer off fib 1, so the labels would stack
+      const clash = Math.abs(p - live.target) < near || Math.abs(p - live.stop) < near
       shapes.push({
         type: 'line',
         x1: live.termBar,
@@ -459,7 +463,7 @@ function render(
         y2: p,
         color: `rgba(${C.fib},${edge ? 0.35 : 0.6})`,
         dash: edge ? [6, 4] : undefined,
-        label: `${v} (${fmt(p)})`,
+        label: clash ? undefined : `${v} (${fmt(p)})`,
         labelColor: `rgba(${C.fib},${edge ? 0.6 : 0.9})`,
       })
     }

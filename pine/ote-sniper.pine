@@ -392,11 +392,15 @@ if showFib and barstate.islast
             ln = array.get(fibLines, i)
             lb = array.get(fibLabels, i)
             edge = v == 0.0 or v == 1.0
+            // the projection already prints these two: the target sits on fib 0
+            // and the stop one ATR buffer off fib 1, so the labels would stack
+            clash = showRR and not na(liveSetup.bxRisk) and
+                 (math.abs(p - liveSetup.tgt) < atr * 0.5 or math.abs(p - liveSetup.stp) < atr * 0.5)
             line.set_xy1(ln, liveSetup.termBar, p)
             line.set_xy2(ln, bar_index + futureBars, p)
             line.set_color(ln, color.new(fibCol, edge ? 55 : 25))
             label.set_xy(lb, bar_index + futureBars, p)
-            label.set_text(lb, str.tostring(v) + "  (" + px(p) + ")")
+            label.set_text(lb, clash ? "" : str.tostring(v) + "  (" + px(p) + ")")
             label.set_textcolor(lb, color.new(fibCol, edge ? 45 : 15))
 
 // ──────────────────────────────────────────────────────────── info panel ──
