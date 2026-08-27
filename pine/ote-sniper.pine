@@ -1,0 +1,481 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  OTE SNIPER  ·  Fair Value Gap + Fibonacci OTE setup finder
+// ═══════════════════════════════════════════════════════════════════════════
+//  Automates the "wait for a retrace into the FVG + Fibonacci OTE" workflow:
+//
+//    1. finds the last confirmed impulse leg from swing pivots
+//    2. auto-anchors a fib with 0 at the leg's terminal extreme and 1 at its
+//       origin, giving the 0.62 / 0.705 / 0.79 OTE band
+//    3. looks for an unfilled 3-candle FVG created inside that leg which
+//       overlaps the OTE band — that overlap is the entry zone
+//    4. projects entry / stop / target with live R:R, then tracks the setup
+//       through tapped → target hit or stopped out
+//
+//    bearish leg (high → low) = short setup: retrace UP into the zone
+//    bullish leg (low → high) = long setup:  retrace DOWN into the zone
+//
+//  Alerts: new setup · price entered zone · target hit · stopped out.
+// ═══════════════════════════════════════════════════════════════════════════
+indicator("OTE Sniper — FVG + Fib OTE", "OTE Sniper", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ───────────────────────────────────────────────────────────────── inputs ─
+gS = "Structure"
+swingLen  = input.int(5, "Swing strength", minval = 1, maxval = 50, group = gS,
+     tooltip = "Bars required either side of a pivot. Higher = fewer, larger impulse legs.")
+useLong   = input.bool(true, "Longs",  group = gS, inline = "dir")
+useShort  = input.bool(true, "Shorts", group = gS, inline = "dir")
+minLegATR = input.float(2.0, "Min impulse leg (x ATR)", minval = 0, step = 0.5, group = gS,
+     tooltip = "Legs smaller than this multiple of ATR(14) are ignored — filters chop.")
+
+gO = "Optimal Trade Entry"
+oteA    = input.float(0.62,  "Shallow OTE", minval = 0.05, maxval = 0.99, step = 0.005, group = gO)
+oteMid  = input.float(0.705, "Entry level", minval = 0.05, maxval = 0.99, step = 0.005, group = gO)
+oteB    = input.float(0.79,  "Deep OTE",    minval = 0.05, maxval = 0.99, step = 0.005, group = gO)
+showFib = input.bool(true, "Draw fib levels for the live setup", group = gO)
+
+gF = "Fair Value Gap"
+requireFVG = input.bool(true, "Require FVG confluence", group = gF,
+     tooltip = "Only flag setups where an unfilled FVG overlaps the OTE band. Off = trade the raw OTE band.")
+fvgInLeg   = input.bool(true, "FVG must sit inside the impulse leg", group = gF)
+minFvgATR  = input.float(0.10, "Min FVG height (x ATR)", minval = 0, step = 0.05, group = gF)
+
+gR = "Risk"
+stopMode = input.string("Beyond leg origin", "Stop placement",
+     options = ["Beyond leg origin", "Beyond FVG edge"], group = gR)
+stopBuf  = input.float(0.25, "Stop buffer (x ATR)", minval = 0, step = 0.05, group = gR)
+tgtMode  = input.string("Fib level", "Target from", options = ["Fib level", "Risk multiple"], group = gR)
+tgtFib   = input.float(0.0, "· fib level", step = 0.1, group = gR,
+     tooltip = "0 = the extreme the impulse leg ended at. Negatives extend past it (-0.5, -1.0 …).")
+tgtR     = input.float(3.0, "· risk multiple", minval = 0.5, step = 0.5, group = gR)
+
+gD = "Display"
+maxSetups  = input.int(3, "Setups kept on chart", minval = 1, maxval = 10, group = gD)
+futureBars = input.int(20, "Project zones forward (bars)", minval = 0, maxval = 400, group = gD)
+showTable  = input.bool(true, "Show info panel", group = gD)
+tablePos   = input.string("Top right", "Info panel corner",
+     options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = gD)
+showRR     = input.bool(true, "Show risk / reward projection", group = gD)
+histMode   = input.string("Faded", "Past setups", options = ["Faded", "Labelled", "Hide"], group = gD,
+     tooltip = "Resolved setups keep only their zone. 'Faded' dims it, 'Labelled' keeps the result text.")
+bullCol = input.color(color.rgb(38, 166, 154), "Bull", group = gD, inline = "c")
+bearCol = input.color(color.rgb(239, 83, 80),  "Bear", group = gD, inline = "c")
+fvgCol  = input.color(color.rgb(22, 122, 122), "FVG",  group = gD, inline = "c")
+fibCol  = input.color(color.rgb(239, 83, 80),  "Fib",  group = gD, inline = "c")
+txtSize  = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large", "Huge"],
+     group = gD, tooltip = "Bump this on a phone — the defaults are sized for a desktop chart.")
+zoneFill = input.int(35, "Zone fill strength", minval = 0, maxval = 70, group = gD,
+     tooltip = "Higher = more solid zones. They stay translucent so candles still read through.")
+lineW    = input.int(2, "Line width", minval = 1, maxval = 4, group = gD)
+
+tSize = txtSize == "Tiny" ? size.tiny : txtSize == "Small" ? size.small :
+     txtSize == "Large" ? size.large : txtSize == "Huge" ? size.huge : size.normal
+zoneT = 100 - zoneFill                                  // entry-zone fill
+fvgT  = int(100 - math.round(zoneFill * 0.75))          // FVG sits under the zone
+rrT   = int(100 - math.round(zoneFill * 0.5))           // projection, lightest of all
+histT = int(math.min(96, 100 - math.round(zoneFill * 0.3)))
+
+// ────────────────────────────────────────────────────────────────── types ─
+type Fvg
+    int   dir              // 1 bullish gap (support) · -1 bearish gap (resistance)
+    float top
+    float bot
+    int   bar              // first bar of the 3-candle pattern
+
+type Setup
+    int   dir              // 1 long · -1 short
+    int   origBar
+    float orig             // leg origin   → fib 1
+    int   termBar
+    float term             // leg terminal → fib 0
+    float zoneTop
+    float zoneBot
+    float ent
+    float stp
+    float tgt
+    float rr
+    bool  hasFvg
+    float fvgTop
+    float fvgBot
+    int   fvgBar
+    int   state            // 0 pending · 1 in zone · 2 target · 3 stopped · 4 expired
+    int   bornBar
+    int   entryBar
+    int   endBar
+    box   bxFvg
+    box   bxZone
+    box   bxRisk
+    box   bxRwd
+
+// ──────────────────────────────────────────────────────────────── helpers ─
+fibAt(float term, float orig, float v) => term + v * (orig - term)
+
+px(float p) => str.tostring(p, format.mintick)
+
+statusText(Setup s) =>
+    side = s.dir == 1 ? "LONG" : "SHORT"
+    move = math.abs(s.tgt - s.ent) / s.ent * 100
+    switch s.state
+        0 => side + " · " + str.tostring(s.rr, "#.#") + "R"
+        1 => side + " · IN ZONE · " + str.tostring(s.rr, "#.#") + "R"
+        2 => "TARGET +" + str.tostring(move, "#.##") + "%"
+        3 => "STOPPED"
+        => "EXPIRED"
+
+// ──────────────────────────────────────────────────────────────── state ───
+atr = ta.atr(14)
+
+var array<Fvg>   fvgs      = array.new<Fvg>()
+var array<Setup> setups    = array.new<Setup>()
+var array<line>  fibLines  = array.new<line>()
+var array<label> fibLabels = array.new<label>()
+
+var float lastPH    = na
+var int   lastPHbar = na
+// why the most recent impulse leg produced no setup — surfaced in the panel,
+// so "no live setup" says which gate rejected it rather than nothing at all
+var string rejectMsg  = "no impulse leg yet"
+var int    lastLegBar = na
+var float lastPL    = na
+var int   lastPLbar = na
+
+if barstate.isfirst
+    for i = 0 to 4
+        array.push(fibLines, line.new(bar_index, close, bar_index, close,
+             color = color.new(fibCol, 40), width = lineW))
+        array.push(fibLabels, label.new(bar_index, close, "", style = label.style_label_left,
+             color = color.new(color.black, 100), textcolor = color.new(fibCol, 0), size = tSize))
+
+bool fireNew = false
+bool fireTap = false
+bool fireWin = false
+bool fireOut = false
+
+// ──────────────────────────────────────────────── fair value gap tracking ─
+// drop gaps price has traded fully through
+if array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        g = array.get(fvgs, i)
+        if (g.dir == 1 ? low < g.bot : high > g.top)
+            array.remove(fvgs, i)
+
+// record new 3-candle imbalances
+if bar_index > 2
+    if low > high[2] and low - high[2] >= minFvgATR * atr
+        array.push(fvgs, Fvg.new(1, low, high[2], bar_index - 2))
+    else if high < low[2] and low[2] - high >= minFvgATR * atr
+        array.push(fvgs, Fvg.new(-1, low[2], high, bar_index - 2))
+    if array.size(fvgs) > 250
+        array.shift(fvgs)
+
+// ────────────────────────────────────────────────── impulse leg / pivots ──
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low,  swingLen, swingLen)
+
+bool  newLeg   = false
+int   nDir     = 0
+int   nOrigBar = na
+float nOrig    = na
+int   nTermBar = na
+float nTerm    = na
+
+if not na(pl)
+    bl = bar_index - swingLen
+    if useShort and not na(lastPHbar) and lastPHbar < bl and lastPH > pl
+        nDir     := -1
+        nOrigBar := lastPHbar
+        nOrig    := lastPH
+        nTermBar := bl
+        nTerm    := pl
+        newLeg   := true
+    lastPL    := pl
+    lastPLbar := bl
+
+if not na(ph)
+    bh = bar_index - swingLen
+    if useLong and not na(lastPLbar) and lastPLbar < bh and ph > lastPL
+        nDir     := 1
+        nOrigBar := lastPLbar
+        nOrig    := lastPL
+        nTermBar := bh
+        nTerm    := ph
+        newLeg   := true
+    lastPH    := ph
+    lastPHbar := bh
+
+// ───────────────────────────────────────────────────────── setup creation ─
+if newLeg
+    lastLegBar := bar_index
+    legSize = math.abs(nOrig - nTerm)
+    if legSize <= 0 or legSize < minLegATR * atr
+        rejectMsg := atr > 0 ? "leg only " + str.tostring(legSize / atr, "#.#") + "x ATR (needs " +
+             str.tostring(minLegATR) + "x)" : "leg too small"
+    if legSize > 0 and legSize >= minLegATR * atr
+        lvlA   = fibAt(nTerm, nOrig, oteA)
+        lvlB   = fibAt(nTerm, nOrig, oteB)
+        oteTop = math.max(lvlA, lvlB)
+        oteBot = math.min(lvlA, lvlB)
+
+        // best unfilled FVG overlapping the OTE band, on the correct side
+        float bTop   = na
+        float bBot   = na
+        int   bBar   = na
+        float bestOv = 0.0
+        if array.size(fvgs) > 0
+            for i = 0 to array.size(fvgs) - 1
+                g = array.get(fvgs, i)
+                inLeg = not fvgInLeg or (g.bar >= nOrigBar - 2 and g.bar <= nTermBar + 2)
+                if g.dir == nDir and inLeg
+                    ov = math.min(g.top, oteTop) - math.max(g.bot, oteBot)
+                    if ov > bestOv
+                        bestOv := ov
+                        bTop   := g.top
+                        bBot   := g.bot
+                        bBar   := g.bar
+
+        hasF = bestOv > 0
+        zTop = hasF ? math.min(oteTop, bTop) : oteTop
+        zBot = hasF ? math.max(oteBot, bBot) : oteBot
+
+        // premise is gone if price already retraced clean through the zone
+        past   = nDir == -1 ? close > zTop : close < zBot
+        entPx  = math.min(math.max(fibAt(nTerm, nOrig, oteMid), zBot), zTop)
+        stpRaw = stopMode == "Beyond FVG edge" and hasF ? (nDir == -1 ? bTop : bBot) : nOrig
+        stpPx  = stpRaw - nDir * stopBuf * atr
+        riskPx = math.abs(entPx - stpPx)
+        tgtPx  = tgtMode == "Risk multiple" ? entPx + nDir * tgtR * riskPx : fibAt(nTerm, nOrig, tgtFib)
+
+        zoneOk = zTop > zBot
+        tgtOk  = nDir == -1 ? tgtPx < entPx : tgtPx > entPx
+        good   = (hasF or not requireFVG) and not past and riskPx > 0 and zoneOk and tgtOk
+
+        if not good
+            rejectMsg := not (hasF or not requireFVG) ? "no unfilled FVG in the OTE band" :
+                 past ? "price already retraced through the zone" :
+                 not zoneOk ? "FVG and OTE band do not overlap" :
+                 "target is not beyond entry"
+
+        if good
+            rejectMsg := ""
+            // a fresh leg supersedes anything still waiting to trigger
+            if array.size(setups) > 0
+                for i = 0 to array.size(setups) - 1
+                    o = array.get(setups, i)
+                    if o.state == 0
+                        o.state  := 4
+                        o.endBar := bar_index
+
+            col = nDir == 1 ? bullCol : bearCol
+            s = Setup.new(dir = nDir, origBar = nOrigBar, orig = nOrig, termBar = nTermBar,
+                 term = nTerm, zoneTop = zTop, zoneBot = zBot, ent = entPx, stp = stpPx,
+                 tgt = tgtPx, rr = math.abs(tgtPx - entPx) / riskPx, hasFvg = hasF,
+                 fvgTop = bTop, fvgBot = bBot, fvgBar = bBar, state = 0,
+                 bornBar = bar_index, entryBar = bar_index, endBar = bar_index)
+
+            if hasF
+                s.bxFvg := box.new(bBar, bTop, bar_index, bBot,
+                     border_color = color.new(fvgCol, 15), bgcolor = color.new(fvgCol, fvgT),
+                     text = "FVG", text_color = color.new(fvgCol, 0), text_size = tSize,
+                     text_halign = text.align_right, text_valign = text.align_top)
+
+            s.bxZone := box.new(nTermBar, zTop, bar_index, zBot,
+                 border_color = color.new(col, 0), border_width = lineW, bgcolor = color.new(col, zoneT),
+                 text_color = color.new(col, 0), text_size = tSize,
+                 text_halign = text.align_left, text_valign = text.align_bottom)
+
+            if showRR
+                s.bxRisk := box.new(bar_index, math.max(entPx, stpPx), bar_index, math.min(entPx, stpPx),
+                     border_color = color.new(bearCol, 35), bgcolor = color.new(bearCol, rrT),
+                     text_color = color.new(bearCol, 0), text_size = tSize, text_halign = text.align_left,
+                     text_valign = nDir == 1 ? text.align_bottom : text.align_top)
+                s.bxRwd := box.new(bar_index, math.max(entPx, tgtPx), bar_index, math.min(entPx, tgtPx),
+                     border_color = color.new(bullCol, 35), bgcolor = color.new(bullCol, rrT),
+                     text_color = color.new(bullCol, 0), text_size = tSize, text_halign = text.align_left,
+                     text_valign = nDir == 1 ? text.align_top : text.align_bottom)
+
+            array.push(setups, s)
+            fireNew := true
+
+            if array.size(setups) > maxSetups
+                d = array.shift(setups)
+                if not na(d.bxFvg)
+                    box.delete(d.bxFvg)
+                if not na(d.bxZone)
+                    box.delete(d.bxZone)
+                if not na(d.bxRisk)
+                    box.delete(d.bxRisk)
+                if not na(d.bxRwd)
+                    box.delete(d.bxRwd)
+
+// ──────────────────────────────────────────── setup tracking + rendering ──
+Setup liveSetup = na
+Setup tapped    = na
+
+if array.size(setups) > 0
+    for i = 0 to array.size(setups) - 1
+        s = array.get(setups, i)
+
+        // ── state machine ────────────────────────────────────────────────
+        if s.state == 0
+            if (s.dir == -1 ? high >= s.zoneBot : low <= s.zoneTop)
+                s.state    := 1
+                s.entryBar := bar_index
+                tapped     := s
+                fireTap    := true
+            else if (s.dir == -1 ? low < s.term : high > s.term)
+                s.state  := 4                      // leg extended — fib is stale
+                s.endBar := bar_index
+        if s.state == 1
+            if (s.dir == -1 ? high >= s.stp : low <= s.stp)
+                s.state  := 3
+                s.endBar := bar_index
+                fireOut  := true
+            else if (s.dir == -1 ? low <= s.tgt : high >= s.tgt)
+                s.state  := 2
+                s.endBar := bar_index
+                fireWin  := true
+
+        // ── geometry ─────────────────────────────────────────────────────
+        //  Only a live setup gets the full treatment. Once it resolves the FVG
+        //  box and the projection come off the chart and just the zone stays,
+        //  colour-coded by outcome — otherwise a session's worth of setups
+        //  stacks into unreadable soup.
+        live   = s.state <= 1
+        detail = live or histMode == "Labelled"
+        rx     = live ? bar_index + futureBars : s.endBar
+        col    = s.state == 2 ? bullCol :
+             s.state == 3 ? bearCol :
+             s.state == 4 ? color.gray :
+             s.dir == 1 ? bullCol : bearCol
+
+        if not na(s.bxFvg)
+            if detail
+                box.set_lefttop(s.bxFvg, s.fvgBar, s.fvgTop)
+                box.set_rightbottom(s.bxFvg, rx, s.fvgBot)
+            else
+                box.delete(s.bxFvg)
+                s.bxFvg := na
+
+        // the projection lives in the empty space right of price, never on it
+        if not na(s.bxRisk)
+            if live
+                lx = bar_index + 1
+                box.set_lefttop(s.bxRisk, lx, math.max(s.ent, s.stp))
+                box.set_rightbottom(s.bxRisk, rx, math.min(s.ent, s.stp))
+                box.set_text(s.bxRisk, "STOP " + px(s.stp))
+                box.set_lefttop(s.bxRwd, lx, math.max(s.ent, s.tgt))
+                box.set_rightbottom(s.bxRwd, rx, math.min(s.ent, s.tgt))
+                box.set_text(s.bxRwd, "TP " + px(s.tgt) + "  " +
+                     str.tostring(math.abs(s.tgt - s.ent) / s.ent * 100, "#.##") + "%")
+            else
+                box.delete(s.bxRisk)
+                box.delete(s.bxRwd)
+                s.bxRisk := na
+                s.bxRwd  := na
+
+        if not na(s.bxZone)
+            if not live and histMode == "Hide"
+                box.delete(s.bxZone)
+                s.bxZone := na
+            else
+                box.set_lefttop(s.bxZone, s.termBar, s.zoneTop)
+                box.set_rightbottom(s.bxZone, rx, s.zoneBot)
+                box.set_border_color(s.bxZone, color.new(col, detail ? 0 : 55))
+                box.set_bgcolor(s.bxZone, color.new(col, detail ? zoneT : histT))
+                box.set_text_color(s.bxZone, color.new(col, 0))
+                box.set_text(s.bxZone, detail ? statusText(s) : "")
+
+        if live
+            liveSetup := s
+
+// ───────────────────────────────────────────────────────────── fib levels ─
+if showFib and barstate.islast
+    if na(liveSetup)
+        for i = 0 to 4
+            line.set_xy1(array.get(fibLines, i), bar_index, close)
+            line.set_xy2(array.get(fibLines, i), bar_index, close)
+            label.set_text(array.get(fibLabels, i), "")
+    else
+        lv = array.from(0.0, oteA, oteMid, oteB, 1.0)
+        for i = 0 to 4
+            v  = array.get(lv, i)
+            p  = fibAt(liveSetup.term, liveSetup.orig, v)
+            ln = array.get(fibLines, i)
+            lb = array.get(fibLabels, i)
+            edge = v == 0.0 or v == 1.0
+            // the projection already prints these two: the target sits on fib 0
+            // and the stop one ATR buffer off fib 1, so the labels would stack
+            clash = showRR and not na(liveSetup.bxRisk) and
+                 (math.abs(p - liveSetup.tgt) < atr * 0.5 or math.abs(p - liveSetup.stp) < atr * 0.5)
+            line.set_xy1(ln, liveSetup.termBar, p)
+            line.set_xy2(ln, bar_index + futureBars, p)
+            line.set_color(ln, color.new(fibCol, edge ? 40 : 0))
+            label.set_xy(lb, bar_index + futureBars, p)
+            label.set_text(lb, clash ? "" : str.tostring(v) + "  (" + px(p) + ")")
+            label.set_textcolor(lb, color.new(fibCol, edge ? 30 : 0))
+
+// ──────────────────────────────────────────────────────────── info panel ──
+tblCorner = tablePos == "Bottom right" ? position.bottom_right :
+     tablePos == "Top left" ? position.top_left :
+     tablePos == "Bottom left" ? position.bottom_left : position.top_right
+
+var table tbl = table.new(tblCorner, 2, 7, border_width = 1,
+     frame_color = color.new(color.gray, 60), frame_width = 1)
+
+row(int r, string k, string v, color c) =>
+    table.cell(tbl, 0, r, k, text_color = color.new(color.silver, 0), text_size = tSize,
+         text_halign = text.align_left, bgcolor = color.new(color.black, 10))
+    table.cell(tbl, 1, r, v, text_color = c, text_size = tSize,
+         text_halign = text.align_right, bgcolor = color.new(color.black, 10))
+
+if showTable and barstate.islast
+    table.clear(tbl, 0, 0, 1, 6)
+    if na(liveSetup)
+        row(0, "OTE Sniper", "no live setup", color.new(color.silver, 0))
+        row(1, "Why", rejectMsg == "" ? "last setup resolved" : rejectMsg, color.new(color.silver, 0))
+        row(2, "Last leg", na(lastLegBar) ? "none yet" :
+             str.tostring(bar_index - lastLegBar) + " bars ago", color.new(color.silver, 0))
+        row(3, "Pivot needs", str.tostring(swingLen) + " closed bars past the extreme",
+             color.new(color.gray, 10))
+    else
+        c = liveSetup.dir == 1 ? bullCol : bearCol
+        row(0, "Bias",   liveSetup.dir == 1 ? "LONG" : "SHORT", c)
+        row(1, "Status", liveSetup.state == 0 ? "waiting for retrace" : "in zone", color.new(color.silver, 0))
+        row(2, "Zone",   px(liveSetup.zoneBot) + " – " + px(liveSetup.zoneTop) + (liveSetup.hasFvg ? "  (FVG)" : ""), c)
+        row(3, "Entry",  px(liveSetup.ent), color.new(color.silver, 0))
+        row(4, "Stop",   px(liveSetup.stp), bearCol)
+        row(5, "Target", px(liveSetup.tgt), bullCol)
+        row(6, "R:R",    str.tostring(liveSetup.rr, "#.##") + "R", color.new(color.silver, 0))
+
+// ─────────────────────────────────────────────────────────────── alerts ───
+int newDir = 0
+if fireNew and not na(liveSetup)
+    newDir := liveSetup.dir
+
+if fireNew and not na(liveSetup)
+    alert(syminfo.ticker + " — new " + (liveSetup.dir == 1 ? "LONG" : "SHORT") +
+         " OTE setup · zone " + px(liveSetup.zoneBot) + "–" + px(liveSetup.zoneTop) +
+         " · entry " + px(liveSetup.ent) + " · stop " + px(liveSetup.stp) +
+         " · target " + px(liveSetup.tgt) + " · " + str.tostring(liveSetup.rr, "#.#") + "R",
+         alert.freq_once_per_bar_close)
+
+if fireTap and not na(tapped)
+    alert(syminfo.ticker + " — price tapped the " + (tapped.dir == 1 ? "buy" : "sell") +
+         " zone @ " + px(close), alert.freq_once_per_bar)
+
+if fireWin
+    alert(syminfo.ticker + " — OTE target hit", alert.freq_once_per_bar)
+
+if fireOut
+    alert(syminfo.ticker + " — OTE setup stopped out", alert.freq_once_per_bar)
+
+alertcondition(fireNew, "New OTE setup", "OTE Sniper: new FVG + OTE setup formed")
+alertcondition(fireTap, "Price in zone", "OTE Sniper: price tapped the entry zone")
+alertcondition(fireWin, "Target hit",    "OTE Sniper: target reached")
+alertcondition(fireOut, "Stopped out",   "OTE Sniper: stop level breached")
+
+plotshape(newDir ==  1, "New long setup",  shape.triangleup,   location.belowbar,
+     color.new(bullCol, 0), size = size.small)
+plotshape(newDir == -1, "New short setup", shape.triangledown, location.abovebar,
+     color.new(bearCol, 0), size = size.small)

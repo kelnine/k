@@ -1,4 +1,5 @@
 import type { Candle } from '../data/types'
+import { makeOte } from './ote'
 import { makeSmc } from './smc'
 
 export type PlotStyle = 'line' | 'hist'
@@ -255,6 +256,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeOte(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {
