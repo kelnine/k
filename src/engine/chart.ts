@@ -39,17 +39,17 @@ interface PaneScale {
 }
 
 const COLORS = {
-  bg: '#0d1118',
-  grid: 'rgba(255,255,255,0.05)',
-  text: '#8b93a3',
-  textBright: '#d1d6e0',
-  up: '#26a69a',
-  down: '#ef5350',
-  axisBg: '#0d1118',
-  crosshair: 'rgba(170,178,196,0.6)',
-  separator: 'rgba(255,255,255,0.12)',
-  lastPriceUp: '#26a69a',
-  lastPriceDown: '#ef5350',
+  bg: '#080b11',
+  grid: 'rgba(255,255,255,0.04)',
+  text: '#7d8699',
+  textBright: '#e7eaf1',
+  up: '#22c7a9',
+  down: '#f6465d',
+  axisBg: '#080b11',
+  crosshair: 'rgba(180,190,210,0.55)',
+  separator: 'rgba(255,255,255,0.09)',
+  lastPriceUp: '#22c7a9',
+  lastPriceDown: '#f6465d',
 }
 
 const AXIS_W = 72
@@ -459,7 +459,7 @@ export class ChartEngine {
       const c = this.candles[i]
       const h = (c.volume / maxVol) * zone
       const x = this.xForIndex(i)
-      ctx.fillStyle = c.close >= c.open ? 'rgba(38,166,154,0.25)' : 'rgba(239,83,80,0.25)'
+      ctx.fillStyle = c.close >= c.open ? 'rgba(34,199,169,0.22)' : 'rgba(246,70,93,0.22)'
       ctx.fillRect(x - bw / 2, mainBottom - 4 - h, bw, h)
     }
   }
@@ -736,8 +736,8 @@ export class ChartEngine {
           const prev = i > 0 ? plot.values[i - 1] : null
           const rising = prev !== null && prev !== undefined ? v >= prev : v >= 0
           ctx.fillStyle = v >= 0
-            ? (rising ? 'rgba(38,166,154,0.9)' : 'rgba(38,166,154,0.45)')
-            : (rising ? 'rgba(239,83,80,0.45)' : 'rgba(239,83,80,0.9)')
+            ? (rising ? 'rgba(34,199,169,0.9)' : 'rgba(34,199,169,0.45)')
+            : (rising ? 'rgba(246,70,93,0.45)' : 'rgba(246,70,93,0.9)')
           const y = this.yForPrice(v, s)
           ctx.fillRect(this.xForIndex(i) - bw / 2, Math.min(y, zero), bw, Math.abs(zero - y) || 1)
         }

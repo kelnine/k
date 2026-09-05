@@ -1,0 +1,376 @@
+//@version=6
+// FutureFi - all-in-one Smart Money Concepts overlay
+// Trend cloud, premium/discount bias, buy/sell zones, BOS/CHoCH structure,
+// liquidity sweeps, two-layer order blocks with mitigation, fair value gaps,
+// confluence-gated signals with auto entry/SL/TP, status dashboard, alerts.
+// No request.security() (scanner-friendly). ASCII only.
+indicator("FutureFi", shorttitle="FutureFi", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============================================================
+// Inputs
+// ============================================================
+grpTrend = "Trend"
+emaFastLen = input.int(21, "Fast EMA", minval=1, group=grpTrend)
+emaSlowLen = input.int(50, "Slow EMA", minval=1, group=grpTrend)
+atrLen     = input.int(14, "ATR Length", minval=1, group=grpTrend)
+atrMult    = input.float(1.5, "Cloud Width (ATR x)", minval=0.1, step=0.1, group=grpTrend)
+showCloud  = input.bool(true, "Show Trend Cloud", group=grpTrend)
+
+grpStruct = "Structure"
+pivotLen   = input.int(10, "Swing Lookback", minval=2, group=grpStruct)
+showBOS    = input.bool(true, "Show BOS / CHoCH", group=grpStruct)
+showSweep  = input.bool(true, "Show Liquidity Sweeps", group=grpStruct)
+showEq     = input.bool(true, "Show Equilibrium (50%)", group=grpStruct)
+
+grpOB = "Order Blocks"
+showOB     = input.bool(true, "Show Order Blocks", group=grpOB)
+maxOB      = input.int(6, "Max Order Blocks", minval=1, maxval=20, group=grpOB)
+obLookback = input.int(20, "OB Search Lookback", minval=3, maxval=50, group=grpOB)
+mitigateOB = input.bool(true, "Remove Mitigated OBs", group=grpOB)
+
+grpFVG = "Fair Value Gaps"
+showFVG  = input.bool(true, "Show FVGs", group=grpFVG)
+maxFVG   = input.int(6, "Max FVGs", minval=1, maxval=20, group=grpFVG)
+fvgMitig = input.bool(true, "Remove Filled FVGs", group=grpFVG)
+
+grpZone = "Buy / Sell Zones"
+showZones = input.bool(true, "Show Buy/Sell Zones", group=grpZone)
+zonePad   = input.float(0.5, "Zone Width (ATR x)", minval=0.1, step=0.1, group=grpZone)
+
+grpSig = "Signals"
+showSignals = input.bool(true, "Show Buy/Sell Signals", group=grpSig)
+sigSpacing  = input.int(5, "Min Bars Between Signals", minval=1, group=grpSig)
+minConfl    = input.int(3, "Min Confluence To Signal", minval=1, maxval=6, group=grpSig)
+useMomentum = input.bool(true, "Require Momentum Filter", group=grpSig)
+useVolume   = input.bool(true, "Use Volume In Confluence", group=grpSig)
+
+grpLvl = "Trade Levels"
+showLevels = input.bool(true, "Show Entry / SL / TP", group=grpLvl)
+rrTarget   = input.float(2.0, "Risk : Reward", minval=0.5, step=0.5, group=grpLvl)
+lvlExtend  = input.int(20, "Level Length (bars)", minval=5, group=grpLvl)
+
+grpDash = "Dashboard"
+showDash = input.bool(true, "Show Dashboard", group=grpDash)
+
+// ============================================================
+// Palette
+// ============================================================
+colUp      = color.new(#00c2a8, 0)
+colDn      = color.new(#ff5d73, 0)
+colUpF     = color.new(#00c2a8, 84)
+colDnF     = color.new(#ff5d73, 84)
+colOBupOut = color.new(#00c2a8, 86)
+colOBupIn  = color.new(#00c2a8, 62)
+colOBdnOut = color.new(#ff5d73, 86)
+colOBdnIn  = color.new(#ff5d73, 62)
+colFVG     = color.new(#5b8def, 80)
+colZbuy    = color.new(#00c2a8, 88)
+colZsel    = color.new(#ff5d73, 88)
+colEq      = color.new(#9aa0aa, 40)
+colHdr     = color.new(#11151c, 0)
+colPanel   = color.new(#1b2230, 12)
+
+// ============================================================
+// Trend cloud
+// ============================================================
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atr     = ta.atr(atrLen)
+trendUp = emaFast > emaSlow
+upper   = emaFast + atr * atrMult
+lower   = emaFast - atr * atrMult
+
+pUpper = plot(showCloud ? upper : na, "Cloud Upper", color=color.new(color.gray, 96))
+pLower = plot(showCloud ? lower : na, "Cloud Lower", color=color.new(color.gray, 96))
+fill(pUpper, pLower, color = trendUp ? colUpF : colDnF, title="Trend Cloud")
+plot(showCloud ? emaFast : na, "EMA Fast", color = trendUp ? colUp : colDn, linewidth=2)
+
+// ============================================================
+// Momentum + volume context
+// ============================================================
+rsi    = ta.rsi(close, 14)
+momUp  = rsi >= 50
+volAvg = ta.sma(volume, 20)
+volHigh = not na(volume) and not na(volAvg) and volume > volAvg
+
+// ============================================================
+// Structure: swings, BOS / CHoCH, liquidity sweeps
+// ============================================================
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var int   lastSwingHighBar = na
+var int   lastSwingLowBar  = na
+var bool  brokeHigh = false
+var bool  brokeLow  = false
+var int   structBias = 0   // 1 bull, -1 bear, 0 none
+
+if not na(ph)
+    lastSwingHigh := ph
+    lastSwingHighBar := bar_index - pivotLen
+    brokeHigh := false
+if not na(pl)
+    lastSwingLow := pl
+    lastSwingLowBar := bar_index - pivotLen
+    brokeLow := false
+
+bullBreak = not na(lastSwingHigh) and not brokeHigh and close > lastSwingHigh
+bearBreak = not na(lastSwingLow)  and not brokeLow  and close < lastSwingLow
+
+bool isChochUp = false
+bool isChochDn = false
+if bullBreak
+    isChochUp := structBias == -1
+    structBias := 1
+    brokeHigh := true
+if bearBreak
+    isChochDn := structBias == 1
+    structBias := -1
+    brokeLow := true
+
+// Liquidity sweep = wick past a swing then close back inside (stop hunt)
+bullSweep = showSweep and not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow
+bearSweep = showSweep and not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+if showBOS and bullBreak
+    label.new(bar_index, low, isChochUp ? "CHoCH" : "BOS", style=label.style_label_up, color=colUp, textcolor=color.white, size=size.small)
+if showBOS and bearBreak
+    label.new(bar_index, high, isChochDn ? "CHoCH" : "BOS", style=label.style_label_down, color=colDn, textcolor=color.white, size=size.small)
+if showSweep and bullSweep
+    label.new(bar_index, low, "x", style=label.style_xcross, color=colUp, textcolor=color.white, size=size.tiny)
+if showSweep and bearSweep
+    label.new(bar_index, high, "x", style=label.style_xcross, color=colDn, textcolor=color.white, size=size.tiny)
+
+// ============================================================
+// Premium / discount / equilibrium
+// ============================================================
+float eq = not na(lastSwingHigh) and not na(lastSwingLow) ? (lastSwingHigh + lastSwingLow) / 2 : na
+discount = not na(eq) and close < eq
+premium  = not na(eq) and close > eq
+plot(showEq ? eq : na, "Equilibrium", color=colEq, style=plot.style_linebr)
+
+// ============================================================
+// Order blocks (two-layer: faint outer + solid inner body)
+// ============================================================
+f_lastOpp(_dir, _len) =>
+    int idx = na
+    for i = 1 to _len
+        if na(idx)
+            bool down = close[i] < open[i]
+            bool up   = close[i] > open[i]
+            if (_dir == 1 and down) or (_dir == -1 and up)
+                idx := i
+    idx
+
+var array<box> obOuter = array.new<box>()
+var array<box> obInner = array.new<box>()
+var array<int> obDir   = array.new<int>()
+
+if showOB and (bullBreak or bearBreak)
+    int dir = bullBreak ? 1 : -1
+    int idx = f_lastOpp(dir, obLookback)
+    if not na(idx)
+        float oTop = high[idx]
+        float oBot = low[idx]
+        float iTop = math.max(open[idx], close[idx])
+        float iBot = math.min(open[idx], close[idx])
+        box bxO = box.new(bar_index - idx, oTop, bar_index + 5, oBot, border_color = dir == 1 ? colUp : colDn, bgcolor = dir == 1 ? colOBupOut : colOBdnOut)
+        box bxI = box.new(bar_index - idx, iTop, bar_index + 5, iBot, border_color = na, bgcolor = dir == 1 ? colOBupIn : colOBdnIn)
+        array.push(obOuter, bxO)
+        array.push(obInner, bxI)
+        array.push(obDir, dir)
+        if array.size(obOuter) > maxOB
+            box oldO = array.shift(obOuter)
+            box oldI = array.shift(obInner)
+            array.shift(obDir)
+            box.delete(oldO)
+            box.delete(oldI)
+
+if array.size(obOuter) > 0
+    for i = array.size(obOuter) - 1 to 0
+        box bxO = array.get(obOuter, i)
+        box bxI = array.get(obInner, i)
+        int d   = array.get(obDir, i)
+        bool mit = mitigateOB and (d == 1 ? close < box.get_bottom(bxO) : close > box.get_top(bxO))
+        if mit
+            box.delete(bxO)
+            box.delete(bxI)
+            array.remove(obOuter, i)
+            array.remove(obInner, i)
+            array.remove(obDir, i)
+        else
+            box.set_right(bxO, bar_index + 5)
+            box.set_right(bxI, bar_index + 5)
+
+// ============================================================
+// Fair value gaps
+// ============================================================
+var array<box> fvgBoxes = array.new<box>()
+var array<int> fvgDir   = array.new<int>()
+
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+if showFVG and bullFVG
+    box bx = box.new(bar_index - 2, low, bar_index + 5, high[2], border_color=na, bgcolor=colFVG)
+    array.push(fvgBoxes, bx)
+    array.push(fvgDir, 1)
+    if array.size(fvgBoxes) > maxFVG
+        box old = array.shift(fvgBoxes)
+        array.shift(fvgDir)
+        box.delete(old)
+if showFVG and bearFVG
+    box bx = box.new(bar_index - 2, low[2], bar_index + 5, high, border_color=na, bgcolor=colFVG)
+    array.push(fvgBoxes, bx)
+    array.push(fvgDir, -1)
+    if array.size(fvgBoxes) > maxFVG
+        box old = array.shift(fvgBoxes)
+        array.shift(fvgDir)
+        box.delete(old)
+
+if array.size(fvgBoxes) > 0
+    for i = array.size(fvgBoxes) - 1 to 0
+        box bx = array.get(fvgBoxes, i)
+        int d  = array.get(fvgDir, i)
+        bool filled = fvgMitig and (d == 1 ? close < box.get_bottom(bx) : close > box.get_top(bx))
+        if filled
+            box.delete(bx)
+            array.remove(fvgBoxes, i)
+            array.remove(fvgDir, i)
+        else
+            box.set_right(bx, bar_index + 5)
+
+// ============================================================
+// Buy / Sell zones (around most recent swings)
+// ============================================================
+var box buyZone  = na
+var box sellZone = na
+
+if showZones and not na(lastSwingLow)
+    float zt = lastSwingLow + atr * zonePad
+    float zb = lastSwingLow - atr * zonePad
+    if na(buyZone)
+        buyZone := box.new(lastSwingLowBar, zt, bar_index + 10, zb, border_color=na, bgcolor=colZbuy)
+    else
+        box.set_top(buyZone, zt)
+        box.set_bottom(buyZone, zb)
+        box.set_left(buyZone, lastSwingLowBar)
+        box.set_right(buyZone, bar_index + 10)
+if showZones and not na(lastSwingHigh)
+    float zt = lastSwingHigh + atr * zonePad
+    float zb = lastSwingHigh - atr * zonePad
+    if na(sellZone)
+        sellZone := box.new(lastSwingHighBar, zt, bar_index + 10, zb, border_color=na, bgcolor=colZsel)
+    else
+        box.set_top(sellZone, zt)
+        box.set_bottom(sellZone, zb)
+        box.set_left(sellZone, lastSwingHighBar)
+        box.set_right(sellZone, bar_index + 10)
+
+inBuyZone  = not na(buyZone)  and low  <= box.get_top(buyZone)     and close >= box.get_bottom(buyZone)
+inSellZone = not na(sellZone) and high >= box.get_bottom(sellZone) and close <= box.get_top(sellZone)
+
+// ============================================================
+// Confluence + signals
+// ============================================================
+bullLoc = inBuyZone or discount
+bearLoc = inSellZone or premium
+
+bullConfl = (trendUp ? 1 : 0) + (structBias == 1 ? 1 : 0) + (bullLoc ? 1 : 0) + ((not useMomentum or momUp) ? 1 : 0) + ((useVolume and volHigh) ? 1 : 0) + ((bullBreak or bullSweep) ? 1 : 0)
+bearConfl = (not trendUp ? 1 : 0) + (structBias == -1 ? 1 : 0) + (bearLoc ? 1 : 0) + ((not useMomentum or not momUp) ? 1 : 0) + ((useVolume and volHigh) ? 1 : 0) + ((bearBreak or bearSweep) ? 1 : 0)
+
+momOkBull = not useMomentum or momUp
+momOkBear = not useMomentum or not momUp
+
+var int lastSigBar = na
+buySig  = showSignals and trendUp     and bullLoc and momOkBull and bullConfl >= minConfl and (na(lastSigBar) or bar_index - lastSigBar >= sigSpacing)
+sellSig = showSignals and not trendUp and bearLoc and momOkBear and bearConfl >= minConfl and (na(lastSigBar) or bar_index - lastSigBar >= sigSpacing)
+if buySig or sellSig
+    lastSigBar := bar_index
+
+plotshape(buySig,  "Buy",  style=shape.triangleup,   location=location.belowbar, color=colUp, size=size.small)
+plotshape(sellSig, "Sell", style=shape.triangledown, location=location.abovebar, color=colDn, size=size.small)
+
+// ============================================================
+// Trade levels (entry / SL / TP for the latest signal)
+// ============================================================
+var line  eLine = na
+var line  sLine = na
+var line  tLine = na
+var label eLbl  = na
+var label sLbl  = na
+var label tLbl  = na
+
+f_clearLevels() =>
+    if not na(eLine)
+        line.delete(eLine)
+    if not na(sLine)
+        line.delete(sLine)
+    if not na(tLine)
+        line.delete(tLine)
+    if not na(eLbl)
+        label.delete(eLbl)
+    if not na(sLbl)
+        label.delete(sLbl)
+    if not na(tLbl)
+        label.delete(tLbl)
+
+if showLevels and (buySig or sellSig)
+    f_clearLevels()
+    float entry = close
+    float sl = na
+    float tp = na
+    if buySig
+        float base = not na(buyZone) ? math.min(box.get_bottom(buyZone), low) : low
+        sl := base - atr * 0.1
+        float risk = math.max(entry - sl, atr * 0.1)
+        sl := entry - risk
+        tp := entry + risk * rrTarget
+    else
+        float base = not na(sellZone) ? math.max(box.get_top(sellZone), high) : high
+        sl := base + atr * 0.1
+        float risk = math.max(sl - entry, atr * 0.1)
+        sl := entry + risk
+        tp := entry - risk * rrTarget
+    int xr = bar_index + lvlExtend
+    eLine := line.new(bar_index, entry, xr, entry, color=color.new(color.gray, 0),  style=line.style_solid,  width=1)
+    sLine := line.new(bar_index, sl,    xr, sl,    color=colDn, style=line.style_dashed, width=1)
+    tLine := line.new(bar_index, tp,    xr, tp,    color=colUp, style=line.style_dashed, width=1)
+    eLbl  := label.new(xr, entry, "Entry " + str.tostring(entry, format.mintick), style=label.style_label_left, color=color.new(color.gray, 20), textcolor=color.white, size=size.tiny)
+    sLbl  := label.new(xr, sl,    "SL "    + str.tostring(sl,    format.mintick), style=label.style_label_left, color=colDn, textcolor=color.white, size=size.tiny)
+    tLbl  := label.new(xr, tp,    "TP "    + str.tostring(tp,    format.mintick), style=label.style_label_left, color=colUp, textcolor=color.white, size=size.tiny)
+
+// ============================================================
+// Dashboard
+// ============================================================
+var table dash = table.new(position.top_right, 2, 8, bgcolor=colPanel, border_color=color.new(#363a45, 0), border_width=1)
+if showDash and barstate.islast
+    table.cell(dash, 0, 0, "FutureFi", text_color=color.white, bgcolor=colHdr, text_size=size.normal)
+    table.cell(dash, 1, 0, "", bgcolor=colHdr, text_size=size.small)
+    table.cell(dash, 0, 1, "Trend", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 1, trendUp ? "UP" : "DOWN", text_color=trendUp ? colUp : colDn, text_size=size.small)
+    table.cell(dash, 0, 2, "Structure", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 2, structBias == 1 ? "Bullish" : structBias == -1 ? "Bearish" : "Neutral", text_color=structBias == 1 ? colUp : structBias == -1 ? colDn : color.gray, text_size=size.small)
+    table.cell(dash, 0, 3, "Momentum", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 3, str.tostring(rsi, "#") + (momUp ? " Bull" : " Bear"), text_color=momUp ? colUp : colDn, text_size=size.small)
+    table.cell(dash, 0, 4, "Volume", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 4, volHigh ? "High" : "Normal", text_color=volHigh ? colUp : color.gray, text_size=size.small)
+    table.cell(dash, 0, 5, "Bias", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, na(eq) ? "-" : discount ? "Discount" : premium ? "Premium" : "EQ", text_color=discount ? colUp : premium ? colDn : color.gray, text_size=size.small)
+    table.cell(dash, 0, 6, "Signal", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 6, buySig ? "BUY" : sellSig ? "SELL" : "-", text_color=buySig ? colUp : sellSig ? colDn : color.gray, text_size=size.small)
+    table.cell(dash, 0, 7, "Confluence", text_color=color.gray, text_size=size.small)
+    int cf = trendUp ? bullConfl : bearConfl
+    table.cell(dash, 1, 7, str.tostring(cf) + "/6", text_color=color.white, text_size=size.small)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(buySig,    title="FutureFi Buy",            message="FutureFi: BUY signal")
+alertcondition(sellSig,   title="FutureFi Sell",           message="FutureFi: SELL signal")
+alertcondition(bullBreak, title="FutureFi Bullish Break",  message="FutureFi: Bullish structure break (BOS/CHoCH)")
+alertcondition(bearBreak, title="FutureFi Bearish Break",  message="FutureFi: Bearish structure break (BOS/CHoCH)")
+alertcondition(bullSweep, title="FutureFi Bullish Sweep",  message="FutureFi: Bullish liquidity sweep")
+alertcondition(bearSweep, title="FutureFi Bearish Sweep",  message="FutureFi: Bearish liquidity sweep")
