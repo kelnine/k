@@ -1,0 +1,50 @@
+# Pine scripts
+
+## `combined-smc-suite.pine`
+
+Three overlays merged into a single TradingView indicator, each behind its own
+on/off switch in a **Modules** group at the top of the settings:
+
+| Toggle | Module | Source |
+| --- | --- | --- |
+| Order Block Detector | Volume-pivot order blocks, average line, mitigation by wick or close | LuxAlgo (CC BY-NC-SA 4.0) |
+| Smart Money Breakout Channels | Volatility-compression channels, breakout signals, in-channel volume/delta bars, side gauge | AlgoAlpha (MPL 2.0) |
+| 200 EMA Filtered Parabolic SAR | PSAR flips filtered by a 200 EMA trend regime and an ADX threshold, with Long/Short entries and EL/ES exits | reconstructed |
+
+Every original input is preserved with its original default, namespaced per
+module (`ob*`, `bc*`, `ps*`) so nothing collides. Alerts from all three are kept,
+plus two confluence alerts (PSAR entry in the same direction as a channel
+breakout).
+
+### Notes on the merge
+
+- The scripts were `//@version=5` (LuxAlgo) and `//@version=6` (AlgoAlpha); the
+  combined file is v6.
+- Order-block mitigation now walks its arrays back-to-front. The original walked
+  forward while removing elements from the array it was iterating, which skips
+  entries and can read past the end.
+- The channel loop was changed the same way, for the same reason.
+- v6 dropped implicit float→bool conversion, so the OB "formed" alerts test the
+  price series with `na()` instead of passing the float straight to
+  `alertcondition`.
+- Disabling a module skips its drawing objects entirely rather than hiding them,
+  so an unused module costs nothing against the 500-box / 500-line limits.
+  `ta.requestUpAndDownVolume()` is the one exception — `request.*` calls must stay
+  unconditional, so it is evaluated even with the channel module off.
+
+### About the Parabolic SAR module
+
+Only screenshots of that indicator's settings were available, not its source, so
+it is a reconstruction from the visible inputs (`MaFastLength` 7, `MaMedLength`
+21, `MaSlowLength` 200, `PSARstart` 0.02, `Increment` 0.02, `Maximum` 0.2, ADX
+Smoothing 14, DI Length 14, Threshold 20, "Show the 21 EMA?") and the visible
+plot list (SAR long/short shapes, exit long/short shapes, three MA plots, the SAR
+plot, and a background). Two behaviours were inferred and may not match the
+original:
+
+- **Entries** fire on a SAR flip that agrees with the 200 EMA and clears the ADX
+  threshold; **exits** fire on the opposite SAR flip while a position is open.
+- **Plots Background** shades by the 200 EMA regime (above = Color 0, below =
+  Color 1).
+
+Send the original source if those need to match exactly.
