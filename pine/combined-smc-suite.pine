@@ -144,23 +144,27 @@ obSetBlocks(show, obTop, obBtm, obLeft, obAvg, extLast, bgCss, borderCss, lvlCss
     var obBox = array.new_box(0)
     var obLvl = array.new_line(0)
 
-    //Pre-allocate the drawing objects
-    if barstate.isfirst and show
-        for i = 0 to extLast - 1
-            array.unshift(obBox, box.new(na, na, na, na
-              , xloc         = xloc.bar_time
-              , extend       = extend.right
-              , bgcolor      = bgCss
-              , border_color = color.new(borderCss, 70)))
-
-            array.unshift(obLvl, line.new(na, na, na, na
-              , xloc   = xloc.bar_time
-              , extend = extend.right
-              , color  = lvlCss
-              , style  = obGetLineStyle(obLineStyleIn)
-              , width  = obLineWidth))
-
     if barstate.islast and show
+        //Allocated on the LAST bar, not the first. TradingView evicts the OLDEST
+        //drawings once max_boxes_count / max_lines_count is reached, and the channel
+        //module creates four drawings per channel across the whole history. Built at
+        //bar 1 these would be first in line for eviction and would silently vanish —
+        //which is exactly why the order blocks stopped rendering after the merge.
+        if array.size(obBox) == 0
+            for i = 0 to extLast - 1
+                array.unshift(obBox, box.new(na, na, na, na
+                  , xloc         = xloc.bar_time
+                  , extend       = extend.right
+                  , bgcolor      = bgCss
+                  , border_color = color.new(borderCss, 70)))
+
+                array.unshift(obLvl, line.new(na, na, na, na
+                  , xloc   = xloc.bar_time
+                  , extend = extend.right
+                  , color  = lvlCss
+                  , style  = obGetLineStyle(obLineStyleIn)
+                  , width  = obLineWidth))
+
         if array.size(obTop) > 0
             for i = 0 to math.min(extLast - 1, array.size(obTop) - 1)
                 getBox = array.get(obBox, i)

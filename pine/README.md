@@ -34,6 +34,14 @@ breakout).
 - The library is imported as `tvta`, so `tvta.requestUpAndDownVolume()` is
   unambiguous and every other `ta.*` call resolves to the built-in namespace.
 - Shorttitle is `SMC Suite` — TradingView caps it at 10 characters.
+- Order-block boxes and average lines are allocated on the **last** bar rather than
+  the first. TradingView evicts the oldest drawings once `max_boxes_count` /
+  `max_lines_count` is reached, and the channel module creates four drawings per
+  channel over the whole history. Built at bar 1 the order blocks were first in line
+  for eviction and disappeared silently. Standalone, LuxAlgo never hits the cap
+  because it only holds six boxes; sharing one budget with the channel module, it
+  does. The trade is that the oldest off-screen channel boxes are now the ones
+  evicted instead.
 - Disabling a module skips its drawing objects entirely rather than hiding them,
   so an unused module costs nothing against the 500-box / 500-line limits.
   `ta.requestUpAndDownVolume()` is the one exception — `request.*` calls must stay
