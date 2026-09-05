@@ -34,8 +34,16 @@ breakout).
 - The library is imported as `tvta`, so `tvta.requestUpAndDownVolume()` is
   unambiguous and every other `ta.*` call resolves to the built-in namespace.
 - Shorttitle is `SMC Suite` — TradingView caps it at 10 characters.
-- Order-block boxes and average lines are allocated on the **last** bar rather than
-  the first. TradingView evicts the oldest drawings once `max_boxes_count` /
+- **The two modules could not both render.** They share one 500-drawing budget,
+  and the channel module leaked: a retired channel's three boxes and centre line
+  were dropped from its tracking arrays but never deleted, so they stayed on the
+  chart forever. Once the budget filled, TradingView evicted the oldest drawings —
+  the order blocks. Retired channels are now deleted past a **Max Historical
+  Channels** limit (default 50), which caps the module at roughly 160 boxes and 80
+  lines and leaves the order blocks room. Standalone, neither script hits the cap;
+  merged, the leak guaranteed one of them lost.
+- Order-block boxes and average lines are also allocated on the **last** bar rather
+  than the first. TradingView evicts the oldest drawings once `max_boxes_count` /
   `max_lines_count` is reached, and the channel module creates four drawings per
   channel over the whole history. Built at bar 1 the order blocks were first in line
   for eviction and disappeared silently. Standalone, LuxAlgo never hits the cap

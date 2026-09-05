@@ -272,6 +272,12 @@ bcTextSizeIn = input.string("Tiny", "Volume Text Size"
   , group   = G_BC
   , tooltip = "Size of the volume text at the corner of the channels.")
 
+bcMaxHistory = input.int(50, "Max Historical Channels"
+  , minval  = 1
+  , maxval  = 200
+  , group   = G_BC
+  , tooltip = "How many broken-out channels stay drawn. Older ones are deleted outright. The original leaked every retired channel, which filled TradingView's 500-drawing budget and silently pushed the order blocks off the chart.")
+
 bcGreen = input.color(#00ffbb, title = "Bullish Colour"
   , group   = G_BC
   , tooltip = "Primary colour for bullish visual elements.")
@@ -286,6 +292,12 @@ bcRed = input.color(#ff1100, title = "Bearish Colour"
 var bcBoxes   = array.new_box()
 var bcBoxesU  = array.new_box()
 var bcBoxesL  = array.new_box()
+
+//Retired channels, kept so they can be deleted instead of leaking
+var bcOldBoxes  = array.new_box()
+var bcOldBoxesU = array.new_box()
+var bcOldBoxesL = array.new_box()
+var bcOldLines  = array.new_line()
 
 var line[] bcGaugeLines  = array.new<line>()
 var label  bcGaugeLabel  = na
@@ -310,6 +322,20 @@ bcCanCreate(float tNew, float bNew) =>
                 ok := false
                 break
     ok
+
+//Park a broken-out channel's drawings and delete the oldest beyond the budget.
+//Without this every retired channel stays on the chart forever.
+bcRetire(box b, box u, box l, line c) =>
+    bcOldBoxes.push(b)
+    bcOldBoxesU.push(u)
+    bcOldBoxesL.push(l)
+    bcOldLines.push(c)
+
+    while bcOldBoxes.size() > bcMaxHistory
+        box.delete(bcOldBoxes.shift())
+        box.delete(bcOldBoxesU.shift())
+        box.delete(bcOldBoxesL.shift())
+        line.delete(bcOldLines.shift())
 
 bcVolTransparency(float v, float smoothedVol) =>
     if bcVolMode == "Volume"
@@ -381,6 +407,7 @@ if bcBoxes.size() > 0
     for i = bcBoxes.size() - 1 to 0
         if ((bcStrong ? math.avg(close, open) : close) > bcBoxes.get(i).get_top())
             bcUpbreak := bcBoxes.get(i).get_bottom()
+            bcRetire(bcBoxes.get(i), bcBoxesU.get(i), bcBoxesL.get(i), bcCenterLines.get(i))
             bcBoxes.remove(i)
             bcBoxesU.remove(i)
             bcBoxesL.remove(i)
@@ -389,6 +416,7 @@ if bcBoxes.size() > 0
 
         else if ((bcStrong ? math.avg(close, open) : close) < bcBoxes.get(i).get_bottom())
             bcDownbreak := bcBoxes.get(i).get_top()
+            bcRetire(bcBoxes.get(i), bcBoxesU.get(i), bcBoxesL.get(i), bcCenterLines.get(i))
             bcBoxes.remove(i)
             bcBoxesU.remove(i)
             bcBoxesL.remove(i)
