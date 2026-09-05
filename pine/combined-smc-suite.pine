@@ -10,13 +10,13 @@
 // Original licenses above continue to apply to their respective sections.
 
 //@version=6
-indicator("Combined SMC Suite [OB + Breakout Channels + PSAR]", "Combined SMC Suite"
+indicator("Combined SMC Suite [OB + Breakout Channels + PSAR]", "SMC Suite"
   , overlay           = true
   , max_boxes_count   = 500
   , max_labels_count  = 500
   , max_lines_count   = 500)
 
-import TradingView/ta/10
+import TradingView/ta/10 as tvta
 
 //-----------------------------------------------------------------------------}
 //Module master switches
@@ -191,7 +191,8 @@ else
 
 obOs := high[obLength] > obUpper ? 0 : low[obLength] < obLower ? 1 : obOs[1]
 
-obPhv = ta.pivothigh(volume, obLength, obLength)
+//ta.pivothigh() returns a price, not a flag — v6 has no implicit float->bool
+obPhvFound = not na(ta.pivothigh(volume, obLength, obLength))
 
 //-----------------------------------------------------------------------------
 //Bullish / bearish order block coordinates
@@ -200,13 +201,13 @@ obPhv = ta.pivothigh(volume, obLength, obLength)
   , obBullBtm
   , obBullAvg
   , obBullLeft
-  , obBullOb] = obGetCoordinates(obEnable and obPhv and obOs == 1, hl2[obLength], low[obLength], low[obLength])
+  , obBullOb] = obGetCoordinates(obEnable and obPhvFound and obOs == 1, hl2[obLength], low[obLength], low[obLength])
 
 [obBearTop
   , obBearBtm
   , obBearAvg
   , obBearLeft
-  , obBearOb] = obGetCoordinates(obEnable and obPhv and obOs == 0, high[obLength], hl2[obLength], high[obLength])
+  , obBearOb] = obGetCoordinates(obEnable and obPhvFound and obOs == 0, high[obLength], hl2[obLength], high[obLength])
 
 //-----------------------------------------------------------------------------
 //Remove mitigated order blocks
@@ -328,17 +329,22 @@ bcLower = (ta.lowestbars(bcVol, bcBoxLength + 1) + bcBoxLength) / bcBoxLength
 bcUpbreak   = 0.0
 bcDownbreak = 0.0
 
-bcDuration = math.max(nz(ta.barssince(ta.crossover(bcLower, bcUpper))), 1)
+//Evaluated unconditionally: a ta.* call behind a short-circuiting `and` would not
+//run on every bar, which corrupts its history
+bcChannelStart = ta.crossover(bcUpper, bcLower)
+bcVolReset     = ta.crossover(bcLower, bcUpper)
+
+bcDuration = math.max(nz(ta.barssince(bcVolReset)), 1)
 bcH = ta.highest(bcDuration)
 bcL = ta.lowest(bcDuration)
 
 //request.*() must stay unconditional, so this is evaluated even when the module is off
-[bcUv, bcDv, bcVold] = ta.requestUpAndDownVolume(bcTf)
+[bcUv, bcDv, bcVold] = tvta.requestUpAndDownVolume(bcTf)
 
 var bcHvold = bcVold
 var bcLvold = bcVold
 
-if ta.crossover(bcLower, bcUpper)
+if bcVolReset
     bcHvold := bcVold
     bcLvold := bcVold
 
@@ -355,7 +361,7 @@ bool bcNewChannelFormed = false
 bool bcBullishBreakout  = false
 bool bcBearishBreakout  = false
 
-if bcEnable and ta.crossover(bcUpper, bcLower) and bcDuration > 10
+if bcEnable and bcChannelStart and bcDuration > 10
     if bcOverlap or bcCanCreate(bcH, bcL)
         bcBoxes.unshift(box.new(bar_index - bcDuration, bcH, bar_index, bcL, bgcolor = color.new(chart.fg_color, 90), border_color = na))
         bcBoxesU.unshift(box.new(bar_index - bcDuration, bcH, bar_index, bcH - bcVola, bgcolor = color.new(bcRed, 70), border_color = na))

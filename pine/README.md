@@ -24,9 +24,16 @@ breakout).
   forward while removing elements from the array it was iterating, which skips
   entries and can read past the end.
 - The channel loop was changed the same way, for the same reason.
-- v6 dropped implicit float→bool conversion, so the OB "formed" alerts test the
-  price series with `na()` instead of passing the float straight to
-  `alertcondition`.
+- v6 dropped implicit float→bool conversion. `ta.pivothigh()` returns a price
+  rather than a flag, so the order-block trigger is now `not na(...)`, and the OB
+  "formed" alerts test the price series the same way instead of passing a float
+  straight to `alertcondition`.
+- The channel-formation `ta.crossover()` calls are hoisted to their own variables.
+  Behind a short-circuiting `and` they would not run on every bar, which corrupts
+  the history those functions depend on (CW10002).
+- The library is imported as `tvta`, so `tvta.requestUpAndDownVolume()` is
+  unambiguous and every other `ta.*` call resolves to the built-in namespace.
+- Shorttitle is `SMC Suite` — TradingView caps it at 10 characters.
 - Disabling a module skips its drawing objects entirely rather than hiding them,
   so an unused module costs nothing against the 500-box / 500-line limits.
   `ta.requestUpAndDownVolume()` is the one exception — `request.*` calls must stay
