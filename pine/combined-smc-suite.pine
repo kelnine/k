@@ -527,10 +527,12 @@ psThreshold    = input.int(20, "Threshold"    , minval = 0, group = G_PS
 
 psShowBg = input.bool(true, "Plots Background"
   , group   = G_PS
-  , tooltip = "Shades the background by the 200 EMA trend regime.")
+  , tooltip = "Fills the band between the fast and medium MA, green while the fast MA leads.")
 
-psBullBg = input.color(color.new(#169400, 90), "Color 0", inline = 'psbg', group = G_PS)
-psBearBg = input.color(color.new(#ff1100, 90), "Color 1", inline = 'psbg', group = G_PS)
+psBullBg = input.color(color.new(#169400, 80), "Color 0", inline = 'psbg', group = G_PS)
+psBearBg = input.color(color.new(#ff1100, 80), "Color 1", inline = 'psbg', group = G_PS)
+
+psSarCss = input.color(#b2b5be, "Parabolic SAR Dots", group = G_PS)
 
 psLongCss  = input.color(#169400, "Long / Short"     , inline = 'pssig', group = G_PS)
 psShortCss = input.color(#ff1100, ""                 , inline = 'pssig', group = G_PS)
@@ -642,12 +644,15 @@ plotshape(psEnable and psShort     ? high : na, "Parabolic SAR short", shape.lab
 plotshape(psEnable and psExitLong  ? high : na, "Exit long"          , shape.triangledown, location.abovebar, psExitCss, text = "EL", textcolor = chart.fg_color, size = size.tiny)
 plotshape(psEnable and psExitShort ? low  : na, "Exit short"         , shape.triangleup  , location.belowbar, psExitCss, text = "ES", textcolor = chart.fg_color, size = size.tiny)
 
-plot(psEnable ? psFast : na, "Fast MA", color.new(color.gray, 40), 1)
-plot(psEnable and psShow21 ? psMed : na, "Med MA (21)", color.new(color.olive, 0), 1)
-plot(psEnable ? psSlow : na, "Slow MA (200)", psShortCss, 2)
-plot(psEnable ? psSar  : na, "Parabolic SAR", color.new(chart.fg_color, 30), 1, plot.style_cross)
+psFastPlot = plot(psEnable ? psFast : na, "Fast MA"     , color.new(color.gray, 40), 1)
+psMedPlot  = plot(psEnable ? psMed  : na, "Med MA (21)"  , psShow21 ? color.olive : na, 1)
+plot(psEnable ? psSlow : na, "Slow MA (200)" , psShortCss, 2)
+plot(psEnable ? psSar  : na, "Parabolic SAR" , psSarCss  , 1, plot.style_cross)
 
-bgcolor(psEnable and psShowBg ? (psTrendUp ? psBullBg : psTrendDn ? psBearBg : na) : na, title = "Plots Background")
+//"Plots Background" with Color 0 / Color 1 in the Style tab is a fill() between two
+//plots — a band tracking price, not a bgcolor() washing the whole chart. The 21 EMA
+//keeps its plot when hidden so the band survives the "Show the 21 EMA?" toggle.
+fill(psFastPlot, psMedPlot, psEnable and psShowBg ? (psFast > psMed ? psBullBg : psBearBg) : na, title = "Plots Background")
 
 //=============================================================================}
 // ALERTS

@@ -51,7 +51,10 @@ original:
 
 - **Entries** fire on a SAR flip that agrees with the 200 EMA and clears the ADX
   threshold; **exits** fire on the opposite SAR flip while a position is open.
-- **Plots Background** shades by the 200 EMA regime (above = Color 0, below =
-  Color 1).
+- **Plots Background** is a `fill()` band between the fast and medium MA (Color 0
+  while the fast MA leads, Color 1 otherwise). In the Style tab a `fill()` between
+  two plots is what shows up as "Plots Background" with Color 0 / Color 1 — it is
+  not a `bgcolor()`, which would wash out the whole chart and hide the order-block
+  bands behind it.
 
 Send the original source if those need to match exactly.
