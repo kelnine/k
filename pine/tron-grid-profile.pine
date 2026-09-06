@@ -35,8 +35,12 @@ barCap     = input.int(1200, "Hard bar cap", minval = 50, maxval = 5000, group =
 
 const string gP = "Profile"
 rowsIn    = input.int(48, "Rows", minval = 8, maxval = 120, group = gP)
-widthBars = input.int(90, "Width (bars)", minval = 10, maxval = 400, group = gP)
-gapBars   = input.int(3, "Gap from range (bars)", minval = 0, maxval = 90, group = gP)
+placement = input.string("Right of bars", "Placement", options = ["Right of bars", "Over the bars"], group = gP,
+     tooltip = "Right of bars puts the profile in the empty space after the last candle, which widens the chart's time axis. Over the bars keeps it inside the range, hugging the right edge.")
+widthMode = input.string("% of range", "Width", options = ["% of range", "Fixed bars"], group = gP, inline = "w")
+widthPct  = input.float(30, "%", minval = 5, maxval = 100, step = 5, group = gP, inline = "w")
+widthBars = input.int(40, "bars", minval = 6, maxval = 400, group = gP, inline = "w")
+gapBars   = input.int(2, "Gap from range (bars)", minval = 0, maxval = 90, group = gP)
 vaPct     = input.float(70, "Value area %", minval = 10, maxval = 95, step = 5, group = gP)
 showPOC   = input.bool(true, "POC line", group = gP)
 showVA    = input.bool(true, "Value-area lines", group = gP)
@@ -68,7 +72,7 @@ cSell  = input.color(color.new(#8e5cf7, 20), "Sell imbalance", group = gS, inlin
 cPOC   = input.color(#ff9800, "POC", group = gS, inline = "s3")
 cVA    = input.color(color.new(#787b86, 40), "VAH / VAL", group = gS, inline = "s3")
 cTrade = input.color(#2962ff, "Trade", group = gS, inline = "s3")
-txtSize = input.string("Tiny", "Text size", options = ["Tiny", "Small", "Normal"], group = gS)
+txtSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = gS)
 
 labelSize = txtSize == "Normal" ? size.normal : txtSize == "Small" ? size.small : size.tiny
 
@@ -228,11 +232,22 @@ if barstate.islast
                 vaLoRow -= 1
                 acc += dn
 
-        // 6. geometry
-        int x0     = bar_index - endOff + gapBars
-        int histW  = int(widthBars * 0.68)
-        int colX0  = x0 + histW + int(widthBars * 0.04)
-        int colW   = widthBars - histW - int(widthBars * 0.04)
+        // 6. geometry — the profile is a block `wBars` wide: histogram on the
+        //    left ~68 %, delta column on the right, a small pad between them.
+        int len   = startOff - endOff + 1
+        int wBars = widthMode == "Fixed bars" ? widthBars : math.max(6, int(len * widthPct / 100.0))
+        bool over = placement == "Over the bars"
+        if not over
+            // TradingView only draws 500 bars past the last one; stay inside that.
+            wBars := math.min(wBars, math.max(6, 480 + endOff - gapBars))
+        else
+            wBars := math.min(wBars, math.max(6, len - 1))
+        int anchor = bar_index - endOff
+        int x0     = over ? anchor - wBars : anchor + gapBars
+        int pad    = math.max(1, int(wBars * 0.04))
+        int colW   = math.max(2, int(wBars * 0.28))
+        int histW  = wBars - colW - pad
+        int colX0  = x0 + histW + pad
         float minV = pocVol * minShare / 100.0
 
         for r = 0 to rowsIn - 1
@@ -257,13 +272,13 @@ if barstate.islast
                     array.push(bxs, box.new(colX0, top - rowH * 0.12, colX0 + w, bot + rowH * 0.12,
                          border_width = 0, bgcolor = ic, xloc = xloc.bar_index))
                 if numMode != "Off" and (numMode == "All rows" ? v >= minV : imb)
-                    array.push(lbs, label.new(colX0 - 1, (top + bot) / 2, fmtVol(d, true), xloc.bar_index, yloc.price,
-                         color = color.new(color.black, 100), textcolor = d > 0 ? cBuy : cSell,
+                    array.push(lbs, label.new(colX0 - pad, (top + bot) / 2, fmtVol(d, true), xloc.bar_index, yloc.price,
+                         color = color.new(color.black, 100), textcolor = color.new(d > 0 ? cBuy : cSell, 0),
                          style = label.style_label_right, size = labelSize))
 
         // 7. levels
         pocPrice := lo + rowH * (pocRow + 0.5)
-        int xRight = x0 + widthBars
+        int xRight = x0 + wBars
         if showPOC
             array.push(lns, line.new(bar_index - startOff, pocPrice, xRight, pocPrice, xloc.bar_index,
                  color = cPOC, style = line.style_dotted, width = 1))
@@ -280,7 +295,7 @@ if barstate.islast
                 netD += array.get(buy, r) - array.get(sell, r)
             array.push(lbs, label.new(x0, lo, "V " + fmtVol(total, false) + "   Δ " + fmtVol(netD, true) +
                  "   " + str.tostring(startOff - endOff + 1) + " bars", xloc.bar_index, yloc.price,
-                 color = color.new(color.black, 100), textcolor = netD > 0 ? cBuy : cSell,
+                 color = color.new(color.black, 100), textcolor = color.new(netD > 0 ? cBuy : cSell, 0),
                  style = label.style_label_up, size = labelSize))
 
 // POC on the price scale, the way an orange price tag reads on the axis.

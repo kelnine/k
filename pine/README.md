@@ -46,9 +46,19 @@ rows). **Ignore rows below % of POC volume** drops thin rows so the sidebar does
 not fill with noise. **Print delta on** switches the numbers between imbalanced
 rows only, every row, or off.
 
-**Profile** — `Rows` is the price resolution, `Width (bars)` / `Gap` place the
-sidebar to the right of the range. The histogram takes the left ~68 % of that
-width and the delta blocks the rest.
+**Profile** — `Rows` is the price resolution. `Width` defaults to **% of range**
+(30 %), so the sidebar scales with however many bars you are looking at instead
+of swamping a zoomed-in chart; switch to `Fixed bars` if you want it pinned.
+The histogram takes the left ~68 % of that width and the delta blocks the rest.
+
+`Placement` decides where the block sits:
+
+- `Right of bars` (default) — in the empty space after the last candle, like the
+  original. TradingView extends the time axis to fit it, which squeezes the
+  candles left; keeping the width percentage modest is what stops that hurting.
+- `Over the bars` — inside the range, hugging the right edge, so the chart's
+  scaling is untouched. Raise the histogram transparency if it covers too much
+  price action.
 
 ### Trade marker
 
