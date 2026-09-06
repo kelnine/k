@@ -18,6 +18,10 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **Volume profile + delta** — `pine/tron-grid-profile.pine`, a TradingView
+  (Pine v6) indicator: visible-range volume profile with per-level buy/sell
+  delta from intrabar data, imbalance blocks, POC and value area. See
+  [`pine/README.md`](pine/README.md).
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.

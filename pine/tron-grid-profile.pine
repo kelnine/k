@@ -1,0 +1,310 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © KCharts
+
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  Tron Grid — Volume Profile + Delta Imbalance
+//
+//  A right-hand volume profile with per-level order-flow delta, in the style
+//  of a footprint/DOM sidebar:
+//
+//    • Horizontal volume histogram for the visible range (or the last N bars)
+//    • Per-row delta (buy volume − sell volume) from intrabar data when the
+//      chart timeframe allows it, otherwise estimated from each bar
+//    • Rows where one side dominates get a coloured imbalance block plus the
+//      signed delta printed next to it — green = buyers, violet = sellers
+//    • POC (dotted) and value-area high/low levels, POC also on the price scale
+//    • Optional trade marker: entry → exit arrow with the R multiple
+//
+//  Nothing here is repainted history: the profile is rebuilt on the last bar
+//  from completed bars, so scrolling/zooming just re-runs the same maths.
+// ═══════════════════════════════════════════════════════════════════════════
+
+indicator("Tron Grid — Volume Profile + Delta", "Tron Grid", overlay = true,
+     max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500,
+     max_bars_back = 5000)
+
+// ─────────────────────────────── Inputs ───────────────────────────────────
+
+const string gR = "Range"
+rangeMode = input.string("Visible range", "Profile covers", options = ["Visible range", "Last N bars"], group = gR,
+     tooltip = "Visible range rebuilds the profile from whatever you have on screen; Last N bars pins it to a fixed window.")
+lookbackIn = input.int(300, "N bars", minval = 10, maxval = 5000, group = gR)
+barCap     = input.int(1200, "Hard bar cap", minval = 50, maxval = 5000, group = gR,
+     tooltip = "Safety valve so a fully zoomed-out chart cannot time the script out.")
+
+const string gP = "Profile"
+rowsIn    = input.int(48, "Rows", minval = 8, maxval = 120, group = gP)
+widthBars = input.int(90, "Width (bars)", minval = 10, maxval = 400, group = gP)
+gapBars   = input.int(3, "Gap from range (bars)", minval = 0, maxval = 90, group = gP)
+vaPct     = input.float(70, "Value area %", minval = 10, maxval = 95, step = 5, group = gP)
+showPOC   = input.bool(true, "POC line", group = gP)
+showVA    = input.bool(true, "Value-area lines", group = gP)
+showStats = input.bool(true, "Range stats footer", group = gP)
+
+const string gD = "Delta"
+deltaMode = input.string("Intrabar (precise)", "Delta source", group = gD,
+     options = ["Intrabar (precise)", "Close position", "Bar direction"],
+     tooltip = "Intrabar splits each bar's volume using lower-timeframe candles. The other two estimate it from the chart bar alone.")
+ltfIn   = input.string("Auto", "Intrabar timeframe", options = ["Auto", "1S", "5S", "15S", "1", "3", "5", "15"], group = gD)
+imbPct  = input.float(58, "Imbalance threshold %", minval = 50, maxval = 95, step = 1, group = gD,
+     tooltip = "A row is flagged when one side holds at least this share of its volume.")
+minShare = input.float(4, "Ignore rows below % of POC volume", minval = 0, maxval = 50, step = 1, group = gD)
+numMode = input.string("Imbalanced rows", "Print delta on", options = ["Imbalanced rows", "All rows", "Off"], group = gD)
+
+const string gT = "Trade marker"
+showTrade = input.bool(false, "Show trade", group = gT)
+tEntry = input.time(0, "Entry time", group = gT)
+pEntry = input.price(0.0, "Entry price", group = gT)
+tExit  = input.time(0, "Exit time", group = gT)
+pExit  = input.price(0.0, "Exit price", group = gT)
+pStop  = input.price(0.0, "Stop price", group = gT, tooltip = "Used only to label the trade in R. Leave at 0 to hide the R text.")
+
+const string gS = "Style"
+cHist  = input.color(color.new(#787b86, 55), "Histogram", group = gS, inline = "s1")
+cVaHi  = input.color(color.new(#787b86, 25), "in value area", group = gS, inline = "s1")
+cBuy   = input.color(color.new(#26c281, 20), "Buy imbalance", group = gS, inline = "s2")
+cSell  = input.color(color.new(#8e5cf7, 20), "Sell imbalance", group = gS, inline = "s2")
+cPOC   = input.color(#ff9800, "POC", group = gS, inline = "s3")
+cVA    = input.color(color.new(#787b86, 40), "VAH / VAL", group = gS, inline = "s3")
+cTrade = input.color(#2962ff, "Trade", group = gS, inline = "s3")
+txtSize = input.string("Tiny", "Text size", options = ["Tiny", "Small", "Normal"], group = gS)
+
+labelSize = txtSize == "Normal" ? size.normal : txtSize == "Small" ? size.small : size.tiny
+
+// ─────────────────────────── Intrabar request ─────────────────────────────
+// request.security_lower_tf returns one array per chart bar. Asking for the
+// chart's own timeframe is the harmless no-op we fall back to, so the call
+// itself is unconditional and the *use* of the result is what we gate.
+
+chartSec = timeframe.in_seconds()
+autoRes  = chartSec >= 14400 ? "15" : chartSec >= 3600 ? "5" : chartSec >= 900 ? "3" : chartSec >= 300 ? "1" : "1S"
+ltfRes   = ltfIn == "Auto" ? autoRes : ltfIn
+wantIntra = deltaMode == "Intrabar (precise)"
+canIntra  = wantIntra and timeframe.in_seconds(ltfRes) < chartSec
+
+[iH, iL, iC, iO, iV] = request.security_lower_tf(syminfo.tickerid, canIntra ? ltfRes : timeframe.period,
+     [high, low, close, open, volume])
+
+// ────────────────────────────── Helpers ───────────────────────────────────
+
+// Compact volume text: 12 345 → "12.3K". `signed` prefixes a + on positives.
+fmtVol(float v, bool signed) =>
+    float a = math.abs(v)
+    string s = ""
+    if a >= 1e9
+        s := str.tostring(v / 1e9, "#.##") + "B"
+    else if a >= 1e6
+        s := str.tostring(v / 1e6, "#.##") + "M"
+    else if a >= 1e3
+        s := str.tostring(v / 1e3, "#.#") + "K"
+    else
+        s := str.tostring(v, "#.#")
+    signed and v > 0 ? "+" + s : s
+
+// Row a price falls in, clamped to the profile.
+rowOf(float price, float lo, float rowH, int rows) =>
+    math.max(0, math.min(rows - 1, int(math.floor((price - lo) / rowH))))
+
+// Share of a candle's volume that counts as buying.
+buyShare(float o, float h, float l, float c, string mode) =>
+    float r = 0.5
+    if mode == "Bar direction"
+        r := c > o ? 1.0 : c < o ? 0.0 : 0.5
+    else
+        r := h > l ? (c - l) / (h - l) : (c > o ? 1.0 : c < o ? 0.0 : 0.5)
+    r
+
+// Spread one candle's volume across every row it touches.
+spread(array<float> buy, array<float> sell, float o, float h, float l, float c, float v,
+     float lo, float rowH, int rows, string mode) =>
+    if v > 0 and not na(h) and not na(l)
+        int r1 = rowOf(l, lo, rowH, rows)
+        int r2 = rowOf(h, lo, rowH, rows)
+        float per = v / (r2 - r1 + 1)
+        float br  = buyShare(o, h, l, c, mode)
+        for r = r1 to r2
+            array.set(buy,  r, array.get(buy,  r) + per * br)
+            array.set(sell, r, array.get(sell, r) + per * (1.0 - br))
+
+// ─────────────────────────── Drawing registry ─────────────────────────────
+// Everything is redrawn on the last bar, so each pass wipes the previous one.
+
+var array<box>   bxs = array.new<box>()
+var array<label> lbs = array.new<label>()
+var array<line>  lns = array.new<line>()
+
+wipe() =>
+    for b in bxs
+        box.delete(b)
+    for l in lbs
+        label.delete(l)
+    for ln in lns
+        line.delete(ln)
+    array.clear(bxs)
+    array.clear(lbs)
+    array.clear(lns)
+
+var float pocPrice = na
+
+// ─────────────────────────────── Build ────────────────────────────────────
+
+if barstate.islast
+    wipe()
+
+    // 1. window, as "bars ago" offsets: endOff (right edge) .. startOff (left)
+    int endOff   = 0
+    int startOff = 0
+    int rightT = int(chart.right_visible_bar_time)
+    int leftT  = int(chart.left_visible_bar_time)
+    if rangeMode == "Visible range" and not na(leftT) and not na(rightT)
+        while endOff < barCap and not na(time[endOff]) and time[endOff] > rightT
+            endOff += 1
+        startOff := endOff
+        while startOff < barCap and not na(time[startOff]) and time[startOff] >= leftT
+            startOff += 1
+        startOff -= 1
+    else
+        startOff := math.min(lookbackIn, barCap) - 1
+    endOff   := math.min(endOff, bar_index)
+    startOff := math.min(math.max(startOff, endOff), bar_index)
+
+    // 2. price extremes over the window
+    float hi = na
+    float lo = na
+    for i = endOff to startOff
+        hi := na(hi) ? high[i] : math.max(hi, high[i])
+        lo := na(lo) ? low[i]  : math.min(lo, low[i])
+
+    float rowH = (hi - lo) / rowsIn
+
+    if rowH > 0
+        // 3. accumulate buy / sell volume per row
+        array<float> buy  = array.new<float>(rowsIn, 0.0)
+        array<float> sell = array.new<float>(rowsIn, 0.0)
+
+        for i = endOff to startOff
+            array<float> aC = iC[i]
+            // Pine does not short-circuit `and`, so the size check needs its own scope:
+            // calling an array method on an `na` id is a runtime error.
+            bool useIntra = false
+            if canIntra and not na(aC)
+                useIntra := array.size(aC) > 0
+            if useIntra
+                array<float> aH = iH[i]
+                array<float> aL = iL[i]
+                array<float> aO = iO[i]
+                array<float> aV = iV[i]
+                for j = 0 to array.size(aC) - 1
+                    spread(buy, sell, array.get(aO, j), array.get(aH, j), array.get(aL, j),
+                         array.get(aC, j), array.get(aV, j), lo, rowH, rowsIn, "Bar direction")
+            else
+                spread(buy, sell, open[i], high[i], low[i], close[i], volume[i], lo, rowH, rowsIn,
+                     deltaMode == "Bar direction" ? "Bar direction" : "Close position")
+
+        // 4. POC, totals
+        int   pocRow = 0
+        float pocVol = 0.0
+        float total  = 0.0
+        for r = 0 to rowsIn - 1
+            float v = array.get(buy, r) + array.get(sell, r)
+            total += v
+            if v > pocVol
+                pocVol := v
+                pocRow := r
+
+        // 5. value area — grow out from the POC until vaPct of volume is inside
+        int vaHiRow = pocRow
+        int vaLoRow = pocRow
+        float acc   = pocVol
+        float need  = total * vaPct / 100.0
+        while acc < need and (vaLoRow > 0 or vaHiRow < rowsIn - 1)
+            float up = vaHiRow < rowsIn - 1 ? array.get(buy, vaHiRow + 1) + array.get(sell, vaHiRow + 1) : -1.0
+            float dn = vaLoRow > 0 ? array.get(buy, vaLoRow - 1) + array.get(sell, vaLoRow - 1) : -1.0
+            if up >= dn
+                vaHiRow += 1
+                acc += up
+            else
+                vaLoRow -= 1
+                acc += dn
+
+        // 6. geometry
+        int x0     = bar_index - endOff + gapBars
+        int histW  = int(widthBars * 0.68)
+        int colX0  = x0 + histW + int(widthBars * 0.04)
+        int colW   = widthBars - histW - int(widthBars * 0.04)
+        float minV = pocVol * minShare / 100.0
+
+        for r = 0 to rowsIn - 1
+            float b   = array.get(buy, r)
+            float s   = array.get(sell, r)
+            float v   = b + s
+            float top = lo + rowH * (r + 1)
+            float bot = lo + rowH * r
+            if v > 0
+                bool inVA = r >= vaLoRow and r <= vaHiRow
+                color hc  = r == pocRow ? color.new(cPOC, 45) : inVA ? cVaHi : cHist
+                array.push(bxs, box.new(x0, top - rowH * 0.12, x0 + math.max(1, int(histW * v / pocVol)), bot + rowH * 0.12,
+                     border_width = 0, bgcolor = hc, xloc = xloc.bar_index))
+
+                // imbalance block + signed delta, only where the row matters
+                float d     = b - s
+                float share = math.max(b, s) / v * 100.0
+                bool  imb   = share >= imbPct and v >= minV
+                if imb
+                    int   w  = math.max(1, int(colW * math.min(1.0, math.abs(d) / pocVol * 2.0)))
+                    color ic = d > 0 ? cBuy : cSell
+                    array.push(bxs, box.new(colX0, top - rowH * 0.12, colX0 + w, bot + rowH * 0.12,
+                         border_width = 0, bgcolor = ic, xloc = xloc.bar_index))
+                if numMode != "Off" and (numMode == "All rows" ? v >= minV : imb)
+                    array.push(lbs, label.new(colX0 - 1, (top + bot) / 2, fmtVol(d, true), xloc.bar_index, yloc.price,
+                         color = color.new(color.black, 100), textcolor = d > 0 ? cBuy : cSell,
+                         style = label.style_label_right, size = labelSize))
+
+        // 7. levels
+        pocPrice := lo + rowH * (pocRow + 0.5)
+        int xRight = x0 + widthBars
+        if showPOC
+            array.push(lns, line.new(bar_index - startOff, pocPrice, xRight, pocPrice, xloc.bar_index,
+                 color = cPOC, style = line.style_dotted, width = 1))
+        if showVA
+            float vah = lo + rowH * (vaHiRow + 1)
+            float val = lo + rowH * vaLoRow
+            array.push(lns, line.new(bar_index - startOff, vah, xRight, vah, xloc.bar_index, color = cVA, style = line.style_dashed))
+            array.push(lns, line.new(bar_index - startOff, val, xRight, val, xloc.bar_index, color = cVA, style = line.style_dashed))
+
+        // 8. footer: total volume and net delta for the range
+        if showStats
+            float netD = 0.0
+            for r = 0 to rowsIn - 1
+                netD += array.get(buy, r) - array.get(sell, r)
+            array.push(lbs, label.new(x0, lo, "V " + fmtVol(total, false) + "   Δ " + fmtVol(netD, true) +
+                 "   " + str.tostring(startOff - endOff + 1) + " bars", xloc.bar_index, yloc.price,
+                 color = color.new(color.black, 100), textcolor = netD > 0 ? cBuy : cSell,
+                 style = label.style_label_up, size = labelSize))
+
+// POC on the price scale, the way an orange price tag reads on the axis.
+plot(pocPrice, "POC", color = cPOC, display = display.price_scale, editable = false)
+
+// ──────────────────────────── Trade marker ────────────────────────────────
+
+if showTrade and barstate.islast and tEntry > 0 and tExit > 0 and pEntry > 0 and pExit > 0
+    int xe = na
+    int xx = na
+    for i = 0 to math.min(bar_index, 5000)
+        if na(xx) and time[i] <= tExit
+            xx := bar_index - i
+        if na(xe) and time[i] <= tEntry
+            xe := bar_index - i
+            break
+    if not na(xe) and not na(xx)
+        array.push(lns, line.new(xe, pEntry, xx, pExit, xloc.bar_index, extend.none, cTrade, line.style_arrow_right, 2))
+        array.push(lbs, label.new(xe, pEntry, "", xloc.bar_index, yloc.price, color = cTrade,
+             style = pExit >= pEntry ? label.style_triangleup : label.style_triangledown, size = size.tiny))
+        if pStop > 0
+            float risk = math.abs(pEntry - pStop)
+            float r    = risk > 0 ? (pStop < pEntry ? pExit - pEntry : pEntry - pExit) / risk : na
+            if not na(r)
+                array.push(lbs, label.new(xx, pExit, (r >= 0 ? "+" : "") + str.tostring(r, "0.00") + "R",
+                     xloc.bar_index, yloc.price, color = color.new(cTrade, 80), textcolor = cTrade,
+                     style = label.style_label_left, size = size.small))
