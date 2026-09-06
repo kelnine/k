@@ -10,7 +10,7 @@
 // Original licenses above continue to apply to their respective sections.
 
 //@version=6
-indicator("Combined SMC Suite [OB + Breakout Channels + PSAR]", "SMC Suite"
+indicator("Combined SMC Suite [OB + Channels + PSAR + KCharts]", "SMC Suite"
   , overlay           = true
   , max_boxes_count   = 500
   , max_labels_count  = 500
@@ -25,10 +25,14 @@ G_MOD  = "═══ Modules ═══"
 G_OB   = "Order Block Detector [LuxAlgo]"
 G_BC   = "Smart Money Breakout Channels [AlgoAlpha]"
 G_PS   = "200 EMA Filtered Parabolic SAR"
+G_KEMA = "KCharts — Pullback EMA"
+G_KVW  = "KCharts — VWAP"
+G_KLVL = "KCharts — 1H / 4H Levels"
 
 obEnable = input.bool(true, "Order Block Detector"          , group = G_MOD)
 bcEnable = input.bool(true, "Smart Money Breakout Channels"  , group = G_MOD)
 psEnable = input.bool(true, "200 EMA Filtered Parabolic SAR" , group = G_MOD)
+kcEnable = input.bool(true, "KCharts Setup (EMA + VWAP + Levels)", group = G_MOD)
 
 //=============================================================================}
 // 1. ORDER BLOCK DETECTOR [LuxAlgo]
@@ -613,6 +617,155 @@ if psShort
     psInShort := true
     psInLong  := false
 
+
+//=============================================================================}
+// 4. KCHARTS SETUP — PULLBACK EMA + VWAP + 1H/4H LEVELS
+//=============================================================================={
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+kcEmaShow  = input.bool(true,    "Show EMA band", group = G_KEMA)
+kcEmaSrc   = input.source(close, "Source"       , group = G_KEMA)
+kcEmaFastL = input.int(9 , "Fast length", minval = 1, group = G_KEMA, inline = "kclen")
+kcEmaSlowL = input.int(21, "Slow length", minval = 1, group = G_KEMA, inline = "kclen")
+kcEmaFill  = input.bool(true, "Shade the band"   , group = G_KEMA)
+kcPbSignal = input.bool(true, "Mark pullback taps", group = G_KEMA
+  , tooltip = "Triangle when price dips into the band with the trend and closes back out of it.")
+kcEmaUpCol = input.color(color.new(#26a69a, 0), "Up"  , group = G_KEMA, inline = "kcc")
+kcEmaDnCol = input.color(color.new(#ef5350, 0), "Down", group = G_KEMA, inline = "kcc")
+
+kcVwapShow  = input.bool(true, "Show VWAP", group = G_KVW)
+kcVwapAnch  = input.string("Session", "Anchor", options = ["Session", "Week", "Month", "Quarter", "Year"], group = G_KVW)
+kcVwapSrc   = input.source(hlc3, "Source", group = G_KVW)
+kcVwapBands = input.bool(false, "Show ±σ bands", group = G_KVW)
+kcVwapMult1 = input.float(1.0, "σ ×" , minval = 0.1, step = 0.1, group = G_KVW, inline = "kcb")
+kcVwapMult2 = input.float(2.0, "and" , minval = 0.1, step = 0.1, group = G_KVW, inline = "kcb")
+kcVwapCol   = input.color(color.new(#2962ff, 0), "Color", group = G_KVW)
+
+kcTf1      = input.timeframe("60" , "Timeframe A", group = G_KLVL, inline = "kctf")
+kcTf2      = input.timeframe("240", "Timeframe B", group = G_KLVL, inline = "kctf")
+kcShowTf1  = input.bool(true, "A levels", group = G_KLVL, inline = "kcon")
+kcShowTf2  = input.bool(true, "B levels", group = G_KLVL, inline = "kcon")
+kcShowPrev = input.bool(true, "Previous period high / low", group = G_KLVL)
+kcShowCurr = input.bool(true, "Current period high / low" , group = G_KLVL
+  , tooltip = "The developing high and low of the period in progress. Updates live, so it moves within the bar by design.")
+kcShowMid  = input.bool(false, "Previous period midpoint", group = G_KLVL)
+kcLvlKeep  = input.int(1, "Periods kept", minval = 1, maxval = 20, group = G_KLVL
+  , tooltip = "How many past periods stay drawn per level. 1 shows only the live level. Capped at 20 because there are ten level series and every drawing here shares one 500-line budget with the order blocks and channels.")
+kcLvlExt    = input.int(12, "Extend right (bars)", minval = 0, maxval = 500, group = G_KLVL)
+kcLvlLabels = input.bool(true, "Labels", group = G_KLVL)
+kcLvlWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_KLVL)
+kcPrevStyle = input.string("Solid" , "Previous style", options = ["Solid", "Dashed", "Dotted"], group = G_KLVL)
+kcCurrStyle = input.string("Dotted", "Current style" , options = ["Solid", "Dashed", "Dotted"], group = G_KLVL)
+kcTf1Col    = input.color(color.new(#ff9800, 0), "A color", group = G_KLVL, inline = "kclc")
+kcTf2Col    = input.color(color.new(#ab47bc, 0), "B color", group = G_KLVL, inline = "kclc")
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+kcLineStyle(string sty) =>
+    switch sty
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        =>          line.style_solid
+
+//"60" -> "1H", "240" -> "4H", "15" -> "15m"
+kcTfName(simple string tf) =>
+    int secs = timeframe.in_seconds(tf)
+    string name = secs % 86400 == 0 ? str.tostring(secs / 86400) + "D" :
+                  secs % 3600  == 0 ? str.tostring(secs / 3600)  + "H" :
+                  secs % 60    == 0 ? str.tostring(secs / 60)    + "m" : str.tostring(secs) + "s"
+    name
+
+//Draws one horizontal level that restarts at the top of every higher-timeframe
+//period. Each call site keeps its own line history via `var`, and turning the
+//level off deletes its drawings rather than leaving them on the chart.
+kcLevel(bool show, bool fresh, float price, color col, string txt, string sty) =>
+    var array<line> lns = array.new<line>()
+    var label lbl = na
+
+    if not show or na(price)
+        if array.size(lns) > 0
+            for i = 0 to array.size(lns) - 1
+                line.delete(array.get(lns, i))
+            array.clear(lns)
+        label.delete(lbl)
+        lbl := na
+    else
+        if fresh or array.size(lns) == 0
+            if array.size(lns) > 0
+                line.set_x2(array.get(lns, array.size(lns) - 1), bar_index)
+            array.push(lns, line.new(bar_index, price, bar_index + kcLvlExt, price, xloc = xloc.bar_index, color = col, width = kcLvlWidth, style = sty))
+            while array.size(lns) > kcLvlKeep
+                line.delete(array.shift(lns))
+
+        line cur = array.get(lns, array.size(lns) - 1)
+        line.set_xy1(cur, line.get_x1(cur), price)
+        line.set_xy2(cur, bar_index + kcLvlExt, price)
+        label.delete(lbl)
+        lbl := barstate.islast and kcLvlLabels ? label.new(bar_index + kcLvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.small) : na
+    price
+
+//-----------------------------------------------------------------------------
+//Calculations
+//-----------------------------------------------------------------------------
+kcEmaFast = ta.ema(kcEmaSrc, kcEmaFastL)
+kcEmaSlow = ta.ema(kcEmaSrc, kcEmaSlowL)
+
+kcTrendUp = kcEmaFast > kcEmaSlow and close > kcEmaSlow
+kcTrendDn = kcEmaFast < kcEmaSlow and close < kcEmaSlow
+kcBandCol = kcTrendUp ? kcEmaUpCol : kcTrendDn ? kcEmaDnCol : color.gray
+
+//A tap is a wick into the band that closes back on the trend side of it
+kcPbUp = kcTrendUp and low  <= kcEmaFast and close > kcEmaFast
+kcPbDn = kcTrendDn and high >= kcEmaFast and close < kcEmaFast
+
+//Each timeframe.change() is evaluated unconditionally — inside the switch arms they
+//would sit behind a branch and not run on every bar
+kcChgD = timeframe.change("D")
+kcChgW = timeframe.change("W")
+kcChgM = timeframe.change("M")
+kcChgQ = timeframe.change("3M")
+kcChgY = timeframe.change("12M")
+
+kcVwapReset = switch kcVwapAnch
+    "Week"    => kcChgW
+    "Month"   => kcChgM
+    "Quarter" => kcChgQ
+    "Year"    => kcChgY
+    =>           kcChgD
+
+[kcVw, kcVwUp1, kcVwDn1]   = ta.vwap(kcVwapSrc, kcVwapReset, kcVwapMult1)
+[kcVw2, kcVwUp2, kcVwDn2]  = ta.vwap(kcVwapSrc, kcVwapReset, kcVwapMult2)
+
+//lookahead_on with the [1] offset is the non-repainting way to read the COMPLETED
+//higher-timeframe bar. The developing values are read without lookahead — they move
+//inside the period on purpose. request.*() must stay unconditional, so these run
+//even with the module off.
+[kcPrevH1, kcPrevL1] = request.security(syminfo.tickerid, kcTf1, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[kcPrevH2, kcPrevL2] = request.security(syminfo.tickerid, kcTf2, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[kcCurrH1, kcCurrL1] = request.security(syminfo.tickerid, kcTf1, [high, low])
+[kcCurrH2, kcCurrL2] = request.security(syminfo.tickerid, kcTf2, [high, low])
+
+//First chart bar of each higher-timeframe period
+kcNew1 = na(time(kcTf1)[1]) or time(kcTf1) != time(kcTf1)[1]
+kcNew2 = na(time(kcTf2)[1]) or time(kcTf2) != time(kcTf2)[1]
+
+//Nothing sensible to draw once the chart timeframe is at or above the level's
+kcFits1 = timeframe.in_seconds() <= timeframe.in_seconds(kcTf1)
+kcFits2 = timeframe.in_seconds() <= timeframe.in_seconds(kcTf2)
+
+kcN1 = kcTfName(kcTf1)
+kcN2 = kcTfName(kcTf2)
+
+kcPrevSty = kcLineStyle(kcPrevStyle)
+kcCurrSty = kcLineStyle(kcCurrStyle)
+
+//Hoisted out of the alert expressions: behind a short-circuiting `and` these would
+//not run on every bar
+kcVwapCrossUp = ta.crossover(close, kcVw)
+kcVwapCrossDn = ta.crossunder(close, kcVw)
+
 //=============================================================================}
 // VISUALS
 //=============================================================================={
@@ -686,6 +839,34 @@ plot(psEnable ? psSar  : na, "Parabolic SAR" , psSarCss  , 1, plot.style_cross)
 //keeps its plot when hidden so the band survives the "Show the 21 EMA?" toggle.
 fill(psFastPlot, psMedPlot, psEnable and psShowBg ? (psFast > psMed ? psBullBg : psBearBg) : na, title = "Plots Background")
 
+
+//--- KCharts Setup
+kcFastPlot = plot(kcEnable and kcEmaShow ? kcEmaFast : na, "KC EMA fast", color = color.new(kcBandCol, 20), linewidth = 1)
+kcSlowPlot = plot(kcEnable and kcEmaShow ? kcEmaSlow : na, "KC EMA slow", color = color.new(kcBandCol, 20), linewidth = 2)
+fill(kcFastPlot, kcSlowPlot, color = kcEnable and kcEmaShow and kcEmaFill ? color.new(kcBandCol, 88) : na, title = "KC EMA band")
+
+plotshape(kcEnable and kcPbSignal and kcPbUp, "Pullback tap up"  , style = shape.triangleup  , location = location.belowbar, color = kcEmaUpCol, size = size.tiny)
+plotshape(kcEnable and kcPbSignal and kcPbDn, "Pullback tap down", style = shape.triangledown, location = location.abovebar, color = kcEmaDnCol, size = size.tiny)
+
+plot(kcEnable and kcVwapShow ? kcVw : na, "VWAP", color = kcVwapCol, linewidth = 2)
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwUp1 : na, "VWAP +σ1", color = color.new(kcVwapCol, 55))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwDn1 : na, "VWAP -σ1", color = color.new(kcVwapCol, 55))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwUp2 : na, "VWAP +σ2", color = color.new(kcVwapCol, 75))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwDn2 : na, "VWAP -σ2", color = color.new(kcVwapCol, 75))
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowPrev, kcNew1, kcPrevH1, kcTf1Col, kcN1 + " PH", kcPrevSty)
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowPrev, kcNew1, kcPrevL1, kcTf1Col, kcN1 + " PL", kcPrevSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowPrev, kcNew2, kcPrevH2, kcTf2Col, kcN2 + " PH", kcPrevSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowPrev, kcNew2, kcPrevL2, kcTf2Col, kcN2 + " PL", kcPrevSty)
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowCurr, kcNew1, kcCurrH1, kcTf1Col, kcN1 + " H", kcCurrSty)
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowCurr, kcNew1, kcCurrL1, kcTf1Col, kcN1 + " L", kcCurrSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowCurr, kcNew2, kcCurrH2, kcTf2Col, kcN2 + " H", kcCurrSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowCurr, kcNew2, kcCurrL2, kcTf2Col, kcN2 + " L", kcCurrSty)
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowMid, kcNew1, math.avg(kcPrevH1, kcPrevL1), color.new(kcTf1Col, 40), kcN1 + " EQ", line.style_dashed)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowMid, kcNew2, math.avg(kcPrevH2, kcPrevL2), color.new(kcTf2Col, 40), kcN2 + " EQ", line.style_dashed)
+
 //=============================================================================}
 // ALERTS
 //=============================================================================={
@@ -709,6 +890,16 @@ alertcondition(psLong      , "PSAR Long"      , "200 EMA filtered Parabolic SAR 
 alertcondition(psShort     , "PSAR Short"     , "200 EMA filtered Parabolic SAR short signal")
 alertcondition(psExitLong  , "PSAR Exit Long" , "200 EMA filtered Parabolic SAR exit long")
 alertcondition(psExitShort , "PSAR Exit Short", "200 EMA filtered Parabolic SAR exit short")
+
+//KCharts Setup
+alertcondition(kcPbUp, "Pullback tap (up)"  , "Price tapped the EMA band in an uptrend and closed back above it")
+alertcondition(kcPbDn, "Pullback tap (down)", "Price tapped the EMA band in a downtrend and closed back below it")
+alertcondition(ta.crossover(close, kcPrevH1) , "Close above previous A high", "Close crossed above the previous timeframe-A high")
+alertcondition(ta.crossunder(close, kcPrevL1), "Close below previous A low" , "Close crossed below the previous timeframe-A low")
+alertcondition(ta.crossover(close, kcPrevH2) , "Close above previous B high", "Close crossed above the previous timeframe-B high")
+alertcondition(ta.crossunder(close, kcPrevL2), "Close below previous B low" , "Close crossed below the previous timeframe-B low")
+alertcondition(kcVwapShow and kcVwapCrossUp, "Close above VWAP", "Close crossed above VWAP")
+alertcondition(kcVwapShow and kcVwapCrossDn, "Close below VWAP", "Close crossed below VWAP")
 
 //Confluence
 alertcondition(psLong  and bcBullishBreakout, "Confluence Long" , "PSAR long + bullish channel breakout")

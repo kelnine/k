@@ -2,7 +2,7 @@
 
 ## `combined-smc-suite.pine`
 
-Three overlays merged into a single TradingView indicator, each behind its own
+Four overlays merged into a single TradingView indicator, each behind its own
 on/off switch in a **Modules** group at the top of the settings:
 
 | Toggle | Module | Source |
@@ -10,16 +10,23 @@ on/off switch in a **Modules** group at the top of the settings:
 | Order Block Detector | Volume-pivot order blocks, average line, mitigation by wick or close | LuxAlgo (CC BY-NC-SA 4.0) |
 | Smart Money Breakout Channels | Volatility-compression channels, breakout signals, in-channel volume/delta bars, side gauge | AlgoAlpha (MPL 2.0) |
 | 200 EMA Filtered Parabolic SAR | PSAR flips filtered by a 200 EMA trend regime and an ADX threshold, with Long/Short entries and EL/ES exits | reconstructed |
+| KCharts Setup | Pullback EMA band with tap markers, anchored VWAP with ±σ bands, and previous/current 1H & 4H highs, lows and midpoints | KCharts |
 
 Every original input is preserved with its original default, namespaced per
-module (`ob*`, `bc*`, `ps*`) so nothing collides. Alerts from all three are kept,
+module (`ob*`, `bc*`, `ps*`, `kc*`) so nothing collides. Alerts from all three are kept,
 plus two confluence alerts (PSAR entry in the same direction as a channel
 breakout).
 
 ### Notes on the merge
 
-- The scripts were `//@version=5` (LuxAlgo) and `//@version=6` (AlgoAlpha); the
+- The scripts were `//@version=5` (LuxAlgo) and `//@version=6` (the rest); the
   combined file is v6.
+- KCharts' **Periods kept** is capped at 20 rather than 50. There are ten level
+  series, so the original maximum would draw 500 lines by itself — the entire
+  budget shared with the order blocks and channels.
+- Every `timeframe.change()` behind a `switch` arm, and the VWAP cross used in an
+  alert, are hoisted to unconditional variables for the same reason as the channel
+  crossovers below.
 - Order-block mitigation now walks its arrays back-to-front. The original walked
   forward while removing elements from the array it was iterating, which skips
   entries and can read past the end.
