@@ -32,7 +32,11 @@ plus the volume-profile block the web engine doesn't draw.
 - **Rows** (default 28) — profile resolution.
 - **Value area %** (default 70) — grown out from the POC, taking the fatter
   neighbouring row each step.
-- **Width (% of lookback)** — how far the profile bars reach left from the right edge.
+- **Width (% of lookback)** (default 16) — how far the profile bars reach left
+  from the right edge. Boxes always render *above* candles in TradingView, so
+  keep this modest or the profile covers price action.
+- **Read-out position** (default top right) — top left collides with the DOM /
+  order panel on a trading layout.
 - **Equal tolerance (%)** (default 0.1) — how close two pivots must be to count
   as a liquidity pool.
 

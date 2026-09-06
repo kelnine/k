@@ -56,17 +56,20 @@ showVP     = input.bool(true, "Show volume profile", group = G_VP)
 vpLen      = input.int(240, "Lookback (bars)", minval = 20, maxval = 500, group = G_VP)
 vpRows     = input.int(28,  "Rows", minval = 8, maxval = 100, group = G_VP)
 vaPct      = input.float(70, "Value area (%)", minval = 30, maxval = 95, step = 1, group = G_VP)
-vpWidthPct = input.float(26, "Width (% of lookback)", minval = 5, maxval = 100, step = 1, group = G_VP)
+vpWidthPct = input.float(16, "Width (% of lookback)", minval = 5, maxval = 100, step = 1, group = G_VP)
 vpOffset   = input.int(4, "Right offset (bars)", minval = 0, maxval = 50, group = G_VP)
 showVaLine = input.bool(true, "POC / value-area lines", group = G_VP)
 showTable  = input.bool(true, "Read-out box", group = G_VP)
+tablePos   = input.string("Top right", "Read-out position", group = G_VP,
+     options = ["Top right", "Top left", "Bottom right", "Bottom left"],
+     tooltip = "Top left collides with the DOM / order panel on a trading layout.")
 
 cBull   = input.color(color.new(#26a69a, 0),  "Bullish",        group = G_STYLE)
 cBear   = input.color(color.new(#ef5350, 0),  "Bearish",        group = G_STYLE)
 cMuted  = input.color(color.new(#8b93a3, 0),  "Neutral",        group = G_STYLE)
-cVaUp   = input.color(color.new(#7e57c2, 35), "Value area up",  group = G_STYLE)
-cVaDn   = input.color(color.new(#5c6bc0, 35), "Value area down",group = G_STYLE)
-cOut    = input.color(color.new(#7e57c2, 75), "Outside value area", group = G_STYLE)
+cVaUp   = input.color(color.new(#7e57c2, 55), "Value area up",  group = G_STYLE)
+cVaDn   = input.color(color.new(#5c6bc0, 55), "Value area down",group = G_STYLE)
+cOut    = input.color(color.new(#7e57c2, 82), "Outside value area", group = G_STYLE)
 cPoc    = input.color(color.new(#ffa726, 0),  "POC",            group = G_STYLE)
 
 // ─────────────────────────────────────────────────────────── types
@@ -385,7 +388,12 @@ plot(lastLP, "Swing low",  color = cBull, display = display.price_scale)
 
 if showTable and barstate.islast
     table.delete(info)
-    info := table.new(position.top_left, 2, 4, bgcolor = color.new(color.black, 78),
+    pos = switch tablePos
+        "Top left"     => position.top_left
+        "Bottom right" => position.bottom_right
+        "Bottom left"  => position.bottom_left
+        => position.top_right
+    info := table.new(pos, 2, 4, bgcolor = color.new(color.black, 78),
          border_color = color.new(color.gray, 70), border_width = 1, frame_width = 1)
     color tCol = trend == 1 ? cBull : trend == -1 ? cBear : cMuted
     string tTxt = trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "Neutral"
