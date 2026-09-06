@@ -38,7 +38,7 @@ rowsIn    = input.int(48, "Rows", minval = 8, maxval = 120, group = gP)
 placement = input.string("Right of bars", "Placement", options = ["Right of bars", "Over the bars"], group = gP,
      tooltip = "Right of bars puts the profile in the empty space after the last candle, which widens the chart's time axis. Over the bars keeps it inside the range, hugging the right edge.")
 widthMode = input.string("% of range", "Width", options = ["% of range", "Fixed bars"], group = gP, inline = "w")
-widthPct  = input.float(30, "%", minval = 5, maxval = 100, step = 5, group = gP, inline = "w")
+widthPct  = input.float(20, "%", minval = 5, maxval = 100, step = 5, group = gP, inline = "w")
 widthBars = input.int(40, "bars", minval = 6, maxval = 400, group = gP, inline = "w")
 gapBars   = input.int(2, "Gap from range (bars)", minval = 0, maxval = 90, group = gP)
 vaPct     = input.float(70, "Value area %", minval = 10, maxval = 95, step = 5, group = gP)
@@ -72,9 +72,9 @@ cSell  = input.color(color.new(#8e5cf7, 20), "Sell imbalance", group = gS, inlin
 cPOC   = input.color(#ff9800, "POC", group = gS, inline = "s3")
 cVA    = input.color(color.new(#787b86, 40), "VAH / VAL", group = gS, inline = "s3")
 cTrade = input.color(#2962ff, "Trade", group = gS, inline = "s3")
-txtSize = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = gS)
+txtSize = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = gS)
 
-labelSize = txtSize == "Normal" ? size.normal : txtSize == "Small" ? size.small : size.tiny
+labelSize = txtSize == "Large" ? size.large : txtSize == "Normal" ? size.normal : txtSize == "Small" ? size.small : size.tiny
 
 // ─────────────────────────── Intrabar request ─────────────────────────────
 // request.security_lower_tf returns one array per chart bar. Asking for the
@@ -272,9 +272,10 @@ if barstate.islast
                     array.push(bxs, box.new(colX0, top - rowH * 0.12, colX0 + w, bot + rowH * 0.12,
                          border_width = 0, bgcolor = ic, xloc = xloc.bar_index))
                 if numMode != "Off" and (numMode == "All rows" ? v >= minV : imb)
-                    array.push(lbs, label.new(colX0 - pad, (top + bot) / 2, fmtVol(d, true), xloc.bar_index, yloc.price,
-                         color = color.new(color.black, 100), textcolor = color.new(d > 0 ? cBuy : cSell, 0),
-                         style = label.style_label_right, size = labelSize))
+                    array.push(lbs, label.new(x0 + wBars + pad, (top + bot) / 2, fmtVol(d, true), xloc.bar_index,
+                         yloc.price, color = color.new(color.black, 100),
+                         textcolor = color.new(d > 0 ? cBuy : cSell, 0),
+                         style = label.style_label_left, size = labelSize))
 
         // 7. levels
         pocPrice := lo + rowH * (pocRow + 0.5)

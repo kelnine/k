@@ -47,9 +47,11 @@ not fill with noise. **Print delta on** switches the numbers between imbalanced
 rows only, every row, or off.
 
 **Profile** — `Rows` is the price resolution. `Width` defaults to **% of range**
-(30 %), so the sidebar scales with however many bars you are looking at instead
+(20 %), so the sidebar scales with however many bars you are looking at instead
 of swamping a zoomed-in chart; switch to `Fixed bars` if you want it pinned.
-The histogram takes the left ~68 % of that width and the delta blocks the rest.
+The histogram takes the left ~68 % of that width, the delta blocks the rest, and
+the delta numbers print in the gutter just past the block so the text never sits
+on top of the bars — `Text size` can go up to Large without anything colliding.
 
 `Placement` decides where the block sits:
 
