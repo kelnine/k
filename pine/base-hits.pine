@@ -1,611 +1,454 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════
-//  BASE HITS — Sessions · Liquidity Raids · Session Stats
+//  BASE HITS
+//  Sessions · liquidity raids · daily bias · session stats
 //
-//  One overlay that reproduces the "base hits" workflow:
-//    • Killzone session boxes (ASIA / LNDN / NYAM / NYPM) with their highs and
-//      lows extended to the right until price takes them out.
-//    • Previous day / week / month highs, lows and the previous daily close.
-//    • A supertrend-anchored trend cloud (bull = green, bear = pink).
-//    • BUY LR / SELL LR liquidity-raid signals — price sweeps resting liquidity
-//      (a session level, an HTF level or a swing pivot) and closes back inside.
-//    • A projected trade: red risk box to the stop, green reward box to the
-//      target at a fixed R multiple, extended forward until it resolves.
-//    • A stats table: for each session/period, the average range plus how often
-//      its high and its low get swept afterwards.
-//    • Bar-close countdown next to price.
+//  Built to match the reference chart: pastel session shading, session highs
+//  and lows extended until price takes them, prior day/week/month levels, the
+//  NY / midday / midnight opens, a supertrend cloud with a dotted trail,
+//  yellow BUY LR / SELL LR raid signals filtered by the day's bias, a
+//  risk/reward projection with partial and breakeven, the light stats table,
+//  and the developing higher-timeframe candle parked beside price.
 // ═══════════════════════════════════════════════════════════════════════════
-indicator("Base HITS — Sessions · Liquidity Raids · Stats", "Base HITS", overlay = true,
+indicator("BASE HITS", "BASE HITS", overlay = true,
      max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
-// ─────────────────────────────── INPUTS ───────────────────────────────────
-string GD = "① Bias of the day"
-string GS = "② Sessions"
-string GL = "③ Higher-timeframe levels"
-string GC = "④ Trend cloud"
-string GR = "⑤ Liquidity-raid signals"
-string GT = "⑥ Trade projection"
-string GB = "⑦ Stats table"
+// ══════════════════════════════ INPUTS ═════════════════════════════════════
+string G1 = "Bias of the day"
+string G2 = "Sessions"
+string G3 = "Levels"
+string G4 = "Cloud & trail"
+string G5 = "Signals"
+string G6 = "Trade"
+string G7 = "Table"
+string G8 = "HTF candle"
 
-// The day gets one direction. Signals against it are suppressed, so a buy day
-// only ever prints BUY LR and a sell day only ever prints SELL LR.
-string biasMode = input.string("Sweep of a session", "How the bias is set",
-     options = ["Sweep of a session", "Prior-day equilibrium", "Prior-day direction", "Daily EMA trend", "Manual"], group = GD)
-string biasSrc  = input.string("ASIA", "Sweep source",
-     options = ["ASIA", "LNDN", "NYAM", "NYPM", "Prior day"], group = GD)
-int    biasEma  = input.int(20, "Daily EMA length", minval = 1, group = GD)
-string manBias  = input.string("Both", "Manual bias", options = ["Buy only", "Sell only", "Both"], group = GD)
-bool   allowNtr = input.bool(false, "Allow signals before the bias is set", group = GD)
-bool   showBias = input.bool(true, "Bias label on chart", group = GD)
+// ── bias ───────────────────────────────────────────────────────────────────
+string biasMode = input.string("Session sweep", "Bias",
+     options = ["Session sweep", "Prior-day equilibrium", "Prior-day direction", "Manual"], group = G1)
+string biasSrc  = input.string("ASIA", "Swept range", options = ["ASIA", "LNDN", "NYAM", "NYPM", "Prior day"], group = G1)
+string manBias  = input.string("Both", "Manual", options = ["Buy only", "Sell only", "Both"], group = G1)
+bool   allowNtr = input.bool(false, "Allow signals before the bias is set", group = G1)
+bool   showBias = input.bool(true, "Bias label beside price", group = G1)
 
-string tzIn        = input.string("America/New_York", "Timezone", group = GS)
-bool   showSessBox = input.bool(true, "Session boxes",      group = GS, inline = "sg")
-bool   showSessLn  = input.bool(true, "Extend high / low",  group = GS, inline = "sg")
-bool   showSessLb  = input.bool(true, "Level labels",       group = GS, inline = "sg")
-int    statN       = input.int(20, "Stat sample size (occurrences)", minval = 3, maxval = 200, group = GS)
+// ── sessions ───────────────────────────────────────────────────────────────
+string TZ    = input.string("America/New_York", "Timezone", group = G2)
+bool   boxOn = input.bool(true, "Shade sessions", group = G2, inline = "sw")
+bool   lvlOn = input.bool(true, "Extend high / low", group = G2, inline = "sw")
+bool   divOn = input.bool(true, "Open divider", group = G2, inline = "sw")
+int    boxTr = input.int(90, "Shade transparency", minval = 50, maxval = 99, group = G2)
 
-bool   asiaOn   = input.bool(true, "ASIA", group = GS, inline = "s1")
-string asiaSpec = input.session("2000-0000", "", group = GS, inline = "s1")
-color  asiaCol  = input.color(#2962ff, "", group = GS, inline = "s1")
-bool   lndnOn   = input.bool(true, "LNDN", group = GS, inline = "s2")
-string lndnSpec = input.session("0200-0500", "", group = GS, inline = "s2")
-color  lndnCol  = input.color(#ff9800, "", group = GS, inline = "s2")
-bool   nyamOn   = input.bool(true, "NYAM", group = GS, inline = "s3")
-string nyamSpec = input.session("0930-1200", "", group = GS, inline = "s3")
-color  nyamCol  = input.color(#26a69a, "", group = GS, inline = "s3")
-bool   nypmOn   = input.bool(true, "NYPM", group = GS, inline = "s4")
-string nypmSpec = input.session("1330-1600", "", group = GS, inline = "s4")
-color  nypmCol  = input.color(#ab47bc, "", group = GS, inline = "s4")
+bool   s0On = input.bool(true, "ASIA", group = G2, inline = "s0")
+string s0Sp = input.session("2000-0000", "", group = G2, inline = "s0")
+color  s0C  = input.color(#ff5c8a, "", group = G2, inline = "s0")
+bool   s1On = input.bool(true, "LNDN", group = G2, inline = "s1")
+string s1Sp = input.session("0200-0500", "", group = G2, inline = "s1")
+color  s1C  = input.color(#b26bff, "", group = G2, inline = "s1")
+bool   s2On = input.bool(true, "NYAM", group = G2, inline = "s2")
+string s2Sp = input.session("0930-1200", "", group = G2, inline = "s2")
+color  s2C  = input.color(#00c9a7, "", group = G2, inline = "s2")
+bool   s3On = input.bool(true, "NYPM", group = G2, inline = "s3")
+string s3Sp = input.session("1330-1600", "", group = G2, inline = "s3")
+color  s3C  = input.color(#3d8bff, "", group = G2, inline = "s3")
 
-bool  showPD  = input.bool(true,  "Prev day high / low",  group = GL, inline = "l1")
-color pdCol   = input.color(#2196f3, "", group = GL, inline = "l1")
-bool  showPDC = input.bool(true,  "Prev day close",       group = GL, inline = "l2")
-color pdcCol  = input.color(#787b86, "", group = GL, inline = "l2")
-bool  showPW  = input.bool(true,  "Prev week high / low", group = GL, inline = "l3")
-color pwCol   = input.color(#26a69a, "", group = GL, inline = "l3")
-bool  showPM  = input.bool(false, "Prev month high / low",group = GL, inline = "l4")
-color pmCol   = input.color(#ef5350, "", group = GL, inline = "l4")
-bool  showOpn = input.bool(true,  "Session opens",        group = GL, inline = "l5")
-color opnCol  = input.color(#5d606b, "", group = GL, inline = "l5")
-bool  showMid = input.bool(true,  "Midpoints (PDM / PWM / PMM)", group = GL)
-bool  showDiv = input.bool(true,  "Vertical dividers at those opens", group = GL)
-string nyoSpec = input.session("0930-0935", "NY open",  group = GL, inline = "l6")
-string midSpec = input.session("1200-1205", "Midday",   group = GL, inline = "l7")
-string mnoSpec = input.session("0000-0005", "Midnight", group = GL, inline = "l8")
+// ── levels ─────────────────────────────────────────────────────────────────
+bool  pdOn  = input.bool(true,  "PDH / PDL / PDM / Close", group = G3, inline = "v1")
+color pdC   = input.color(#e53935, "", group = G3, inline = "v1")
+bool  pwOn  = input.bool(true,  "PWH / PWL / PWM", group = G3, inline = "v2")
+color pwC   = input.color(#1e88e5, "", group = G3, inline = "v2")
+bool  pmOn  = input.bool(false, "PMH / PML / PMM", group = G3, inline = "v3")
+color pmC   = input.color(#8e24aa, "", group = G3, inline = "v3")
+bool  opOn  = input.bool(true,  "NY open / Midday / Midnight", group = G3, inline = "v4")
+color opC   = input.color(#131722, "", group = G3, inline = "v4")
+string nyoSp = input.session("0930-0935", "NY open",  group = G3)
+string midSp = input.session("1200-1205", "Midday",   group = G3)
+string mnoSp = input.session("0000-0005", "Midnight", group = G3)
 
-bool  showCloud = input.bool(true, "Show trend cloud", group = GC)
-int   atrLen    = input.int(10, "ATR length", minval = 1, group = GC)
-float stMult    = input.float(3.0, "Supertrend factor", minval = 0.5, step = 0.1, group = GC)
-float bandMult  = input.float(2.5, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = GC)
-color bullCol   = input.color(color.new(#26a69a, 80), "Bull / bear", group = GC, inline = "c1")
-color bearCol   = input.color(color.new(#e91e63, 80), "",            group = GC, inline = "c1")
+// ── cloud & trail ──────────────────────────────────────────────────────────
+bool  cloudOn = input.bool(true, "Trend cloud", group = G4)
+int   atrLen  = input.int(10, "ATR length", minval = 1, group = G4)
+float stMult  = input.float(3.0, "Supertrend factor", minval = 0.5, step = 0.1, group = G4)
+float depth   = input.float(3.0, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = G4)
+color bullC   = input.color(color.new(#00c9a7, 82), "Bull / bear", group = G4, inline = "c")
+color bearC   = input.color(color.new(#ff5c8a, 82), "", group = G4, inline = "c")
+bool  sarOn   = input.bool(true, "Dotted trail", group = G4)
 
-bool  useSessLiq = input.bool(true,  "Sweep session highs / lows", group = GR)
-bool  useHtfLiq  = input.bool(true,  "Sweep PD / PW / PM levels",  group = GR)
-bool  usePivLiq  = input.bool(true,  "Sweep swing pivots", group = GR, inline = "p1")
-int   pivLen     = input.int(5, "left/right", minval = 1, group = GR, inline = "p1")
-int   maxLiq     = input.int(20, "Max tracked pivots", minval = 1, maxval = 100, group = GR)
-bool  needClose  = input.bool(true,  "Require rejection close", group = GR)
-bool  needTrend  = input.bool(false, "Require trend alignment", group = GR)
-float minWick    = input.float(20, "Min sweep wick (% of bar)", minval = 0, maxval = 100, group = GR)
-int   coolDown   = input.int(2, "Bars between signals", minval = 0, group = GR)
-color sigCol     = input.color(#ffeb3b, "Signal label", group = GR)
+// ── signals ────────────────────────────────────────────────────────────────
+bool  useSess = input.bool(true, "Raid session highs / lows", group = G5)
+bool  useHtf  = input.bool(true, "Raid PD / PW / PM levels", group = G5)
+bool  usePiv  = input.bool(true, "Raid swing pivots", group = G5, inline = "p")
+int   pivLen  = input.int(5, "len", minval = 1, group = G5, inline = "p")
+int   maxLiq  = input.int(20, "Pivots tracked", minval = 1, maxval = 100, group = G5)
+bool  needRej = input.bool(true, "Require rejection close", group = G5)
+float minWick = input.float(20, "Min sweep wick (% of bar)", minval = 0, maxval = 100, group = G5)
+int   coolBar = input.int(2, "Bars between signals", minval = 0, group = G5)
+color sigBg   = input.color(#ffe94a, "Label", group = G5)
 
-bool  showTrade = input.bool(true, "Show trade projection", group = GT)
-float rrMult    = input.float(2.0, "Reward : risk", minval = 0.1, step = 0.1, group = GT)
-float stopBuf   = input.float(0.25, "Stop buffer (ATR)", minval = 0, step = 0.05, group = GT)
-int   projBars  = input.int(20, "Project forward (bars)", minval = 1, maxval = 400, group = GT)
-float tp1AtR    = input.float(1.0, "Partial target at (R, 0 = off)", minval = 0, step = 0.1, group = GT)
-float beAtR     = input.float(1.0, "Move stop to breakeven at (R, 0 = off)", minval = 0, step = 0.1, group = GT)
-color riskCol   = input.color(color.new(#ef5350, 70), "Risk / reward", group = GT, inline = "t1")
-color rewCol    = input.color(color.new(#26a69a, 70), "",              group = GT, inline = "t1")
-bool  showCd    = input.bool(true, "Bar-close countdown", group = GT)
+// ── trade ──────────────────────────────────────────────────────────────────
+bool  tradeOn = input.bool(true, "Project the trade", group = G6)
+float rrMult  = input.float(2.0, "Reward : risk", minval = 0.1, step = 0.1, group = G6)
+float stopBuf = input.float(0.25, "Stop buffer (ATR)", minval = 0, step = 0.05, group = G6)
+int   projBar = input.int(20, "Project forward (bars)", minval = 1, maxval = 400, group = G6)
+float tp1AtR  = input.float(1.0, "Partial at (R, 0 = off)", minval = 0, step = 0.1, group = G6)
+float beAtR   = input.float(1.0, "Breakeven at (R, 0 = off)", minval = 0, step = 0.1, group = G6)
+color riskC   = input.color(color.new(#ef5350, 72), "Risk / reward", group = G6, inline = "t")
+color rewC    = input.color(color.new(#26a69a, 72), "", group = G6, inline = "t")
 
-bool   showTbl = input.bool(true, "Show stats table", group = GB)
-string tblPos  = input.string(position.top_right, "Position",
+// ── table ──────────────────────────────────────────────────────────────────
+bool   tblOn  = input.bool(true, "Stats table", group = G7)
+string tblPos = input.string(position.top_right, "Position",
      options = [position.top_right, position.middle_right, position.bottom_right,
-                position.top_left, position.middle_left, position.bottom_left], group = GB)
-string tblSize = input.string(size.small, "Text size",
-     options = [size.tiny, size.small, size.normal], group = GB)
-bool   showWL  = input.bool(true, "Include signal W/L row", group = GB)
+                position.top_left, position.middle_left, position.bottom_left], group = G7)
+string tblSz  = input.string(size.small, "Text size", options = [size.tiny, size.small, size.normal], group = G7)
+color  tblBg  = input.color(color.white, "Cells / text", group = G7, inline = "tb")
+color  tblTx  = input.color(#131722, "", group = G7, inline = "tb")
+color  tblHot = input.color(#ff9aae, "Hot", group = G7, inline = "tb")
+bool   showWL = input.bool(true, "Include the W/L row", group = G7)
 
-string GX = "⑧ Dealing range (premium / discount)"
-bool  showDR   = input.bool(true, "Show the range", group = GX)
-color premCol  = input.color(color.new(#ef5350, 88), "Premium / discount", group = GX, inline = "x1")
-color discCol  = input.color(color.new(#26a69a, 88), "", group = GX, inline = "x1")
-bool  showDRq  = input.bool(true, "0.25 / EQ / 0.75 lines", group = GX)
-int   drExt    = input.int(10, "Extend right (bars)", minval = 0, maxval = 200, group = GX)
-bool  showDR2  = input.bool(false, "Nested (shorter) range", group = GX, inline = "x2")
-int   drLen2   = input.int(3, "pivot len", minval = 1, group = GX, inline = "x2")
-bool  needPrem = input.bool(false, "Only sell in premium, only buy in discount", group = GX)
+// ── htf candle ─────────────────────────────────────────────────────────────
+bool   htfOn  = input.bool(true, "Developing HTF candle", group = G8)
+string htfTf  = input.timeframe("15", "Timeframe", group = G8)
+int    htfGap = input.int(6, "Bars right", minval = 1, maxval = 100, group = G8, inline = "h")
+int    htfW   = input.int(4, "Width", minval = 1, maxval = 20, group = G8, inline = "h")
+bool   cdOn   = input.bool(true, "Countdown", group = G8)
 
-string GH = "⑨ Projected HTF candle"
-bool   showHtf = input.bool(true, "Show the developing candle", group = GH)
-string htfTf   = input.timeframe("15", "Timeframe", group = GH)
-int    htfGap  = input.int(6, "Bars to the right", minval = 1, maxval = 100, group = GH, inline = "h1")
-int    htfW    = input.int(4, "Width (bars)", minval = 1, maxval = 20, group = GH, inline = "h1")
-
-// ──────────────────────────────── TYPES ───────────────────────────────────
-type Sess
-    string name
-    color  col
-    bool   on       = false
-    bool   wasIn    = false
-    float  hi       = na
-    float  lo       = na
-    box    bx       = na
-    float  pHi      = na
-    float  pLo      = na
-    int    pAt      = na
-    bool   pHiSwept = false
-    bool   pLoSwept = false
-    line   hiLn     = na
-    line   loLn     = na
-    label  hiLb     = na
-    label  loLb     = na
-    array<float> rng
-    array<float> hHit
-    array<float> lHit
-
-type Per
-    string name
-    color  col
-    float  wH   = na
-    float  wL   = na
-    bool   hitH = false
-    bool   hitL = false
-    array<float> rng
-    array<float> hHit
-    array<float> lHit
-
-type Lvl
-    string name
-    color  col
-    line   ln = na
-    label  lb = na
-
-type DRange
-    box   prem = na
-    box   disc = na
-    line  eq   = na
-    line  q75  = na
-    line  q25  = na
-    label lb   = na
-
-type Trade
-    bool  active = false
-    bool  be     = false
-    bool  tp1    = false
-    int   dir    = 0
-    float entry  = na
-    float stop   = na
-    float tgt    = na
-    float risk   = na
-    float tp1Px  = na
-    box   rBx    = na
-    box   tBx    = na
-    line  tp1Ln  = na
-    label tp1Lb  = na
-    label lb     = na
-
-// ────────────────────────────── HELPERS ───────────────────────────────────
-capPush(array<float> a, float v, int cap) =>
-    a.push(v)
-    while a.size() > cap
-        a.shift()
-    a.size()
-
+// ════════════════════════════ SMALL HELPERS ════════════════════════════════
 pad2(int v) =>
     (v < 10 ? "0" : "") + str.tostring(v)
 
-newLbl(int x, float y, string txt, color c) =>
+tag(int x, float y, string txt, color c) =>
     label.new(x, y, txt, xloc.bar_index, yloc.price, color.new(color.black, 100),
          label.style_label_left, c, size.tiny)
 
-// Session state machine: track the live session, publish its levels when it
-// closes, then watch for the sweep and record the outcome as a statistic.
-method sessStep(Sess s, bool isIn, bool boxOn, bool lnOn, bool lbOn, int cap) =>
-    bool opens   = s.on and isIn and not s.wasIn
-    bool runs    = s.on and isIn and s.wasIn
-    bool closes  = s.on and not isIn and s.wasIn
-    bool watches = s.on and not isIn and not s.wasIn and not na(s.pHi)
+clock(int ms) =>
+    int t = int(math.max(0, ms) / 1000)
+    int h = int(t / 3600)
+    (h > 0 ? str.tostring(h) + ":" : "") + pad2(int(t % 3600 / 60)) + ":" + pad2(int(t % 60))
 
-    // session opens → bank the previous instance as a statistic, start fresh
-    if opens
-        if not na(s.pHi)
-            capPush(s.rng,  s.pHi - s.pLo,      cap)
-            capPush(s.hHit, s.pHiSwept ? 1 : 0, cap)
-            capPush(s.lHit, s.pLoSwept ? 1 : 0, cap)
-        s.hi := high
-        s.lo := low
-        if boxOn
-            s.bx := box.new(bar_index, s.hi, bar_index, s.lo,
-                 border_color = color.new(s.col, 55), border_width = 1,
-                 bgcolor = color.new(s.col, 90))
+// ══════════════════════════════ STATE ══════════════════════════════════════
+// four sessions, held in parallel arrays (index 0..3 = ASIA / LNDN / NYAM / NYPM)
+var array<string> sNm  = array.from("ASIA", "LNDN", "NYAM", "NYPM")
+var array<color>  sCl  = array.from(s0C, s1C, s2C, s3C)
+var array<bool>   sOn  = array.from(s0On, s1On, s2On, s3On)
+var array<bool>   sIn  = array.new<bool>(4, false)
+var array<bool>   sWas = array.new<bool>(4, false)
+var array<float>  sHi  = array.new<float>(4, na)
+var array<float>  sLo  = array.new<float>(4, na)
+var array<float>  pHi  = array.new<float>(4, na)
+var array<float>  pLo  = array.new<float>(4, na)
+var array<bool>   pHiS = array.new<bool>(4, false)
+var array<bool>   pLoS = array.new<bool>(4, false)
+var array<int>    pAt  = array.new<int>(4, na)
+var array<box>    sBx  = array.new<box>(4)
+var array<line>   sHiL = array.new<line>(4)
+var array<line>   sLoL = array.new<line>(4)
+var array<label>  sHiB = array.new<label>(4)
+var array<label>  sLoB = array.new<label>(4)
+// cumulative stats: count, summed range, times the high was taken, times the low was
+var array<float>  sCnt = array.new<float>(4, 0)
+var array<float>  sSmR = array.new<float>(4, 0)
+var array<float>  sSmH = array.new<float>(4, 0)
+var array<float>  sSmL = array.new<float>(4, 0)
 
-    // session running → stretch the box with the range
-    if runs
-        s.hi := math.max(s.hi, high)
-        s.lo := math.min(s.lo, low)
-        if not na(s.bx)
-            box.set_right(s.bx, bar_index)
-            box.set_top(s.bx, s.hi)
-            box.set_bottom(s.bx, s.lo)
+// prior day / week / month, same idea (index 0..2 = PD / PW / PM)
+var array<string> hNm = array.from("PD", "PW", "PM")
+var array<color>  hCl = array.from(pdC, pwC, pmC)
+var array<float> hWH  = array.new<float>(3, na)
+var array<float> hWL  = array.new<float>(3, na)
+var array<bool>  hHitH = array.new<bool>(3, false)
+var array<bool>  hHitL = array.new<bool>(3, false)
+var array<float> hCnt = array.new<float>(3, 0)
+var array<float> hSmR = array.new<float>(3, 0)
+var array<float> hSmH = array.new<float>(3, 0)
+var array<float> hSmL = array.new<float>(3, 0)
 
-    // session closes → publish its high and low as levels
-    if closes
-        s.pHi      := s.hi
-        s.pLo      := s.lo
-        s.pAt      := bar_index
-        s.pHiSwept := false
-        s.pLoSwept := false
-        if not na(s.hiLn)
-            line.delete(s.hiLn)
-        if not na(s.loLn)
-            line.delete(s.loLn)
-        if not na(s.hiLb)
-            label.delete(s.hiLb)
-        if not na(s.loLb)
-            label.delete(s.loLb)
-        if lnOn
-            s.hiLn := line.new(bar_index, s.pHi, bar_index, s.pHi, color = s.col, style = line.style_dotted)
-            s.loLn := line.new(bar_index, s.pLo, bar_index, s.pLo, color = s.col, style = line.style_dotted)
-        if lbOn
-            s.hiLb := newLbl(bar_index, s.pHi, s.name + " High", s.col)
-            s.loLb := newLbl(bar_index, s.pLo, s.name + " Low",  s.col)
+// thirteen horizontal levels
+var array<string> lNm = array.from("PDH", "PDL", "PDM", "Close", "PWH", "PWL", "PWM",
+     "PMH", "PML", "PMM", "NY Open", "Midday", "Midnight")
+var array<color>  lCl = array.from(pdC, pdC, pdC, pdC, pwC, pwC, pwC, pmC, pmC, pmC, opC, opC, opC)
+var array<float>  lPx = array.new<float>(13, na)
+var array<bool>   lNw = array.new<bool>(13, false)
+var array<bool>   lSh = array.new<bool>(13, false)
+var array<line>   lLn = array.new<line>(13)
+var array<label>  lLb = array.new<label>(13)
 
-    // outside the session → extend the levels until price takes them
-    if watches
-        if high > s.pHi
-            s.pHiSwept := true
-        if low < s.pLo
-            s.pLoSwept := true
-        if not s.pHiSwept and not na(s.hiLn)
-            line.set_x2(s.hiLn, bar_index)
-        if not s.pHiSwept and not na(s.hiLb)
-            label.set_x(s.hiLb, bar_index)
-        if not s.pLoSwept and not na(s.loLn)
-            line.set_x2(s.loLn, bar_index)
-        if not s.pLoSwept and not na(s.loLb)
-            label.set_x(s.loLb, bar_index)
+var array<float> pivH = array.new<float>()
+var array<float> pivL = array.new<float>()
 
-    s.wasIn := isIn
+var int    biasDir = 0
+var string biasWhy = "not set"
+var int    dayStart = 0
+var int    lastSig = -99999
 
-// Previous day / week / month: same idea, driven by the HTF rollover.
-method perStep(Per p, bool isNew, float pH, float pL, int cap) =>
-    if isNew
-        if not na(p.wH)
-            capPush(p.rng,  p.wH - p.wL,    cap)
-            capPush(p.hHit, p.hitH ? 1 : 0, cap)
-            capPush(p.lHit, p.hitL ? 1 : 0, cap)
-        p.wH   := pH
-        p.wL   := pL
-        p.hitH := false
-        p.hitL := false
-    if not na(p.wH)
-        if high > p.wH
-            p.hitH := true
-        if low < p.wL
-            p.hitL := true
+var bool  tActive = false
+var bool  tBe     = false
+var bool  tTp1    = false
+var int   tDir    = 0
+var float tEntry  = na
+var float tStop   = na
+var float tTgt    = na
+var float tRisk   = na
+var float tTp1Px  = na
+var box   tRBx    = na
+var box   tTBx    = na
+var line  tT1Ln   = na
+var label tT1Lb   = na
+var label tLb     = na
+var int   wins    = 0
+var int   losses  = 0
+var int   bes     = 0
+var int   parts   = 0
 
-// Stepped level line: a fresh segment each period, the old one stays frozen.
-method render(Lvl v, bool isNew, float price, bool show) =>
-    if show and not na(price)
-        bool fresh = isNew or na(v.ln)
-        if fresh
-            if not na(v.lb)
-                label.delete(v.lb)
-            v.ln := line.new(bar_index, price, bar_index, price, color = v.col, style = line.style_dashed)
-            v.lb := newLbl(bar_index, price, v.name, v.col)
-        if not fresh
-            line.set_y1(v.ln, price)
-            line.set_y2(v.ln, price)
-            line.set_x2(v.ln, bar_index)
-            label.set_xy(v.lb, bar_index, price)
-
-// Premium above equilibrium, discount below, drawn from the swing that opened
-// the range out to the right edge.
-method draw(DRange d, float hi, float lo, int hiAt, int loAt, int ext, color pc, color dc, bool lines, string tag) =>
-    if not na(hi) and not na(lo) and hi > lo
-        int   l   = math.min(nz(hiAt, bar_index), nz(loAt, bar_index))
-        int   r   = bar_index + ext
-        float eqv = (hi + lo) / 2
-        float q75 = lo + (hi - lo) * 0.75
-        float q25 = lo + (hi - lo) * 0.25
-        if na(d.prem)
-            d.prem := box.new(l, hi, r, eqv, border_color = color.new(pc, 60), bgcolor = pc)
-            d.disc := box.new(l, eqv, r, lo, border_color = color.new(dc, 60), bgcolor = dc)
-            d.eq   := line.new(l, eqv, r, eqv, color = color.new(color.gray, 30), style = line.style_dashed)
-            d.q75  := line.new(l, q75, r, q75, color = color.new(color.gray, 60), style = line.style_dotted)
-            d.q25  := line.new(l, q25, r, q25, color = color.new(color.gray, 60), style = line.style_dotted)
-            d.lb   := newLbl(r, eqv, tag, color.gray)
-        box.set_lefttop(d.prem, l, hi)
-        box.set_rightbottom(d.prem, r, eqv)
-        box.set_lefttop(d.disc, l, eqv)
-        box.set_rightbottom(d.disc, r, lo)
-        line.set_xy1(d.eq, l, eqv)
-        line.set_xy2(d.eq, r, eqv)
-        line.set_xy1(d.q75, l, q75)
-        line.set_xy2(d.q75, r, q75)
-        line.set_xy1(d.q25, l, q25)
-        line.set_xy2(d.q25, r, q25)
-        line.set_color(d.q75, color.new(color.gray, lines ? 60 : 100))
-        line.set_color(d.q25, color.new(color.gray, lines ? 60 : 100))
-        line.set_color(d.eq, color.new(color.gray, lines ? 30 : 100))
-        label.set_xy(d.lb, r, eqv)
-        label.set_textcolor(d.lb, color.new(color.gray, lines ? 0 : 100))
-
-statRow(table t, int r, string nm, color c, array<float> rng, array<float> hh, array<float> ll, string sz) =>
-    float ar = rng.size() > 0 ? rng.avg() : na
-    float hp = hh.size()  > 0 ? hh.avg() * 100 : na
-    float lp = ll.size()  > 0 ? ll.avg() * 100 : na
-    string tip = "samples: " + str.tostring(rng.size())
-    table.cell(t, 0, r, nm, text_color = color.white, bgcolor = color.new(c, 20), text_size = sz, tooltip = tip)
-    table.cell(t, 1, r, na(ar) ? "–" : str.tostring(ar, "#.###"),
-         text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz, tooltip = tip)
-    table.cell(t, 2, r, na(hp) ? "–" : str.tostring(int(math.round(hp))) + "%",
-         text_color = color.white, text_size = sz,
-         bgcolor = color.from_gradient(nz(hp, 0), 0, 100, color.new(#787b86, 85), color.new(#ef5350, 40)), tooltip = tip)
-    table.cell(t, 3, r, na(lp) ? "–" : str.tostring(int(math.round(lp))) + "%",
-         text_color = color.white, text_size = sz,
-         bgcolor = color.from_gradient(nz(lp, 0), 0, 100, color.new(#787b86, 85), color.new(#26a69a, 40)), tooltip = tip)
-
-// ─────────────────────────────── STATE ────────────────────────────────────
-var Sess sAsia = Sess.new(name = "ASIA", col = asiaCol, on = asiaOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var Sess sLndn = Sess.new(name = "LNDN", col = lndnCol, on = lndnOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var Sess sNyam = Sess.new(name = "NYAM", col = nyamCol, on = nyamOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var Sess sNypm = Sess.new(name = "NYPM", col = nypmCol, on = nypmOn, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var array<Sess> sessArr = array.from(sAsia, sLndn, sNyam, sNypm)
-
-var Per pDay = Per.new(name = "PD", col = pdCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var Per pWk  = Per.new(name = "PW", col = pwCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var Per pMon = Per.new(name = "PM", col = pmCol, rng = array.new<float>(), hHit = array.new<float>(), lHit = array.new<float>())
-var array<Per> perArr = array.from(pDay, pWk, pMon)
-
-var Lvl lPdH = Lvl.new(name = "PDH",   col = pdCol)
-var Lvl lPdL = Lvl.new(name = "PDL",   col = pdCol)
-var Lvl lPdC = Lvl.new(name = "Close", col = pdcCol)
-var Lvl lPwH = Lvl.new(name = "PWH",   col = pwCol)
-var Lvl lPwL = Lvl.new(name = "PWL",   col = pwCol)
-var Lvl lPmH = Lvl.new(name = "PMH",   col = pmCol)
-var Lvl lPmL = Lvl.new(name = "PML",   col = pmCol)
-
-var Lvl lNyo = Lvl.new(name = "NY Open",  col = opnCol)
-var Lvl lMid = Lvl.new(name = "Midday",   col = opnCol)
-var Lvl lMno = Lvl.new(name = "Midnight", col = opnCol)
 var float nyoPx = na
 var float midPx = na
 var float mnoPx = na
 
-var Lvl lPdM = Lvl.new(name = "PDM", col = pdCol)
-var Lvl lPwM = Lvl.new(name = "PWM", col = pwCol)
-var Lvl lPmM = Lvl.new(name = "PMM", col = pmCol)
+var label statusLb = na
+var table tbl      = na
+var box   hBody    = na
+var line  hWick    = na
+var label hTag     = na
+var label hCd      = na
 
-var float drHi   = na
-var float drLo   = na
-var int   drHiAt = na
-var int   drLoAt = na
-var float dr2Hi   = na
-var float dr2Lo   = na
-var int   dr2HiAt = na
-var int   dr2LoAt = na
-var DRange dr1 = DRange.new()
-var DRange dr2 = DRange.new()
-
-var box   htfBody = na
-var line  htfWick = na
-var label htfTag  = na
-var label htfCd   = na
-
-var array<float> pivHi  = array.new<float>()
-var array<float> pivLo  = array.new<float>()
-var array<bool>  inFlag = array.new<bool>(4, false)
-var Trade tr     = Trade.new()
-var int   wins   = 0
-var int   losses = 0
-var int   bes    = 0
-var int   tp1s   = 0
-var int   lastSig = -100000
-var label cdLb   = na
-var table tbl    = na
-
-// ───────────────────────── MARKET CONTEXT ─────────────────────────────────
+// ═══════════════════════════ MARKET CONTEXT ════════════════════════════════
 float atrv = ta.atr(atrLen)
-[stVal, stDir] = ta.supertrend(stMult, atrLen)
-int trendDir = stDir < 0 ? 1 : -1
+[stLine, stDir] = ta.supertrend(stMult, atrLen)
+int trend = stDir < 0 ? 1 : -1
+float sar = ta.sar(0.02, 0.02, 0.2)
 
-[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
-[pwH, pwL]      = request.security(syminfo.tickerid, "W", [high[1], low[1]],           lookahead = barmerge.lookahead_on)
-[pmH, pmL]      = request.security(syminfo.tickerid, "M", [high[1], low[1]],           lookahead = barmerge.lookahead_on)
-
-// the higher-timeframe candle currently being built, drawn beside price
+[pdH, pdL, pdC2, pdO] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1], open[1]], lookahead = barmerge.lookahead_on)
+[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pmH, pmL] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
 [hO, hH, hL, hC, hTc] = request.security(syminfo.tickerid, htfTf, [open, high, low, close, time_close])
-string htfLbl = str.contains(htfTf, "S") or str.contains(htfTf, "D") or str.contains(htfTf, "W") or str.contains(htfTf, "M") ? htfTf : htfTf + "m"
 
 bool newD = nz(ta.change(time("D")), 0) != 0
 bool newW = nz(ta.change(time("W")), 0) != 0
 bool newM = nz(ta.change(time("M")), 0) != 0
 
-inFlag.set(0, asiaOn and not na(time(timeframe.period, asiaSpec, tzIn)))
-inFlag.set(1, lndnOn and not na(time(timeframe.period, lndnSpec, tzIn)))
-inFlag.set(2, nyamOn and not na(time(timeframe.period, nyamSpec, tzIn)))
-inFlag.set(3, nypmOn and not na(time(timeframe.period, nypmSpec, tzIn)))
+array.set(sIn, 0, s0On and not na(time(timeframe.period, s0Sp, TZ)))
+array.set(sIn, 1, s1On and not na(time(timeframe.period, s1Sp, TZ)))
+array.set(sIn, 2, s2On and not na(time(timeframe.period, s2Sp, TZ)))
+array.set(sIn, 3, s3On and not na(time(timeframe.period, s3Sp, TZ)))
 
-// ───────────────────────── BIAS OF THE DAY ────────────────────────────────
-// One direction per day. It is set once — by the first sweep of the chosen
-// session range, or from prior-day context — and then locked until the next
-// day, so only signals that agree with it are allowed to print.
-[pdO, pdCl] = request.security(syminfo.tickerid, "D", [open[1], close[1]], lookahead = barmerge.lookahead_on)
-float dEma  = request.security(syminfo.tickerid, "D", ta.ema(close, biasEma)[1], lookahead = barmerge.lookahead_on)
-float pdMid = na(pdH) or na(pdL) ? na : (pdH + pdL) / 2
-
-// The range whose sweep decides the day (read before this bar's session update,
-// so the very bar that grabs the liquidity is already on the right side).
-float bsHi = biasSrc == "ASIA" ? sAsia.pHi : biasSrc == "LNDN" ? sLndn.pHi : biasSrc == "NYAM" ? sNyam.pHi : biasSrc == "NYPM" ? sNypm.pHi : pdH
-float bsLo = biasSrc == "ASIA" ? sAsia.pLo : biasSrc == "LNDN" ? sLndn.pLo : biasSrc == "NYAM" ? sNyam.pLo : biasSrc == "NYPM" ? sNypm.pLo : pdL
-int   bsAt = biasSrc == "ASIA" ? sAsia.pAt : biasSrc == "LNDN" ? sLndn.pAt : biasSrc == "NYAM" ? sNyam.pAt : biasSrc == "NYPM" ? sNypm.pAt : na
-
-var int dayStart = 0
-if newD
-    dayStart := bar_index
-
-// Yesterday's session range is not today's bias — the range has to have closed
-// inside the current day before its sweep counts.
-bool bsFresh = biasSrc == "Prior day" or (not na(bsAt) and bsAt >= dayStart)
-
-var int    biasDir = 0
-var string biasWhy = "not set yet"
-
-if newD
-    biasDir := 0
-    biasWhy := "not set yet"
-
-if biasMode == "Manual"
-    biasDir := manBias == "Buy only" ? 1 : manBias == "Sell only" ? -1 : 0
-    biasWhy := "set manually"
-
-// A grab of the low is buy-side fuel, a grab of the high is sell-side fuel.
-if biasMode == "Sweep of a session" and biasDir == 0 and bsFresh and not na(bsHi) and not na(bsLo)
-    bool tookLo = low < bsLo
-    bool tookHi = high > bsHi
-    if tookLo and not tookHi
-        biasDir := 1
-        biasWhy := biasSrc + " low swept → buys only"
-    if tookHi and not tookLo
-        biasDir := -1
-        biasWhy := biasSrc + " high swept → sells only"
-    if tookHi and tookLo
-        biasDir := close > (bsHi + bsLo) / 2 ? 1 : -1
-        biasWhy := biasSrc + " range swept both ways → closed " + (close > (bsHi + bsLo) / 2 ? "up" : "down")
-
-if biasMode == "Prior-day equilibrium" and biasDir == 0 and not na(pdMid)
-    biasDir := close > pdMid ? 1 : -1
-    biasWhy := close > pdMid ? "above prior-day equilibrium" : "below prior-day equilibrium"
-
-if biasMode == "Prior-day direction" and biasDir == 0 and not na(pdO) and not na(pdCl)
-    biasDir := pdCl > pdO ? 1 : -1
-    biasWhy := pdCl > pdO ? "prior day closed up" : "prior day closed down"
-
-if biasMode == "Daily EMA trend" and biasDir == 0 and not na(dEma) and not na(pdCl)
-    biasDir := pdCl > dEma ? 1 : -1
-    biasWhy := pdCl > dEma ? "daily close above EMA" : "daily close below EMA"
-
-bool allowBuy  = biasDir > 0 or (biasDir == 0 and allowNtr)
-bool allowSell = biasDir < 0 or (biasDir == 0 and allowNtr)
-
-// ───────────────────── LIQUIDITY RAID DETECTION ───────────────────────────
-// Every candidate level is read *before* this bar's state updates, so a level
-// only fires once — the first time price reaches through it and closes back.
-float sellLvl = na
-float buyLvl  = na
-
-if useSessLiq
-    for i = 0 to sessArr.size() - 1
-        Sess s = sessArr.get(i)
-        if s.on and not na(s.pHi)
-            if not s.pHiSwept and high > s.pHi and close < s.pHi
-                sellLvl := math.max(nz(sellLvl, s.pHi), s.pHi)
-            if not s.pLoSwept and low < s.pLo and close > s.pLo
-                buyLvl := math.min(nz(buyLvl, s.pLo), s.pLo)
-
-if useHtfLiq
-    for i = 0 to perArr.size() - 1
-        Per p = perArr.get(i)
-        if not na(p.wH) and not p.hitH and high > p.wH and close < p.wH
-            sellLvl := math.max(nz(sellLvl, p.wH), p.wH)
-        if not na(p.wL) and not p.hitL and low < p.wL and close > p.wL
-            buyLvl := math.min(nz(buyLvl, p.wL), p.wL)
-
-if usePivLiq and pivHi.size() > 0
-    for i = 0 to pivHi.size() - 1
-        float L = pivHi.get(i)
-        if high > L and close < L
-            sellLvl := math.max(nz(sellLvl, L), L)
-if usePivLiq and pivLo.size() > 0
-    for i = 0 to pivLo.size() - 1
-        float L = pivLo.get(i)
-        if low < L and close > L
-            buyLvl := math.min(nz(buyLvl, L), L)
-
-float barRng = math.max(high - low, syminfo.mintick)
-bool  wickS  = (high - math.max(open, close)) / barRng * 100 >= minWick
-bool  wickB  = (math.min(open, close) - low)  / barRng * 100 >= minWick
-bool  coolOk = bar_index - lastSig > coolDown
-
-// equilibrium of the current dealing range (as of the previous bar)
-float drMid  = na(drHi) or na(drLo) ? na : (drHi + drLo) / 2
-bool  premOk = not needPrem or (not na(drMid) and close > drMid)
-bool  discOk = not needPrem or (not na(drMid) and close < drMid)
-
-bool sellSig = allowSell and premOk and not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needClose or close < open) and (not needTrend or trendDir < 0)
-bool buySig  = allowBuy  and discOk and not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needClose or close > open) and (not needTrend or trendDir > 0)
-if sellSig and buySig
-    bool preferSell = biasDir != 0 ? biasDir < 0 : trendDir < 0
-    sellSig := preferSell
-    buySig  := not preferSell
-
-// ─────────────────────────── STATE UPDATES ────────────────────────────────
-for i = 0 to sessArr.size() - 1
-    Sess sv = sessArr.get(i)
-    sv.sessStep(inFlag.get(i), showSessBox, showSessLn, showSessLb, statN)
-
-pDay.perStep(newD, pdH, pdL, statN)
-pWk.perStep(newW, pwH, pwL, statN)
-pMon.perStep(newM, pmH, pmL, statN)
-
-float ph = ta.pivothigh(pivLen, pivLen)
-float pl = ta.pivotlow(pivLen, pivLen)
-if usePivLiq
-    if pivHi.size() > 0
-        for i = pivHi.size() - 1 to 0
-            if pivHi.get(i) < high
-                pivHi.remove(i)
-    if pivLo.size() > 0
-        for i = pivLo.size() - 1 to 0
-            if pivLo.get(i) > low
-                pivLo.remove(i)
-    if not na(ph)
-        capPush(pivHi, ph, maxLiq)
-    if not na(pl)
-        capPush(pivLo, pl, maxLiq)
-
-// The dealing range is simply the last confirmed swing high and swing low.
-if not na(ph)
-    drHi   := ph
-    drHiAt := bar_index - pivLen
-if not na(pl)
-    drLo   := pl
-    drLoAt := bar_index - pivLen
-
-float ph2 = ta.pivothigh(drLen2, drLen2)
-float pl2 = ta.pivotlow(drLen2, drLen2)
-if not na(ph2)
-    dr2Hi   := ph2
-    dr2HiAt := bar_index - drLen2
-if not na(pl2)
-    dr2Lo   := pl2
-    dr2LoAt := bar_index - drLen2
-
-lPdH.render(newD, pdH, showPD)
-lPdL.render(newD, pdL, showPD)
-lPdC.render(newD, pdC, showPDC)
-lPwH.render(newW, pwH, showPW)
-lPwL.render(newW, pwL, showPW)
-lPmH.render(newM, pmH, showPM)
-lPmL.render(newM, pmL, showPM)
-lPdM.render(newD, na(pdH) or na(pdL) ? na : (pdH + pdL) / 2, showMid and showPD)
-lPwM.render(newW, na(pwH) or na(pwL) ? na : (pwH + pwL) / 2, showMid and showPW)
-lPmM.render(newM, na(pmH) or na(pmL) ? na : (pmH + pmL) / 2, showMid and showPM)
-
-// ── session opens: the price at 09:30 / 12:00 / 00:00, held for the day, and
-//    a vertical divider on the bar that stamps each one.
-int  tNyo  = time(timeframe.period, nyoSpec, tzIn)
-int  tMid  = time(timeframe.period, midSpec, tzIn)
-int  tMno  = time(timeframe.period, mnoSpec, tzIn)
+int  tNyo  = time(timeframe.period, nyoSp, TZ)
+int  tMid  = time(timeframe.period, midSp, TZ)
+int  tMno  = time(timeframe.period, mnoSp, TZ)
 bool atNyo = not na(tNyo) and na(tNyo[1])
 bool atMid = not na(tMid) and na(tMid[1])
 bool atMno = not na(tMno) and na(tMno[1])
 
+if newD
+    dayStart := bar_index
+
+// ═════════════════════════ BIAS OF THE DAY ═════════════════════════════════
+// One direction per day: set once, then locked. A grab of the low is buy-side
+// fuel, a grab of the high is sell-side fuel.
+int   bi   = biasSrc == "ASIA" ? 0 : biasSrc == "LNDN" ? 1 : biasSrc == "NYAM" ? 2 : biasSrc == "NYPM" ? 3 : -1
+int   bj   = math.max(bi, 0)
+float bsHi = bi < 0 ? pdH : array.get(pHi, bj)
+float bsLo = bi < 0 ? pdL : array.get(pLo, bj)
+int   bsAt = bi < 0 ? dayStart : nz(array.get(pAt, bj), -1)
+bool  bsOk = bi < 0 or bsAt >= dayStart
+
+if newD
+    biasDir := 0
+    biasWhy := "not set"
+
+if biasMode == "Manual"
+    biasDir := manBias == "Buy only" ? 1 : manBias == "Sell only" ? -1 : 0
+    biasWhy := "manual"
+
+if biasMode == "Session sweep" and biasDir == 0 and bsOk and not na(bsHi) and not na(bsLo)
+    bool tookLo = low < bsLo
+    bool tookHi = high > bsHi
+    if tookLo and not tookHi
+        biasDir := 1
+        biasWhy := biasSrc + " low swept"
+    if tookHi and not tookLo
+        biasDir := -1
+        biasWhy := biasSrc + " high swept"
+    if tookHi and tookLo
+        biasDir := close > (bsHi + bsLo) / 2 ? 1 : -1
+        biasWhy := biasSrc + " swept both sides"
+
+if biasMode == "Prior-day equilibrium" and biasDir == 0 and not na(pdH) and not na(pdL)
+    float eqd = (pdH + pdL) / 2
+    biasDir := close > eqd ? 1 : -1
+    biasWhy := close > eqd ? "above PD equilibrium" : "below PD equilibrium"
+
+if biasMode == "Prior-day direction" and biasDir == 0 and not na(pdO) and not na(pdC2)
+    biasDir := pdC2 > pdO ? 1 : -1
+    biasWhy := pdC2 > pdO ? "prior day closed up" : "prior day closed down"
+
+bool okBuy  = biasDir > 0 or (biasDir == 0 and allowNtr)
+bool okSell = biasDir < 0 or (biasDir == 0 and allowNtr)
+
+// ═══════════════════════ LIQUIDITY RAID DETECTION ══════════════════════════
+// Levels are read before this bar's updates, so each one can only fire once.
+float sellLvl = na
+float buyLvl  = na
+
+if useSess
+    for i = 0 to 3
+        float ph_ = array.get(pHi, i)
+        float pl_ = array.get(pLo, i)
+        if array.get(sOn, i) and not na(ph_)
+            if not array.get(pHiS, i) and high > ph_ and close < ph_
+                sellLvl := math.max(nz(sellLvl, ph_), ph_)
+            if not array.get(pLoS, i) and low < pl_ and close > pl_
+                buyLvl := math.min(nz(buyLvl, pl_), pl_)
+
+if useHtf
+    for i = 0 to 2
+        float wh = array.get(hWH, i)
+        float wl = array.get(hWL, i)
+        if not na(wh) and not array.get(hHitH, i) and high > wh and close < wh
+            sellLvl := math.max(nz(sellLvl, wh), wh)
+        if not na(wl) and not array.get(hHitL, i) and low < wl and close > wl
+            buyLvl := math.min(nz(buyLvl, wl), wl)
+
+if usePiv and array.size(pivH) > 0
+    for i = 0 to array.size(pivH) - 1
+        float lv = array.get(pivH, i)
+        if high > lv and close < lv
+            sellLvl := math.max(nz(sellLvl, lv), lv)
+if usePiv and array.size(pivL) > 0
+    for i = 0 to array.size(pivL) - 1
+        float lv = array.get(pivL, i)
+        if low < lv and close > lv
+            buyLvl := math.min(nz(buyLvl, lv), lv)
+
+float barRng = math.max(high - low, syminfo.mintick)
+bool  wickS  = (high - math.max(open, close)) / barRng * 100 >= minWick
+bool  wickB  = (math.min(open, close) - low) / barRng * 100 >= minWick
+bool  coolOk = bar_index - lastSig > coolBar
+
+bool sellSig = okSell and not na(sellLvl) and not na(atrv) and wickS and coolOk and (not needRej or close < open)
+bool buySig  = okBuy  and not na(buyLvl)  and not na(atrv) and wickB and coolOk and (not needRej or close > open)
+if sellSig and buySig
+    bool preferSell = biasDir != 0 ? biasDir < 0 : trend < 0
+    sellSig := preferSell
+    buySig  := not preferSell
+
+// ═════════════════════════ SESSION BOOKKEEPING ═════════════════════════════
+for i = 0 to 3
+    bool on    = array.get(sOn, i)
+    bool isIn  = array.get(sIn, i)
+    bool was   = array.get(sWas, i)
+    color col  = array.get(sCl, i)
+    bool opens = on and isIn and not was
+    bool runs  = on and isIn and was
+    bool ends  = on and not isIn and was
+    bool watch = on and not isIn and not was and not na(array.get(pHi, i))
+
+    if opens
+        // bank the instance that just finished as a statistic
+        if not na(array.get(pHi, i))
+            array.set(sCnt, i, array.get(sCnt, i) + 1)
+            array.set(sSmR, i, array.get(sSmR, i) + array.get(pHi, i) - array.get(pLo, i))
+            array.set(sSmH, i, array.get(sSmH, i) + (array.get(pHiS, i) ? 1 : 0))
+            array.set(sSmL, i, array.get(sSmL, i) + (array.get(pLoS, i) ? 1 : 0))
+        array.set(sHi, i, high)
+        array.set(sLo, i, low)
+        if boxOn
+            array.set(sBx, i, box.new(bar_index, high, bar_index, low,
+                 border_color = color.new(col, 70), border_width = 1, bgcolor = color.new(col, boxTr)))
+        if divOn
+            line.new(bar_index, low, bar_index, high, extend = extend.both,
+                 color = color.new(col, 45), style = line.style_dotted)
+
+    if runs
+        array.set(sHi, i, math.max(array.get(sHi, i), high))
+        array.set(sLo, i, math.min(array.get(sLo, i), low))
+        box bx = array.get(sBx, i)
+        if not na(bx)
+            box.set_right(bx, bar_index)
+            box.set_top(bx, array.get(sHi, i))
+            box.set_bottom(bx, array.get(sLo, i))
+
+    if ends
+        array.set(pHi, i, array.get(sHi, i))
+        array.set(pLo, i, array.get(sLo, i))
+        array.set(pHiS, i, false)
+        array.set(pLoS, i, false)
+        array.set(pAt, i, bar_index)
+        if lvlOn
+            float h_ = array.get(sHi, i)
+            float l_ = array.get(sLo, i)
+            array.set(sHiL, i, line.new(bar_index, h_, bar_index, h_, color = col, style = line.style_dotted))
+            array.set(sLoL, i, line.new(bar_index, l_, bar_index, l_, color = col, style = line.style_dotted))
+            label ohb = array.get(sHiB, i)
+            label olb = array.get(sLoB, i)
+            if not na(ohb)
+                label.delete(ohb)
+            if not na(olb)
+                label.delete(olb)
+            array.set(sHiB, i, tag(bar_index, h_, array.get(sNm, i) + " High", col))
+            array.set(sLoB, i, tag(bar_index, l_, array.get(sNm, i) + " Low", col))
+
+    if watch
+        if high > array.get(pHi, i)
+            array.set(pHiS, i, true)
+        if low < array.get(pLo, i)
+            array.set(pLoS, i, true)
+        line hl = array.get(sHiL, i)
+        line ll = array.get(sLoL, i)
+        label hb = array.get(sHiB, i)
+        label lb = array.get(sLoB, i)
+        if not array.get(pHiS, i) and not na(hl)
+            line.set_x2(hl, bar_index)
+        if not array.get(pHiS, i) and not na(hb)
+            label.set_x(hb, bar_index)
+        if not array.get(pLoS, i) and not na(ll)
+            line.set_x2(ll, bar_index)
+        if not array.get(pLoS, i) and not na(lb)
+            label.set_x(lb, bar_index)
+
+    array.set(sWas, i, isIn)
+
+// prior day / week / month sweep bookkeeping
+for i = 0 to 2
+    bool isNew = i == 0 ? newD : i == 1 ? newW : newM
+    float nH   = i == 0 ? pdH : i == 1 ? pwH : pmH
+    float nL   = i == 0 ? pdL : i == 1 ? pwL : pmL
+    if isNew
+        if not na(array.get(hWH, i))
+            array.set(hCnt, i, array.get(hCnt, i) + 1)
+            array.set(hSmR, i, array.get(hSmR, i) + array.get(hWH, i) - array.get(hWL, i))
+            array.set(hSmH, i, array.get(hSmH, i) + (array.get(hHitH, i) ? 1 : 0))
+            array.set(hSmL, i, array.get(hSmL, i) + (array.get(hHitL, i) ? 1 : 0))
+        array.set(hWH, i, nH)
+        array.set(hWL, i, nL)
+        array.set(hHitH, i, false)
+        array.set(hHitL, i, false)
+    if not na(array.get(hWH, i))
+        if high > array.get(hWH, i)
+            array.set(hHitH, i, true)
+        if low < array.get(hWL, i)
+            array.set(hHitL, i, true)
+
+// pivots feeding the raid pool
+float phv = ta.pivothigh(pivLen, pivLen)
+float plv = ta.pivotlow(pivLen, pivLen)
+if usePiv
+    if array.size(pivH) > 0
+        for i = array.size(pivH) - 1 to 0
+            if array.get(pivH, i) < high
+                array.remove(pivH, i)
+    if array.size(pivL) > 0
+        for i = array.size(pivL) - 1 to 0
+            if array.get(pivL, i) > low
+                array.remove(pivL, i)
+    if not na(phv)
+        array.push(pivH, phv)
+        if array.size(pivH) > maxLiq
+            array.shift(pivH)
+    if not na(plv)
+        array.push(pivL, plv)
+        if array.size(pivL) > maxLiq
+            array.shift(pivL)
+
+// ════════════════════════════ HORIZONTAL LEVELS ════════════════════════════
 if atNyo
     nyoPx := open
 if atMid
@@ -613,208 +456,251 @@ if atMid
 if atMno
     mnoPx := open
 
-lNyo.render(atNyo, nyoPx, showOpn)
-lMid.render(atMid, midPx, showOpn)
-lMno.render(atMno, mnoPx, showOpn)
+float pdM = na(pdH) or na(pdL) ? na : (pdH + pdL) / 2
+float pwM = na(pwH) or na(pwL) ? na : (pwH + pwL) / 2
+float pmM = na(pmH) or na(pmL) ? na : (pmH + pmL) / 2
 
-if showDiv and (atNyo or atMid or atMno)
-    line.new(bar_index, low, bar_index, high, extend = extend.both,
-         color = color.new(opnCol, 55), style = line.style_dotted)
+array.set(lPx, 0, pdH)
+array.set(lPx, 1, pdL)
+array.set(lPx, 2, pdM)
+array.set(lPx, 3, pdC2)
+array.set(lPx, 4, pwH)
+array.set(lPx, 5, pwL)
+array.set(lPx, 6, pwM)
+array.set(lPx, 7, pmH)
+array.set(lPx, 8, pmL)
+array.set(lPx, 9, pmM)
+array.set(lPx, 10, nyoPx)
+array.set(lPx, 11, midPx)
+array.set(lPx, 12, mnoPx)
 
-// ─────────────────────────── SIGNAL LABELS ────────────────────────────────
+for i = 0 to 12
+    bool isNew = i <= 3 ? newD : i <= 6 ? newW : i <= 9 ? newM : i == 10 ? atNyo : i == 11 ? atMid : atMno
+    bool shown = i <= 3 ? pdOn : i <= 6 ? pwOn : i <= 9 ? pmOn : opOn
+    array.set(lNw, i, isNew)
+    array.set(lSh, i, shown)
+
+for i = 0 to 12
+    float px = array.get(lPx, i)
+    if array.get(lSh, i) and not na(px)
+        line ln = array.get(lLn, i)
+        bool fresh = array.get(lNw, i) or na(ln)
+        if fresh
+            label oldLb = array.get(lLb, i)
+            if not na(oldLb)
+                label.delete(oldLb)
+            array.set(lLn, i, line.new(bar_index, px, bar_index, px, color = array.get(lCl, i), style = line.style_dashed))
+            array.set(lLb, i, tag(bar_index, px, array.get(lNm, i), array.get(lCl, i)))
+        line ln2 = array.get(lLn, i)
+        label lb2 = array.get(lLb, i)
+        line.set_y1(ln2, px)
+        line.set_y2(ln2, px)
+        line.set_x2(ln2, bar_index)
+        label.set_xy(lb2, bar_index, px)
+
+// ══════════════════════════════ SIGNALS ════════════════════════════════════
 if sellSig
     label.new(bar_index, high + atrv * 0.4, "SELL LR", xloc.bar_index, yloc.price,
-         sigCol, label.style_label_down, color.black, size.tiny,
-         tooltip = "Swept " + str.tostring(sellLvl, format.mintick) + " and closed back below")
+         sigBg, label.style_label_down, color.black, size.tiny,
+         tooltip = "swept " + str.tostring(sellLvl, format.mintick))
     lastSig := bar_index
-    alert("SELL LR — liquidity raid on " + syminfo.ticker, alert.freq_once_per_bar_close)
+    alert("SELL LR " + syminfo.ticker, alert.freq_once_per_bar_close)
+
 if buySig
     label.new(bar_index, low - atrv * 0.4, "BUY LR", xloc.bar_index, yloc.price,
-         sigCol, label.style_label_up, color.black, size.tiny,
-         tooltip = "Swept " + str.tostring(buyLvl, format.mintick) + " and closed back above")
+         sigBg, label.style_label_up, color.black, size.tiny,
+         tooltip = "swept " + str.tostring(buyLvl, format.mintick))
     lastSig := bar_index
-    alert("BUY LR — liquidity raid on " + syminfo.ticker, alert.freq_once_per_bar_close)
+    alert("BUY LR " + syminfo.ticker, alert.freq_once_per_bar_close)
 
-// ────────────────────────── TRADE PROJECTION ──────────────────────────────
-if tr.active
-    bool stopHit = tr.dir < 0 ? high >= tr.stop : low  <= tr.stop
-    bool tgtHit  = tr.dir < 0 ? low  <= tr.tgt  : high >= tr.tgt
-    bool resolved = stopHit or tgtHit
-    if resolved
-        tr.active := false
-        if stopHit and tr.be
+// ═══════════════════════════ TRADE PROJECTION ══════════════════════════════
+if tActive
+    bool stopHit = tDir < 0 ? high >= tStop : low <= tStop
+    bool tgtHit  = tDir < 0 ? low <= tTgt : high >= tTgt
+    bool done    = stopHit or tgtHit
+
+    if done
+        tActive := false
+        if stopHit and tBe
             bes += 1
-        if stopHit and not tr.be
+        if stopHit and not tBe
             losses += 1
         if not stopHit
             wins += 1
-        if not na(tr.rBx)
-            box.set_right(tr.rBx, bar_index)
-            box.set_bgcolor(tr.rBx, color.new(riskCol, stopHit and not tr.be ? 55 : 90))
-        if not na(tr.tBx)
-            box.set_right(tr.tBx, bar_index)
-            box.set_bgcolor(tr.tBx, color.new(rewCol, tgtHit and not stopHit ? 55 : 90))
-        if not na(tr.tp1Ln)
-            line.set_x2(tr.tp1Ln, bar_index)
-        if not na(tr.tp1Lb)
-            label.set_x(tr.tp1Lb, bar_index)
-        if not na(tr.lb)
-            label.set_x(tr.lb, bar_index)
-            label.set_text(tr.lb, stopHit ? (tr.be ? "BE" : "SL") : "TP")
+        if not na(tRBx)
+            box.set_right(tRBx, bar_index)
+        if not na(tTBx)
+            box.set_right(tTBx, bar_index)
+        if not na(tT1Ln)
+            line.set_x2(tT1Ln, bar_index)
+        if not na(tT1Lb)
+            label.set_x(tT1Lb, bar_index)
+        if not na(tLb)
+            label.set_x(tLb, bar_index)
+            label.set_text(tLb, stopHit ? (tBe ? "BE" : "SL") : "TP")
 
-    if not resolved
-        // a piece off the table at the partial, then the stop comes to entry
-        if not tr.tp1 and not na(tr.tp1Px)
-            bool t1Hit = tr.dir < 0 ? low <= tr.tp1Px : high >= tr.tp1Px
-            if t1Hit
-                tr.tp1 := true
-                tp1s   += 1
-                if not na(tr.tp1Ln)
-                    line.set_color(tr.tp1Ln, color.new(color.gray, 35))
-                if not na(tr.tp1Lb)
-                    label.set_text(tr.tp1Lb, "TP1 ✓")
-                    label.set_textcolor(tr.tp1Lb, color.gray)
-        if not na(tr.tp1Ln)
-            line.set_x2(tr.tp1Ln, bar_index + projBars)
-        if not na(tr.tp1Lb)
-            label.set_x(tr.tp1Lb, bar_index + projBars)
-        // once the trade has paid for itself, the stop comes to entry
-        if beAtR > 0 and not tr.be and not na(tr.risk)
-            float trig = tr.entry + tr.dir * tr.risk * beAtR
-            bool reached = tr.dir < 0 ? low <= trig : high >= trig
+    if not done
+        if not tTp1 and not na(tTp1Px)
+            bool hit1 = tDir < 0 ? low <= tTp1Px : high >= tTp1Px
+            if hit1
+                tTp1  := true
+                parts += 1
+                if not na(tT1Lb)
+                    label.set_text(tT1Lb, "TP1 ✓")
+        if beAtR > 0 and not tBe and not na(tRisk)
+            float trig = tEntry + tDir * tRisk * beAtR
+            bool reached = tDir < 0 ? low <= trig : high >= trig
             if reached
-                tr.be   := true
-                tr.stop := tr.entry
-                if not na(tr.rBx)
-                    box.set_top(tr.rBx, tr.entry)
-                    box.set_bottom(tr.rBx, tr.entry)
-                    box.set_bgcolor(tr.rBx, color.new(color.gray, 85))
-                    box.set_border_color(tr.rBx, color.new(color.gray, 45))
-                if not na(tr.lb)
-                    label.set_text(tr.lb, "BE")
-        if not na(tr.rBx)
-            box.set_right(tr.rBx, bar_index + projBars)
-        if not na(tr.tBx)
-            box.set_right(tr.tBx, bar_index + projBars)
-        if not na(tr.lb)
-            label.set_x(tr.lb, bar_index + projBars)
+                tBe   := true
+                tStop := tEntry
+                if not na(tRBx)
+                    box.set_top(tRBx, tEntry)
+                    box.set_bottom(tRBx, tEntry)
+                    box.set_bgcolor(tRBx, color.new(color.gray, 85))
+                if not na(tLb)
+                    label.set_text(tLb, "BE")
+        if not na(tRBx)
+            box.set_right(tRBx, bar_index + projBar)
+        if not na(tTBx)
+            box.set_right(tTBx, bar_index + projBar)
+        if not na(tT1Ln)
+            line.set_x2(tT1Ln, bar_index + projBar)
+        if not na(tT1Lb)
+            label.set_x(tT1Lb, bar_index + projBar)
+        if not na(tLb)
+            label.set_x(tLb, bar_index + projBar)
 
-if showTrade and not tr.active and (sellSig or buySig)
-    int   d    = sellSig ? -1 : 1
-    float lvl  = sellSig ? sellLvl : buyLvl
-    float e    = close
-    float sl   = d < 0 ? math.max(high, lvl) + atrv * stopBuf : math.min(low, lvl) - atrv * stopBuf
-    float risk = math.abs(sl - e)
-    if risk > 0
-        float tp = e + d * risk * rrMult
-        tr.active := true
-        tr.be     := false
-        tr.dir    := d
-        tr.entry  := e
-        tr.stop   := sl
-        tr.tgt    := tp
-        tr.risk   := risk
-        tr.rBx := box.new(bar_index, math.max(e, sl), bar_index + projBars, math.min(e, sl),
-             border_color = color.new(riskCol, 40), bgcolor = riskCol)
-        tr.tBx := box.new(bar_index, math.max(e, tp), bar_index + projBars, math.min(e, tp),
-             border_color = color.new(rewCol, 40), bgcolor = rewCol)
-        tr.lb  := newLbl(bar_index + projBars, tp, str.tostring(rrMult, "#.#") + "R", d < 0 ? riskCol : rewCol)
-        tr.tp1   := false
-        tr.tp1Px := tp1AtR > 0 ? e + d * risk * tp1AtR : na
-        tr.tp1Ln := na
-        tr.tp1Lb := na
-        if not na(tr.tp1Px)
-            tr.tp1Ln := line.new(bar_index, tr.tp1Px, bar_index + projBars, tr.tp1Px,
-                 color = color.new(rewCol, 20), style = line.style_dashed)
-            tr.tp1Lb := newLbl(bar_index + projBars, tr.tp1Px, "TP1", rewCol)
+if tradeOn and not tActive and (sellSig or buySig)
+    int   d  = sellSig ? -1 : 1
+    float lv = sellSig ? sellLvl : buyLvl
+    float e  = close
+    float sl = d < 0 ? math.max(high, lv) + atrv * stopBuf : math.min(low, lv) - atrv * stopBuf
+    float rk = math.abs(sl - e)
+    if rk > 0
+        float tp = e + d * rk * rrMult
+        tActive := true
+        tBe     := false
+        tTp1    := false
+        tDir    := d
+        tEntry  := e
+        tStop   := sl
+        tTgt    := tp
+        tRisk   := rk
+        tRBx    := box.new(bar_index, math.max(e, sl), bar_index + projBar, math.min(e, sl),
+             border_color = color.new(riskC, 45), bgcolor = riskC)
+        tTBx    := box.new(bar_index, math.max(e, tp), bar_index + projBar, math.min(e, tp),
+             border_color = color.new(rewC, 45), bgcolor = rewC)
+        tLb     := tag(bar_index + projBar, tp, str.tostring(rrMult, "#.#") + "R", d < 0 ? riskC : rewC)
+        tTp1Px  := tp1AtR > 0 ? e + d * rk * tp1AtR : na
+        tT1Ln   := na
+        tT1Lb   := na
+        if not na(tTp1Px)
+            tT1Ln := line.new(bar_index, tTp1Px, bar_index + projBar, tTp1Px,
+                 color = color.new(rewC, 20), style = line.style_dashed)
+            tT1Lb := tag(bar_index + projBar, tTp1Px, "TP1", rewC)
 
-// ───────────────────────────── TREND CLOUD ────────────────────────────────
-float cloudEdge = stVal + (stDir < 0 ? -1 : 1) * atrv * bandMult
-p1 = plot(showCloud ? stVal : na, "Trend line", color = color.new(trendDir > 0 ? bullCol : bearCol, 30))
-p2 = plot(showCloud ? cloudEdge : na, "Cloud edge", color = color.new(color.black, 100))
-fill(p1, p2, color = trendDir > 0 ? bullCol : bearCol, title = "Trend cloud")
+// ═══════════════════════════ CLOUD & TRAIL ═════════════════════════════════
+float edge = stLine + (stDir < 0 ? -1 : 1) * atrv * depth
+p1 = plot(cloudOn ? stLine : na, "Trend", color = color.new(trend > 0 ? bullC : bearC, 35), linewidth = 2)
+p2 = plot(cloudOn ? edge : na, "Edge", color = color.new(color.black, 100))
+fill(p1, p2, color = trend > 0 ? bullC : bearC, title = "Cloud")
+plot(sarOn ? sar : na, "Trail", color = color.new(#131722, 15), style = plot.style_circles, linewidth = 1)
 
-// ──────────────────────── COUNTDOWN + STATS TABLE ─────────────────────────
+// ═══════════════════ STATUS LABEL, HTF CANDLE, TABLE ═══════════════════════
 if barstate.islast
-    if showCd or showBias
-        int rem  = int(math.max(0, time_close - timenow) / 1000)
-        int hrs  = int(rem / 3600)
-        int mins = int(rem % 3600 / 60)
-        int secs = int(rem % 60)
-        string cdTxt = timeframe.period + "  " + (hrs > 0 ? str.tostring(hrs) + ":" : "") + pad2(mins) + ":" + pad2(secs)
-        string bTxt  = biasDir > 0 ? "BUY BIAS" : biasDir < 0 ? "SELL BIAS" : "NO BIAS"
-        string sTxt  = showBias and showCd ? bTxt + "\n" + cdTxt : showBias ? bTxt : cdTxt
-        color  sBg   = biasDir > 0 ? color.new(#26a69a, 20) : biasDir < 0 ? color.new(#ef5350, 20) : color.new(color.gray, 25)
-        if na(cdLb)
-            cdLb := label.new(bar_index + 3, close, sTxt, xloc.bar_index, yloc.price,
-                 sBg, label.style_label_left, color.white, size.small)
-        label.set_xy(cdLb, bar_index + 3, close)
-        label.set_text(cdLb, sTxt)
-        label.set_color(cdLb, sBg)
-        label.set_tooltip(cdLb, "Bias: " + biasWhy)
+    if showBias or cdOn
+        string bTxt = biasDir > 0 ? "BUY BIAS" : biasDir < 0 ? "SELL BIAS" : "NO BIAS"
+        string cTxt = timeframe.period + "  " + clock(time_close - timenow)
+        string txt  = showBias and cdOn ? bTxt + "\n" + cTxt : showBias ? bTxt : cTxt
+        color  bg   = biasDir > 0 ? color.new(#00c9a7, 15) : biasDir < 0 ? color.new(#ff5c8a, 15) : color.new(color.gray, 25)
+        if na(statusLb)
+            statusLb := label.new(bar_index + 3, close, txt, xloc.bar_index, yloc.price,
+                 bg, label.style_label_left, color.white, size.small)
+        label.set_xy(statusLb, bar_index + 3, close)
+        label.set_text(statusLb, txt)
+        label.set_color(statusLb, bg)
+        label.set_tooltip(statusLb, biasWhy)
 
-    // ── dealing range: premium above equilibrium, discount below
-    if showDR
-        dr1.draw(drHi, drLo, drHiAt, drLoAt, drExt, premCol, discCol, showDRq, "EQ")
-    if showDR and showDR2
-        dr2.draw(dr2Hi, dr2Lo, dr2HiAt, dr2LoAt, drExt, premCol, discCol, showDRq, "eq")
+    if htfOn and not na(hO)
+        int   lf = bar_index + htfGap
+        int   rt = lf + htfW
+        int   md = lf + int(htfW / 2)
+        color hc = hC >= hO ? #00c9a7 : #ff5c8a
+        if na(hBody)
+            hBody := box.new(lf, math.max(hO, hC), rt, math.min(hO, hC), border_color = hc, bgcolor = hc)
+            hWick := line.new(md, hH, md, hL, color = hc)
+            hTag  := label.new(md, hH, htfTf, xloc.bar_index, yloc.price,
+                 color.new(color.black, 100), label.style_label_down, #787b86, size.tiny)
+            hCd   := label.new(md, hL, "", xloc.bar_index, yloc.price,
+                 color.new(color.black, 100), label.style_label_up, #787b86, size.tiny)
+        box.set_lefttop(hBody, lf, math.max(hO, hC))
+        box.set_rightbottom(hBody, rt, math.min(hO, hC))
+        box.set_bgcolor(hBody, hc)
+        box.set_border_color(hBody, hc)
+        line.set_xy1(hWick, md, hH)
+        line.set_xy2(hWick, md, hL)
+        line.set_color(hWick, hc)
+        label.set_xy(hTag, md, hH)
+        label.set_xy(hCd, md, hL)
+        label.set_text(hCd, clock(hTc - timenow))
 
-    // ── the developing HTF candle, parked to the right of the last bar
-    if showHtf and not na(hO)
-        int   lft   = bar_index + htfGap
-        int   rgt   = lft + htfW
-        int   mid   = lft + int(htfW / 2)
-        color bodyC = hC >= hO ? color.new(#26a69a, 15) : color.new(#ef5350, 15)
-        float bt    = math.max(hO, hC)
-        float bb    = math.min(hO, hC)
-        if na(htfBody)
-            htfBody := box.new(lft, bt, rgt, bb, border_color = bodyC, bgcolor = bodyC)
-            htfWick := line.new(mid, hH, mid, hL, color = bodyC)
-            htfTag  := label.new(mid, hH, htfLbl, xloc.bar_index, yloc.price,
-                 color.new(color.black, 100), label.style_label_down, color.gray, size.tiny)
-            htfCd   := label.new(mid, hL, "", xloc.bar_index, yloc.price,
-                 color.new(color.black, 100), label.style_label_up, color.gray, size.tiny)
-        box.set_lefttop(htfBody, lft, bt)
-        box.set_rightbottom(htfBody, rgt, bb)
-        box.set_bgcolor(htfBody, bodyC)
-        box.set_border_color(htfBody, bodyC)
-        line.set_xy1(htfWick, mid, hH)
-        line.set_xy2(htfWick, mid, hL)
-        line.set_color(htfWick, bodyC)
-        label.set_xy(htfTag, mid, hH)
-        label.set_xy(htfCd, mid, hL)
-        int hrem = int(math.max(0, hTc - timenow) / 1000)
-        int hhrs = int(hrem / 3600)
-        label.set_text(htfCd, (hhrs > 0 ? str.tostring(hhrs) + ":" : "") + pad2(int(hrem % 3600 / 60)) + ":" + pad2(int(hrem % 60)))
-
-    if showTbl
+    if tblOn
         if na(tbl)
             tbl := table.new(tblPos, 4, showWL ? 9 : 8, border_width = 1,
-                 frame_width = 1, frame_color = color.new(color.gray, 50), border_color = color.new(color.gray, 60))
-        color hdr = color.new(color.black, 30)
-        table.cell(tbl, 0, 0, biasDir > 0 ? "BUY" : biasDir < 0 ? "SELL" : "—",
-             text_color = color.white, text_size = tblSize,
-             bgcolor = biasDir > 0 ? color.new(#26a69a, 35) : biasDir < 0 ? color.new(#ef5350, 35) : hdr,
-             tooltip = "Bias of the day: " + biasWhy)
-        table.cell(tbl, 1, 0, "Range", text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "Average range of the last N occurrences")
-        table.cell(tbl, 2, 0, "High",  text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that high is taken out afterwards")
-        table.cell(tbl, 3, 0, "Low",   text_color = color.white, bgcolor = hdr, text_size = tblSize, tooltip = "How often that low is taken out afterwards")
-        statRow(tbl, 1, "ASIA", asiaCol, sAsia.rng, sAsia.hHit, sAsia.lHit, tblSize)
-        statRow(tbl, 2, "LNDN", lndnCol, sLndn.rng, sLndn.hHit, sLndn.lHit, tblSize)
-        statRow(tbl, 3, "NYAM", nyamCol, sNyam.rng, sNyam.hHit, sNyam.lHit, tblSize)
-        statRow(tbl, 4, "NYPM", nypmCol, sNypm.rng, sNypm.hHit, sNypm.lHit, tblSize)
-        statRow(tbl, 5, "PD",   pdCol,   pDay.rng,  pDay.hHit,  pDay.lHit,  tblSize)
-        statRow(tbl, 6, "PW",   pwCol,   pWk.rng,   pWk.hHit,   pWk.lHit,   tblSize)
-        statRow(tbl, 7, "PM",   pmCol,   pMon.rng,  pMon.hHit,  pMon.lHit,  tblSize)
-        if showWL
-            int    done = wins + losses
-            float  wr   = done > 0 ? 100.0 * wins / done : na
-            string wrTip = "win rate excluding breakevens: " + (na(wr) ? "–" : str.tostring(int(math.round(wr))) + "%") + "\npartials reached: " + str.tostring(tp1s)
-            table.cell(tbl, 0, 8, "LR", text_color = color.white, bgcolor = color.new(sigCol, 40), text_size = tblSize, tooltip = wrTip)
-            table.cell(tbl, 1, 8, str.tostring(wins) + "W", text_color = color.white, bgcolor = color.new(#26a69a, 60), text_size = tblSize, tooltip = wrTip)
-            table.cell(tbl, 2, 8, str.tostring(losses) + "L", text_color = color.white, bgcolor = color.new(#ef5350, 60), text_size = tblSize, tooltip = wrTip)
-            table.cell(tbl, 3, 8, str.tostring(bes) + "BE", text_color = color.white, bgcolor = color.new(color.gray, 60), text_size = tblSize, tooltip = wrTip)
+                 border_color = #9598a1, frame_width = 1, frame_color = #9598a1)
+        table.cell(tbl, 0, 0, biasDir > 0 ? "BUY" : biasDir < 0 ? "SELL" : "", text_color = tblTx,
+             bgcolor = biasDir > 0 ? color.new(#00c9a7, 55) : biasDir < 0 ? color.new(#ff5c8a, 55) : tblBg,
+             text_size = tblSz, tooltip = biasWhy)
+        table.cell(tbl, 1, 0, "Range", text_color = tblTx, bgcolor = tblBg, text_size = tblSz)
+        table.cell(tbl, 2, 0, "High",  text_color = tblTx, bgcolor = tblBg, text_size = tblSz,
+             tooltip = "how often that high gets taken afterwards")
+        table.cell(tbl, 3, 0, "Low",   text_color = tblTx, bgcolor = tblBg, text_size = tblSz,
+             tooltip = "how often that low gets taken afterwards")
 
-// ─────────────────────────────── ALERTS ───────────────────────────────────
-alertcondition(sellSig, "SELL LR", "Base HITS: sell-side liquidity raid")
-alertcondition(buySig,  "BUY LR",  "Base HITS: buy-side liquidity raid")
+        // rows 1-4: the sessions
+        for k = 0 to 3
+            float  cnt = array.get(sCnt, k)
+            float  ar  = cnt > 0 ? array.get(sSmR, k) / cnt : na
+            float  hp  = cnt > 0 ? array.get(sSmH, k) / cnt * 100 : na
+            float  lp  = cnt > 0 ? array.get(sSmL, k) / cnt * 100 : na
+            string tip = "samples: " + str.tostring(int(cnt))
+            table.cell(tbl, 0, k + 1, array.get(sNm, k), text_color = tblTx,
+                 bgcolor = color.new(array.get(sCl, k), 65), text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 1, k + 1, na(ar) ? "–" : str.tostring(ar, "#.##"),
+                 text_color = tblTx, bgcolor = tblBg, text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 2, k + 1, na(hp) ? "–" : str.tostring(int(math.round(hp))) + "%",
+                 text_color = tblTx, text_size = tblSz, tooltip = tip,
+                 bgcolor = color.from_gradient(nz(hp, 0), 0, 100, tblBg, tblHot))
+            table.cell(tbl, 3, k + 1, na(lp) ? "–" : str.tostring(int(math.round(lp))) + "%",
+                 text_color = tblTx, text_size = tblSz, tooltip = tip,
+                 bgcolor = color.from_gradient(nz(lp, 0), 0, 100, tblBg, tblHot))
+
+        // rows 5-7: prior day / week / month
+        for k = 0 to 2
+            float  cnt = array.get(hCnt, k)
+            float  ar  = cnt > 0 ? array.get(hSmR, k) / cnt : na
+            float  hp  = cnt > 0 ? array.get(hSmH, k) / cnt * 100 : na
+            float  lp  = cnt > 0 ? array.get(hSmL, k) / cnt * 100 : na
+            string tip = "samples: " + str.tostring(int(cnt))
+            table.cell(tbl, 0, k + 5, array.get(hNm, k), text_color = tblTx,
+                 bgcolor = color.new(array.get(hCl, k), 65), text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 1, k + 5, na(ar) ? "–" : str.tostring(ar, "#.##"),
+                 text_color = tblTx, bgcolor = tblBg, text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 2, k + 5, na(hp) ? "–" : str.tostring(int(math.round(hp))) + "%",
+                 text_color = tblTx, text_size = tblSz, tooltip = tip,
+                 bgcolor = color.from_gradient(nz(hp, 0), 0, 100, tblBg, tblHot))
+            table.cell(tbl, 3, k + 5, na(lp) ? "–" : str.tostring(int(math.round(lp))) + "%",
+                 text_color = tblTx, text_size = tblSz, tooltip = tip,
+                 bgcolor = color.from_gradient(nz(lp, 0), 0, 100, tblBg, tblHot))
+
+        if showWL
+            int    tot = wins + losses
+            string tip = "win rate excluding breakevens: " + (tot > 0 ? str.tostring(int(math.round(100.0 * wins / tot))) + "%" : "–") + "\npartials reached: " + str.tostring(parts)
+            table.cell(tbl, 0, 8, "LR", text_color = tblTx, bgcolor = color.new(sigBg, 40), text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 1, 8, str.tostring(wins) + "W", text_color = tblTx, bgcolor = color.new(#00c9a7, 65), text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 2, 8, str.tostring(losses) + "L", text_color = tblTx, bgcolor = color.new(#ff5c8a, 65), text_size = tblSz, tooltip = tip)
+            table.cell(tbl, 3, 8, str.tostring(bes) + "BE", text_color = tblTx, bgcolor = tblBg, text_size = tblSz, tooltip = tip)
+
+// ══════════════════════════════ ALERTS ═════════════════════════════════════
+alertcondition(sellSig, "SELL LR", "BASE HITS: sell-side liquidity raid")
+alertcondition(buySig,  "BUY LR",  "BASE HITS: buy-side liquidity raid")
