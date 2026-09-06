@@ -1,0 +1,407 @@
+//@version=6
+// Phantom Flow — SMC + Visible-Range Volume Profile
+// -----------------------------------------------------------------------------
+// TradingView port of the "Phantom Flow SMC" overlay from KCharts
+// (src/indicators/smc.ts), extended with the volume profile / value-area block
+// that the web engine does not draw.
+//
+// What it puts on the chart:
+//   • Swing structure        HH / HL / LH / LL fractal pivots
+//   • Market structure       BOS (continuation) and CHoCH (reversal) breaks
+//   • Order blocks           last opposite candle before a break, held open
+//                            until price mitigates the zone
+//   • Fair value gaps        3-candle imbalances, held open until filled
+//   • Liquidity              equal highs / lows marked with circles at both
+//                            pivots, i.e. the resting pools above/below price
+//   • Volume profile         lookback-range profile with POC and value area,
+//                            right-anchored like the built-in VRVP
+//   • Axis tags              POC / VAH / VAL / last swing levels published to
+//                            the price scale so they read as price labels
+// -----------------------------------------------------------------------------
+
+indicator("Phantom Flow — SMC + Volume Profile", "Phantom Flow",
+     overlay          = true,
+     max_boxes_count  = 500,
+     max_lines_count  = 500,
+     max_labels_count = 500,
+     max_bars_back    = 1000)
+
+// ─────────────────────────────────────────────────────────── inputs
+
+string G_STRUCT = "Market structure"
+string G_ZONES  = "Zones"
+string G_LIQ    = "Liquidity"
+string G_VP     = "Volume profile"
+string G_STYLE  = "Style"
+
+swingLen   = input.int(5, "Swing strength (bars each side)", minval = 1, maxval = 50, group = G_STRUCT,
+     tooltip = "Bars required either side of a pivot. Matches `swing` in the KCharts SMC engine.")
+showBreaks = input.bool(true,  "BOS / CHoCH", group = G_STRUCT)
+showSwings = input.bool(true,  "Swing labels (HH / HL / LH / LL)", group = G_STRUCT)
+maxSwings  = input.int(40, "Keep last N swing labels", minval = 4, maxval = 200, group = G_STRUCT)
+
+showOB     = input.bool(true, "Order blocks", group = G_ZONES)
+maxOB      = input.int(6,  "Keep last N order blocks", minval = 1, maxval = 30, group = G_ZONES)
+showFVG    = input.bool(true, "Fair value gaps", group = G_ZONES)
+maxFVG     = input.int(14, "Keep last N fair value gaps", minval = 1, maxval = 60, group = G_ZONES)
+extendBars = input.int(8,  "Extend live zones (bars)", minval = 0, maxval = 100, group = G_ZONES,
+     tooltip = "How far past the last bar an unmitigated zone is projected.")
+
+showEq     = input.bool(true, "Equal highs / lows", group = G_LIQ)
+eqTolPct   = input.float(0.1, "Equal tolerance (%)", minval = 0.0, maxval = 5.0, step = 0.01, group = G_LIQ,
+     tooltip = "Two pivots count as equal when they sit within this % of each other.")
+maxEq      = input.int(6, "Keep last N liquidity pools", minval = 1, maxval = 30, group = G_LIQ)
+
+showVP     = input.bool(true, "Show volume profile", group = G_VP)
+vpLen      = input.int(240, "Lookback (bars)", minval = 20, maxval = 500, group = G_VP)
+vpRows     = input.int(28,  "Rows", minval = 8, maxval = 100, group = G_VP)
+vaPct      = input.float(70, "Value area (%)", minval = 30, maxval = 95, step = 1, group = G_VP)
+vpWidthPct = input.float(26, "Width (% of lookback)", minval = 5, maxval = 100, step = 1, group = G_VP)
+vpOffset   = input.int(4, "Right offset (bars)", minval = 0, maxval = 50, group = G_VP)
+showVaLine = input.bool(true, "POC / value-area lines", group = G_VP)
+showTable  = input.bool(true, "Read-out box", group = G_VP)
+
+cBull   = input.color(color.new(#26a69a, 0),  "Bullish",        group = G_STYLE)
+cBear   = input.color(color.new(#ef5350, 0),  "Bearish",        group = G_STYLE)
+cMuted  = input.color(color.new(#8b93a3, 0),  "Neutral",        group = G_STYLE)
+cVaUp   = input.color(color.new(#7e57c2, 35), "Value area up",  group = G_STYLE)
+cVaDn   = input.color(color.new(#5c6bc0, 35), "Value area down",group = G_STYLE)
+cOut    = input.color(color.new(#7e57c2, 75), "Outside value area", group = G_STYLE)
+cPoc    = input.color(color.new(#ffa726, 0),  "POC",            group = G_STYLE)
+
+// ─────────────────────────────────────────────────────────── types
+
+type Zone
+    box   bx
+    float top
+    float bot
+    bool  bull
+    bool  live
+
+// ─────────────────────────────────────────────────────────── state
+
+var array<Zone>  obs      = array.new<Zone>()
+var array<Zone>  fvgs     = array.new<Zone>()
+var array<label> swingLbl = array.new<label>()
+var array<line>  eqLines  = array.new<line>()
+var array<label> eqDots   = array.new<label>()
+
+var float lastHP   = na       // last confirmed swing high price
+var int   lastHB   = na       // ... and its bar index
+var bool  crossedH = true
+var float lastLP   = na
+var int   lastLB   = na
+var bool  crossedL = true
+var int   trend    = 0        // 1 bull, -1 bear
+
+var float prevPH   = na       // previous pivot high, for HH / LH + equal highs
+var int   prevPHB  = na
+var float prevPL   = na
+var int   prevPLB  = na
+
+// profile output, published to the price scale further down
+var float pocPrice = na
+var float vahPrice = na
+var float valPrice = na
+
+// ─────────────────────────────────────────────────────────── helpers
+
+// Offset (in bars back from the current bar) of the most recent candle whose
+// direction is `wantDown`. Mirrors lastBullOB / lastBearOB in smc.ts.
+lastOpposite(maxBack, wantDown) =>
+    int res = na
+    int cap = math.min(maxBack, 300)
+    if cap >= 1
+        for j = 1 to cap
+            bool isDown = close[j] < open[j]
+            if isDown == wantDown
+                res := j
+                break
+    res
+
+// Push a zone, trimming the oldest past `keep`.
+addZone(arr, z, keep) =>
+    array.push(arr, z)
+    while array.size(arr) > keep
+        Zone old = array.shift(arr)
+        box.delete(old.bx)
+
+// Advance every live zone: mitigated → freeze its right edge; else project it.
+ageZones(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            Zone z = array.get(arr, i)
+            if z.live
+                bool hit = z.bull ? low <= z.top : high >= z.bot
+                if hit
+                    z.live := false
+                    box.set_right(z.bx, bar_index)
+                else
+                    box.set_right(z.bx, bar_index + extendBars)
+
+trimLabels(arr, keep) =>
+    while array.size(arr) > keep
+        label.delete(array.shift(arr))
+
+trimLines(arr, keep) =>
+    while array.size(arr) > keep
+        line.delete(array.shift(arr))
+
+// ─────────────────────────────────────────────────────────── 1. swings
+
+float ph = ta.pivothigh(high, swingLen, swingLen)
+float pl = ta.pivotlow(low, swingLen, swingLen)
+
+if not na(ph)
+    int   pb = bar_index - swingLen
+    float pp = ph
+    if showSwings
+        string txt = na(prevPH) or pp > prevPH ? "HH" : "LH"
+        array.push(swingLbl, label.new(pb, pp, txt, xloc = xloc.bar_index, yloc = yloc.price,
+             style = label.style_label_down, color = color.new(color.black, 100),
+             textcolor = cMuted, size = size.tiny))
+        trimLabels(swingLbl, maxSwings)
+    // equal highs → resting liquidity above price
+    if showEq and not na(prevPH)
+        float avg = (pp + prevPH) / 2.0
+        if math.abs(pp - prevPH) / avg <= eqTolPct / 100.0
+            array.push(eqLines, line.new(prevPHB, avg, pb, avg, xloc = xloc.bar_index,
+                 color = color.new(cMuted, 20), style = line.style_dashed, width = 1))
+            array.push(eqDots, label.new(prevPHB, prevPH, "", xloc = xloc.bar_index, yloc = yloc.price,
+                 style = label.style_circle, color = color.new(cBear, 40), size = size.tiny))
+            array.push(eqDots, label.new(pb, pp, "EQH", xloc = xloc.bar_index, yloc = yloc.price,
+                 style = label.style_circle, color = color.new(cBear, 40),
+                 textcolor = color.new(cBear, 0), size = size.tiny))
+            trimLines(eqLines, maxEq * 2)
+            trimLabels(eqDots, maxEq * 4)
+    prevPH  := pp
+    prevPHB := pb
+    lastHP  := pp
+    lastHB  := pb
+    crossedH := false
+
+if not na(pl)
+    int   pb = bar_index - swingLen
+    float pp = pl
+    if showSwings
+        string txt = na(prevPL) or pp < prevPL ? "LL" : "HL"
+        array.push(swingLbl, label.new(pb, pp, txt, xloc = xloc.bar_index, yloc = yloc.price,
+             style = label.style_label_up, color = color.new(color.black, 100),
+             textcolor = cMuted, size = size.tiny))
+        trimLabels(swingLbl, maxSwings)
+    if showEq and not na(prevPL)
+        float avg = (pp + prevPL) / 2.0
+        if math.abs(pp - prevPL) / avg <= eqTolPct / 100.0
+            array.push(eqLines, line.new(prevPLB, avg, pb, avg, xloc = xloc.bar_index,
+                 color = color.new(cMuted, 20), style = line.style_dashed, width = 1))
+            array.push(eqDots, label.new(prevPLB, prevPL, "", xloc = xloc.bar_index, yloc = yloc.price,
+                 style = label.style_circle, color = color.new(cBull, 40), size = size.tiny))
+            array.push(eqDots, label.new(pb, pp, "EQL", xloc = xloc.bar_index, yloc = yloc.price,
+                 style = label.style_circle, color = color.new(cBull, 40),
+                 textcolor = color.new(cBull, 0), size = size.tiny))
+            trimLines(eqLines, maxEq * 2)
+            trimLabels(eqDots, maxEq * 4)
+    prevPL  := pp
+    prevPLB := pb
+    lastLP  := pp
+    lastLB  := pb
+    crossedL := false
+
+// ─────────────────────────────────────────────────────────── 2. structure + 3. order blocks
+
+bool bullBreak = false
+bool bearBreak = false
+
+if not na(lastHP) and not crossedH and close > lastHP
+    bool isChoch = trend == -1
+    if showBreaks
+        line.new(lastHB, lastHP, bar_index, lastHP, xloc = xloc.bar_index, color = cBull, width = 1,
+             style = isChoch ? line.style_dashed : line.style_solid)
+        label.new(bar_index, lastHP, isChoch ? "CHoCH" : "BOS", xloc = xloc.bar_index, yloc = yloc.price,
+             style = label.style_label_down, color = color.new(color.black, 100),
+             textcolor = cBull, size = size.tiny)
+    if showOB
+        int off = lastOpposite(bar_index - lastHB + 1, true)
+        if not na(off)
+            float t = high[off]
+            float b = low[off]
+            box bx = box.new(bar_index - off, t, bar_index + extendBars, b, xloc = xloc.bar_index,
+                 border_color = color.new(cBull, 45), bgcolor = color.new(cBull, 86),
+                 text = "OB", text_color = color.new(cBull, 10), text_size = size.tiny,
+                 text_halign = text.align_left, text_valign = text.align_center)
+            addZone(obs, Zone.new(bx, t, b, true, true), maxOB)
+    crossedH  := true
+    trend     := 1
+    bullBreak := true
+
+if not na(lastLP) and not crossedL and close < lastLP
+    bool isChoch = trend == 1
+    if showBreaks
+        line.new(lastLB, lastLP, bar_index, lastLP, xloc = xloc.bar_index, color = cBear, width = 1,
+             style = isChoch ? line.style_dashed : line.style_solid)
+        label.new(bar_index, lastLP, isChoch ? "CHoCH" : "BOS", xloc = xloc.bar_index, yloc = yloc.price,
+             style = label.style_label_up, color = color.new(color.black, 100),
+             textcolor = cBear, size = size.tiny)
+    if showOB
+        int off = lastOpposite(bar_index - lastLB + 1, false)
+        if not na(off)
+            float t = high[off]
+            float b = low[off]
+            box bx = box.new(bar_index - off, t, bar_index + extendBars, b, xloc = xloc.bar_index,
+                 border_color = color.new(cBear, 45), bgcolor = color.new(cBear, 86),
+                 text = "OB", text_color = color.new(cBear, 10), text_size = size.tiny,
+                 text_halign = text.align_left, text_valign = text.align_center)
+            addZone(obs, Zone.new(bx, t, b, false, true), maxOB)
+    crossedL  := true
+    trend     := -1
+    bearBreak := true
+
+// ─────────────────────────────────────────────────────────── 4. fair value gaps
+
+if showFVG and bar_index > 2
+    if low > high[2]                                   // bullish imbalance
+        box bx = box.new(bar_index - 2, low, bar_index + extendBars, high[2], xloc = xloc.bar_index,
+             border_color = color.new(cBull, 80), bgcolor = color.new(cBull, 93))
+        addZone(fvgs, Zone.new(bx, low, high[2], true, true), maxFVG)
+    else if high < low[2]                              // bearish imbalance
+        box bx = box.new(bar_index - 2, low[2], bar_index + extendBars, high, xloc = xloc.bar_index,
+             border_color = color.new(cBear, 80), bgcolor = color.new(cBear, 93))
+        addZone(fvgs, Zone.new(bx, low[2], high, false, true), maxFVG)
+
+ageZones(obs)
+ageZones(fvgs)
+
+// ─────────────────────────────────────────────────────────── 5. volume profile
+
+var array<box> vpBoxes = array.new<box>()
+var line pocLine = na
+var line vahLine = na
+var line valLine = na
+var table info   = na
+
+if showVP and barstate.islast
+    // wipe the previous render — the profile is recomputed on every tick
+    while array.size(vpBoxes) > 0
+        box.delete(array.shift(vpBoxes))
+    line.delete(pocLine)
+    line.delete(vahLine)
+    line.delete(valLine)
+
+    int n = math.max(2, math.min(vpLen, bar_index))
+
+    float hi = high
+    float lo = low
+    for j = 0 to n - 1
+        hi := math.max(hi, high[j])
+        lo := math.min(lo, low[j])
+
+    float step = (hi - lo) / vpRows
+    if step > 0
+        array<float> upVol = array.new<float>(vpRows, 0.0)
+        array<float> dnVol = array.new<float>(vpRows, 0.0)
+
+        // spread each bar's volume across the rows its range covers
+        for j = 0 to n - 1
+            int b1 = math.max(0, math.min(vpRows - 1, int((low[j]  - lo) / step)))
+            int b2 = math.max(0, math.min(vpRows - 1, int((high[j] - lo) / step)))
+            float share = nz(volume[j]) / (b2 - b1 + 1)
+            bool  isUp  = close[j] >= open[j]
+            for b = b1 to b2
+                if isUp
+                    array.set(upVol, b, array.get(upVol, b) + share)
+                else
+                    array.set(dnVol, b, array.get(dnVol, b) + share)
+
+        // point of control + running total
+        float maxVol = 0.0
+        float total  = 0.0
+        int   poc    = 0
+        for b = 0 to vpRows - 1
+            float v = array.get(upVol, b) + array.get(dnVol, b)
+            total += v
+            if v > maxVol
+                maxVol := v
+                poc    := b
+
+        // value area: grow out from the POC, always taking the fatter neighbour
+        int   vaLo   = poc
+        int   vaHi   = poc
+        float acc    = maxVol
+        float target = total * vaPct / 100.0
+        while acc < target and (vaLo > 0 or vaHi < vpRows - 1)
+            float below = vaLo > 0 ? array.get(upVol, vaLo - 1) + array.get(dnVol, vaLo - 1) : -1.0
+            float above = vaHi < vpRows - 1 ? array.get(upVol, vaHi + 1) + array.get(dnVol, vaHi + 1) : -1.0
+            if above >= below
+                vaHi += 1
+                acc  += above
+            else
+                vaLo -= 1
+                acc  += below
+
+        int right = bar_index + vpOffset
+        int maxW  = math.max(2, int(n * vpWidthPct / 100.0))
+
+        if maxVol > 0
+            for b = 0 to vpRows - 1
+                float vUp = array.get(upVol, b)
+                float vDn = array.get(dnVol, b)
+                float yb  = lo + step * b
+                float yt  = yb + step * 0.86          // small gap between rows
+                bool  inVA = b >= vaLo and b <= vaHi
+                int wUp = int(math.round(maxW * vUp / maxVol))
+                int wDn = int(math.round(maxW * vDn / maxVol))
+                if wDn > 0
+                    array.push(vpBoxes, box.new(right - wDn, yt, right, yb, xloc = xloc.bar_index,
+                         border_color = color.new(color.black, 100),
+                         bgcolor = inVA ? cVaDn : cOut))
+                if wUp > 0
+                    array.push(vpBoxes, box.new(right - wDn - wUp, yt, right - wDn, yb, xloc = xloc.bar_index,
+                         border_color = color.new(color.black, 100),
+                         bgcolor = inVA ? cVaUp : cOut))
+
+            pocPrice := lo + step * (poc + 0.5)
+            vahPrice := lo + step * (vaHi + 1)
+            valPrice := lo + step * vaLo
+
+            if showVaLine
+                pocLine := line.new(bar_index - n + 1, pocPrice, right, pocPrice, xloc = xloc.bar_index,
+                     color = cPoc, width = 1)
+                vahLine := line.new(bar_index - n + 1, vahPrice, right, vahPrice, xloc = xloc.bar_index,
+                     color = color.new(cMuted, 40), style = line.style_dotted)
+                valLine := line.new(bar_index - n + 1, valPrice, right, valPrice, xloc = xloc.bar_index,
+                     color = color.new(cMuted, 40), style = line.style_dotted)
+
+// ─────────────────────────────────────────────────────────── 6. axis tags
+
+// Published as plots so TradingView prints them as labels in the price scale,
+// the way the drawn levels do in the reference chart.
+plot(showVP ? pocPrice : na, "POC", color = cPoc,   display = display.price_scale)
+plot(showVP ? vahPrice : na, "VAH", color = cMuted, display = display.price_scale)
+plot(showVP ? valPrice : na, "VAL", color = cMuted, display = display.price_scale)
+plot(lastHP, "Swing high", color = cBear, display = display.price_scale)
+plot(lastLP, "Swing low",  color = cBull, display = display.price_scale)
+
+// ─────────────────────────────────────────────────────────── 7. read-out
+
+if showTable and barstate.islast
+    table.delete(info)
+    info := table.new(position.top_left, 2, 4, bgcolor = color.new(color.black, 78),
+         border_color = color.new(color.gray, 70), border_width = 1, frame_width = 1)
+    color tCol = trend == 1 ? cBull : trend == -1 ? cBear : cMuted
+    string tTxt = trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "Neutral"
+    table.cell(info, 0, 0, "Trend", text_color = cMuted, text_size = size.tiny)
+    table.cell(info, 1, 0, tTxt,    text_color = tCol,   text_size = size.tiny)
+    table.cell(info, 0, 1, "POC",   text_color = cMuted, text_size = size.tiny)
+    table.cell(info, 1, 1, na(pocPrice) ? "—" : str.tostring(pocPrice, format.mintick),
+         text_color = cPoc, text_size = size.tiny)
+    table.cell(info, 0, 2, "VAH",   text_color = cMuted, text_size = size.tiny)
+    table.cell(info, 1, 2, na(vahPrice) ? "—" : str.tostring(vahPrice, format.mintick),
+         text_color = cMuted, text_size = size.tiny)
+    table.cell(info, 0, 3, "VAL",   text_color = cMuted, text_size = size.tiny)
+    table.cell(info, 1, 3, na(valPrice) ? "—" : str.tostring(valPrice, format.mintick),
+         text_color = cMuted, text_size = size.tiny)
+
+// ─────────────────────────────────────────────────────────── 8. alerts
+
+alertcondition(bullBreak, "Bullish structure break", "Phantom Flow: bullish BOS/CHoCH on {{ticker}}")
+alertcondition(bearBreak, "Bearish structure break", "Phantom Flow: bearish BOS/CHoCH on {{ticker}}")
