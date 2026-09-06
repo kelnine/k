@@ -10,7 +10,7 @@
 // Original licenses above continue to apply to their respective sections.
 
 //@version=6
-indicator("Combined SMC Suite [OB + Channels + PSAR + KCharts]", "SMC Suite"
+indicator("Combined SMC Suite [OB + Channels + PSAR + KCharts + DepthFlow]", "SMC Suite"
   , overlay           = true
   , max_boxes_count   = 500
   , max_labels_count  = 500
@@ -28,11 +28,15 @@ G_PS   = "200 EMA Filtered Parabolic SAR"
 G_KEMA = "KCharts — Pullback EMA"
 G_KVW  = "KCharts — VWAP"
 G_KLVL = "KCharts — 1H / 4H Levels"
+G_DFVP = "DepthFlow — Volume Blocks"
+G_DFDM = "DepthFlow — Dominance"
+G_DFSG = "DepthFlow — Signals"
 
 obEnable = input.bool(true, "Order Block Detector"          , group = G_MOD)
 bcEnable = input.bool(true, "Smart Money Breakout Channels"  , group = G_MOD)
 psEnable = input.bool(true, "200 EMA Filtered Parabolic SAR" , group = G_MOD)
 kcEnable = input.bool(true, "KCharts Setup (EMA + VWAP + Levels)", group = G_MOD)
+dfEnable = input.bool(true, "DepthFlow (Order Flow Liquidity)"  , group = G_MOD)
 
 //=============================================================================}
 // 1. ORDER BLOCK DETECTOR [LuxAlgo]
@@ -766,6 +770,209 @@ kcCurrSty = kcLineStyle(kcCurrStyle)
 kcVwapCrossUp = ta.crossover(close, kcVw)
 kcVwapCrossDn = ta.crossunder(close, kcVw)
 
+
+//=============================================================================}
+// 5. DEPTHFLOW — ORDER-FLOW LIQUIDITY & VOLUME BLOCKS
+//=============================================================================={
+// Everything is derived from raw OHLCV — no external data.
+//   Volume blocks  — volume-by-price over a trailing window; high-volume nodes are
+//                    drawn as liquidity bands (red supply above, green demand below)
+//                    labelled with traded volume and the buy/sell split.
+//   Dominance      — buy vs. sell volume (close-location method), top-right.
+//   Sweeps         — a wick pierces a recent swing and the candle closes back inside.
+//   Displacement   — impulsive candles whose body dwarfs recent ATR.
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+dfLookback  = input.int(300, "Profile lookback (bars)", minval = 20, group = G_DFVP)
+dfBins      = input.int(120, "Resolution (bins)", minval = 10, maxval = 500, group = G_DFVP)
+dfMaxBlocks = input.int(8, "Max liquidity blocks", minval = 1, maxval = 30, group = G_DFVP)
+dfNodeRatio = input.float(0.55, "Node threshold (× peak bin)", minval = 0.1, maxval = 1.0, step = 0.05, group = G_DFVP)
+dfShowSplit = input.bool(true, "Show B/S split on blocks", group = G_DFVP)
+
+dfShowDom   = input.bool(true, "Show dominance read-out", group = G_DFDM)
+dfDomWindow = input.int(60, "Dominance window (bars)", minval = 5, group = G_DFDM)
+
+dfShowSweeps = input.bool(true, "Sweeps (liquidity grabs)", group = G_DFSG)
+dfSwingLen   = input.int(5, "Swing strength", minval = 1, group = G_DFSG)
+dfShowDisp   = input.bool(true, "Displacement", group = G_DFSG)
+dfAtrLen     = input.int(14, "ATR length", minval = 1, group = G_DFSG)
+dfDispMult   = input.float(1.6, "Displacement (× ATR body)", minval = 0.5, step = 0.1, group = G_DFSG)
+
+dfSupply = input.color(color.rgb(239, 83, 80) , "Supply", inline = 'dfc', group = G_DFVP)
+dfDemand = input.color(color.rgb(38, 166, 154), "Demand", inline = 'dfc', group = G_DFVP)
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+dfFmtVol(float v) =>
+    v >= 1000000 ? str.tostring(v / 1000000, "#.##") + "M" : v >= 1000 ? str.tostring(v / 1000, "#.###") + "K" : str.tostring(v, "#")
+
+//Close-location buy fraction of a candle's volume
+dfBuyFrac(float h, float l, float c, float o) =>
+    float rng = h - l
+    rng > 0 ? (c - l) / rng : (c > o ? 1.0 : c < o ? 0.0 : 0.5)
+
+//-----------------------------------------------------------------------------
+//Volume-by-price liquidity blocks (rebuilt on the last bar)
+//-----------------------------------------------------------------------------
+var box[]   dfBoxes  = array.new<box>()
+var label[] dfLabels = array.new<label>()
+
+if dfEnable and barstate.islast
+    //Clear the previous render — these are rebuilt each tick rather than accumulated
+    for b in dfBoxes
+        box.delete(b)
+    array.clear(dfBoxes)
+    for lb in dfLabels
+        label.delete(lb)
+    array.clear(dfLabels)
+
+    int n = math.min(dfLookback, bar_index + 1)
+
+    float pHi = high
+    float pLo = low
+    for i = 0 to n - 1
+        pHi := math.max(pHi, high[i])
+        pLo := math.min(pLo, low[i])
+    float span = pHi - pLo
+
+    if span > 0
+        float binSize = span / dfBins
+        float[] volBin  = array.new_float(dfBins, 0.0)
+        float[] buyBin  = array.new_float(dfBins, 0.0)
+        float[] sellBin = array.new_float(dfBins, 0.0)
+
+        //Bin the window's volume, split into buy / sell per candle
+        for i = 0 to n - 1
+            float bf    = dfBuyFrac(high[i], low[i], close[i], open[i])
+            float vBuy  = volume[i] * bf
+            float vSell = volume[i] * (1 - bf)
+            int b0 = int(math.max(0, math.floor((low[i] - pLo) / binSize)))
+            int b1 = int(math.min(dfBins - 1, math.floor((high[i] - pLo) / binSize)))
+            int k  = b1 - b0 + 1
+            for b = b0 to b1
+                array.set(volBin , b, array.get(volBin , b) + volume[i] / k)
+                array.set(buyBin , b, array.get(buyBin , b) + vBuy / k)
+                array.set(sellBin, b, array.get(sellBin, b) + vSell / k)
+
+        float peak = array.max(volBin)
+        float thr  = peak * dfNodeRatio
+
+        //Merge contiguous high-volume bins into blocks
+        float[] bTop  = array.new_float()
+        float[] bBot  = array.new_float()
+        float[] bVol  = array.new_float()
+        float[] bBuy  = array.new_float()
+        float[] bSell = array.new_float()
+        bool  inRun = false
+        float rTop  = 0.0
+        float rBot  = 0.0
+        float rVol  = 0.0
+        float rBuy  = 0.0
+        float rSell = 0.0
+
+        for b = 0 to dfBins - 1
+            float vb = array.get(volBin, b)
+            if vb >= thr
+                float top = pLo + (b + 1) * binSize
+                float bot = pLo + b * binSize
+                if not inRun
+                    inRun := true
+                    rTop  := top
+                    rBot  := bot
+                    rVol  := vb
+                    rBuy  := array.get(buyBin, b)
+                    rSell := array.get(sellBin, b)
+                else
+                    rTop  := top
+                    rVol  += vb
+                    rBuy  += array.get(buyBin, b)
+                    rSell += array.get(sellBin, b)
+            else if inRun
+                array.push(bTop, rTop)
+                array.push(bBot, rBot)
+                array.push(bVol, rVol)
+                array.push(bBuy, rBuy)
+                array.push(bSell, rSell)
+                inRun := false
+
+        if inRun
+            array.push(bTop, rTop)
+            array.push(bBot, rBot)
+            array.push(bVol, rVol)
+            array.push(bBuy, rBuy)
+            array.push(bSell, rSell)
+
+        //Draw the heaviest blocks (left edge = window start, extend right)
+        int leftBar = bar_index - (n - 1)
+        int drawn = 0
+        while drawn < dfMaxBlocks and array.size(bVol) > 0
+            int   mi     = array.indexof(bVol, array.max(bVol))
+            float top    = array.get(bTop, mi)
+            float bot    = array.get(bBot, mi)
+            float vol    = array.get(bVol, mi)
+            float bvy    = array.get(bBuy, mi)
+            float svy    = array.get(bSell, mi)
+            float center = (top + bot) / 2
+            bool  above  = center >= close
+            color col    = above ? dfSupply : dfDemand
+            int   dom    = bvy + svy > 0 ? int(math.round(bvy / (bvy + svy) * 100)) : 50
+
+            box bx = box.new(leftBar, top, bar_index, bot, border_color = color.new(col, 45), border_width = 1, bgcolor = color.new(col, 84), extend = extend.right)
+            array.push(dfBoxes, bx)
+
+            string txt = dfFmtVol(vol) + (dfShowSplit ? "   B" + str.tostring(dom) + "/S" + str.tostring(100 - dom) : "")
+            label lbX = label.new(bar_index, center, txt, xloc = xloc.bar_index, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = size.small)
+            array.push(dfLabels, lbX)
+
+            array.remove(bTop , mi)
+            array.remove(bBot , mi)
+            array.remove(bVol , mi)
+            array.remove(bBuy , mi)
+            array.remove(bSell, mi)
+            drawn += 1
+
+//-----------------------------------------------------------------------------
+//Spot buy / sell dominance read-out
+//-----------------------------------------------------------------------------
+var table dfDomTable = table.new(position.bottom_right, 1, 1, border_width = 1)
+if dfEnable and dfShowDom and barstate.islast
+    float db = 0.0
+    float ds = 0.0
+    int   m  = math.min(dfDomWindow, bar_index + 1)
+    for i = 0 to m - 1
+        float bf = dfBuyFrac(high[i], low[i], close[i], open[i])
+        db += volume[i] * bf
+        ds += volume[i] * (1 - bf)
+    float tot = db + ds
+    int   bp  = tot > 0 ? int(math.round(db / tot * 100)) : 50
+    color dc  = bp >= 50 ? dfDemand : dfSupply
+    table.cell(dfDomTable, 0, 0, "B " + str.tostring(bp) + "%   S " + str.tostring(100 - bp) + "%", text_color = dc, text_size = size.normal, bgcolor = color.new(color.black, 70))
+
+//-----------------------------------------------------------------------------
+//Sweeps and displacement
+//-----------------------------------------------------------------------------
+dfPh = ta.pivothigh(dfSwingLen, dfSwingLen)
+dfPl = ta.pivotlow(dfSwingLen, dfSwingLen)
+
+var float dfLastPH = na
+var float dfLastPL = na
+if not na(dfPh)
+    dfLastPH := dfPh
+if not na(dfPl)
+    dfLastPL := dfPl
+
+//Buy-side sweep: poke above a swing high, close back below it
+dfSweepHigh = dfShowSweeps and not na(dfLastPH) and high > dfLastPH and close < dfLastPH and not (high[1] > dfLastPH and close[1] < dfLastPH)
+//Sell-side sweep: dip under a swing low, close back above it
+dfSweepLow  = dfShowSweeps and not na(dfLastPL) and low < dfLastPL and close > dfLastPL and not (low[1] < dfLastPL and close[1] > dfLastPL)
+
+dfAtrv = ta.atr(dfAtrLen)
+dfBody = math.abs(close - open)
+dfDispUp = dfShowDisp and dfBody > dfAtrv * dfDispMult and close >= open
+dfDispDn = dfShowDisp and dfBody > dfAtrv * dfDispMult and close <  open
+
 //=============================================================================}
 // VISUALS
 //=============================================================================={
@@ -867,6 +1074,13 @@ kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowCurr, kcNew2, kcCurrL2, kcT
 kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowMid, kcNew1, math.avg(kcPrevH1, kcPrevL1), color.new(kcTf1Col, 40), kcN1 + " EQ", line.style_dashed)
 kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowMid, kcNew2, math.avg(kcPrevH2, kcPrevL2), color.new(kcTf2Col, 40), kcN2 + " EQ", line.style_dashed)
 
+
+//--- DepthFlow
+plotshape(dfEnable and dfSweepHigh, "Sweep High", shape.triangledown, location.abovebar, color = dfSupply, text = "sweep", textcolor = dfSupply, size = size.tiny)
+plotshape(dfEnable and dfSweepLow , "Sweep Low" , shape.triangleup  , location.belowbar, color = dfDemand, text = "sweep", textcolor = dfDemand, size = size.tiny)
+plotshape(dfEnable and dfDispUp, "Displacement Up", shape.diamond, location.belowbar, color = dfDemand, text = "DISP", textcolor = dfDemand, size = size.tiny)
+plotshape(dfEnable and dfDispDn, "Displacement Dn", shape.diamond, location.abovebar, color = dfSupply, text = "DISP", textcolor = dfSupply, size = size.tiny)
+
 //=============================================================================}
 // ALERTS
 //=============================================================================={
@@ -900,6 +1114,12 @@ alertcondition(ta.crossover(close, kcPrevH2) , "Close above previous B high", "C
 alertcondition(ta.crossunder(close, kcPrevL2), "Close below previous B low" , "Close crossed below the previous timeframe-B low")
 alertcondition(kcVwapShow and kcVwapCrossUp, "Close above VWAP", "Close crossed above VWAP")
 alertcondition(kcVwapShow and kcVwapCrossDn, "Close below VWAP", "Close crossed below VWAP")
+
+//DepthFlow
+alertcondition(dfSweepHigh, "Sweep High"     , "Liquidity swept above a swing high, closed back below")
+alertcondition(dfSweepLow , "Sweep Low"      , "Liquidity swept below a swing low, closed back above")
+alertcondition(dfDispUp   , "Displacement Up", "Impulsive bullish candle relative to ATR")
+alertcondition(dfDispDn   , "Displacement Dn", "Impulsive bearish candle relative to ATR")
 
 //Confluence
 alertcondition(psLong  and bcBullishBreakout, "Confluence Long" , "PSAR long + bullish channel breakout")

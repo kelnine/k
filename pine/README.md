@@ -2,7 +2,7 @@
 
 ## `combined-smc-suite.pine`
 
-Four overlays merged into a single TradingView indicator, each behind its own
+Five overlays merged into a single TradingView indicator, each behind its own
 on/off switch in a **Modules** group at the top of the settings:
 
 | Toggle | Module | Source |
@@ -11,16 +11,20 @@ on/off switch in a **Modules** group at the top of the settings:
 | Smart Money Breakout Channels | Volatility-compression channels, breakout signals, in-channel volume/delta bars, side gauge | AlgoAlpha (MPL 2.0) |
 | 200 EMA Filtered Parabolic SAR | PSAR flips filtered by a 200 EMA trend regime and an ADX threshold, with Long/Short entries and EL/ES exits | reconstructed |
 | KCharts Setup | Pullback EMA band with tap markers, anchored VWAP with ±σ bands, and previous/current 1H & 4H highs, lows and midpoints | KCharts |
+| DepthFlow | Volume-by-price liquidity blocks with buy/sell split, a buy/sell dominance read-out, liquidity sweeps and ATR displacement | DepthFlow |
 
 Every original input is preserved with its original default, namespaced per
-module (`ob*`, `bc*`, `ps*`, `kc*`) so nothing collides. Alerts from all three are kept,
+module (`ob*`, `bc*`, `ps*`, `kc*`, `df*`) so nothing collides. Alerts from all three are kept,
 plus two confluence alerts (PSAR entry in the same direction as a channel
 breakout).
 
 ### Notes on the merge
 
-- The scripts were `//@version=5` (LuxAlgo) and `//@version=6` (the rest); the
-  combined file is v6.
+- LuxAlgo and DepthFlow were `//@version=5`, the rest `//@version=6`; the combined
+  file is v6.
+- DepthFlow's dominance table moved from `top_right` to `bottom_right`. The channel
+  module's "volume not available" warning table already sits in `top_right`, and two
+  tables cannot share a cell.
 - KCharts' **Periods kept** is capped at 20 rather than 50. There are ten level
   series, so the original maximum would draw 500 lines by itself — the entire
   budget shared with the order blocks and channels.
@@ -61,6 +65,24 @@ breakout).
   so an unused module costs nothing against the 500-box / 500-line limits.
   `ta.requestUpAndDownVolume()` is the one exception — `request.*` calls must stay
   unconditional, so it is evaluated even with the channel module off.
+
+### Drawing budget
+
+TradingView caps a script at 500 boxes, 500 lines and 500 labels — one pool for the
+whole indicator, not per module. That cap is what broke the order blocks when only
+two modules existed, so here is the worst case with everything on and every limit
+maxed:
+
+| | boxes | lines | labels |
+| --- | --- | --- | --- |
+| Order blocks | 6 | 6 | – |
+| Breakout channels | ~155 | ~72 | 1 |
+| KCharts levels | – | ≤200 | 10 |
+| DepthFlow blocks | ≤30 | – | ≤30 |
+| **Total** | **~191** | **~278** | **~41** |
+
+`plotshape()` markers do not count against the label budget. DepthFlow deletes and
+rebuilds its blocks on every render rather than accumulating them.
 
 ### About the Parabolic SAR module
 
