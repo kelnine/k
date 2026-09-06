@@ -54,3 +54,7 @@ break*, both firing on BOS **and** CHoCH.
   same unless you feed it lower-timeframe data.
 - On symbols with no volume feed the profile bars collapse to nothing; the
   structure layers still work.
+- A zone is never mitigated by the bar that created it — the impulse candle
+  routinely overlaps the block it just left behind. Order blocks close on first
+  touch of the zone; gaps close only when fully filled. Both match
+  `src/indicators/smc.ts`, which starts its mitigation scan at `breakBar + 1`.
