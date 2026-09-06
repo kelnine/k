@@ -38,6 +38,22 @@ psEnable = input.bool(true, "200 EMA Filtered Parabolic SAR" , group = G_MOD)
 kcEnable = input.bool(true, "KCharts Setup (EMA + VWAP + Levels)", group = G_MOD)
 dfEnable = input.bool(true, "DepthFlow (Order Flow Liquidity)"  , group = G_MOD)
 
+alertsOn = input.bool(true, "Fire alerts", group = G_MOD
+  , tooltip = "Signals fire through alert() rather than alertcondition(). Create ONE alert on this indicator with condition 'Any alert() function call' — the message names which signal fired. alertcondition() costs a plot output each, and 25 of them blew TradingView's 64-plot ceiling.")
+
+sigMax = input.int(150, "Max signal markers kept", minval = 20, maxval = 400, group = G_MOD
+  , tooltip = "Signal markers are drawn as labels, not plotshape(): a plotshape costs four plot outputs and the script was over the 64 limit. Labels cost none, but they accumulate, so the oldest are deleted past this count.")
+
+//Signal markers as labels. Positioned with yloc so they sit exactly where the
+//equivalent plotshape() would, and ring-buffered so they cannot exhaust the label cap.
+var label[] sigLabels = array.new<label>()
+
+sigMark(bool cond, string txt, color bg, color fg, string sty, string yl) =>
+    if cond
+        array.push(sigLabels, label.new(bar_index, close, txt, yloc = yl, style = sty, color = bg, textcolor = fg, size = size.tiny))
+        while array.size(sigLabels) > sigMax
+            label.delete(array.shift(sigLabels))
+
 //=============================================================================}
 // 1. ORDER BLOCK DETECTOR [LuxAlgo]
 //=============================================================================={
@@ -976,14 +992,8 @@ dfDispDn = dfShowDisp and dfBody > dfAtrv * dfDispMult and close <  open
 //=============================================================================}
 // VISUALS
 //=============================================================================={
-//--- Order blocks (hidden reference plots, kept for alerts / external scripts)
-plot(obEnable ? obBullOb : na, 'Bull OB', obBullCss, 2, plot.style_linebr
-  , offset  = -obLength
-  , display = display.none)
-
-plot(obEnable ? obBearOb : na, 'Bear OB', obBearCss, 2, plot.style_linebr
-  , offset  = -obLength
-  , display = display.none)
+//The two hidden display.none order-block plots were removed: they rendered nothing
+//and only fed alertcondition(), which is gone, but still cost a plot output each.
 
 //--- Breakout channels
 plotshape(bcEnable and bcUpbreak   != 0 ? bcUpbreak   : na, "Bullish Breakout Signal", shape.labelup  , location.absolute, bcGreen, text = "▲", textcolor = chart.fg_color)
@@ -1052,8 +1062,8 @@ kcFastPlot = plot(kcEnable and kcEmaShow ? kcEmaFast : na, "KC EMA fast", color 
 kcSlowPlot = plot(kcEnable and kcEmaShow ? kcEmaSlow : na, "KC EMA slow", color = color.new(kcBandCol, 20), linewidth = 2)
 fill(kcFastPlot, kcSlowPlot, color = kcEnable and kcEmaShow and kcEmaFill ? color.new(kcBandCol, 88) : na, title = "KC EMA band")
 
-plotshape(kcEnable and kcPbSignal and kcPbUp, "Pullback tap up"  , style = shape.triangleup  , location = location.belowbar, color = kcEmaUpCol, size = size.tiny)
-plotshape(kcEnable and kcPbSignal and kcPbDn, "Pullback tap down", style = shape.triangledown, location = location.abovebar, color = kcEmaDnCol, size = size.tiny)
+sigMark(kcEnable and kcPbSignal and kcPbUp, "", kcEmaUpCol, kcEmaUpCol, label.style_triangleup  , yloc.belowbar)
+sigMark(kcEnable and kcPbSignal and kcPbDn, "", kcEmaDnCol, kcEmaDnCol, label.style_triangledown, yloc.abovebar)
 
 plot(kcEnable and kcVwapShow ? kcVw : na, "VWAP", color = kcVwapCol, linewidth = 2)
 plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwUp1 : na, "VWAP +σ1", color = color.new(kcVwapCol, 55))
@@ -1076,52 +1086,88 @@ kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowMid, kcNew2, math.avg(kcPre
 
 
 //--- DepthFlow
-plotshape(dfEnable and dfSweepHigh, "Sweep High", shape.triangledown, location.abovebar, color = dfSupply, text = "sweep", textcolor = dfSupply, size = size.tiny)
-plotshape(dfEnable and dfSweepLow , "Sweep Low" , shape.triangleup  , location.belowbar, color = dfDemand, text = "sweep", textcolor = dfDemand, size = size.tiny)
-plotshape(dfEnable and dfDispUp, "Displacement Up", shape.diamond, location.belowbar, color = dfDemand, text = "DISP", textcolor = dfDemand, size = size.tiny)
-plotshape(dfEnable and dfDispDn, "Displacement Dn", shape.diamond, location.abovebar, color = dfSupply, text = "DISP", textcolor = dfSupply, size = size.tiny)
+sigMark(dfEnable and dfSweepHigh, "sweep", color.new(dfSupply, 100), dfSupply, label.style_label_down, yloc.abovebar)
+sigMark(dfEnable and dfSweepLow , "sweep", color.new(dfDemand, 100), dfDemand, label.style_label_up  , yloc.belowbar)
+sigMark(dfEnable and dfDispUp, "DISP", color.new(dfDemand, 100), dfDemand, label.style_label_up  , yloc.belowbar)
+sigMark(dfEnable and dfDispDn, "DISP", color.new(dfSupply, 100), dfSupply, label.style_label_down, yloc.abovebar)
 
 //=============================================================================}
 // ALERTS
 //=============================================================================={
-//Order blocks — v6 no longer casts float to bool implicitly, so the OB price
-//series are tested for na explicitly
+//alertcondition() costs one plot output each; 25 of them put the script over
+//TradingView's 64-plot ceiling. Every signal fires through alert() instead, which
+//costs nothing. Create ONE alert on this indicator with the condition
+//"Any alert() function call" — each message names the signal that fired.
 obBullFormed = not na(obBullOb)
 obBearFormed = not na(obBearOb)
 
-alertcondition(obBullFormed    , 'Bullish OB Formed'   , 'Bullish order block detected')
-alertcondition(obBearFormed    , 'Bearish OB Formed'   , 'Bearish order block detected')
-alertcondition(obMitigatedBull , 'Bullish OB Mitigated', 'Bullish order block mitigated')
-alertcondition(obMitigatedBear , 'Bearish OB Mitigated', 'Bearish order block mitigated')
+//Hoisted: behind a short-circuiting `and` these would not run on every bar
+kcA1Up = ta.crossover(close, kcPrevH1)
+kcA1Dn = ta.crossunder(close, kcPrevL1)
+kcA2Up = ta.crossover(close, kcPrevH2)
+kcA2Dn = ta.crossunder(close, kcPrevL2)
 
-//Breakout channels
-alertcondition(bcNewChannelFormed, "New Channel Formation", "A new breakout channel has been formed")
-alertcondition(bcBullishBreakout , "Bullish Breakout"     , "Price has broken out above the channel (bullish signal)")
-alertcondition(bcBearishBreakout , "Bearish Breakout"     , "Price has broken out below the channel (bearish signal)")
+if alertsOn
+    //Order blocks
+    if obBullFormed
+        alert("Bullish order block detected", alert.freq_once_per_bar_close)
+    if obBearFormed
+        alert("Bearish order block detected", alert.freq_once_per_bar_close)
+    if obMitigatedBull
+        alert("Bullish order block mitigated", alert.freq_once_per_bar_close)
+    if obMitigatedBear
+        alert("Bearish order block mitigated", alert.freq_once_per_bar_close)
 
-//Parabolic SAR
-alertcondition(psLong      , "PSAR Long"      , "200 EMA filtered Parabolic SAR long signal")
-alertcondition(psShort     , "PSAR Short"     , "200 EMA filtered Parabolic SAR short signal")
-alertcondition(psExitLong  , "PSAR Exit Long" , "200 EMA filtered Parabolic SAR exit long")
-alertcondition(psExitShort , "PSAR Exit Short", "200 EMA filtered Parabolic SAR exit short")
+    //Breakout channels
+    if bcNewChannelFormed
+        alert("New breakout channel formed", alert.freq_once_per_bar_close)
+    if bcBullishBreakout
+        alert("Bullish breakout — price broke above the channel", alert.freq_once_per_bar_close)
+    if bcBearishBreakout
+        alert("Bearish breakout — price broke below the channel", alert.freq_once_per_bar_close)
 
-//KCharts Setup
-alertcondition(kcPbUp, "Pullback tap (up)"  , "Price tapped the EMA band in an uptrend and closed back above it")
-alertcondition(kcPbDn, "Pullback tap (down)", "Price tapped the EMA band in a downtrend and closed back below it")
-alertcondition(ta.crossover(close, kcPrevH1) , "Close above previous A high", "Close crossed above the previous timeframe-A high")
-alertcondition(ta.crossunder(close, kcPrevL1), "Close below previous A low" , "Close crossed below the previous timeframe-A low")
-alertcondition(ta.crossover(close, kcPrevH2) , "Close above previous B high", "Close crossed above the previous timeframe-B high")
-alertcondition(ta.crossunder(close, kcPrevL2), "Close below previous B low" , "Close crossed below the previous timeframe-B low")
-alertcondition(kcVwapShow and kcVwapCrossUp, "Close above VWAP", "Close crossed above VWAP")
-alertcondition(kcVwapShow and kcVwapCrossDn, "Close below VWAP", "Close crossed below VWAP")
+    //Parabolic SAR
+    if psLong
+        alert("PSAR long — 200 EMA filtered", alert.freq_once_per_bar_close)
+    if psShort
+        alert("PSAR short — 200 EMA filtered", alert.freq_once_per_bar_close)
+    if psExitLong
+        alert("PSAR exit long", alert.freq_once_per_bar_close)
+    if psExitShort
+        alert("PSAR exit short", alert.freq_once_per_bar_close)
 
-//DepthFlow
-alertcondition(dfSweepHigh, "Sweep High"     , "Liquidity swept above a swing high, closed back below")
-alertcondition(dfSweepLow , "Sweep Low"      , "Liquidity swept below a swing low, closed back above")
-alertcondition(dfDispUp   , "Displacement Up", "Impulsive bullish candle relative to ATR")
-alertcondition(dfDispDn   , "Displacement Dn", "Impulsive bearish candle relative to ATR")
+    //KCharts Setup
+    if kcPbUp
+        alert("Pullback tap up — tapped the EMA band in an uptrend and closed back above", alert.freq_once_per_bar_close)
+    if kcPbDn
+        alert("Pullback tap down — tapped the EMA band in a downtrend and closed back below", alert.freq_once_per_bar_close)
+    if kcA1Up
+        alert("Close above previous " + kcN1 + " high", alert.freq_once_per_bar_close)
+    if kcA1Dn
+        alert("Close below previous " + kcN1 + " low", alert.freq_once_per_bar_close)
+    if kcA2Up
+        alert("Close above previous " + kcN2 + " high", alert.freq_once_per_bar_close)
+    if kcA2Dn
+        alert("Close below previous " + kcN2 + " low", alert.freq_once_per_bar_close)
+    if kcVwapShow and kcVwapCrossUp
+        alert("Close above VWAP", alert.freq_once_per_bar_close)
+    if kcVwapShow and kcVwapCrossDn
+        alert("Close below VWAP", alert.freq_once_per_bar_close)
 
-//Confluence
-alertcondition(psLong  and bcBullishBreakout, "Confluence Long" , "PSAR long + bullish channel breakout")
-alertcondition(psShort and bcBearishBreakout, "Confluence Short", "PSAR short + bearish channel breakout")
+    //DepthFlow
+    if dfSweepHigh
+        alert("Liquidity swept above a swing high, closed back below", alert.freq_once_per_bar_close)
+    if dfSweepLow
+        alert("Liquidity swept below a swing low, closed back above", alert.freq_once_per_bar_close)
+    if dfDispUp
+        alert("Displacement up — impulsive bullish candle vs ATR", alert.freq_once_per_bar_close)
+    if dfDispDn
+        alert("Displacement down — impulsive bearish candle vs ATR", alert.freq_once_per_bar_close)
+
+    //Confluence
+    if psLong and bcBullishBreakout
+        alert("Confluence long — PSAR long with a bullish channel breakout", alert.freq_once_per_bar_close)
+    if psShort and bcBearishBreakout
+        alert("Confluence short — PSAR short with a bearish channel breakout", alert.freq_once_per_bar_close)
+
 //=============================================================================}

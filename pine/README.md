@@ -66,6 +66,36 @@ breakout).
   `ta.requestUpAndDownVolume()` is the one exception — `request.*` calls must stay
   unconditional, so it is evaluated even with the channel module off.
 
+### Plot-output budget
+
+Separate from the drawing cap, and the reason the five-module build first failed at
+runtime with `RE10140`. TradingView allows 64 *plot outputs*, and `plotshape()`,
+`plotcandle()`, `fill()` and `alertcondition()` all count — `plotshape` and
+`plotcandle` at four apiece. Modules 4 and 5 took the total to 98.
+
+Two structural changes brought it to 45:
+
+- **Alerts fire through `alert()` instead of `alertcondition()`** (−25). Create one
+  alert on the indicator with the condition *Any alert() function call*; each message
+  names the signal that fired. The trade is that individual signals no longer appear
+  as separate entries in TradingView's alert dropdown.
+- **Signal markers are labels, not `plotshape()`** for the KCharts and DepthFlow
+  modules (−24). `yloc` puts them exactly where the plotshape sat, and a ring buffer
+  (**Max signal markers kept**, default 150) stops them exhausting the label cap.
+  The order-block, channel and PSAR markers stay as `plotshape()` — those were
+  checked against the reference charts and are worth their 32 outputs.
+
+The two hidden `display.none` order-block plots were also dropped; they rendered
+nothing and only existed to feed `alertcondition()`.
+
+| | count | weight | outputs |
+| --- | --- | --- | --- |
+| `plot()` | 11 | 1 | 11 |
+| `plotshape()` | 6 | 4 | 24 |
+| `plotcandle()` | 2 | 4 | 8 |
+| `fill()` | 2 | 1 | 2 |
+| **Total** | | | **45 / 64** |
+
 ### Drawing budget
 
 TradingView caps a script at 500 boxes, 500 lines and 500 labels — one pool for the
