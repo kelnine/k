@@ -47,6 +47,13 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production bundle in dist/
 ```
 
+## TradingView
+
+The same template — visible-range volume profile, EMA pair, supply/demand bands
+— is also available as a Pine v6 indicator in [`pine/`](pine/), for reading the
+same setup on TradingView charts. See [`pine/README.md`](pine/README.md) for
+install steps and the inputs that match.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,
