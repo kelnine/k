@@ -72,8 +72,9 @@ the mirror.
 
 ## Reading the table
 
-* **Range** — average high-to-low range of that session/period across all the
-  history the chart has loaded (hover a cell for the sample count).
+* **Range** — the actual high-to-low range of the last completed session or
+  period. Hover for the average across everything the chart has loaded, and the
+  sample count behind it.
 * **High** — how often that high gets traded through afterwards.
 * **Low** — same for the low.
 * **LR row** — how the projected trades resolved: wins, losses, breakevens.

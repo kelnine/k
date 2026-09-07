@@ -36,7 +36,7 @@ string TZ    = input.string("America/New_York", "Timezone", group = G2)
 bool   boxOn = input.bool(true, "Shade sessions", group = G2, inline = "sw")
 bool   lvlOn = input.bool(true, "Extend high / low", group = G2, inline = "sw")
 bool   divOn = input.bool(true, "Open divider", group = G2, inline = "sw")
-int    boxTr = input.int(90, "Shade transparency", minval = 50, maxval = 99, group = G2)
+int    boxTr = input.int(94, "Shade transparency", minval = 50, maxval = 99, group = G2)
 
 bool   s0On = input.bool(true, "ASIA", group = G2, inline = "s0")
 string s0Sp = input.session("2000-0000", "", group = G2, inline = "s0")
@@ -68,7 +68,7 @@ string mnoSp = input.session("0000-0005", "Midnight", group = G3)
 bool  cloudOn = input.bool(true, "Trend cloud", group = G4)
 int   atrLen  = input.int(10, "ATR length", minval = 1, group = G4)
 float stMult  = input.float(3.0, "Supertrend factor", minval = 0.5, step = 0.1, group = G4)
-float depth   = input.float(3.0, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = G4)
+float depth   = input.float(1.5, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = G4)
 color bullC   = input.color(color.new(#00c9a7, 82), "Bull / bear", group = G4, inline = "c")
 color bearC   = input.color(color.new(#ff5c8a, 82), "", group = G4, inline = "c")
 bool  sarOn   = input.bool(true, "Dotted trail", group = G4)
@@ -113,14 +113,14 @@ color  vwCol  = input.color(#2962ff, "", group = G9, inline = "v")
 bool   vwBnd  = input.bool(true, "Bands", group = G9, inline = "b")
 float  vwSd1  = input.float(1.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
 float  vwSd2  = input.float(2.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
-color  vwFill = input.color(color.new(#2962ff, 92), "Band fill", group = G9)
+color  vwFill = input.color(color.new(#2962ff, 95), "Band fill", group = G9)
 
 // ── volume profile ─────────────────────────────────────────────────────────
 string G10 = "Volume profile"
 bool  vpOn   = input.bool(true, "Volume profile", group = G10)
 int   vpBars = input.int(200, "Lookback", minval = 10, maxval = 1000, group = G10, inline = "vp")
 int   vpRows = input.int(80, "Rows", minval = 10, maxval = 200, group = G10, inline = "vp")
-int   vpW    = input.int(60, "Width (bars)", minval = 5, maxval = 200, group = G10, inline = "vw")
+int   vpW    = input.int(40, "Width (bars)", minval = 5, maxval = 200, group = G10, inline = "vw")
 int   vpGap  = input.int(2, "Gap", minval = 0, maxval = 100, group = G10, inline = "vw")
 color vpCol  = input.color(color.new(#5b6bd6, 62), "Bars / POC", group = G10, inline = "vc")
 color vpPoc  = input.color(#ff9800, "", group = G10, inline = "vc")
@@ -794,10 +794,11 @@ if barstate.islast
         // rows 1-4: the sessions
         for k = 0 to 3
             float  cnt = array.get(sCnt, k)
-            float  ar  = cnt > 0 ? array.get(sSmR, k) / cnt : na
+            float  avg = cnt > 0 ? array.get(sSmR, k) / cnt : na
+            float  ar  = na(array.get(pHi, k)) ? avg : array.get(pHi, k) - array.get(pLo, k)
             float  hp  = cnt > 0 ? array.get(sSmH, k) / cnt * 100 : na
             float  lp  = cnt > 0 ? array.get(sSmL, k) / cnt * 100 : na
-            string tip = "samples: " + str.tostring(int(cnt))
+            string tip = "last range, avg " + (na(avg) ? "–" : str.tostring(avg, "#.##")) + " over " + str.tostring(int(cnt)) + " samples"
             table.cell(tbl, 0, k + 1, array.get(sNm, k), text_color = tblTx,
                  bgcolor = color.new(array.get(sCl, k), 65), text_size = tblSz, tooltip = tip)
             table.cell(tbl, 1, k + 1, na(ar) ? "–" : str.tostring(ar, "#.##"),
@@ -812,10 +813,11 @@ if barstate.islast
         // rows 5-7: prior day / week / month
         for k = 0 to 2
             float  cnt = array.get(hCnt, k)
-            float  ar  = cnt > 0 ? array.get(hSmR, k) / cnt : na
+            float  avg = cnt > 0 ? array.get(hSmR, k) / cnt : na
+            float  ar  = na(array.get(hWH, k)) ? avg : array.get(hWH, k) - array.get(hWL, k)
             float  hp  = cnt > 0 ? array.get(hSmH, k) / cnt * 100 : na
             float  lp  = cnt > 0 ? array.get(hSmL, k) / cnt * 100 : na
-            string tip = "samples: " + str.tostring(int(cnt))
+            string tip = "last range, avg " + (na(avg) ? "–" : str.tostring(avg, "#.##")) + " over " + str.tostring(int(cnt)) + " samples"
             table.cell(tbl, 0, k + 5, array.get(hNm, k), text_color = tblTx,
                  bgcolor = color.new(array.get(hCl, k), 65), text_size = tblSz, tooltip = tip)
             table.cell(tbl, 1, k + 5, na(ar) ? "–" : str.tostring(ar, "#.##"),
