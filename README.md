@@ -31,6 +31,15 @@ fully custom canvas rendering engine, with no third-party charting library.
   - `DemoAdapter` — deterministic synthetic feed used automatically when the
     exchange is unreachable, so the app always works
 
+## TradingView
+
+`pine/phantom-flow.pine` is a Pine Script v6 port of the Phantom Flow SMC overlay
+for TradingView, with a lookback-range **volume profile** (POC + value area,
+up/down split, right-anchored) on top of the swing structure, BOS/CHoCH, order
+blocks, fair value gaps and liquidity pools. POC / VAH / VAL and the last swing
+levels are published to the price scale as axis labels. Paste it into the Pine
+Editor and add it to a chart — see `pine/README.md` for the settings.
+
 ## Run it
 
 ```sh
