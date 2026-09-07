@@ -105,6 +105,28 @@ color  tblTx  = input.color(#131722, "", group = G7, inline = "tb")
 color  tblHot = input.color(#ff9aae, "Hot", group = G7, inline = "tb")
 bool   showWL = input.bool(true, "Include the W/L row", group = G7)
 
+// ── vwap ───────────────────────────────────────────────────────────────────
+string G9  = "VWAP"
+bool   vwOn   = input.bool(true, "VWAP", group = G9, inline = "v")
+string vwAnch = input.string("Day", "Anchor", options = ["Day", "Week", "Month"], group = G9, inline = "v")
+color  vwCol  = input.color(#2962ff, "", group = G9, inline = "v")
+bool   vwBnd  = input.bool(true, "Bands", group = G9, inline = "b")
+float  vwSd1  = input.float(1.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
+float  vwSd2  = input.float(2.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
+color  vwFill = input.color(color.new(#2962ff, 92), "Band fill", group = G9)
+
+// ── volume profile ─────────────────────────────────────────────────────────
+string G10 = "Volume profile"
+bool  vpOn   = input.bool(true, "Volume profile", group = G10)
+int   vpBars = input.int(200, "Lookback", minval = 10, maxval = 1000, group = G10, inline = "vp")
+int   vpRows = input.int(80, "Rows", minval = 10, maxval = 200, group = G10, inline = "vp")
+int   vpW    = input.int(60, "Width (bars)", minval = 5, maxval = 200, group = G10, inline = "vw")
+int   vpGap  = input.int(2, "Gap", minval = 0, maxval = 100, group = G10, inline = "vw")
+color vpCol  = input.color(color.new(#5b6bd6, 62), "Bars / POC", group = G10, inline = "vc")
+color vpPoc  = input.color(#ff9800, "", group = G10, inline = "vc")
+bool  vpVa   = input.bool(true, "Value area (70%)", group = G10)
+color vpVaC  = input.color(color.new(#5b6bd6, 40), "Value area", group = G10)
+
 // ── htf candle ─────────────────────────────────────────────────────────────
 bool   htfOn  = input.bool(true, "Developing HTF candle", group = G8)
 string htfTf  = input.timeframe("15", "Timeframe", group = G8)
@@ -202,6 +224,11 @@ var int   parts   = 0
 var float nyoPx = na
 var float midPx = na
 var float mnoPx = na
+
+var array<box> vpBx  = array.new<box>()
+var line       vpPocL = na
+var line       vpVahL = na
+var line       vpValL = na
 
 var label statusLb = na
 var table tbl      = na
@@ -599,6 +626,32 @@ if tradeOn and not tActive and (sellSig or buySig)
                  color = color.new(rewC, 20), style = line.style_dashed)
             tT1Lb := tag(bar_index + projBar, tTp1Px, "TP1", rewC)
 
+// ══════════════════════════════ VWAP ═══════════════════════════════════════
+// Anchored VWAP with standard-deviation bands. Resets on the chosen anchor.
+var float vwPV  = 0.0
+var float vwV   = 0.0
+var float vwPV2 = 0.0
+bool vwReset = vwAnch == "Week" ? newW : vwAnch == "Month" ? newM : newD
+if vwReset
+    vwPV  := 0.0
+    vwV   := 0.0
+    vwPV2 := 0.0
+float vwSrc = hlc3
+float vwVol = nz(volume, 0)
+vwPV  += vwSrc * vwVol
+vwV   += vwVol
+vwPV2 += vwSrc * vwSrc * vwVol
+float vwLine = vwV > 0 ? vwPV / vwV : na
+float vwVar  = vwV > 0 ? math.max(vwPV2 / vwV - vwLine * vwLine, 0) : na
+float vwSd   = na(vwVar) ? na : math.sqrt(vwVar)
+
+plot(vwOn ? vwLine : na, "VWAP", color = vwCol, linewidth = 2)
+u2 = plot(vwOn and vwBnd ? vwLine + vwSd * vwSd2 : na, "+2σ", color = color.new(vwCol, 55))
+l2 = plot(vwOn and vwBnd ? vwLine - vwSd * vwSd2 : na, "-2σ", color = color.new(vwCol, 55))
+u1 = plot(vwOn and vwBnd ? vwLine + vwSd * vwSd1 : na, "+1σ", color = color.new(vwCol, 70))
+l1 = plot(vwOn and vwBnd ? vwLine - vwSd * vwSd1 : na, "-1σ", color = color.new(vwCol, 70))
+fill(u2, l2, color = vwFill, title = "VWAP band")
+
 // ═══════════════════════════ CLOUD & TRAIL ═════════════════════════════════
 float edge = stLine + (stDir < 0 ? -1 : 1) * atrv * depth
 p1 = plot(cloudOn ? stLine : na, "Trend", color = color.new(trend > 0 ? bullC : bearC, 35), linewidth = 2)
@@ -620,6 +673,87 @@ if barstate.islast
         label.set_text(statusLb, txt)
         label.set_color(statusLb, bg)
         label.set_tooltip(statusLb, biasWhy)
+
+    // ── volume profile: bucket the last N bars into rows, draw from the right
+    if vpOn
+        if array.size(vpBx) > 0
+            for i = 0 to array.size(vpBx) - 1
+                box.delete(array.get(vpBx, i))
+            array.clear(vpBx)
+        int n = math.min(vpBars, bar_index + 1)
+        float hh = high
+        float ll = low
+        for k = 0 to n - 1
+            hh := math.max(hh, high[k])
+            ll := math.min(ll, low[k])
+        float step = (hh - ll) / vpRows
+        if step > 0
+            array<float> vols = array.new<float>(vpRows, 0.0)
+            float total = 0.0
+            for k = 0 to n - 1
+                float bv = nz(volume[k], 0)
+                int i0 = int(math.floor((low[k] - ll) / step))
+                int i1 = int(math.floor((high[k] - ll) / step))
+                i0 := math.max(0, math.min(vpRows - 1, i0))
+                i1 := math.max(0, math.min(vpRows - 1, i1))
+                float share = bv / (i1 - i0 + 1)
+                for r = i0 to i1
+                    array.set(vols, r, array.get(vols, r) + share)
+                total += bv
+
+            float mx  = 0.0
+            int   poc = 0
+            for r = 0 to vpRows - 1
+                if array.get(vols, r) > mx
+                    mx  := array.get(vols, r)
+                    poc := r
+
+            // value area: grow out from the POC until 70% of the volume is inside
+            int vaLo = poc
+            int vaHi = poc
+            float acc = mx
+            float want = total * 0.7
+            if vpVa and total > 0
+                while acc < want and (vaLo > 0 or vaHi < vpRows - 1)
+                    bool  canUp = vaHi < vpRows - 1
+                    bool  canDn = vaLo > 0
+                    float above = array.get(vols, math.min(vaHi + 1, vpRows - 1))
+                    float below = array.get(vols, math.max(vaLo - 1, 0))
+                    bool  goUp  = canUp and (not canDn or above >= below)
+                    if goUp
+                        vaHi += 1
+                        acc  += above
+                    if not goUp
+                        vaLo -= 1
+                        acc  += below
+
+            int rightX = bar_index + vpGap + vpW
+            if mx > 0
+                for r = 0 to vpRows - 1
+                    float v = array.get(vols, r)
+                    if v > 0
+                        int len = int(math.round(vpW * v / mx))
+                        if len > 0
+                            float y0 = ll + step * r
+                            color bc = r == poc ? color.new(vpPoc, 30) : (vpVa and r >= vaLo and r <= vaHi ? vpVaC : vpCol)
+                            array.push(vpBx, box.new(rightX - len, y0 + step * 0.9, rightX, y0,
+                                 border_color = color.new(color.black, 100), bgcolor = bc))
+
+            float pocY = ll + step * (poc + 0.5)
+            if na(vpPocL)
+                vpPocL := line.new(bar_index, pocY, rightX, pocY, color = vpPoc, style = line.style_dashed)
+                vpVahL := line.new(bar_index, pocY, rightX, pocY, color = color.new(vpPoc, 55), style = line.style_dotted)
+                vpValL := line.new(bar_index, pocY, rightX, pocY, color = color.new(vpPoc, 55), style = line.style_dotted)
+            line.set_xy1(vpPocL, bar_index - n + 1, pocY)
+            line.set_xy2(vpPocL, rightX, pocY)
+            float vahY = ll + step * (vaHi + 1)
+            float valY = ll + step * vaLo
+            line.set_xy1(vpVahL, bar_index - n + 1, vahY)
+            line.set_xy2(vpVahL, rightX, vahY)
+            line.set_xy1(vpValL, bar_index - n + 1, valY)
+            line.set_xy2(vpValL, rightX, valY)
+            line.set_color(vpVahL, color.new(vpPoc, vpVa ? 55 : 100))
+            line.set_color(vpValL, color.new(vpPoc, vpVa ? 55 : 100))
 
     if htfOn and not na(hO)
         int   lf = bar_index + htfGap

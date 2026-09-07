@@ -13,6 +13,18 @@ table. `base-hits.pine` is the whole thing.
 Built around a 5m chart with a 15m projected candle. Let the chart load a few
 hundred bars back so the stats table has samples to average.
 
+## What it replaces
+
+It rolls one stack into a single script:
+
+| Original | What it contributed |
+| --- | --- |
+| **ICT Killzones + Pivots** | session boxes, session highs/lows, the stats table |
+| **ICT Pro Tools** | the day/week/month levels and the liquidity-raid reads |
+| **HTF Candle** | the developing higher-timeframe candle beside price |
+| **VWAP** | anchored VWAP with σ bands |
+| **Volume Profile (200 × 200)** | the volume histogram, POC and value area |
+
 ## What's on the chart
 
 | Piece | What it is |
@@ -25,6 +37,8 @@ hundred bars back so the stats table has samples to average.
 | **Trade projection** | Red risk box (entry → stop), green reward box (entry → target), a dashed `TP1` partial line, and the stop snapping to entry at breakeven. Freezes at the bar that resolves it, labelled `TP` / `SL` / `BE`. |
 | **Stats table** | Per session and per period: average range, how often that high gets taken, how often that low gets taken. The corner cell shows the day's bias; the bottom row tallies W / L / BE. |
 | **HTF candle** | The 15m candle currently being built, parked to the right of price with its countdown. |
+| **VWAP** | Anchored VWAP (day / week / month) with 1σ and 2σ bands and a filled 2σ envelope. |
+| **Volume profile** | The last 200 bars bucketed into rows and drawn from the right edge: POC in orange, the 70% value area shaded, VAH/VAL/POC extended back across the lookback. |
 
 ## Bias of the day
 
@@ -69,9 +83,16 @@ the mirror.
 `SELL LR` and `BUY LR` as alert conditions, plus `alert()` calls so *Any
 alert() function call* works. Once per bar close.
 
+## Tuning the volume profile
+
+`Lookback` and `Rows` default to 200 × 80. Rows can go to 200, but every row is
+a box and TradingView caps a script at 500 of them, so a high row count eats
+the budget the session boxes also draw from — drop it if older session shading
+starts disappearing. `Width` and `Gap` control how far right of price it sits.
+
 ## Not in here
 
-His charts also run TradingView's built-in volume profile, and the
-target/stop boxes with dollar amounts are the manual **Long/Short Position**
-drawing tool. Neither is something a script can reproduce — the projection box
-here is the automated stand-in.
+The target/stop boxes with dollar amounts in his screenshots are the manual
+**Long/Short Position** drawing tool — a script can't produce those numbers
+(no order size or account currency). The risk/reward projection here is the
+automated stand-in.
