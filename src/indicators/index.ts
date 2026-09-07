@@ -1,5 +1,8 @@
 import type { Candle } from '../data/types'
 import { makeSmc } from './smc'
+import { makeVolumeProfile, type VolumeProfile } from './volume-profile'
+
+export type { ProfileRow, VolumeProfile } from './volume-profile'
 
 export type PlotStyle = 'line' | 'hist'
 
@@ -63,6 +66,8 @@ export interface IndicatorResult {
   fills?: { a: string; b: string; color: string }[]
   /** free-form overlay primitives (boxes / lines / markers) */
   shapes?: IndicatorShape[]
+  /** horizontal volume histogram drawn against the price axis */
+  profile?: VolumeProfile
   /** custom legend chips (used when an indicator has no numeric plots) */
   legend?: { color: string; value: string }[]
 }
@@ -72,7 +77,13 @@ export interface IndicatorDef {
   /** display name incl. params, e.g. "RSI 14" */
   name: string
   kind: 'overlay' | 'pane'
-  compute(candles: Candle[]): IndicatorResult
+  /**
+   * Set for indicators whose output depends on what is on screen: the engine
+   * passes the visible bar range to `compute` and recomputes it while panning
+   * and zooming, instead of only when the candles change.
+   */
+  visibleRange?: boolean
+  compute(candles: Candle[], from?: number, to?: number): IndicatorResult
 }
 
 // ---------------------------------------------------------------- math
@@ -136,6 +147,7 @@ const C = {
   red: '#ef5350',
   yellow: '#fdd835',
   cyan: '#26c6da',
+  green: '#22c55e',
 }
 
 function maDef(id: string, name: string, n: number, color: string, exp = false): IndicatorDef {
@@ -155,6 +167,8 @@ export const INDICATORS: IndicatorDef[] = [
   maDef('ma50', 'MA 50', 50, C.orange),
   maDef('ma200', 'MA 200', 200, C.red),
   maDef('ema21', 'EMA 21', 21, C.cyan, true),
+  maDef('ema50', 'EMA 50', 50, C.red, true),
+  maDef('ema200', 'EMA 200', 200, C.green, true),
   {
     id: 'bb',
     name: 'BB 20·2',
@@ -255,6 +269,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeVolumeProfile(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {

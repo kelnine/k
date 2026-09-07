@@ -55,9 +55,16 @@ const TOOLS: { id: DrawingTool; label: string; title: string }[] = [
   { id: 'cursor', label: '✛', title: 'Cursor (pan/select)' },
   { id: 'trendline', label: '╱', title: 'Trend line' },
   { id: 'hline', label: '─', title: 'Horizontal level' },
+  { id: 'zone', label: '▭', title: 'Zone — supply/demand band (2 clicks)' },
+  { id: 'long', label: '↗', title: 'Long position — entry, target, stop (3 clicks)' },
+  { id: 'short', label: '↘', title: 'Short position — entry, target, stop (3 clicks)' },
+  { id: 'measure', label: '↕', title: 'Measured move — % between two prices (2 clicks)' },
   { id: 'fib', label: '𝒇', title: 'Fibonacci retracement' },
   { id: 'text', label: 'T', title: 'Text note' },
 ]
+
+/** volume profile + the red/green EMA pair, the setup these charts are read on */
+const PROFILE_PRESET = ['vp', 'ema50', 'ema200']
 
 // ---------------------------------------------------------------- watchlist row
 
@@ -256,6 +263,13 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             </div>
           )}
         </div>
+        <button
+          className="bar-btn"
+          title="Volume profile + EMA 50 / 200"
+          onClick={() => updateActive({ indicators: PROFILE_PRESET })}
+        >
+          ⚡ Profile setup
+        </button>
         <div className="layout-group">
           {(['1', '2h', '2v', '4'] as Layout[]).map((l) => (
             <button
