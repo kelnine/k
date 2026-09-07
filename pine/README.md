@@ -25,6 +25,16 @@ It rolls one stack into a single script:
 | **VWAP** | anchored VWAP with σ bands |
 | **Volume Profile (200 × 200)** | the volume histogram, POC and value area |
 
+## Layout: Clean vs Everything
+
+The first input. **Clean** (the default) draws zones, levels, signals, the
+profile, the VWAP line, the HTF candle and the table — and nothing else.
+**Everything** adds the trend cloud, the dotted trail, the VWAP σ bands, the
+session dividers and the weekly/monthly levels on top.
+
+The switch can only *add*. Any toggle you turn on individually stays on in
+Clean, so you can build up from quiet rather than digging out from busy.
+
 ## What's on the chart
 
 | Piece | What it is |

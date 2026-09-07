@@ -14,6 +14,12 @@ indicator("BASE HITS", "BASE HITS", overlay = true,
      max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ══════════════════════════════ INPUTS ═════════════════════════════════════
+// Clean is the default: zones, levels, signals and the table. Everything adds
+// the cloud, the trail, the VWAP bands, session dividers and the weekly levels
+// on top, without you having to hunt through the toggles.
+string layout = input.string("Clean", "Layout", options = ["Clean", "Everything"], group = "Layout")
+bool   lush   = layout == "Everything"
+
 string G1 = "Bias of the day"
 string G2 = "Sessions"
 string G3 = "Levels"
@@ -35,8 +41,8 @@ bool   showBias = input.bool(true, "Bias label beside price", group = G1)
 string TZ    = input.string("America/New_York", "Timezone", group = G2)
 bool   boxOn = input.bool(true, "Shade sessions", group = G2, inline = "sw")
 bool   lvlOn = input.bool(true, "Extend high / low", group = G2, inline = "sw")
-bool   divOn = input.bool(true, "Open divider", group = G2, inline = "sw")
-int    boxTr = input.int(94, "Shade transparency", minval = 50, maxval = 99, group = G2)
+bool   divOn = input.bool(false, "Open divider", group = G2, inline = "sw")
+int    boxTr = input.int(95, "Shade transparency", minval = 50, maxval = 99, group = G2)
 
 bool   s0On = input.bool(true, "ASIA", group = G2, inline = "s0")
 string s0Sp = input.session("2000-0000", "", group = G2, inline = "s0")
@@ -54,7 +60,7 @@ color  s3C  = input.color(#3d8bff, "", group = G2, inline = "s3")
 // ── levels ─────────────────────────────────────────────────────────────────
 bool  pdOn  = input.bool(true,  "PDH / PDL / PDM / Close", group = G3, inline = "v1")
 color pdC   = input.color(#e53935, "", group = G3, inline = "v1")
-bool  pwOn  = input.bool(true,  "PWH / PWL / PWM", group = G3, inline = "v2")
+bool  pwOn  = input.bool(false, "PWH / PWL / PWM", group = G3, inline = "v2")
 color pwC   = input.color(#1e88e5, "", group = G3, inline = "v2")
 bool  pmOn  = input.bool(false, "PMH / PML / PMM", group = G3, inline = "v3")
 color pmC   = input.color(#8e24aa, "", group = G3, inline = "v3")
@@ -65,13 +71,13 @@ string midSp = input.session("1200-1205", "Midday",   group = G3)
 string mnoSp = input.session("0000-0005", "Midnight", group = G3)
 
 // ── cloud & trail ──────────────────────────────────────────────────────────
-bool  cloudOn = input.bool(true, "Trend cloud", group = G4)
+bool  cloudOn = input.bool(false, "Trend cloud", group = G4)
 int   atrLen  = input.int(10, "ATR length", minval = 1, group = G4)
 float stMult  = input.float(3.0, "Supertrend factor", minval = 0.5, step = 0.1, group = G4)
 float depth   = input.float(1.5, "Cloud depth (ATR)", minval = 0.1, step = 0.1, group = G4)
 color bullC   = input.color(color.new(#00c9a7, 82), "Bull / bear", group = G4, inline = "c")
 color bearC   = input.color(color.new(#ff5c8a, 82), "", group = G4, inline = "c")
-bool  sarOn   = input.bool(true, "Dotted trail", group = G4)
+bool  sarOn   = input.bool(false, "Dotted trail", group = G4)
 
 // ── signals ────────────────────────────────────────────────────────────────
 bool  useSess = input.bool(true, "Raid session highs / lows", group = G5)
@@ -110,7 +116,7 @@ string G9  = "VWAP"
 bool   vwOn   = input.bool(true, "VWAP", group = G9, inline = "v")
 string vwAnch = input.string("Day", "Anchor", options = ["Day", "Week", "Month"], group = G9, inline = "v")
 color  vwCol  = input.color(#2962ff, "", group = G9, inline = "v")
-bool   vwBnd  = input.bool(true, "Bands", group = G9, inline = "b")
+bool   vwBnd  = input.bool(false, "Bands", group = G9, inline = "b")
 float  vwSd1  = input.float(1.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
 float  vwSd2  = input.float(2.0, "σ", minval = 0.1, step = 0.1, group = G9, inline = "b")
 color  vwFill = input.color(color.new(#2962ff, 95), "Band fill", group = G9)
@@ -119,7 +125,7 @@ color  vwFill = input.color(color.new(#2962ff, 95), "Band fill", group = G9)
 string G10 = "Volume profile"
 bool  vpOn   = input.bool(true, "Volume profile", group = G10)
 int   vpBars = input.int(200, "Lookback", minval = 10, maxval = 1000, group = G10, inline = "vp")
-int   vpRows = input.int(80, "Rows", minval = 10, maxval = 200, group = G10, inline = "vp")
+int   vpRows = input.int(60, "Rows", minval = 10, maxval = 200, group = G10, inline = "vp")
 int   vpW    = input.int(40, "Width (bars)", minval = 5, maxval = 200, group = G10, inline = "vw")
 int   vpGap  = input.int(2, "Gap", minval = 0, maxval = 100, group = G10, inline = "vw")
 color vpCol  = input.color(color.new(#5b6bd6, 62), "Bars / POC", group = G10, inline = "vc")
@@ -307,6 +313,13 @@ if biasMode == "Prior-day direction" and biasDir == 0 and not na(pdO) and not na
     biasDir := pdC2 > pdO ? 1 : -1
     biasWhy := pdC2 > pdO ? "prior day closed up" : "prior day closed down"
 
+bool cloudUse = cloudOn or lush
+bool sarUse   = sarOn   or lush
+bool bndUse   = vwBnd   or lush
+bool divUse   = divOn   or lush
+bool pwUse    = pwOn    or lush
+bool pmUse    = pmOn    or lush
+
 bool okBuy  = biasDir > 0 or (biasDir == 0 and allowNtr)
 bool okSell = biasDir < 0 or (biasDir == 0 and allowNtr)
 
@@ -380,7 +393,7 @@ for i = 0 to 3
         if boxOn
             array.set(sBx, i, box.new(bar_index, high, bar_index, low,
                  border_color = color.new(col, 70), border_width = 1, bgcolor = color.new(col, boxTr)))
-        if divOn
+        if divUse
             line.new(bar_index, low, bar_index, high, extend = extend.both,
                  color = color.new(col, 45), style = line.style_dotted)
 
@@ -503,7 +516,7 @@ array.set(lPx, 12, mnoPx)
 
 for i = 0 to 12
     bool isNew = i <= 3 ? newD : i <= 6 ? newW : i <= 9 ? newM : i == 10 ? atNyo : i == 11 ? atMid : atMno
-    bool shown = i <= 3 ? pdOn : i <= 6 ? pwOn : i <= 9 ? pmOn : opOn
+    bool shown = i <= 3 ? pdOn : i <= 6 ? pwUse : i <= 9 ? pmUse : opOn
     array.set(lNw, i, isNew)
     array.set(lSh, i, shown)
 
@@ -646,18 +659,18 @@ float vwVar  = vwV > 0 ? math.max(vwPV2 / vwV - vwLine * vwLine, 0) : na
 float vwSd   = na(vwVar) ? na : math.sqrt(vwVar)
 
 plot(vwOn ? vwLine : na, "VWAP", color = vwCol, linewidth = 2)
-u2 = plot(vwOn and vwBnd ? vwLine + vwSd * vwSd2 : na, "+2σ", color = color.new(vwCol, 55))
-l2 = plot(vwOn and vwBnd ? vwLine - vwSd * vwSd2 : na, "-2σ", color = color.new(vwCol, 55))
-u1 = plot(vwOn and vwBnd ? vwLine + vwSd * vwSd1 : na, "+1σ", color = color.new(vwCol, 70))
-l1 = plot(vwOn and vwBnd ? vwLine - vwSd * vwSd1 : na, "-1σ", color = color.new(vwCol, 70))
+u2 = plot(vwOn and bndUse ? vwLine + vwSd * vwSd2 : na, "+2σ", color = color.new(vwCol, 55))
+l2 = plot(vwOn and bndUse ? vwLine - vwSd * vwSd2 : na, "-2σ", color = color.new(vwCol, 55))
+u1 = plot(vwOn and bndUse ? vwLine + vwSd * vwSd1 : na, "+1σ", color = color.new(vwCol, 70))
+l1 = plot(vwOn and bndUse ? vwLine - vwSd * vwSd1 : na, "-1σ", color = color.new(vwCol, 70))
 fill(u2, l2, color = vwFill, title = "VWAP band")
 
 // ═══════════════════════════ CLOUD & TRAIL ═════════════════════════════════
 float edge = stLine + (stDir < 0 ? -1 : 1) * atrv * depth
-p1 = plot(cloudOn ? stLine : na, "Trend", color = color.new(trend > 0 ? bullC : bearC, 35), linewidth = 2)
-p2 = plot(cloudOn ? edge : na, "Edge", color = color.new(color.black, 100))
+p1 = plot(cloudUse ? stLine : na, "Trend", color = color.new(trend > 0 ? bullC : bearC, 35), linewidth = 2)
+p2 = plot(cloudUse ? edge : na, "Edge", color = color.new(color.black, 100))
 fill(p1, p2, color = trend > 0 ? bullC : bearC, title = "Cloud")
-plot(sarOn ? sar : na, "Trail", color = color.new(#131722, 15), style = plot.style_circles, linewidth = 1)
+plot(sarUse ? sar : na, "Trail", color = color.new(#131722, 15), style = plot.style_circles, linewidth = 1)
 
 // ═══════════════════ STATUS LABEL, HTF CANDLE, TABLE ═══════════════════════
 if barstate.islast
