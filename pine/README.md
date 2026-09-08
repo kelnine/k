@@ -19,18 +19,34 @@ indicator itself (the number of indicators per chart is what plan tiers limit).
 
 | Element | Detail |
 | --- | --- |
-| Volume profile | Volume bucketed by price across the **visible** bars, each row split into up volume (close ≥ open) and down volume. Recomputes when you scroll or zoom. |
+| Volume profile | Volume bucketed by price, each row split into up volume (close ≥ open) and down volume. The range it measures is set by **Profile range** — see below. |
 | Value area | The rows holding 70 % of volume around the POC, coloured white/blue; the wings outside it green/orange. |
 | POC | Heaviest row, drawn across the chart and extended right, with a price label. |
 | VAH / VAL | Off by default — dotted teal/orange lines when enabled. |
 | EMAs | 50 red, 200 green by default. |
 | Zones | Supply and demand bands from confirmed pivots, extended right until price *closes* through them. |
+| Previous session | POC / VAH / VAL of the session that has already closed, drawn as fixed lines that never move. |
 | Stats | POC / VAH / VAL table, top-right. |
+
+## Profile range — which one to use
+
+| Mode | Measures | POC behaviour |
+| --- | --- | --- |
+| **Session** (default) | Today's bars only | Holds still as you scroll. Grows through the day as volume accumulates. |
+| **Fixed bars** | The last N bars | Holds still as you scroll. Rolls forward one bar at a time. |
+| **Visible range** | Whatever is on screen | Moves whenever you scroll or zoom — this is what TradingView's VPVR does, and it is only useful while you keep the window fixed. |
+
+If you want a level that does not move at all, use the **previous session**
+lines: that session is closed, so its POC/VAH/VAL are final.
+
+Whichever mode is active, the histogram is drawn from the left edge of the
+screen, so a session that starts off-screen still shows its bars.
 
 ## Inputs that match the reference charts
 
 - Timeframe **4h** (1D for the higher-timeframe reads), Binance perpetuals.
-- Profile: rows `80`, width `30 %`, value area `70 %`, POC line on, VAH/VAL off.
+- Profile: range `Visible range` for the screenshot look, rows `80`, width `30 %`,
+  value area `70 %`, POC line on, VAH/VAL off.
 - EMAs: fast `50`, slow `200`.
 - Zones: pivot strength `10`, 3 per side.
 
@@ -46,9 +62,9 @@ indicator itself (the number of indicators per chart is what plan tiers limit).
 
 ## Behaviour worth knowing
 
-- **The profile recalculates as you scroll.** That is the point of a visible-range
-  profile, but it means the POC moves when the window changes. Anchor a level you
-  intend to trade by dragging a horizontal line onto it.
+- **Only `Visible range` recalculates as you scroll.** Session and Fixed bars hold
+  their levels. If you trade off a developing POC in any mode, remember it can
+  still drift as new volume prints — drag a horizontal line onto it to freeze it.
 - **Boxes render above candles in Pine**, unlike the KCharts engine where the
   profile sits behind them. The row colours therefore ship at 25 % transparency;
   raise it in the settings if you want the bars fainter still.
