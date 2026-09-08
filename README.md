@@ -63,6 +63,14 @@ Tick history is capped per load, so older bars in the window may have no
 footprint; the chart says how many bars it could build. Drag to pan, wheel to
 zoom, drag the price axis to stretch it, double-click to reset.
 
+## On TradingView itself
+
+`pine/orderflow-footprint.pine` is the same footprint as a Pine Script v6
+indicator you can paste into TradingView's Pine Editor — imbalance-tinted
+bid/ask cells, volume profile, POC and the parameters table, built from
+lower-timeframe intrabars. See [pine/README.md](pine/README.md) for install
+steps and what Pine can and cannot see.
+
 ## Run it
 
 ```sh

@@ -1,0 +1,326 @@
+//@version=6
+// =============================================================================
+// Orderflow Footprint — a footprint / orderflow chart for TradingView
+//
+// A port of https://github.com/harveysp/OrderflowChart to Pine Script: every
+// candle becomes a column of price rows showing the volume that traded into the
+// bid vs. into the ask, tinted by diagonal imbalance, with a volume profile, the
+// point of control, and a roc / volume / cum delta / delta table underneath.
+//
+// Pine has no aggressor flag, so the bid/ask split is estimated from
+// lower-timeframe candles (uptick/downtick rule) — see "Build one bar's rows"
+// below, the only block that would change if you swap in the Premium-only
+// request.footprint() API, which returns exchange-reported rows directly.
+//
+// Drawing objects are capped at 500 per script, so only the most recent bars
+// carry a footprint; the table reports how many were drawn.
+// =============================================================================
+
+indicator("Orderflow Footprint", overlay = true, max_boxes_count = 500, max_labels_count = 20)
+
+// ----------------------------------------------------------------- inputs
+
+g_data = "Data"
+i_ltf     = input.string("Auto", "Intrabar timeframe", options = ["Auto", "1S", "5S", "15S", "30S", "1", "3", "5", "15"], group = g_data, tooltip = "Lower timeframe the bid/ask split is estimated from. Finer is more accurate but reaches back over fewer bars. Second-based timeframes need a paid plan.")
+i_rowMode = input.string("Auto", "Row size", options = ["Auto", "Ticks"], group = g_data)
+i_rowsPer = input.int(14, "Auto: rows per bar", minval = 4, maxval = 40, group = g_data)
+i_rowTick = input.int(50, "Fixed: ticks per row", minval = 1, group = g_data)
+i_spread  = input.bool(false, "Spread intrabar volume across its range", group = g_data, tooltip = "Off: all of an intrabar's volume lands on its closing row. On: it is split evenly over the rows the intrabar covers.")
+
+g_draw = "Display"
+i_bars    = input.int(14, "Footprint bars", minval = 1, maxval = 40, group = g_draw)
+i_text    = input.bool(true, "Bid × ask numbers", group = g_draw)
+i_size    = input.string("Tiny", "Text size", options = ["Tiny", "Small", "Normal"], group = g_draw)
+i_width   = input.float(0.9, "Column width", minval = 0.2, maxval = 1.0, step = 0.05, group = g_draw)
+i_transp  = input.int(25, "Cell transparency", minval = 0, maxval = 90, group = g_draw, tooltip = "Boxes draw over the candles, so keep some transparency if you want to see the price action through the footprint.")
+i_prof    = input.bool(true, "Volume profile", group = g_draw)
+i_poc     = input.bool(true, "Point of control", group = g_draw)
+i_imbThr  = input.float(0.45, "Imbalance marker", minval = 0.0, maxval = 1.0, step = 0.05, group = g_draw, tooltip = "Outline rows whose diagonal imbalance exceeds this. 0 disables the markers.")
+i_table   = input.bool(true, "Parameters table", group = g_draw)
+
+// ----------------------------------------------------------------- colours
+
+// icefire_r and RdYlGn, the two ramps the reference chart uses
+var array<color> ICEFIRE = array.from(
+     #000000, #4c0000, #820000, #ac2301, #c65400, #da8200, #e7b000, #f3d573,
+     #e1e9d1, #9be4ef, #54c8df, #30a4ca, #217eb8, #0e58a8, #003786, #001f4d, #000000)
+
+var array<color> RDYLGN = array.from(
+     #a50026, #d73027, #f46d43, #fdae61, #fee08b, #ffffbf, #d9ef8b, #a6d96a,
+     #66bd63, #1a9850, #006837)
+
+f_ramp(stops, t) =>
+    int    n    = array.size(stops) - 1
+    float  x    = math.max(0.0, math.min(1.0, t)) * n
+    int    i    = math.min(n - 1, int(math.floor(x)))
+    color.from_gradient(x - i, 0.0, 1.0, array.get(stops, i), array.get(stops, i + 1))
+
+// both ends of icefire run to black, which reads as "empty" rather than
+// "extreme" — rows with one side at zero sit exactly at ±1, so pull them in
+f_imbColor(z) =>
+    f_ramp(ICEFIRE, (math.max(-0.9, math.min(0.9, z)) + 1.0) / 2.0)
+
+// the pale middle of the ramp needs dark ink, the saturated ends need light
+f_ink(z) =>
+    math.abs(z) < 0.34 ? #0b0f16 : #e8edf7
+
+f_tanh(x) =>
+    float z = math.max(-20.0, math.min(20.0, x))
+    float e = math.exp(2.0 * z)
+    (e - 1.0) / (e + 1.0)
+
+// ----------------------------------------------------------------- helpers
+
+f_num(v) =>
+    float a = math.abs(v)
+    a >= 1000000 ? str.tostring(v / 1000000, "#.#") + "M" :
+     a >= 1000 ? str.tostring(v / 1000, "#.#") + "k" :
+     a >= 10 ? str.tostring(v, "#") :
+     a >= 1 ? str.tostring(v, "#.#") :
+     a > 0 ? str.tostring(v, "#.##") : "0"
+
+f_pad(s, w, left) =>
+    int gap = math.max(0, w - str.length(s))
+    string fill = gap > 0 ? str.repeat(" ", gap) : ""
+    left ? fill + s : s + fill
+
+// ----------------------------------------------------------------- row model
+
+type FpBar
+    int          t
+    int          minRow
+    float        rowSz
+    array<float> bid
+    array<float> ask
+    float        delta
+    float        vol
+    int          poc
+    float        cum = na
+    float        roc = na
+
+// Row height, snapped to whole ticks. The auto size follows ATR, but it only
+// moves when volatility has really shifted — otherwise rows would drift a tick
+// at a time and stop lining up from one bar to the next.
+float atr     = ta.atr(20)
+float rawRow  = i_rowMode == "Auto" ? nz(atr, syminfo.mintick * i_rowsPer) / i_rowsPer : i_rowTick * syminfo.mintick
+int   rowTkNow = math.max(1, int(math.round(rawRow / syminfo.mintick)))
+var int rowTk = na
+if na(rowTk) or i_rowMode != "Auto" or rowTkNow > rowTk * 1.5 or rowTkNow * 1.5 < rowTk
+    rowTk := rowTkNow
+float rowSz   = rowTk * syminfo.mintick
+
+// intrabar timeframe: never higher than the chart, or the request throws
+int    chartSec = timeframe.in_seconds()
+string autoLtf  = chartSec >= 900 ? "1" : chartSec >= 300 ? "15S" : chartSec >= 60 ? "5S" : "1S"
+string wantLtf  = i_ltf == "Auto" ? autoLtf : i_ltf
+bool   ltfOk    = timeframe.in_seconds(wantLtf) < chartSec
+string useLtf   = ltfOk ? wantLtf : autoLtf
+bool   canRun   = timeframe.in_seconds(useLtf) < chartSec
+
+[ltfO, ltfH, ltfL, ltfC, ltfV] = request.security_lower_tf(syminfo.tickerid, useLtf, [open, high, low, close, volume])
+
+// -----------------------------------------------------------------
+// Build one bar's rows from intrabar candles.
+//
+// Pine has no aggressor flag, so each intrabar is classified by direction:
+// closing up puts its volume on the ask, closing down on the bid, and an
+// unchanged close falls back to the tick rule against the previous intrabar.
+// -----------------------------------------------------------------
+var array<FpBar> hist = array.new<FpBar>()
+
+float barDelta = na
+int   n        = na(ltfC) ? 0 : array.size(ltfC)
+
+if canRun and n > 0 and rowSz > 0
+    int minRow = na
+    int maxRow = na
+    for i = 0 to n - 1
+        float lo = i_spread ? array.get(ltfL, i) : array.get(ltfC, i)
+        float hi = i_spread ? array.get(ltfH, i) : array.get(ltfC, i)
+        int r1 = int(math.floor(lo / rowSz))
+        int r2 = int(math.floor(hi / rowSz))
+        minRow := na(minRow) ? r1 : math.min(minRow, r1)
+        maxRow := na(maxRow) ? r2 : math.max(maxRow, r2)
+
+    int rows = na(minRow) ? 0 : maxRow - minRow + 1
+    if rows > 0 and rows <= 300
+        array<float> bidA = array.new<float>(rows, 0.0)
+        array<float> askA = array.new<float>(rows, 0.0)
+        float prevC = na
+
+        for i = 0 to n - 1
+            float o_ = array.get(ltfO, i)
+            float c_ = array.get(ltfC, i)
+            float v_ = nz(array.get(ltfV, i))
+            float dir = c_ > o_ ? 1.0 : c_ < o_ ? -1.0 : na(prevC) ? 0.0 : c_ > prevC ? 1.0 : c_ < prevC ? -1.0 : 0.0
+            float askShare = dir > 0.0 ? 1.0 : dir < 0.0 ? 0.0 : 0.5
+            prevC := c_
+
+            int r1 = int(math.floor((i_spread ? array.get(ltfL, i) : c_) / rowSz)) - minRow
+            int r2 = int(math.floor((i_spread ? array.get(ltfH, i) : c_) / rowSz)) - minRow
+            int span = r2 - r1 + 1
+            float each = v_ / span
+            for r = r1 to r2
+                if r >= 0 and r < rows
+                    array.set(askA, r, array.get(askA, r) + each * askShare)
+                    array.set(bidA, r, array.get(bidA, r) + each * (1.0 - askShare))
+
+        float bidT = array.sum(bidA)
+        float askT = array.sum(askA)
+        int   poc  = 0
+        float best = -1.0
+        for r = 0 to rows - 1
+            float tot = array.get(bidA, r) + array.get(askA, r)
+            if tot > best
+                best := tot
+                poc  := r
+
+        barDelta := askT - bidT
+        FpBar fb = FpBar.new(t = time, minRow = minRow, rowSz = rowSz, bid = bidA, ask = askA, delta = barDelta, vol = bidT + askT, poc = poc)
+
+        // one entry per bar: replace on each realtime tick, append on a new bar
+        int  lastIdx  = array.size(hist) - 1
+        bool sameBar  = false
+        if lastIdx >= 0
+            FpBar prevB = array.get(hist, lastIdx)
+            sameBar := prevB.t == time
+        if sameBar
+            array.set(hist, lastIdx, fb)
+        else
+            array.push(hist, fb)
+            while array.size(hist) > 40
+                array.shift(hist)
+
+// rolling cum delta and its rate of change, as the reference computes them
+float cumD = math.sum(nz(barDelta), 10)
+float rocV = nz(cumD[1]) != 0 ? (cumD - cumD[1]) / math.abs(cumD[1]) * 100 : na
+if array.size(hist) > 0
+    FpBar cur = array.get(hist, array.size(hist) - 1)
+    if cur.t == time
+        cur.cum := cumD
+        cur.roc := rocV
+
+// ----------------------------------------------------------------- drawing
+
+var array<box> cells = array.new<box>()
+var table      tbl   = table.new(position.bottom_center, 42, 5, border_width = 1)
+var label      warn  = na
+
+if barstate.islast
+    for b in cells
+        box.delete(b)
+    array.clear(cells)
+    label.delete(warn)
+    warn := na
+    table.clear(tbl, 0, 0, 41, 4)
+
+    int total = array.size(hist)
+    if not canRun
+        warn := label.new(bar_index, high, "Footprint needs an intrabar timeframe below the chart timeframe", style = label.style_label_down, color = color.new(color.red, 20), textcolor = color.white)
+    else if total == 0
+        warn := label.new(bar_index, high, "No intrabar data available here — try a higher chart timeframe", style = label.style_label_down, color = color.new(color.orange, 20), textcolor = color.white)
+
+    // work backwards from the newest bar while drawing objects last
+    int budget  = 480
+    int used    = 0
+    int drawn   = 0
+    int wanted  = math.min(i_bars, total)
+    if wanted > 0
+        for k = 0 to wanted - 1
+            FpBar b = array.get(hist, total - 1 - k)
+            int cost = array.size(b.bid) * (i_prof ? 2 : 1)
+            if used + cost > budget
+                break
+            used  += cost
+            drawn += 1
+
+    int    tfMs  = chartSec * 1000
+    int    half  = int(tfMs * i_width / 2)
+    string tSize = i_size == "Small" ? size.small : i_size == "Normal" ? size.normal : size.tiny
+
+    for k = 0 to math.max(0, drawn - 1)
+        if k >= drawn
+            break
+        FpBar b = array.get(hist, total - 1 - k)
+        int rows = array.size(b.bid)
+        float bRow = b.rowSz
+        int colL = b.t - half
+        int colR = b.t + half
+        int cellR = i_prof ? colL + int((colR - colL) * 0.70) : colR
+        int profSpan = colR - cellR
+
+        float maxRow = 0.0
+        for r = 0 to rows - 1
+            maxRow := math.max(maxRow, array.get(b.bid, r) + array.get(b.ask, r))
+
+        for r = 0 to rows - 1
+            float bid = array.get(b.bid, r)
+            float ask = array.get(b.ask, r)
+            // diagonal imbalance: this row's bid against the ask one row above,
+            // the two sides that trade against each other as price steps down
+            float askUp = r < rows - 1 ? array.get(b.ask, r + 1) : array.get(b.ask, r)
+            float denom = bid + askUp
+            float z = denom > 0 ? (bid - askUp) / denom : 0.0
+
+            float pLow  = (b.minRow + r) * bRow
+            float pHigh = pLow + bRow
+
+            color border = color.new(color.white, 100)
+            int   bw     = 0
+            if i_imbThr > 0 and math.abs(z) >= i_imbThr
+                border := z > 0 ? color.new(#4fc3f7, 20) : color.new(#ff7043, 20)
+                bw     := 1
+            if i_poc and r == b.poc
+                border := color.new(#ffcd5a, 10)
+                bw     := 2
+
+            string txt = ""
+            if i_text
+                txt := f_pad(f_num(bid), 5, true) + "  " + f_pad(f_num(ask), 5, false)
+
+            array.push(cells, box.new(colL, pHigh, cellR, pLow, xloc = xloc.bar_time,
+                 bgcolor = color.new(f_imbColor(z), i_transp), border_color = border, border_width = bw,
+                 text = txt, text_color = f_ink(z), text_size = tSize,
+                 text_halign = text.align_center, text_valign = text.align_center,
+                 text_font_family = font.family_monospace))
+
+            if i_prof and maxRow > 0 and profSpan > 0
+                int w = int(profSpan * (bid + ask) / maxRow)
+                if w > 0
+                    array.push(cells, box.new(cellR, pHigh - bRow * 0.15, cellR + w, pLow + bRow * 0.15,
+                         xloc = xloc.bar_time, bgcolor = color.new(#7c4dff, 20),
+                         border_color = color.new(color.white, 100), border_width = 0))
+
+    // ------------------------------------------------------------- table
+    if i_table
+        table.cell(tbl, 0, 0, "", text_color = color.gray, text_size = size.tiny)
+        table.cell(tbl, 0, 1, "roc", text_color = color.gray, text_size = size.tiny)
+        table.cell(tbl, 0, 2, "volume", text_color = color.gray, text_size = size.tiny)
+        table.cell(tbl, 0, 3, "cum delta", text_color = color.gray, text_size = size.tiny)
+        table.cell(tbl, 0, 4, "delta", text_color = color.gray, text_size = size.tiny)
+
+        int cols = math.min(drawn, 40)
+        for k = 0 to math.max(0, cols - 1)
+            if k >= cols
+                break
+            FpBar b = array.get(hist, total - 1 - (cols - 1 - k))
+            int c = k + 1
+            table.cell(tbl, c, 0, str.format_time(b.t, "HH:mm", syminfo.timezone), text_color = color.gray, text_size = size.tiny)
+            // the reference squashes every parameter through tanh before colouring
+            table.cell(tbl, c, 1, na(b.roc) ? "—" : str.tostring(b.roc, "#.#") + "%",
+                 bgcolor = na(b.roc) ? color.new(color.gray, 80) : color.new(f_ramp(RDYLGN, (f_tanh(b.roc) + 1) / 2), 20),
+                 text_color = color.white, text_size = size.tiny)
+            table.cell(tbl, c, 2, f_num(b.vol),
+                 bgcolor = color.new(f_ramp(RDYLGN, (f_tanh(b.vol) + 1) / 2), 20),
+                 text_color = color.white, text_size = size.tiny)
+            table.cell(tbl, c, 3, na(b.cum) ? "—" : f_num(b.cum),
+                 bgcolor = na(b.cum) ? color.new(color.gray, 80) : color.new(f_ramp(RDYLGN, (f_tanh(b.cum) + 1) / 2), 20),
+                 text_color = color.white, text_size = size.tiny)
+            table.cell(tbl, c, 4, f_num(b.delta),
+                 bgcolor = color.new(f_ramp(RDYLGN, (f_tanh(b.delta) + 1) / 2), 20),
+                 text_color = color.white, text_size = size.tiny)
+
+// values worth having in the Data Window and available to alerts
+plot(barDelta, "Delta", display = display.data_window)
+plot(cumD, "Cum delta", display = display.data_window)
+plot(rowSz, "Row size", display = display.data_window)
