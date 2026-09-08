@@ -1,4 +1,4 @@
-import type { Candle, DataAdapter, SymbolInfo, Ticker, Timeframe } from './types'
+import type { Candle, DataAdapter, SymbolInfo, Ticker, Timeframe, Trade, TradeSource } from './types'
 
 const REST = 'https://api.binance.com/api/v3'
 const WS = 'wss://stream.binance.com:9443/ws'
@@ -15,6 +15,10 @@ function toCandle(r: Raw): Candle {
     close: parseFloat(r[4]),
     volume: parseFloat(r[5]),
   }
+}
+
+function toTrade(r: RawAgg): Trade {
+  return { time: r.T, price: parseFloat(r.p), qty: parseFloat(r.q), buyerMaker: r.m }
 }
 
 /** WebSocket that re-dials with backoff until closed via the returned fn. */
@@ -50,10 +54,23 @@ function persistentSocket(url: string, onMessage: (data: any) => void): () => vo
   }
 }
 
-export class BinanceAdapter implements DataAdapter {
+/** Binance caps aggTrades at 1000 rows per request. */
+const AGG_PAGE = 1000
+
+interface RawAgg {
+  a: number // aggregate trade id
+  p: string // price
+  q: string // quantity
+  T: number // timestamp
+  m: boolean // buyer was the maker
+}
+
+export class BinanceAdapter implements DataAdapter, TradeSource {
   id = 'binance'
   name = 'Binance'
+  private exchangeInfo: Promise<any> | null = null
   private symbolsCache: Promise<SymbolInfo[]> | null = null
+  private tickCache: Promise<Map<string, number>> | null = null
 
   static async available(timeoutMs = 3000): Promise<boolean> {
     try {
@@ -64,9 +81,13 @@ export class BinanceAdapter implements DataAdapter {
     }
   }
 
+  private info(): Promise<any> {
+    this.exchangeInfo ??= fetch(`${REST}/exchangeInfo`).then((r) => r.json())
+    return this.exchangeInfo
+  }
+
   private allSymbols(): Promise<SymbolInfo[]> {
-    this.symbolsCache ??= fetch(`${REST}/exchangeInfo`)
-      .then((r) => r.json())
+    this.symbolsCache ??= this.info()
       .then((j) =>
         (j.symbols as any[])
           .filter((s) => s.status === 'TRADING' && s.isSpotTradingAllowed)
@@ -116,6 +137,58 @@ export class BinanceAdapter implements DataAdapter {
         close: parseFloat(k.c),
         volume: parseFloat(k.v),
       })
+    })
+  }
+
+  /** PRICE_FILTER tick size per symbol, from the cached exchangeInfo payload. */
+  async priceTick(symbol: string): Promise<number | null> {
+    this.tickCache ??= this.info().then((j) => {
+      const m = new Map<string, number>()
+      for (const s of j.symbols as any[]) {
+        const f = (s.filters as any[])?.find((x) => x.filterType === 'PRICE_FILTER')
+        const tick = f ? parseFloat(f.tickSize) : NaN
+        if (isFinite(tick) && tick > 0) m.set(s.symbol, tick)
+      }
+      return m
+    })
+    return (await this.tickCache).get(symbol) ?? null
+  }
+
+  /**
+   * Walk aggTrades backwards from the latest print. Paging by id (rather than
+   * by time) is the only way to read a busy symbol without silent truncation:
+   * a time-windowed request returns the *first* 1000 trades in the window and
+   * quietly drops the rest.
+   */
+  async fetchRecentTrades(symbol: string, since: number, cap: number): Promise<Trade[]> {
+    const pages: Trade[][] = []
+    let collected = 0
+
+    const head = await fetch(`${REST}/aggTrades?symbol=${symbol}&limit=${AGG_PAGE}`)
+    if (!head.ok) throw new Error(`Binance aggTrades ${head.status}`)
+    let page = (await head.json()) as RawAgg[]
+
+    while (page.length > 0) {
+      pages.push(page.map(toTrade))
+      collected += page.length
+      const firstId = page[0].a
+      if (collected >= cap || page[0].T <= since || firstId <= 0) break
+      const fromId = Math.max(0, firstId - AGG_PAGE)
+      const limit = firstId - fromId
+      if (limit <= 0) break
+      const res = await fetch(`${REST}/aggTrades?symbol=${symbol}&fromId=${fromId}&limit=${limit}`)
+      if (!res.ok) break // partial history is still usable
+      page = (await res.json()) as RawAgg[]
+    }
+
+    pages.reverse()
+    return pages.flat()
+  }
+
+  subscribeTrades(symbol: string, onTrade: (t: Trade) => void): () => void {
+    return persistentSocket(`${WS}/${symbol.toLowerCase()}@aggTrade`, (msg) => {
+      if (!msg?.p) return
+      onTrade(toTrade(msg as RawAgg))
     })
   }
 
