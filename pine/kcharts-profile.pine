@@ -1,0 +1,312 @@
+//@version=6
+// KCharts Profile Setup
+// ---------------------------------------------------------------------------
+// The chart template this repo renders in its own engine, ported to Pine so the
+// same read works on TradingView:
+//   • volume profile with up/down volume per row, value area coloured apart
+//     from the wings, point of control extended across the chart
+//   • the EMA pair the trend is read from (50 red / 200 green by default)
+//   • supply / demand bands from confirmed pivots, extended until price closes
+//     through them
+//   • the previous session's POC / VAH / VAL as fixed levels
+//
+// The profile measures one of three ranges, set by "Profile range":
+//   Session       — today's bars only. Levels stay put as you scroll (default).
+//   Fixed bars    — the last N bars, whatever is on screen.
+//   Visible range — recomputed from the bars on screen, like TradingView's VPVR.
+//                   The POC moves whenever you scroll or zoom; that is expected.
+// ---------------------------------------------------------------------------
+indicator("KCharts Profile Setup", shorttitle = "KC Profile", overlay = true, max_boxes_count = 500, max_lines_count = 50, max_labels_count = 50, max_bars_back = 5000)
+
+// ------------------------------------------------------------------- inputs
+gP = "Volume profile"
+showProfile = input.bool(true, "Show profile", group = gP)
+profileMode = input.string("Session", "Profile range", options = ["Session", "Fixed bars", "Visible range"], group = gP, tooltip = "Session and Fixed bars hold still as you scroll. Visible range re-measures the bars on screen, so its POC moves with the chart.")
+fixedBars   = input.int(240, "Fixed bars", minval = 20, maxval = 5000, group = gP)
+rowCount    = input.int(80, "Rows", minval = 10, maxval = 200, group = gP)
+widthPct    = input.float(30, "Width (% of screen)", minval = 5, maxval = 80, group = gP)
+vaPct       = input.float(70, "Value area (%)", minval = 30, maxval = 95, group = gP)
+maxScan     = input.int(1500, "Max bars scanned", minval = 50, maxval = 5000, group = gP, tooltip = "Caps how far back the profile looks. Raise it for long sessions on low timeframes; lower it if the script feels slow.")
+cVaUp       = input.color(color.new(#d1d4dc, 25), "Value area — up / down", inline = "va", group = gP)
+cVaDn       = input.color(color.new(#2962ff, 25), "", inline = "va", group = gP)
+cWingUp     = input.color(color.new(#26a69a, 25), "Outside VA — up / down", inline = "wing", group = gP)
+cWingDn     = input.color(color.new(#ff9800, 25), "", inline = "wing", group = gP)
+showPoc     = input.bool(true, "POC line", group = gP)
+showVa      = input.bool(false, "VAH / VAL lines", group = gP)
+showStats   = input.bool(true, "Stats table", group = gP)
+
+gV = "Previous session levels"
+showPrior = input.bool(true, "Show previous session POC / VAH / VAL", group = gV, tooltip = "Levels from the session that has already closed. These never move.")
+cPrior    = input.color(#787b86, "Line colour", group = gV)
+
+gE = "EMAs"
+showEmas = input.bool(true, "Show EMAs", group = gE)
+fastLen  = input.int(50, "Fast", minval = 1, group = gE)
+slowLen  = input.int(200, "Slow", minval = 1, group = gE)
+cFast    = input.color(#ef5350, "Fast / slow colour", inline = "ema", group = gE)
+cSlow    = input.color(#22c55e, "", inline = "ema", group = gE)
+
+gZ = "Supply / demand zones"
+showZones = input.bool(true, "Show zones", group = gZ)
+pivotLen  = input.int(10, "Pivot strength", minval = 2, group = gZ, tooltip = "Bars required either side of a swing before it counts as a pivot.")
+maxZones  = input.int(3, "Zones per side", minval = 1, maxval = 8, group = gZ)
+cZoneFill = input.color(color.new(#d4c000, 87), "Zone fill", group = gZ)
+cZoneEdge = input.color(color.new(#d4c000, 45), "Zone border", group = gZ)
+
+// ---------------------------------------------------------------- functions
+// Volume per price row over a span of bar offsets. Rows 0..n-1 hold up volume
+// (close >= open), rows n..2n-1 the matching down volume for the same price.
+rowVolumes(int offNear, int offFar, float base, float st) =>
+    float[] vols = array.new_float(rowCount * 2, 0.0)
+    for i = offNear to offFar
+        float rng  = high[i] - low[i]
+        int   r1   = math.max(0, math.min(rowCount - 1, int((low[i] - base) / st)))
+        int   r2   = math.max(0, math.min(rowCount - 1, int((high[i] - base) / st)))
+        int   slot = close[i] >= open[i] ? 0 : rowCount
+        for r = r1 to r2
+            float rowLo = base + r * st
+            float rowHi = rowLo + st
+            float ov = rng <= 0 ? 1.0 : (math.min(high[i], rowHi) - math.max(low[i], rowLo)) / rng
+            if ov > 0
+                array.set(vols, r + slot, array.get(vols, r + slot) + volume[i] * ov)
+    vols
+
+// [pocIdx, valIdx, vahIdx] — the value area grown out from the POC, always
+// taking the heavier of the two neighbouring rows.
+valueArea(float[] vols) =>
+    float total  = 0.0
+    float pocVol = 0.0
+    int   pocIdx = 0
+    for r = 0 to rowCount - 1
+        float v = array.get(vols, r) + array.get(vols, r + rowCount)
+        total := total + v
+        if v > pocVol
+            pocVol := v
+            pocIdx := r
+    int   loIdx = pocIdx
+    int   hiIdx = pocIdx
+    float acc   = pocVol
+    float tgt   = total * vaPct / 100.0
+    while acc < tgt and (loIdx > 0 or hiIdx < rowCount - 1)
+        float below = loIdx > 0 ? array.get(vols, loIdx - 1) + array.get(vols, loIdx - 1 + rowCount) : -1.0
+        float above = hiIdx < rowCount - 1 ? array.get(vols, hiIdx + 1) + array.get(vols, hiIdx + 1 + rowCount) : -1.0
+        if above >= below
+            hiIdx := hiIdx + 1
+            acc := acc + above
+        else
+            loIdx := loIdx - 1
+            acc := acc + below
+    array.from(pocIdx, loIdx, hiIdx)
+
+// --------------------------------------------------------------------- EMAs
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+plot(showEmas ? emaFast : na, "EMA fast", color = cFast, linewidth = 2)
+plot(showEmas ? emaSlow : na, "EMA slow", color = cSlow, linewidth = 2)
+
+// ----------------------------------------------------------------- sessions
+bool newSession = nz(ta.change(time("D")), 0) != 0
+var int startBar     = 0
+var int prevStartBar = 0
+if newSession and bar_index > 0
+    prevStartBar := startBar
+    startBar := bar_index
+
+// -------------------------------------------------------------------- zones
+var box[]   supBox = array.new_box()
+var float[] supTop = array.new_float()
+var float[] supBot = array.new_float()
+var box[]   demBox = array.new_box()
+var float[] demTop = array.new_float()
+var float[] demBot = array.new_float()
+
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+// a supply band runs from the swing high down to the body top of that bar
+if showZones and not na(ph)
+    float zTop = high[pivotLen]
+    float zBot = math.max(open[pivotLen], close[pivotLen])
+    if zBot < zTop
+        array.push(supBox, box.new(bar_index - pivotLen, zTop, bar_index, zBot, border_color = cZoneEdge, bgcolor = cZoneFill, extend = extend.right))
+        array.push(supTop, zTop)
+        array.push(supBot, zBot)
+        if array.size(supBox) > maxZones
+            box.delete(array.shift(supBox))
+            array.shift(supTop)
+            array.shift(supBot)
+
+if showZones and not na(pl)
+    float zBot = low[pivotLen]
+    float zTop = math.min(open[pivotLen], close[pivotLen])
+    if zBot < zTop
+        array.push(demBox, box.new(bar_index - pivotLen, zTop, bar_index, zBot, border_color = cZoneEdge, bgcolor = cZoneFill, extend = extend.right))
+        array.push(demTop, zTop)
+        array.push(demBot, zBot)
+        if array.size(demBox) > maxZones
+            box.delete(array.shift(demBox))
+            array.shift(demTop)
+            array.shift(demBot)
+
+// a band is done once price closes through it
+if array.size(supBox) > 0
+    for i = array.size(supBox) - 1 to 0
+        if close > array.get(supTop, i)
+            box.delete(array.get(supBox, i))
+            array.remove(supBox, i)
+            array.remove(supTop, i)
+            array.remove(supBot, i)
+
+if array.size(demBox) > 0
+    for i = array.size(demBox) - 1 to 0
+        if close < array.get(demBot, i)
+            box.delete(array.get(demBox, i))
+            array.remove(demBox, i)
+            array.remove(demTop, i)
+            array.remove(demBot, i)
+
+inSupply = false
+if array.size(supTop) > 0
+    for i = 0 to array.size(supTop) - 1
+        if high >= array.get(supBot, i) and low <= array.get(supTop, i)
+            inSupply := true
+
+inDemand = false
+if array.size(demTop) > 0
+    for i = 0 to array.size(demTop) - 1
+        if high >= array.get(demBot, i) and low <= array.get(demTop, i)
+            inDemand := true
+
+// ------------------------------------------------------------------ profile
+var box[] profBox   = array.new_box()
+var line  pocLine   = na
+var line  vahLine   = na
+var line  valLine   = na
+var label pocLabel  = na
+var line  ppocLine  = na
+var line  pvahLine  = na
+var line  pvalLine  = na
+var label ppocLabel = na
+var float pocOut    = na
+var float vahOut    = na
+var float valOut    = na
+
+if barstate.islast
+    // everything below is redrawn from scratch on each recalculation
+    if array.size(profBox) > 0
+        for i = 0 to array.size(profBox) - 1
+            box.delete(array.get(profBox, i))
+        array.clear(profBox)
+    line.delete(pocLine)
+    line.delete(vahLine)
+    line.delete(valLine)
+    label.delete(pocLabel)
+    line.delete(ppocLine)
+    line.delete(pvahLine)
+    line.delete(pvalLine)
+    label.delete(ppocLabel)
+
+    int maxBack = math.min(bar_index, maxScan)
+
+    // bars back to the left edge of the screen — the histogram is always drawn
+    // from there, so a session that starts off-screen still shows up
+    int visBars = maxBack
+    for i = 0 to maxBack
+        if time[i] < chart.left_visible_bar_time
+            visBars := math.max(1, i - 1)
+            break
+
+    int leftOff = maxBack
+    if profileMode == "Visible range"
+        leftOff := visBars
+    else if profileMode == "Fixed bars"
+        leftOff := math.min(maxBack, fixedBars)
+    else
+        leftOff := math.max(1, math.min(maxBack, bar_index - startBar))
+
+    if showProfile
+        float hiP = high
+        float loP = low
+        for i = 0 to leftOff
+            hiP := math.max(hiP, high[i])
+            loP := math.min(loP, low[i])
+
+        float step = (hiP - loP) / rowCount
+        if step > 0
+            float[] vols = rowVolumes(0, leftOff, loP, step)
+            int[]   va   = valueArea(vols)
+            int pocIdx = array.get(va, 0)
+            int loIdx  = array.get(va, 1)
+            int hiIdx  = array.get(va, 2)
+            float pocVol = array.get(vols, pocIdx) + array.get(vols, pocIdx + rowCount)
+
+            int leftIdx  = bar_index - math.min(leftOff, visBars)
+            int widthBar = math.max(1, int(visBars * widthPct / 100.0))
+            if pocVol > 0
+                for r = 0 to rowCount - 1
+                    float up = array.get(vols, r)
+                    float dn = array.get(vols, r + rowCount)
+                    float v  = up + dn
+                    if v > 0
+                        int   w     = int(math.round(v / pocVol * widthBar))
+                        int   uw    = int(math.round(w * up / v))
+                        float rowLo = loP + r * step
+                        float rowHi = rowLo + step
+                        bool  inVa  = r >= loIdx and r <= hiIdx
+                        if uw > 0
+                            array.push(profBox, box.new(leftIdx, rowHi, leftIdx + uw, rowLo, border_width = 0, bgcolor = inVa ? cVaUp : cWingUp))
+                        if w - uw > 0
+                            array.push(profBox, box.new(leftIdx + uw, rowHi, leftIdx + w, rowLo, border_width = 0, bgcolor = inVa ? cVaDn : cWingDn))
+
+                pocOut := loP + (pocIdx + 0.5) * step
+                vahOut := loP + (hiIdx + 1) * step
+                valOut := loP + loIdx * step
+
+                if showPoc
+                    pocLine := line.new(leftIdx, pocOut, bar_index, pocOut, color = #d1d4dc, width = 1, extend = extend.right)
+                    pocLabel := label.new(bar_index, pocOut, "POC " + str.tostring(pocOut, format.mintick), style = label.style_label_left, color = color.new(#787b86, 15), textcolor = #0d1118, size = size.small)
+                if showVa
+                    vahLine := line.new(leftIdx, vahOut, bar_index, vahOut, color = color.new(#26a69a, 25), style = line.style_dotted, extend = extend.right)
+                    valLine := line.new(leftIdx, valOut, bar_index, valOut, color = color.new(#ff9800, 25), style = line.style_dotted, extend = extend.right)
+
+    // ---- previous session, measured once and left alone
+    if showPrior and prevStartBar > 0 and startBar > prevStartBar
+        int offNear = bar_index - startBar + 1
+        int offFar  = math.min(maxScan, bar_index - prevStartBar)
+        if offFar > offNear
+            float pHi = high[offNear]
+            float pLo = low[offNear]
+            for i = offNear to offFar
+                pHi := math.max(pHi, high[i])
+                pLo := math.min(pLo, low[i])
+            float pStep = (pHi - pLo) / rowCount
+            if pStep > 0
+                float[] pVols = rowVolumes(offNear, offFar, pLo, pStep)
+                int[]   pVa   = valueArea(pVols)
+                float pPoc = pLo + (array.get(pVa, 0) + 0.5) * pStep
+                float pVal = pLo + array.get(pVa, 1) * pStep
+                float pVah = pLo + (array.get(pVa, 2) + 1) * pStep
+                ppocLine := line.new(bar_index - offFar, pPoc, bar_index, pPoc, color = cPrior, width = 2, extend = extend.right)
+                pvahLine := line.new(bar_index - offFar, pVah, bar_index, pVah, color = cPrior, style = line.style_dashed, extend = extend.right)
+                pvalLine := line.new(bar_index - offFar, pVal, bar_index, pVal, color = cPrior, style = line.style_dashed, extend = extend.right)
+                ppocLabel := label.new(bar_index, pPoc, "prev POC " + str.tostring(pPoc, format.mintick), style = label.style_label_left, color = color.new(cPrior, 25), textcolor = #ffffff, size = size.small)
+
+// -------------------------------------------------------------------- stats
+var table stats = table.new(position.top_right, 2, 4, bgcolor = color.new(#0d1118, 15), border_width = 1, border_color = color.new(#787b86, 70))
+if showStats and showProfile and barstate.islast and not na(pocOut)
+    table.cell(stats, 0, 0, "range", text_color = #8b93a3, text_size = size.tiny)
+    table.cell(stats, 1, 0, profileMode, text_color = #8b93a3, text_size = size.tiny)
+    table.cell(stats, 0, 1, "POC", text_color = #d1d4dc, text_size = size.small)
+    table.cell(stats, 1, 1, str.tostring(pocOut, format.mintick), text_color = #d1d4dc, text_size = size.small)
+    table.cell(stats, 0, 2, "VAH", text_color = #26a69a, text_size = size.small)
+    table.cell(stats, 1, 2, str.tostring(vahOut, format.mintick), text_color = #26a69a, text_size = size.small)
+    table.cell(stats, 0, 3, "VAL", text_color = #ff9800, text_size = size.small)
+    table.cell(stats, 1, 3, str.tostring(valOut, format.mintick), text_color = #ff9800, text_size = size.small)
+
+// ------------------------------------------------------------------- alerts
+// Only series-stable conditions get alerts: a visible-range profile differs per
+// viewer, so anything derived from it would fire off a different level.
+alertcondition(ta.crossover(emaFast, emaSlow), "EMA cross up", "Fast EMA crossed above slow EMA")
+alertcondition(ta.crossunder(emaFast, emaSlow), "EMA cross down", "Fast EMA crossed below slow EMA")
+alertcondition(inSupply and not inSupply[1], "Price entered supply zone", "Price tapped a supply band")
+alertcondition(inDemand and not inDemand[1], "Price entered demand zone", "Price tapped a demand band")

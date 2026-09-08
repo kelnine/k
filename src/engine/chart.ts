@@ -1,6 +1,7 @@
 import type { Candle } from '../data/types'
 import { indicatorById, type IndicatorDef, type IndicatorResult, type IndicatorShape } from '../indicators'
 import {
+  axisTags,
   DEFAULT_COLOR,
   hitTestDrawing,
   POINTS_NEEDED,
@@ -52,6 +53,18 @@ const COLORS = {
   lastPriceDown: '#ef5350',
 }
 
+/** volume-profile histogram colours: value area vs. the wings outside it */
+const PROFILE = {
+  vaUp: 'rgba(209,212,220,0.85)',
+  vaDown: 'rgba(41,98,255,0.8)',
+  up: 'rgba(38,166,154,0.8)',
+  down: 'rgba(255,152,0,0.8)',
+  poc: '#d1d4dc',
+  pocTag: '#787b86',
+  /** share of the plot width the heaviest row spans */
+  widthFrac: 0.3,
+}
+
 const AXIS_W = 72
 const TIME_AXIS_H = 26
 const DEFAULT_BAR_SPACING = 9
@@ -92,6 +105,7 @@ export class ChartEngine {
   private overlayRafId = 0
   private loadMoreArmed = true
   private mainScale: PaneScale | null = null
+  private computedRange: [number, number] = [-1, -1]
   private paneScales: { ind: ActiveInd; scale: PaneScale }[] = []
   private destroyed = false
 
@@ -219,10 +233,20 @@ export class ChartEngine {
   }
 
   private recomputeIndicators(): void {
+    this.computedRange = [-1, -1]
     this.indicators = this.indicatorIds
       .map((id) => indicatorById(id))
       .filter((d): d is IndicatorDef => !!d)
       .map((def) => ({ def, result: def.compute(this.candles) }))
+  }
+
+  /** re-run visible-range indicators (volume profile) when the window moves */
+  private syncVisibleIndicators(from: number, to: number): void {
+    if (this.computedRange[0] === from && this.computedRange[1] === to) return
+    this.computedRange = [from, to]
+    for (const a of this.indicators) {
+      if (a.def.visibleRange) a.result = a.def.compute(this.candles, from, to)
+    }
   }
 
   // ------------------------------------------------------------- geometry
@@ -352,6 +376,7 @@ export class ChartEngine {
     const { mainBottom, panes } = this.layoutPanes()
     const [from, to] = this.visibleRange()
     const hasData = this.candles.length > 0 && from <= to
+    if (hasData) this.syncVisibleIndicators(from, to)
 
     // ---- main pane price scale (candles + overlay indicator plots)
     let min = Infinity
@@ -384,17 +409,21 @@ export class ChartEngine {
 
     const timeTicks = this.computeTimeTicks(from, to)
     this.drawGrid(ctx, this.mainScale, timeTicks, mainBottom)
+    // the axis is painted first so the price tags drawn below survive
+    this.drawPriceAxis(ctx, this.mainScale)
     if (hasData) {
       this.drawWatermark(ctx, mainBottom)
+      this.drawVolumeProfile(ctx, this.mainScale)
       this.drawVolume(ctx, from, to, mainBottom)
       this.drawCandles(ctx, from, to, this.mainScale)
       this.drawOverlayIndicators(ctx, from, to, this.mainScale)
       this.drawIndicatorShapes(ctx, this.mainScale)
+      this.drawProfilePoc(ctx, this.mainScale)
       this.drawLastPrice(ctx, this.mainScale)
       const sp = this.drawSpace()
       if (sp) for (const d of this.drawings) renderDrawing(ctx, sp, d, d.id === this.selectedId)
+      this.drawDrawingTags(ctx, this.mainScale)
     }
-    this.drawPriceAxis(ctx, this.mainScale)
 
     // ---- oscillator panes
     this.paneScales = []
@@ -461,6 +490,64 @@ export class ChartEngine {
       const x = this.xForIndex(i)
       ctx.fillStyle = c.close >= c.open ? 'rgba(38,166,154,0.25)' : 'rgba(239,83,80,0.25)'
       ctx.fillRect(x - bw / 2, mainBottom - 4 - h, bw, h)
+    }
+  }
+
+  private get profile() {
+    for (const a of this.indicators) if (a.result.profile) return a.result.profile
+    return null
+  }
+
+  /**
+   * Horizontal volume-by-price histogram down the left edge: each row is split
+   * into up and down volume, coloured one way inside the value area and
+   * another outside it.
+   */
+  private drawVolumeProfile(ctx: CanvasRenderingContext2D, s: PaneScale): void {
+    const p = this.profile
+    if (!p || p.maxRowVolume <= 0) return
+    const maxW = this.plotW * PROFILE.widthFrac
+    for (const row of p.rows) {
+      const vol = row.up + row.down
+      if (vol <= 0) continue
+      const yTop = this.yForPrice(row.high, s)
+      const yBot = this.yForPrice(row.low, s)
+      if (yBot < s.top || yTop > s.bottom) continue
+      const h = Math.max(1, yBot - yTop - 0.5)
+      const w = (vol / p.maxRowVolume) * maxW
+      const mid = (row.low + row.high) / 2
+      const inVA = mid >= p.val && mid <= p.vah
+      const upW = (row.up / vol) * w
+      ctx.fillStyle = inVA ? PROFILE.vaUp : PROFILE.up
+      ctx.fillRect(0, yTop, upW, h)
+      ctx.fillStyle = inVA ? PROFILE.vaDown : PROFILE.down
+      ctx.fillRect(upW, yTop, w - upW, h)
+    }
+  }
+
+  /** point of control, extended across the pane and tagged on the axis */
+  private drawProfilePoc(ctx: CanvasRenderingContext2D, s: PaneScale): void {
+    const p = this.profile
+    if (!p) return
+    const y = this.yForPrice(p.poc, s)
+    if (y < s.top || y > s.bottom) return
+    ctx.strokeStyle = PROFILE.poc
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, Math.round(y) + 0.5)
+    ctx.lineTo(this.plotW, Math.round(y) + 0.5)
+    ctx.stroke()
+    this.axisLabel(ctx, y, formatPrice(p.poc), PROFILE.pocTag, '#0d1118')
+  }
+
+  /** price tags drawings publish to the axis (levels, entries, targets, stops) */
+  private drawDrawingTags(ctx: CanvasRenderingContext2D, s: PaneScale): void {
+    for (const d of this.drawings) {
+      for (const tag of axisTags(d)) {
+        const y = this.yForPrice(tag.price, s)
+        if (y < s.top || y > s.bottom) continue
+        this.axisLabel(ctx, y, formatPrice(tag.price), tag.color, '#fff')
+      }
     }
   }
 
@@ -824,14 +911,20 @@ export class ChartEngine {
     // in-progress drawing preview
     const sp = this.drawSpace()
     if (this.pending && sp) {
+      const need = POINTS_NEEDED[this.pending.type]
+      const cursor = this.pointAt(m.x, m.y)
+      // pad with the cursor so multi-click tools (positions) preview from the
+      // very first anchor instead of staying invisible until the last click
+      const points = [...this.pending.points]
+      while (points.length < need) points.push(cursor)
       const preview: Drawing = {
         id: '__pending',
         type: this.pending.type,
-        points: [...this.pending.points, this.pointAt(m.x, m.y)].slice(0, POINTS_NEEDED[this.pending.type]),
+        points: points.slice(0, need),
         color: DEFAULT_COLOR[this.pending.type],
         text: '…',
       }
-      if (preview.points.length === POINTS_NEEDED[preview.type]) renderDrawing(ctx, sp, preview, false)
+      renderDrawing(ctx, sp, preview, false)
     }
   }
 

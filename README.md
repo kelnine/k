@@ -12,15 +12,23 @@ fully custom canvas rendering engine, with no third-party charting library.
 - **Trading interactions** — drag to pan, scroll to zoom (anchored at the cursor),
   double-click to reset, crosshair with OHLC legend, infinite history loading as
   you pan back.
-- **Indicators** — MA 20/50/200, EMA 21, Bollinger Bands, daily-anchored VWAP
-  (overlays) plus RSI and MACD in their own synced panes.
+- **Indicators** — MA 20/50/200, EMA 21/50/200, Bollinger Bands, daily-anchored
+  VWAP (overlays) plus RSI and MACD in their own synced panes.
+- **Volume profile (VPVR)** — volume bucketed by price over the *visible* range,
+  split into up/down volume per row, with the point of control extended across
+  the pane and tagged on the axis, and the 70 % value area coloured apart from
+  the wings. Recomputed live as you pan and zoom. `⚡ Profile setup` loads it
+  together with the EMA 50/200 pair in one click.
+
 - **Phantom Flow SMC** — a from-scratch Smart Money Concepts overlay: swing
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
-- **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
-  text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
-  symbol in `localStorage`.
+- **Drawing tools** — trendlines, horizontal levels, supply/demand zones,
+  long/short position boxes (entry → target → stop, with % moves and R:R),
+  measured-move arrows, Fibonacci retracements, and text notes. Levels, entries,
+  targets and stops get a price tag on the axis. Select, drag, re-anchor
+  endpoints, delete with `Del`. Saved per symbol in `localStorage`.
 - **Multi-chart layouts** — 1 / 2 / 4 chart grids with an active-chart concept;
   symbol search, timeframe, and indicators apply to the focused chart.
 - **Watchlist** — live prices with up/down flashes and 24 h change.
@@ -39,6 +47,13 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production bundle in dist/
 ```
 
+## TradingView
+
+The same template — visible-range volume profile, EMA pair, supply/demand bands
+— is also available as a Pine v6 indicator in [`pine/`](pine/), for reading the
+same setup on TradingView charts. See [`pine/README.md`](pine/README.md) for
+install steps and the inputs that match.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,
@@ -56,5 +71,6 @@ src/
     drawings.ts  drawing tools: render + hit-testing
     utils.ts     axis ticks, price/time formatting
   indicators/  pure-function indicator library + registry
+    volume-profile.ts  visible-range volume-by-price, POC + value area
   ui/          React shell: toolbar, layouts, watchlist, search
 ```
