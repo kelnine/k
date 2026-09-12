@@ -89,6 +89,13 @@ position and the run's statistics.
 > no orders anywhere, and back-tested numbers on any feed — least of all the
 > synthetic demo feed — are not a forecast.
 
+## TradingView build
+
+The same model as a pair of Pine v6 scripts in [`pine/`](pine/) — the indicator
+(levels, premium/discount column, resting-limit bot, alerts) and a strategy
+build of the identical rules for TradingView's backtester. See
+[`pine/README.md`](pine/README.md) for install, inputs and alert setup.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,

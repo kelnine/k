@@ -1,0 +1,150 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  NQ Goldbach — PO3 bot, strategy build
+//
+//  Same rules as the indicator (goldbach_po3.pine), expressed as a strategy so
+//  TradingView's own engine fills the orders and reports the statistics. Use
+//  this one to judge the edge; use the indicator to trade and alert from.
+//
+//  Rules, unchanged:
+//    bias    structure — close through the last confirmed swing (BOS / CHoCH)
+//    filter  price on the bias side of the dealing range's equilibrium
+//    entry   limit resting on the nearest OB / FV / RB / LV level, within
+//            reach, pulled after N bars or when the bias flips
+//    exit    ATR stop, half off at T1, rest at T2, stop to break-even after T1
+// ═══════════════════════════════════════════════════════════════════════════
+
+strategy("NQ Goldbach — PO3 Bot (strategy)", shorttitle="NQ Goldbach ST", overlay = true,
+     initial_capital = 25000, default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.0,
+     max_bars_back = 300, calc_on_every_tick = false)
+
+gR = "Dealing range"
+sizeMode = input.string("Auto", "PO3 size", group = gR,
+     options = ["Auto", "3", "9", "27", "81", "243", "729", "2187", "6561", "19683"])
+autoMult = input.float(1.2, "Auto: median bar range ×", minval = 0.2, maxval = 10, step = 0.1, group = gR)
+
+gB = "Bot"
+riskPct   = input.float(0.75, "Risk % per trade", minval = 0.01, maxval = 10, step = 0.05, group = gB)
+pvLen     = input.int(5, "Swing strength", minval = 2, maxval = 30, group = gB)
+stopAtr   = input.float(1.3, "Stop (ATR ×)", minval = 0.2, maxval = 10, step = 0.1, group = gB)
+reachAtr  = input.float(1.0, "Limit must be within (ATR ×)", minval = 0.1, maxval = 5, step = 0.1, group = gB)
+orderLife = input.int(8, "Cancel order after (bars)", minval = 1, maxval = 100, group = gB)
+t1R       = input.float(1.0, "Target 1 (R)", minval = 0.2, step = 0.1, group = gB)
+t2R       = input.float(2.0, "Target 2 (R)", minval = 0.3, step = 0.1, group = gB)
+beAfterT1 = input.bool(true, "Stop to break-even after T1", group = gB)
+showLvls  = input.bool(true, "Draw the levels", group = gB)
+
+var array<float>  ratios = array.from(0.0, 0.03, 0.11, 0.17, 0.29, 0.41, 0.47, 0.5, 0.53, 0.59, 0.71, 0.83, 0.89, 0.97, 1.0)
+var array<string> roles  = array.from("Low", "RB", "OB", "FV", "LV", "BR", "MB", "EQ", "MB", "BR", "LV", "FV", "OB", "RB", "High")
+
+fIsEntryRole(string role) =>
+    role == "OB" or role == "FV" or role == "RB" or role == "LV"
+
+fRangeLow(float px, float sz) =>
+    math.floor(px / sz) * sz
+
+fNearestEntry(float sz, bool below) =>
+    float best   = na
+    float baseLo = fRangeLow(close, sz)
+    for k = 0 to 1
+        float lo = baseLo + (k == 0 ? 0.0 : below ? -sz : sz)
+        for i = 0 to array.size(ratios) - 1
+            if fIsEntryRole(array.get(roles, i))
+                float px = lo + sz * array.get(ratios, i)
+                bool  ok = below ? px < close : px > close
+                if ok and (na(best) or math.abs(px - close) < math.abs(best - close))
+                    best := px
+    best
+
+// ── range
+atr14   = ta.atr(14)
+medBar  = ta.median(ta.tr(true), 100)
+autoTgt = math.max(medBar * autoMult, syminfo.mintick)
+autoSz  = math.pow(3, math.ceil(math.log(autoTgt) / math.log(3)))
+po3sz   = sizeMode == "Auto" ? autoSz : str.tonumber(sizeMode)
+rngLow  = fRangeLow(close, po3sz)
+rngPos  = (close - rngLow) / po3sz
+
+// ── structure
+ph = ta.pivothigh(high, pvLen, pvLen)
+pl = ta.pivotlow(low, pvLen, pvLen)
+
+var float lastPH  = na
+var float lastPL  = na
+var bool  usedPH  = true
+var bool  usedPL  = true
+var int   biasDir = 0
+
+if not na(ph)
+    lastPH := ph
+    usedPH := false
+if not na(pl)
+    lastPL := pl
+    usedPL := false
+if not na(lastPH) and not usedPH and close > lastPH
+    usedPH  := true
+    biasDir := 1
+if not na(lastPL) and not usedPL and close < lastPL
+    usedPL  := true
+    biasDir := -1
+
+// ── orders
+var int   placedBar = na
+var int   placedDir = 0
+var float riskAtFill = na
+var float initSize  = na
+
+flat = strategy.position_size == 0
+
+if flat and placedDir != 0 and (bar_index - placedBar > orderLife or (biasDir != 0 and biasDir != placedDir))
+    strategy.cancel("L")
+    strategy.cancel("S")
+    placedDir := 0
+
+if flat and placedDir == 0 and biasDir != 0 and not na(atr14) and barstate.isconfirmed
+    bool wantLong  = biasDir ==  1 and rngPos < 0.5
+    bool wantShort = biasDir == -1 and rngPos > 0.5
+    if wantLong or wantShort
+        float lvlPx = fNearestEntry(po3sz, wantLong)
+        if not na(lvlPx) and math.abs(lvlPx - close) <= atr14 * reachAtr
+            float stopDist = atr14 * stopAtr
+            float cash     = strategy.equity * riskPct / 100
+            float raw      = cash / math.max(stopDist * syminfo.pointvalue, syminfo.mintick)
+            float qty      = raw >= 10 ? math.floor(raw) : raw >= 1 ? math.round(raw * 10) / 10 : math.round(raw * 1000) / 1000
+            if qty > 0
+                strategy.entry(wantLong ? "L" : "S", wantLong ? strategy.long : strategy.short,
+                     qty = qty, limit = lvlPx)
+                placedBar := bar_index
+                placedDir := wantLong ? 1 : -1
+
+// the bar a fill lands on: remember the risk the order was sized against
+if not flat and strategy.position_size[1] == 0
+    riskAtFill := atr14 * stopAtr
+    initSize   := math.abs(strategy.position_size)
+    placedDir  := 0
+
+if not flat and not na(riskAtFill)
+    float e      = strategy.position_avg_price
+    int   dir    = strategy.position_size > 0 ? 1 : -1
+    bool  t1Done = not na(initSize) and math.abs(strategy.position_size) < initSize
+    float stopPx = t1Done and beAfterT1 ? e : e - dir * riskAtFill
+    string fromId = dir == 1 ? "L" : "S"
+    strategy.exit("T1", from_entry = fromId, qty_percent = 50, stop = stopPx, limit = e + dir * t1R * riskAtFill)
+    strategy.exit("T2", from_entry = fromId, stop = stopPx, limit = e + dir * t2R * riskAtFill)
+
+// ── the levels, for context on the backtest chart
+var array<line> sLines = array.new<line>()
+
+if showLvls and barstate.islast
+    while array.size(sLines) > 0
+        line.delete(array.pop(sLines))
+    for i = 0 to array.size(ratios) - 1
+        float  r    = array.get(ratios, i)
+        string role = array.get(roles, i)
+        float  px   = rngLow + po3sz * r
+        bool   key  = r == 0.0 or r == 1.0 or r == 0.5
+        array.push(sLines, line.new(math.max(0, bar_index - 300), px, bar_index + 10, px,
+             color = color.new(key ? color.orange : color.yellow, key ? 15 : fIsEntryRole(role) ? 35 : 65),
+             style = r == 0.5 ? line.style_dotted : line.style_solid,
+             width = key ? 2 : 1))
