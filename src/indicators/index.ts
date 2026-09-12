@@ -1,4 +1,5 @@
 import type { Candle } from '../data/types'
+import { makeFrankenstein, makeFrankScore } from './frankenstein'
 import { makeSmc } from './smc'
 
 export type PlotStyle = 'line' | 'hist'
@@ -255,6 +256,8 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeFrankenstein(),
+  makeFrankScore(),
 ]
 
 export function indicatorById(id: string): IndicatorDef | undefined {

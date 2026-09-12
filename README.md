@@ -18,6 +18,15 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **Frankenstein AI** — a nine-limb ensemble that scores every bar and paper-trades
+  its own signal. Market structure, order blocks, fair-value gaps, the trend
+  stack, momentum, VWAP, liquidity sweeps, the fib pocket and volume thrust each
+  vote independently; the votes are blended and then throttled by a
+  volatility/agreement gate, and the gated score drives a simulated trader that
+  sizes by conviction, scales out at 1R/2R and trails the runner. Entries and
+  exits are drawn on the chart as `qty @ price` tickets with their risk/reward
+  boxes, alongside a live-zone overlay, a fib ladder and a price-level heat
+  ribbon. **Simulated fills only — no broker is connected.**
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.
@@ -39,6 +48,30 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production bundle in dist/
 ```
 
+## The Frankenstein model
+
+```
+src/model/
+  features.ts   causal feature layer — EMAs, RSI, ATR, MACD, VWAP, swings,
+                order blocks, FVGs, liquidity pools, impulse legs. Every
+                derived object records the bar it first becomes *knowable* at,
+                so a swing pivot is invisible until its confirmation bars pass.
+  limbs.ts      the nine independent voters, each -1 … +1 with a reason string
+  frankenstein.ts  the blend + the regime gate
+  autotrader.ts    paper execution: next-bar-open fills, stop-before-target
+                   within a bar, scale-outs, trailing, equity + stats
+```
+
+Nothing in `src/model` touches the DOM, so the bot in `bot/` can import the same
+ensemble the chart runs. Turn it on with the **🧠 AI Trader** button in the
+toolbar (or the `Frankenstein AI` / `Frankenstein Score` indicators); the
+right-hand panel shows the current limb-by-limb breakdown, the open paper
+position and the run's statistics.
+
+> The trader simulates its own fills against the candles it is handed. It places
+> no orders anywhere, and back-tested numbers on any feed — least of all the
+> synthetic demo feed — are not a forecast.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,
@@ -56,5 +89,6 @@ src/
     drawings.ts  drawing tools: render + hit-testing
     utils.ts     axis ticks, price/time formatting
   indicators/  pure-function indicator library + registry
+  model/       Frankenstein ensemble: features, limbs, blend, paper trader
   ui/          React shell: toolbar, layouts, watchlist, search
 ```

@@ -6,6 +6,7 @@ import { formatPrice } from '../engine/utils'
 import { INDICATORS } from '../indicators'
 import { BotFeed } from './BotFeed'
 import { ChartView } from './ChartView'
+import { ModelPanel } from './ModelPanel'
 
 type Layout = '1' | '2h' | '2v' | '4'
 
@@ -256,6 +257,20 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             </div>
           )}
         </div>
+        <button
+          className={`bar-btn ai-btn${active.indicators.includes('frankenstein') ? ' on' : ''}`}
+          title="Run the Frankenstein ensemble on this chart (paper trades)"
+          onClick={() => {
+            const on = active.indicators.includes('frankenstein')
+            updateActive({
+              indicators: on
+                ? active.indicators.filter((x) => x !== 'frankenstein' && x !== 'frankscore')
+                : [...active.indicators, 'frankenstein', 'frankscore'],
+            })
+          }}
+        >
+          🧠 AI Trader
+        </button>
         <div className="layout-group">
           {(['1', '2h', '2v', '4'] as Layout[]).map((l) => (
             <button
@@ -323,6 +338,7 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             adapter={adapter}
             onAdd={(s) => setWatchlist((w) => (w.includes(s) ? w : [...w, s]))}
           />
+          <ModelPanel adapter={adapter} symbol={active.symbol} tf={active.tf} />
           <BotFeed adapter={adapter} symbols={watchlist} />
         </aside>
       </div>
