@@ -22,7 +22,7 @@ strategy("NQ Goldbach — PO3 Bot (strategy)", shorttitle="NQ Goldbach ST", over
 gR = "Dealing range"
 sizeMode = input.string("Auto", "PO3 size", group = gR,
      options = ["Auto", "3", "9", "27", "81", "243", "729", "2187", "6561", "19683"])
-autoMult = input.float(1.2, "Auto: median bar range ×", minval = 0.2, maxval = 10, step = 0.1, group = gR)
+autoMult = input.float(5.0, "Auto: ATR ×", minval = 0.5, maxval = 60, step = 0.5, group = gR)
 
 gB = "Bot"
 riskPct   = input.float(0.75, "Risk % per trade", minval = 0.01, maxval = 10, step = 0.05, group = gB)
@@ -59,9 +59,8 @@ fNearestEntry(float sz, bool below) =>
 
 // ── range
 atr14   = ta.atr(14)
-medBar  = ta.median(ta.tr(true), 100)
-autoTgt = math.max(medBar * autoMult, syminfo.mintick)
-autoSz  = math.pow(3, math.ceil(math.log(autoTgt) / math.log(3)))
+autoTgt = math.max(atr14 * autoMult, syminfo.mintick)
+autoSz  = math.pow(3, math.round(math.log(autoTgt) / math.log(3)))
 po3sz   = sizeMode == "Auto" ? autoSz : str.tonumber(sizeMode)
 rngLow  = fRangeLow(close, po3sz)
 rngPos  = (close - rngLow) / po3sz
@@ -111,7 +110,8 @@ if flat and placedDir == 0 and biasDir != 0 and not na(atr14) and barstate.iscon
             float stopDist = atr14 * stopAtr
             float cash     = strategy.equity * riskPct / 100
             float raw      = cash / math.max(stopDist * syminfo.pointvalue, syminfo.mintick)
-            float qty      = raw >= 10 ? math.floor(raw) : raw >= 1 ? math.round(raw * 10) / 10 : math.round(raw * 1000) / 1000
+            bool  frac     = syminfo.type == "crypto" or syminfo.type == "forex"
+            float qty      = frac ? (raw >= 10 ? math.floor(raw) : raw >= 1 ? math.round(raw * 10) / 10 : math.round(raw * 1000) / 1000) : math.floor(raw)
             if qty > 0
                 strategy.entry(wantLong ? "L" : "S", wantLong ? strategy.long : strategy.short,
                      qty = qty, limit = lvlPx)

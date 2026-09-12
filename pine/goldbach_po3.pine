@@ -35,11 +35,12 @@ gR = "Dealing range"
 sizeMode = input.string("Auto", "PO3 size", group = gR,
      options = ["Auto", "3", "9", "27", "81", "243", "729", "2187", "6561", "19683"],
      tooltip = "Auto picks the smallest power of three that comfortably contains a typical bar's range — 81 on NQ intraday, larger on BTC.")
-autoMult   = input.float(1.2, "Auto: median bar range ×", minval = 0.2, maxval = 10, step = 0.1, group = gR)
+autoMult   = input.float(5.0, "Auto: ATR ×", minval = 0.5, maxval = 60, step = 0.5, group = gR,
+     tooltip = "The range should frame a session's move, not one candle. ATR(14) × 5, snapped to the nearest power of three, lands on 81 for NQ intraday. Raise it for a bigger range, or just pick the size by hand.")
 showHigher = input.bool(true,  "Draw nested ×3 range", group = gR)
 showExt    = input.bool(true,  "Draw ±0.111 extensions", group = gR)
 histBars   = input.int(300, "Draw levels back (bars)", minval = 20, maxval = 2000, group = gR)
-labelOff   = input.int(14,  "Label offset (bars)", minval = 1, maxval = 100, group = gR)
+labelOff   = input.int(3,   "Label offset (bars)", minval = 1, maxval = 100, group = gR)
 
 // ────────────────────────────────────────────── inputs: premium / discount
 gC = "Premium / discount column"
@@ -56,7 +57,9 @@ lvlCol  = input.color(color.rgb(255, 193, 7),   "Goldbach levels",  group = gS)
 eqCol   = input.color(color.rgb(120, 144, 180), "Equilibrium",      group = gS)
 extCol  = input.color(color.rgb(171, 71, 188),  "Extensions",       group = gS)
 faintTr = input.int(45, "Nested range fade", minval = 0, maxval = 90, group = gS)
-txtSize = input.string("small", "Label size", options = ["tiny", "small", "normal"], group = gS)
+txtSize = input.string("tiny", "Label size", options = ["tiny", "small", "normal"], group = gS)
+lblMode = input.string("Entry + key", "Label detail", options = ["All", "Entry + key", "Key only"], group = gS,
+     tooltip = "Entry + key drops the MB / BR labels that bunch up around equilibrium. The lines stay either way.")
 
 // ──────────────────────────────────────────────────────── inputs: zones/MA
 gZ = "Structure"
@@ -64,7 +67,7 @@ pvLen    = input.int(5, "Swing strength", minval = 2, maxval = 30, group = gZ)
 showBos  = input.bool(true, "Label BOS / CHoCH", group = gZ)
 showOB   = input.bool(true, "Order blocks", group = gZ)
 showFVG  = input.bool(true, "Fair value gaps", group = gZ)
-keepZone = input.int(5, "Keep last N zones per side", minval = 1, maxval = 20, group = gZ)
+keepZone = input.int(3, "Keep last N zones per side", minval = 1, maxval = 20, group = gZ)
 showEma  = input.bool(true, "EMA ribbon", group = gZ)
 emaFastL = input.int(21, "EMA fast", minval = 2, group = gZ)
 emaSlowL = input.int(50, "EMA slow", minval = 2, group = gZ)
@@ -72,6 +75,8 @@ emaSlowL = input.int(50, "EMA slow", minval = 2, group = gZ)
 // ────────────────────────────────────────────────────────── inputs: the bot
 gB = "Bot"
 botOn      = input.bool(true, "Take signals", group = gB)
+keepTrades = input.int(3, "Keep last N trades drawn", minval = 1, maxval = 50, group = gB,
+     tooltip = "Every closed trade leaves two boxes, a line and two labels. Past a handful the chart is unreadable.")
 acctEquity = input.float(25000, "Account equity", minval = 1, group = gB)
 riskPct    = input.float(0.75, "Risk % per trade", minval = 0.01, maxval = 10, step = 0.05, group = gB)
 stopAtr    = input.float(1.3, "Stop (ATR ×)", minval = 0.2, maxval = 10, step = 0.1, group = gB)
@@ -80,6 +85,7 @@ orderLife  = input.int(8, "Cancel order after (bars)", minval = 1, maxval = 100,
 t1R        = input.float(1.0, "Target 1 (R)", minval = 0.2, step = 0.1, group = gB)
 t2R        = input.float(2.0, "Target 2 (R)", minval = 0.3, step = 0.1, group = gB)
 beAfterT1  = input.bool(true, "Stop to break-even after T1", group = gB)
+tblPos     = input.string("Top right", "Read-out position", options = ["Top right", "Bottom right", "Bottom left", "Hidden"], group = gB)
 buyCol     = input.color(color.rgb(41, 98, 255), "Buy ticket", group = gB)
 sellCol    = input.color(color.rgb(239, 83, 80), "Sell ticket", group = gB)
 
@@ -106,10 +112,9 @@ fRangeLow(float px, float sz) =>
 
 // ═══════════════════════════════════════════════════════════════ range sizing
 atr14   = ta.atr(14)
-medBar  = ta.median(ta.tr(true), 100)
-autoTgt = math.max(medBar * autoMult, syminfo.mintick)
-// smallest power of three at or above the target
-autoSz  = math.pow(3, math.ceil(math.log(autoTgt) / math.log(3)))
+autoTgt = math.max(atr14 * autoMult, syminfo.mintick)
+// nearest power of three in log space — "next one up" jumps a whole factor of 3
+autoSz  = math.pow(3, math.round(math.log(autoTgt) / math.log(3)))
 po3sz   = sizeMode == "Auto" ? autoSz : str.tonumber(sizeMode)
 
 rngLow  = fRangeLow(close, po3sz)
@@ -151,8 +156,9 @@ fDrawLadder(float sz, bool faint) =>
              style = isEq ? line.style_dotted : line.style_solid)
         array.push(gLines, ln)
         // the nested range only names the levels worth naming — the rest is noise
-        bool named = isKey or isEq
-        if not faint or named or role == "OB" or role == "FV"
+        bool named  = isKey or isEq
+        bool roleOk = lblMode == "All" or (lblMode == "Key only" and named) or (lblMode == "Entry + key" and (named or fIsEntryRole(role)))
+        if roleOk and (not faint or named or role == "OB")
             string txt = (named ? fRatioText(r) : fRatioText(r) + " " + role) + " | " + szTxt
             label lb = label.new(x2, px, txt, xloc = xloc.bar_index,
                  style     = label.style_label_left,
@@ -167,12 +173,13 @@ fDrawLadder(float sz, bool faint) =>
             line le = line.new(x1, px, x2, px, xloc = xloc.bar_index,
                  color = color.new(extCol, math.min(95, 45 + fade)), style = line.style_dashed)
             array.push(gLines, le)
-            label lbe = label.new(x2, px, str.tostring(r, "0.000") + " Ext | " + szTxt, xloc = xloc.bar_index,
-                 style     = label.style_label_left,
-                 color     = color.new(color.black, 100),
-                 textcolor = color.new(extCol, math.min(70, fade)),
-                 size      = fLabelSize())
-            array.push(gLabels, lbe)
+            if not faint
+                label lbe = label.new(x2, px, str.tostring(r, "0.000") + " Ext | " + szTxt, xloc = xloc.bar_index,
+                     style     = label.style_label_left,
+                     color     = color.new(color.black, 100),
+                     textcolor = color.new(extCol, 0),
+                     size      = fLabelSize())
+                array.push(gLabels, lbe)
     0
 
 // premium above equilibrium, discount below — banded by the partition itself
@@ -238,12 +245,16 @@ if not na(lastPL) and not usedPL and close < lastPL
     usedPL   := true
     biasDir  := -1
 
-if showBos and bosUp
-    label.new(bar_index, low, breakTxt, style = label.style_label_up,
-         color = color.new(discCol, 25), textcolor = color.white, size = size.tiny)
-if showBos and bosDown
-    label.new(bar_index, high, breakTxt, style = label.style_label_down,
-         color = color.new(premCol, 25), textcolor = color.white, size = size.tiny)
+var array<label> bosLbls = array.new<label>()
+
+if showBos and (bosUp or bosDown)
+    array.push(bosLbls, label.new(bar_index, bosUp ? low : high, breakTxt,
+         style     = bosUp ? label.style_label_up : label.style_label_down,
+         color     = color.new(bosUp ? discCol : premCol, 25),
+         textcolor = color.white,
+         size      = size.tiny))
+    while array.size(bosLbls) > 12
+        label.delete(array.shift(bosLbls))
 
 // ---- order blocks: the last opposite candle before the break
 var array<box> bullOB = array.new<box>()
@@ -328,7 +339,9 @@ fAgeZones(bearFVG, false)
 
 fQty(float cashAtRisk, float stopDist) =>
     float raw = cashAtRisk / math.max(stopDist * syminfo.pointvalue, syminfo.mintick)
-    raw >= 10 ? math.floor(raw) : raw >= 1 ? math.round(raw * 10) / 10 : math.round(raw * 1000) / 1000
+    // futures and shares trade in whole units — only crypto and FX size fractionally
+    bool frac = syminfo.type == "crypto" or syminfo.type == "forex"
+    frac ? (raw >= 10 ? math.floor(raw) : raw >= 1 ? math.round(raw * 10) / 10 : math.round(raw * 1000) / 1000) : math.floor(raw)
 
 // nearest OB/FV/RB/LV level on the working side, this range or the next one over
 fNearestEntry(float sz, bool below) =>
@@ -375,6 +388,12 @@ var line  stopLn   = na
 var line  t1Line   = na
 var line  t2Line   = na
 
+// closed-trade drawings, trimmed to the last `keepTrades`: 2 boxes, 1 line and
+// 2 labels each, which is what buries the chart once a few dozen have printed
+var array<box>   tBoxes   = array.new<box>()
+var array<line>  tLines   = array.new<line>()
+var array<label> tLabels  = array.new<label>()
+
 bool  evOrder = false
 bool  evFill  = false
 bool  evT1    = false
@@ -413,16 +432,19 @@ if ordDir != 0
         rwdBox  := box.new(bar_index, math.max(posEntry, posT2), bar_index + 1, math.min(posEntry, posT2),
              border_color = color.new(discCol, 80), bgcolor = color.new(discCol, 88))
         entryLn := line.new(bar_index, posEntry, bar_index + 1, posEntry, color = side, width = 2)
+        array.push(tBoxes, riskBox)
+        array.push(tBoxes, rwdBox)
+        array.push(tLines, entryLn)
         stopLn  := line.new(bar_index, posStop,  bar_index + 1, posStop,  color = color.new(premCol, 20), style = line.style_dashed)
         t1Line  := line.new(bar_index, posT1,    bar_index + 1, posT1,    color = color.new(discCol, 35), style = line.style_dashed)
         t2Line  := line.new(bar_index, posT2,    bar_index + 1, posT2,    color = color.new(discCol, 20), style = line.style_dashed)
-        label.new(bar_index, posEntry,
+        array.push(tLabels, label.new(bar_index, posEntry,
              (posDir == 1 ? "▲ " : "▼ ") + str.tostring(posQty) + " @ " + str.tostring(posEntry, format.mintick),
              xloc      = xloc.bar_index,
              style     = posDir == 1 ? label.style_label_up : label.style_label_down,
              color     = color.new(side, 20),
              textcolor = color.white,
-             size      = size.tiny)
+             size      = size.tiny))
 
 // ---- 2. manage what is on: the fill above can be managed on its own bar
 if posDir != 0
@@ -459,12 +481,18 @@ if posDir != 0
         line.delete(stopLn)
         line.delete(t1Line)
         line.delete(t2Line)
-        label.new(bar_index, outPx, (exitR >= 0 ? "+" : "") + str.tostring(exitR, "0.00") + "R",
+        array.push(tLabels, label.new(bar_index, outPx, (exitR >= 0 ? "+" : "") + str.tostring(exitR, "0.00") + "R",
              xloc      = xloc.bar_index,
              style     = posDir == 1 ? label.style_label_down : label.style_label_up,
              color     = color.new(exitR >= 0 ? discCol : premCol, 25),
              textcolor = color.white,
-             size      = size.tiny)
+             size      = size.tiny))
+        while array.size(tBoxes) > keepTrades * 2
+            box.delete(array.shift(tBoxes))
+        while array.size(tLines) > keepTrades
+            line.delete(array.shift(tLines))
+        while array.size(tLabels) > keepTrades * 2
+            label.delete(array.shift(tLabels))
         posDir   := 0
         posT1Hit := false
         bankedR  := 0.0
@@ -475,12 +503,13 @@ if botOn and posDir == 0 and ordDir == 0 and biasDir != 0 and not na(atr14) and 
     bool wantShort = biasDir == -1 and rngPos > 0.5
     if wantLong or wantShort
         [lvlPx, lvlTx] = fNearestEntry(po3sz, wantLong)
-        if not na(lvlPx) and math.abs(lvlPx - close) <= atr14 * reachAtr
-            float stopDist = atr14 * stopAtr
+        float stopDist = atr14 * stopAtr
+        float wantQty  = fQty(riskCash, stopDist)
+        if not na(lvlPx) and wantQty > 0 and math.abs(lvlPx - close) <= atr14 * reachAtr
             ordDir  := wantLong ? 1 : -1
             ordPx   := lvlPx
             ordStop := wantLong ? lvlPx - stopDist : lvlPx + stopDist
-            ordQty  := fQty(riskCash, stopDist)
+            ordQty  := wantQty
             ordExp  := bar_index + orderLife
             ordTxt  := lvlTx
             evOrder := true
@@ -520,20 +549,23 @@ alertcondition(evT2,    "Goldbach — T2 reached",    "Goldbach: second target r
 alertcondition(evStop,  "Goldbach — stopped out",   "Goldbach: stop hit, flat")
 
 // ══════════════════════════════════════════════════════════════ read-out table
-var table tbl = table.new(position.top_right, 2, 6, border_width = 1)
+var table tbl = table.new(
+     tblPos == "Bottom right" ? position.bottom_right : tblPos == "Bottom left" ? position.bottom_left : position.top_right,
+     2, 6, bgcolor = color.new(color.black, 20), frame_color = color.new(color.gray, 60),
+     frame_width = 1, border_color = color.new(color.gray, 80), border_width = 1)
 
-if barstate.islast
+if barstate.islast and tblPos != "Hidden"
     string stateTxt = posDir != 0 ? (posDir == 1 ? "LONG " : "SHORT ") + str.tostring(posQty) + " @ " + str.tostring(posEntry, format.mintick) : ordDir != 0 ? str.tostring(ordQty) + " | " + (ordDir == 1 ? "Buy" : "Sell") + " Limit @ " + str.tostring(ordPx, format.mintick) : "flat"
     color posColor = rngPos > 0.5 ? premCol : discCol
-    table.cell(tbl, 0, 0, "PO3",       text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 0, "PO3",       text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
     table.cell(tbl, 1, 0, fSizeText(po3sz) + " · " + fSizeText(po3sz * 3), text_color = keyCol, text_size = size.small)
-    table.cell(tbl, 0, 1, "Range",     text_color = color.gray, text_size = size.small, text_halign = text.align_left)
-    table.cell(tbl, 1, 1, str.tostring(rngLow, format.mintick) + " – " + str.tostring(rngHigh, format.mintick), text_color = color.gray, text_size = size.small)
-    table.cell(tbl, 0, 2, "Position",  text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 1, "Range",     text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(rngLow, format.mintick) + " – " + str.tostring(rngHigh, format.mintick), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 2, "Position",  text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
     table.cell(tbl, 1, 2, str.tostring(rngPos * 100, "0") + "% " + (rngPos > 0.5 ? "premium" : "discount"), text_color = posColor, text_size = size.small)
-    table.cell(tbl, 0, 3, "Structure", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 3, "Structure", text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
     table.cell(tbl, 1, 3, biasDir == 1 ? "bullish" : biasDir == -1 ? "bearish" : "—", text_color = biasDir == 1 ? discCol : biasDir == -1 ? premCol : color.gray, text_size = size.small)
-    table.cell(tbl, 0, 4, "Equilibrium", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 4, "Equilibrium", text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
     table.cell(tbl, 1, 4, str.tostring(rngEq, format.mintick), text_color = eqCol, text_size = size.small)
-    table.cell(tbl, 0, 5, "Bot",       text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 5, "Bot",       text_color = color.new(color.silver, 20), text_size = size.small, text_halign = text.align_left)
     table.cell(tbl, 1, 5, botOn ? stateTxt : "off", text_color = (posDir == 1 or ordDir == 1) ? buyCol : (posDir == -1 or ordDir == -1) ? sellCol : color.gray, text_size = size.small)
