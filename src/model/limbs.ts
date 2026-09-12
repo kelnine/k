@@ -1,6 +1,7 @@
 import type { Candle } from '../data/types'
 import type { Features } from './features'
 import { activeZones } from './features'
+import { ENTRY_ROLES, nearestLevel, po3Range, rangePosition } from './goldbach'
 import type { LimbVote, Zone } from './types'
 
 /**
@@ -242,6 +243,48 @@ const volumeLimb: Limb = {
   },
 }
 
+/**
+ * Goldbach: where price sits in its power-of-three dealing range, and whether
+ * it is sitting on a level the algorithm is expected to deal from.
+ *
+ * Discount is not a buy on its own — it is a buy *when structure is already
+ * bullish*, and the vote only gets loud when price is actually tagging an
+ * OB/FV/RB/LV level rather than floating between them. On the wrong side of
+ * equilibrium for the prevailing structure it contributes a light lean, not a
+ * fight: this limb is confluence, not a countertrend opinion.
+ */
+const goldbachLimb: Limb = {
+  id: 'goldbach',
+  name: 'Goldbach PO3',
+  weight: 1.4,
+  run({ candles, f, i }) {
+    const price = candles[i].close
+    const atr = f.atr14[i]
+    const range = po3Range(price, f.po3)
+    const pos = rangePosition(price, range)
+    // +1 at the extreme discount, -1 at the extreme premium
+    const lean = (0.5 - pos) * 2
+    const level = nearestLevel(price, range, { roles: ENTRY_ROLES })
+    const tagging = level !== null && atr !== null && Math.abs(level.price - price) <= atr * 0.35
+
+    let bias = 0
+    for (let k = f.events.length - 1; k >= 0; k--) {
+      if (f.events[k].bar <= i) {
+        bias = f.events[k].side === 'bull' ? 1 : -1
+        break
+      }
+    }
+
+    const withBias = bias !== 0 && Math.sign(lean) === bias
+    const vote = clamp(lean * (withBias ? (tagging ? 1.6 : 0.8) : 0.3))
+    const where = pos > 0.5 ? 'premium' : 'discount'
+    const note = tagging
+      ? `${level!.label.split(' | ')[0]} ${level!.role} · ${where}`
+      : `${(pos * 100).toFixed(0)}% of ${f.po3} range`
+    return { vote, note }
+  },
+}
+
 export const LIMBS: Limb[] = [
   structureLimb,
   orderBlockLimb,
@@ -252,6 +295,7 @@ export const LIMBS: Limb[] = [
   liquidityLimb,
   fibLimb,
   volumeLimb,
+  goldbachLimb,
 ]
 
 /** Run every limb at bar `i`. */

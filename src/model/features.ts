@@ -1,4 +1,5 @@
 import type { Candle } from '../data/types'
+import { chooseSize } from './goldbach'
 import type { Leg, StructureEvent, Swing, Zone } from './types'
 
 /**
@@ -28,6 +29,9 @@ export interface Features {
   legs: Leg[]
   /** equal-high / equal-low liquidity pools, keyed by the bar they are known at */
   pools: LiquidityPool[]
+  /** PO3 dealing-range size chosen for this instrument, and the one above it */
+  po3: number
+  po3Higher: number
 }
 
 export interface LiquidityPool {
@@ -335,6 +339,7 @@ export function buildFeatures(candles: Candle[], opts: Partial<FeatureOptions> =
     vwap[i] = vol > 0 ? pv / vol : null
   }
 
+  const po3 = chooseSize(candles)
   const atr14 = atr(candles, 14)
   const atrPct = rollingRank(
     atr14.map((v, i) => (v === null ? null : v / candles[i].close)),
@@ -356,6 +361,8 @@ export function buildFeatures(candles: Candle[], opts: Partial<FeatureOptions> =
     zones: [...obs, ...detectFvgs(candles)],
     legs: buildLegs(swings),
     pools: buildPools(candles, swings, o.eqTol),
+    po3,
+    po3Higher: po3 * 3,
   }
 }
 

@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Candle, DataAdapter, Timeframe } from '../data'
 import { formatPrice } from '../engine/utils'
-import { runModel, type ModelRun } from '../model'
+import {
+  ENTRY_ROLES,
+  nearestLevel,
+  po3Range,
+  rangePosition,
+  runModel,
+  traderOptions,
+  type ModelRun,
+  type TraderOptions,
+} from '../model'
 
 /**
  * The Frankenstein cockpit: what the ensemble thinks right now, which limb
@@ -55,14 +64,45 @@ function Equity({ run }: { run: ModelRun }) {
   )
 }
 
+/** The PO3 dealing range read-out: where price sits and what it is nearest. */
+function GoldbachStrip({ run, price }: { run: ModelRun; price: number }) {
+  const range = po3Range(price, run.po3)
+  const pos = Math.max(0, Math.min(1, rangePosition(price, range)))
+  const level = nearestLevel(price, range, { roles: ENTRY_ROLES })
+  const premium = pos > 0.5
+  return (
+    <div className="po3">
+      <div className="po3-head">
+        <span>PO3 {run.po3} · {run.po3 * 3}</span>
+        <b className={premium ? 'neg' : 'pos'}>
+          {(pos * 100).toFixed(0)}% {premium ? 'premium' : 'discount'}
+        </b>
+      </div>
+      <div className="po3-bar">
+        <span className="po3-eq" />
+        <span className="po3-mark" style={{ bottom: `${pos * 100}%` }} />
+      </div>
+      <div className="po3-foot">
+        <span>{formatPrice(range.low)}</span>
+        <span>{level ? `${level.label.split(' | ')[0]} ${level.role} @ ${formatPrice(level.price)}` : '—'}</span>
+        <span>{formatPrice(range.high)}</span>
+      </div>
+    </div>
+  )
+}
+
 export function ModelPanel({
   adapter,
   symbol,
   tf,
+  entryStyle,
+  onEntryStyle,
 }: {
   adapter: DataAdapter
   symbol: string
   tf: Timeframe
+  entryStyle: TraderOptions['entryStyle']
+  onEntryStyle(style: TraderOptions['entryStyle']): void
 }) {
   const [run, setRun] = useState<ModelRun | null>(null)
   const [loading, setLoading] = useState(false)
@@ -78,9 +118,11 @@ export function ModelPanel({
       const now = Date.now()
       if (!force && now - lastRunRef.current < RECOMPUTE_MS) return
       lastRunRef.current = now
-      setRun(runModel(candles, symbol))
+      setRun(runModel(candles, symbol, { trader: traderOptions() }))
     },
-    [symbol],
+    // entryStyle is read through the shared setting, but a change must re-run
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [symbol, entryStyle],
   )
 
   useEffect(() => {
@@ -167,6 +209,18 @@ export function ModelPanel({
                 </div>
               </div>
 
+              <GoldbachStrip run={run} price={price} />
+
+              {run.pending && (
+                <div className={`model-order ${run.pending.side}`}>
+                  <span className="order-tag">
+                    {run.pending.qty} | {run.pending.side === 'bull' ? 'Buy' : 'Sell'} Limit
+                  </span>
+                  <span className="order-level">{run.pending.level}</span>
+                  <b>{formatPrice(run.pending.price)}</b>
+                </div>
+              )}
+
               <div className="model-section">{symbol} · {tf} · {run.votes.length} limbs</div>
               <div className="limbs">
                 {run.votes.map((v) => (
@@ -252,6 +306,24 @@ export function ModelPanel({
                 </div>
               </div>
 
+              <div className="model-section">Entries</div>
+              <div className="entry-toggle">
+                {(['goldbach', 'market'] as const).map((style) => (
+                  <button
+                    key={style}
+                    className={entryStyle === style ? 'on' : ''}
+                    title={
+                      style === 'goldbach'
+                        ? 'Rest a limit on the nearest Goldbach level price has to come back for'
+                        : 'Take the next bar’s open'
+                    }
+                    onClick={() => onEntryStyle(style)}
+                  >
+                    {style === 'goldbach' ? 'Goldbach limit' : 'Market'}
+                  </button>
+                ))}
+              </div>
+
               <div className="model-section">Recent fills</div>
               <div className="model-trades">
                 {run.closed.length === 0 && <div className="bot-feed-empty">No closed trades yet</div>}
@@ -264,7 +336,7 @@ export function ModelPanel({
                       <span className="trade-px">{formatPrice(t.entry)}</span>
                       <span className="trade-arrow">→</span>
                       <span className="trade-px">{formatPrice(t.exitPrice)}</span>
-                      <span className="trade-reason">{t.reason}</span>
+                      <span className="trade-reason">{t.level ? t.level.split(' | ')[0] : t.reason}</span>
                       <span className={t.r >= 0 ? 'trade-r pos' : 'trade-r neg'}>
                         {t.r >= 0 ? '+' : ''}
                         {t.r.toFixed(2)}R

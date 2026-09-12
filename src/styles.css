@@ -889,3 +889,114 @@ button {
 .trade-r {
   text-align: right;
 }
+
+/* ------------------------------------------------ goldbach PO3 strip */
+
+.po3 {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.po3-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.po3-head b {
+  font-variant-numeric: tabular-nums;
+}
+
+.po3-bar {
+  position: relative;
+  height: 46px;
+  margin: 6px 0 4px;
+  border-radius: 3px;
+  background: linear-gradient(to top, rgba(38, 166, 154, 0.55), rgba(38, 166, 154, 0.12) 48%, rgba(239, 83, 80, 0.12) 52%, rgba(239, 83, 80, 0.55));
+}
+
+.po3-eq {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed rgba(255, 255, 255, 0.35);
+}
+
+.po3-mark {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  height: 2px;
+  background: var(--text);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+}
+
+.po3-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.po3-foot span:nth-child(2) {
+  color: #ffc107;
+}
+
+.model-order {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: rgba(41, 98, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(41, 98, 255, 0.4);
+}
+
+.model-order.bear {
+  background: rgba(239, 83, 80, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(239, 83, 80, 0.4);
+}
+
+.order-tag {
+  font-weight: 600;
+}
+
+.order-level {
+  flex: 1;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-order b {
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.entry-toggle button {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.entry-toggle button.on {
+  color: var(--text);
+  background: rgba(41, 98, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(41, 98, 255, 0.5);
+}

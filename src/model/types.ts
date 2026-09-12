@@ -88,6 +88,8 @@ export interface Position {
   side: Side
   /** bar the position was opened on */
   bar: number
+  /** the Goldbach level the entry rested on, when it was a limit fill */
+  level?: string
   time: number
   entry: number
   stop: number
@@ -110,6 +112,23 @@ export interface Position {
   banked?: number
   /** bookkeeping: how the most recent exit fill came about */
   lastReason?: ExitReason
+}
+
+/** A limit order resting at a Goldbach level, waiting for price to come to it. */
+export interface PendingOrder {
+  side: Side
+  /** limit price — a Goldbach level */
+  price: number
+  /** the level it is resting on, e.g. "0.83 FV | 81" */
+  level: string
+  qty: number
+  stop: number
+  conviction: number
+  /** bar the order was placed on */
+  bar: number
+  /** bar index after which the order is pulled */
+  expires: number
+  votes: LimbVote[]
 }
 
 export interface ClosedTrade extends Position {
@@ -149,10 +168,14 @@ export interface ModelRun {
   events: StructureEvent[]
   legs: Leg[]
   open: Position | null
+  /** limit order currently resting, if any */
+  pending: PendingOrder | null
   closed: ClosedTrade[]
   equity: EquityPoint[]
   stats: RunStats
   /** limb breakdown on the most recent bar */
   votes: LimbVote[]
+  /** PO3 dealing-range size the model framed this instrument with */
+  po3: number
   startEquity: number
 }

@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { makeFrankenstein, makeFrankScore } from './frankenstein'
+import { makeGoldbach } from './goldbach'
 import { makeSmc } from './smc'
 
 export type PlotStyle = 'line' | 'hist'
@@ -256,6 +257,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
   },
   makeSmc(),
+  makeGoldbach(),
   makeFrankenstein(),
   makeFrankScore(),
 ]

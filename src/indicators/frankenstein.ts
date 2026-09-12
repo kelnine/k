@@ -1,5 +1,5 @@
 import type { Candle } from '../data/types'
-import { runModel, type ModelRun, type Position, type Zone } from '../model'
+import { runModel, traderOptions, getEntryStyle, type ModelRun, type Position, type Zone } from '../model'
 import type { IndicatorDef, IndicatorResult, IndicatorShape } from './index'
 
 /**
@@ -20,7 +20,7 @@ const C = {
   bear: '239,83,80',
   buy: '41,98,255',
   sell: '239,83,80',
-  fib: '255,152,0',
+  fib: '38,198,218',
   muted: 'rgba(139,147,163,0.8)',
 }
 
@@ -37,14 +37,14 @@ const cache = new Map<string, ModelRun>()
 export function modelFor(candles: Candle[]): ModelRun | null {
   if (candles.length < 60) return null
   const last = candles[candles.length - 1]
-  const key = `${candles.length}:${candles[0].time}:${last.time}:${last.close}:${last.volume}`
+  const key = `${getEntryStyle()}:${candles.length}:${candles[0].time}:${last.time}:${last.close}:${last.volume}`
   const hit = cache.get(key)
   if (hit) {
     cache.delete(key)
     cache.set(key, hit)
     return hit
   }
-  const run = runModel(candles, 'CHART')
+  const run = runModel(candles, 'CHART', { trader: traderOptions() })
   cache.set(key, run)
   if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string)
   return run
@@ -187,8 +187,9 @@ function heatShapes(run: ModelRun, candles: Candle[], lo: number, hi: number): I
     const top = bottom + step
     const above = bottom >= price
     out.push({
+      // starts past the Goldbach premium/discount column, which owns n+1…n+3
       type: 'box',
-      x1: n + 1,
+      x1: n + 4,
       x2: null,
       yTop: top,
       yBottom: bottom,
@@ -260,6 +261,22 @@ function tradeShapes(run: ModelRun, n: number): IndicatorShape[] {
         label: `T${i + 1} ${fmt(tp)}`,
         labelColor: `rgba(${C.bull},0.95)`,
       })
+    })
+  }
+
+  const order = run.pending
+  if (order) {
+    const buy = order.side === 'bull'
+    out.push({
+      type: 'line',
+      x1: order.bar,
+      x2: null,
+      y1: order.price,
+      y2: order.price,
+      color: `rgba(${buy ? C.buy : C.sell},0.9)`,
+      dash: [2, 2],
+      label: `${order.qty} | ${buy ? 'Buy' : 'Sell'} Limit · ${order.level}`,
+      labelColor: `rgba(${buy ? C.buy : C.sell},1)`,
     })
   }
 

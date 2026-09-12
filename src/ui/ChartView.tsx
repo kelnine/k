@@ -24,6 +24,8 @@ export interface ChartViewProps {
   symbol: string
   tf: Timeframe
   indicators: string[]
+  /** opaque token: when it changes, indicators are recomputed (model settings) */
+  modelRevision?: string
   tool: DrawingTool
   active: boolean
   showFrame: boolean
@@ -36,6 +38,7 @@ export function ChartView({
   symbol,
   tf,
   indicators,
+  modelRevision,
   tool,
   active,
   showFrame,
@@ -124,7 +127,7 @@ export function ChartView({
 
   useEffect(() => {
     engineRef.current?.setIndicators(indicators)
-  }, [indicators])
+  }, [indicators, modelRevision])
 
   useEffect(() => {
     engineRef.current?.setTool(active ? tool : 'cursor')

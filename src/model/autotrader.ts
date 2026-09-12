@@ -1,5 +1,6 @@
 import type { Candle } from '../data/types'
 import { buildFeatures, type FeatureOptions } from './features'
+import { ENTRY_ROLES, nearestLevel, po3Range, type GoldbachLevel } from './goldbach'
 import { scoreBars, ENSEMBLE_DEFAULTS, type EnsembleOptions } from './frankenstein'
 import type {
   ClosedTrade,
@@ -8,6 +9,7 @@ import type {
   LimbVote,
   ModelBar,
   ModelRun,
+  PendingOrder,
   Position,
   RunStats,
   Side,
@@ -45,6 +47,15 @@ export interface TraderOptions {
   /** bars to sit out after a stop-out */
   cooldown: number
   startEquity: number
+  /**
+   * 'goldbach' rests a limit order on the nearest Goldbach level price has to
+   * come back for; 'market' just takes the next bar's open.
+   */
+  entryStyle: 'goldbach' | 'market'
+  /** how far a resting limit may sit from price, in ATR */
+  limitReachAtr: number
+  /** bars a resting limit stays live before it is pulled */
+  orderLife: number
 }
 
 export const TRADER_DEFAULTS: TraderOptions = {
@@ -60,6 +71,9 @@ export const TRADER_DEFAULTS: TraderOptions = {
   breakEvenR: 1,
   cooldown: 3,
   startEquity: 25_000,
+  entryStyle: 'goldbach',
+  limitReachAtr: 1,
+  orderLife: 8,
 }
 
 export interface ModelOptions {
@@ -91,26 +105,46 @@ export function runModel(candles: Candle[], symbol: string, opts: ModelOptions =
   const equity: EquityPoint[] = []
   let cash = t.startEquity
   let open: Position | null = null
+  let pending: PendingOrder | null = null
   let cooldownUntil = -1
   let seq = 0
+
+  /** Run the open position against one bar and book it if it finished there. */
+  const settle = (bar: number, c: Candle, atr: number | null): void => {
+    if (!open) return
+    manage(open, c, bar, atr, t)
+    cash += takeRealized(open)
+    if (open.qty > 0) return
+    const done = finish(open, bar, c.time)
+    closed.push(done)
+    if (done.reason === 'stop') cooldownUntil = bar + t.cooldown
+    open = null
+  }
 
   for (let i = 1; i < candles.length; i++) {
     const c = candles[i]
     const atr = f.atr14[i] ?? null
 
-    // ---- manage the open position against this bar
-    if (open) {
-      manage(open, c, i, atr, t)
-      cash += takeRealized(open)
-      if (open.qty <= 0) {
-        const done = finish(open, i, c.time)
-        closed.push(done)
-        if (done.reason === 'stop') cooldownUntil = i + t.cooldown
-        open = null
+    // ---- manage the position carried into this bar
+    settle(i, c, atr)
+
+    // ---- a resting limit fills when this bar trades through it
+    if (pending) {
+      const hit = pending.side === 'bull' ? c.low <= pending.price : c.high >= pending.price
+      if (open || i > pending.expires) {
+        pending = null
+      } else if (hit) {
+        // a gap through the limit fills at the open, in our favour
+        const fill =
+          pending.side === 'bull' ? Math.min(pending.price, c.open) : Math.max(pending.price, c.open)
+        open = fromPending(pending, fill, i, c.time, symbol, ++seq, t)
+        pending = null
+        // the bar that filled us can also take us out — assume the worse path
+        settle(i, c, atr)
       }
     }
 
-    // ---- act on the *previous* bar's signal, filled at this bar's open
+    // ---- act on the *previous* bar's signal
     const sig = bars[i - 1]
     const atrPrev = f.atr14[i - 1]
     if (sig && atrPrev) {
@@ -123,11 +157,44 @@ export function runModel(candles: Candle[], symbol: string, opts: ModelOptions =
         closed.push(finish(open, i, c.time))
         open = null
       }
+      // a resting order is only pulled when the signal flips against it — a bar
+      // whose score merely dips under the entry threshold is not a cancel
+      if (pending && dir && dir !== pending.side && Math.abs(sig.gated) >= t.flip) pending = null
 
-      if (!open && dir && i > cooldownUntil) {
+      if (!open && !pending && dir && i > cooldownUntil) {
         const conviction = Math.min(1, Math.abs(sig.gated))
-        const entry: number = c.open
         const stopDist = atrPrev * t.stopAtr
+
+        // rest the entry on the Goldbach level price has to trade back to
+        const limit: GoldbachLevel | null =
+          t.entryStyle === 'goldbach'
+            ? nearestLevel(c.open, po3Range(c.open, f.po3), {
+                side: dir === 'bull' ? 'below' : 'above',
+                roles: ENTRY_ROLES,
+              })
+            : null
+        if (limit && Math.abs(limit.price - c.open) <= atrPrev * t.limitReachAtr) {
+          const stop: number = dir === 'bull' ? limit.price - stopDist : limit.price + stopDist
+          const risk = cash * t.riskPct * (0.5 + 0.5 * conviction)
+          const qty = roundQty(risk / stopDist)
+          if (qty > 0) {
+            pending = {
+              side: dir,
+              price: limit.price,
+              level: `${limit.label.split(' | ')[0]} ${limit.role} | ${limit.label.split(' | ')[1]}`,
+              qty,
+              stop,
+              conviction,
+              bar: i,
+              expires: i + t.orderLife,
+              votes: (sig.votes ?? []) as LimbVote[],
+            }
+          }
+          equity.push({ bar: i, time: c.time, equity: cash + unrealized(open, c.close) })
+          continue
+        }
+
+        const entry: number = c.open
         const stop: number = dir === 'bull' ? entry - stopDist : entry + stopDist
         // risk scales with conviction, from half size at threshold to full size at 1.0
         const risk = cash * t.riskPct * (0.5 + 0.5 * conviction)
@@ -177,11 +244,57 @@ export function runModel(candles: Candle[], symbol: string, opts: ModelOptions =
     events: f.events,
     legs: f.legs,
     open,
+    pending,
     closed,
     equity,
     stats: summarise(closed, equity, t.startEquity),
     votes: bars[candles.length - 1]?.votes ?? [],
+    po3: f.po3,
     startEquity: t.startEquity,
+  }
+}
+
+/** Turn a filled limit order into an open position. */
+function fromPending(
+  o: PendingOrder,
+  fill: number,
+  bar: number,
+  time: number,
+  symbol: string,
+  seq: number,
+  t: TraderOptions,
+): Position {
+  const sign = o.side === 'bull' ? 1 : -1
+  // the stop stays where it was placed; a gap fill just buys a wider edge
+  const risk = Math.abs(fill - o.stop)
+  return {
+    id: `${symbol}-${seq}`,
+    symbol,
+    side: o.side,
+    bar,
+    time,
+    level: o.level,
+    entry: fill,
+    stop: o.stop,
+    initialStop: o.stop,
+    targets: t.scaleOuts.map((s) => fill + sign * s.r * risk),
+    qty: o.qty,
+    initialQty: o.qty,
+    risk,
+    conviction: o.conviction,
+    realized: 0,
+    extreme: fill,
+    votes: o.votes,
+    fills: [
+      {
+        bar,
+        time,
+        price: fill,
+        qty: o.qty,
+        action: o.side === 'bull' ? 'buy' : 'sell',
+        label: `${o.qty} @ ${fmt(fill)}`,
+      },
+    ],
   }
 }
 
