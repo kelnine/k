@@ -49,3 +49,36 @@ export interface DataAdapter {
   /** Lightweight last-price stream for watchlists. Returns an unsubscribe function. */
   subscribeTicker(symbol: string, onTick: (t: Ticker) => void): () => void
 }
+
+/** A single executed trade (Binance aggTrade, or a synthetic equivalent). */
+export interface Trade {
+  time: number // ms epoch
+  price: number
+  qty: number
+  /** true when the buyer was the maker, i.e. an aggressive SELL that hit the bid */
+  buyerMaker: boolean
+}
+
+/**
+ * Optional tick-data capability. Adapters that can serve raw trades let the
+ * app build footprint (orderflow) charts; adapters that can't simply omit it
+ * and the UI falls back to candles.
+ */
+export interface TradeSource {
+  /**
+   * Recent trades in ascending time order, walking backwards from now until
+   * `since` is covered or `cap` trades have been collected — whichever comes
+   * first. Exchanges page tick data hard, so partial coverage is normal and
+   * the caller is expected to drop bars the window doesn't reach.
+   */
+  fetchRecentTrades(symbol: string, since: number, cap: number): Promise<Trade[]>
+  /** Live trade prints. Returns an unsubscribe function. */
+  subscribeTrades(symbol: string, onTrade: (t: Trade) => void): () => void
+  /** Exchange price increment, when the venue publishes one. */
+  priceTick(symbol: string): Promise<number | null>
+}
+
+export function supportsTrades(a: DataAdapter): a is DataAdapter & TradeSource {
+  const t = a as Partial<TradeSource>
+  return typeof t.fetchRecentTrades === 'function' && typeof t.subscribeTrades === 'function'
+}

@@ -6,13 +6,21 @@ import { formatPrice } from '../engine/utils'
 import { INDICATORS } from '../indicators'
 import { BotFeed } from './BotFeed'
 import { ChartView } from './ChartView'
+import { FootprintView } from './FootprintView'
 
 type Layout = '1' | '2h' | '2v' | '4'
+type ChartType = 'candles' | 'footprint'
 
 interface CellConfig {
   symbol: string
   tf: Timeframe
   indicators: string[]
+  /** candles, or the bid/ask footprint built from tick data */
+  type: ChartType
+  /** footprint row height multiplier (1 = auto) */
+  rowMul: number
+  /** highlight the point of control on each footprint bar */
+  poc: boolean
 }
 
 interface PersistedState {
@@ -21,13 +29,15 @@ interface PersistedState {
   watchlist: string[]
 }
 
+const CELL_DEFAULTS = { type: 'candles' as ChartType, rowMul: 1, poc: true }
+
 const DEFAULT_STATE: PersistedState = {
   layout: '1',
   cells: [
-    { symbol: 'BTCUSDT', tf: '1h', indicators: ['ma20', 'ma50'] },
-    { symbol: 'ETHUSDT', tf: '1h', indicators: [] },
-    { symbol: 'SOLUSDT', tf: '1h', indicators: [] },
-    { symbol: 'BNBUSDT', tf: '1h', indicators: [] },
+    { symbol: 'BTCUSDT', tf: '1h', indicators: ['ma20', 'ma50'], ...CELL_DEFAULTS },
+    { symbol: 'ETHUSDT', tf: '1h', indicators: [], ...CELL_DEFAULTS },
+    { symbol: 'SOLUSDT', tf: '1h', indicators: [], ...CELL_DEFAULTS },
+    { symbol: 'BNBUSDT', tf: '1h', indicators: [], ...CELL_DEFAULTS },
   ],
   watchlist: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'],
 }
@@ -39,9 +49,14 @@ function loadState(): PersistedState {
     const raw = localStorage.getItem(STATE_KEY)
     if (!raw) return DEFAULT_STATE
     const parsed = JSON.parse(raw) as Partial<PersistedState>
+    // older saved states predate the footprint fields
+    const cells =
+      parsed.cells?.length === 4
+        ? parsed.cells.map((c, i) => ({ ...DEFAULT_STATE.cells[i], ...c }))
+        : DEFAULT_STATE.cells
     return {
       layout: parsed.layout ?? DEFAULT_STATE.layout,
-      cells: parsed.cells?.length === 4 ? parsed.cells : DEFAULT_STATE.cells,
+      cells,
       watchlist: parsed.watchlist ?? DEFAULT_STATE.watchlist,
     }
   } catch {
@@ -50,6 +65,13 @@ function loadState(): PersistedState {
 }
 
 const CELL_COUNT: Record<Layout, number> = { '1': 1, '2h': 2, '2v': 2, '4': 4 }
+
+const ROW_MULS: { mul: number; label: string }[] = [
+  { mul: 0.5, label: 'fine' },
+  { mul: 1, label: '1×' },
+  { mul: 2, label: '2×' },
+  { mul: 4, label: '4×' },
+]
 
 const TOOLS: { id: DrawingTool; label: string; title: string }[] = [
   { id: 'cursor', label: '✛', title: 'Cursor (pan/select)' },
@@ -208,6 +230,7 @@ export function App({ adapter }: { adapter: DataAdapter }) {
 
   const count = CELL_COUNT[layout]
   const active = cells[Math.min(activeCell, count - 1)]
+  const isFootprint = active.type === 'footprint'
 
   function updateActive(patch: Partial<CellConfig>): void {
     setCells((cs) => cs.map((c, i) => (i === Math.min(activeCell, count - 1) ? { ...c, ...patch } : c)))
@@ -236,11 +259,55 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             </button>
           ))}
         </div>
+        <div className="type-group">
+          <button
+            className={`bar-btn${active.type === 'candles' ? ' on' : ''}`}
+            title="Candlestick chart"
+            onClick={() => updateActive({ type: 'candles' })}
+          >
+            ▮ Candles
+          </button>
+          <button
+            className={`bar-btn${active.type === 'footprint' ? ' on' : ''}`}
+            title="Bid/ask footprint built from tick data"
+            onClick={() => updateActive({ type: 'footprint' })}
+          >
+            ▦ Footprint
+          </button>
+        </div>
+        {isFootprint && (
+          <div className="fp-controls">
+            <span className="fp-label">Rows</span>
+            {ROW_MULS.map((r) => (
+              <button
+                key={r.mul}
+                className={`tf-btn${active.rowMul === r.mul ? ' on' : ''}`}
+                title={`Row height ${r.label}`}
+                onClick={() => updateActive({ rowMul: r.mul })}
+              >
+                {r.label}
+              </button>
+            ))}
+            <label className="fp-check">
+              <input
+                type="checkbox"
+                checked={active.poc}
+                onChange={() => updateActive({ poc: !active.poc })}
+              />
+              POC
+            </label>
+          </div>
+        )}
         <div className="ind-menu" ref={indMenuRef}>
-          <button className="bar-btn" onClick={() => setIndMenuOpen((o) => !o)}>
+          <button
+            className="bar-btn"
+            disabled={isFootprint}
+            title={isFootprint ? 'Indicators apply to candlestick charts' : 'Indicators'}
+            onClick={() => setIndMenuOpen((o) => !o)}
+          >
             ƒ Indicators{active.indicators.length ? ` · ${active.indicators.length}` : ''}
           </button>
-          {indMenuOpen && (
+          {indMenuOpen && !isFootprint && (
             <div className="ind-dropdown">
               {INDICATORS.map((ind) => (
                 <label key={ind.id} className="ind-item">
@@ -279,8 +346,9 @@ export function App({ adapter }: { adapter: DataAdapter }) {
           {TOOLS.map((t) => (
             <button
               key={t.id}
-              title={t.title}
-              className={`tool-btn${tool === t.id ? ' on' : ''}`}
+              title={isFootprint ? 'Drawing tools apply to candlestick charts' : t.title}
+              disabled={isFootprint}
+              className={`tool-btn${tool === t.id && !isFootprint ? ' on' : ''}`}
               onClick={() => setTool(t.id)}
             >
               {t.label}
@@ -289,20 +357,34 @@ export function App({ adapter }: { adapter: DataAdapter }) {
         </aside>
 
         <main className={`grid layout-${layout}`}>
-          {cells.slice(0, count).map((cell, i) => (
-            <ChartView
-              key={i}
-              adapter={adapter}
-              symbol={cell.symbol}
-              tf={cell.tf}
-              indicators={cell.indicators}
-              tool={tool}
-              active={i === Math.min(activeCell, count - 1)}
-              showFrame={count > 1}
-              onActivate={() => setActiveCell(i)}
-              onToolFinished={() => setTool('cursor')}
-            />
-          ))}
+          {cells.slice(0, count).map((cell, i) =>
+            cell.type === 'footprint' ? (
+              <FootprintView
+                key={`fp-${i}`}
+                adapter={adapter}
+                symbol={cell.symbol}
+                tf={cell.tf}
+                rowMul={cell.rowMul}
+                showPoc={cell.poc}
+                active={i === Math.min(activeCell, count - 1)}
+                showFrame={count > 1}
+                onActivate={() => setActiveCell(i)}
+              />
+            ) : (
+              <ChartView
+                key={`c-${i}`}
+                adapter={adapter}
+                symbol={cell.symbol}
+                tf={cell.tf}
+                indicators={cell.indicators}
+                tool={tool}
+                active={i === Math.min(activeCell, count - 1)}
+                showFrame={count > 1}
+                onActivate={() => setActiveCell(i)}
+                onToolFinished={() => setTool('cursor')}
+              />
+            ),
+          )}
         </main>
 
         <aside className="watchlist">

@@ -90,6 +90,8 @@ button {
 }
 
 .tf-group,
+.type-group,
+.fp-controls,
 .layout-group {
   display: flex;
   gap: 2px;
@@ -114,7 +116,20 @@ button {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.bar-btn:disabled,
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bar-btn:disabled:hover,
+.tool-btn:disabled:hover {
+  color: var(--text-dim);
+  background: none;
+}
+
 .tf-btn.on,
+.bar-btn.on,
 .layout-btn.on {
   color: #fff;
   background: var(--accent);
@@ -604,4 +619,107 @@ button {
   justify-content: space-between;
   font-size: 10px;
   color: var(--text-dim);
+}
+
+/* ------------------------------------------------ footprint chart */
+
+.fp-controls {
+  align-items: center;
+  gap: 4px;
+}
+
+.fp-label {
+  padding-left: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fp-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fp-check input {
+  accent-color: var(--accent);
+}
+
+.legend-dim {
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+/* colour key, bottom-left of a footprint cell */
+.fp-key {
+  position: absolute;
+  right: 84px;
+  top: 10px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.fp-key span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* the two ends of the icefire imbalance ramp */
+.sw-sell {
+  background: linear-gradient(90deg, #9be4ef, #0e58a8);
+}
+
+.sw-buy {
+  background: linear-gradient(90deg, #f3d573, #ac2301);
+}
+
+.sw-prof {
+  background: rgba(124, 77, 255, 0.85);
+}
+
+.sw-poc {
+  background: none;
+  border: 1px solid rgba(255, 205, 86, 0.9);
+}
+
+.chart-note {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(20, 25, 35, 0.9);
+  color: var(--text-dim);
+}
+
+.chart-note.dim {
+  top: auto;
+  bottom: 100px;
+  left: auto;
+  right: 84px;
+  transform: none;
+  padding: 3px 8px;
+  font-size: 11px;
+  opacity: 0.8;
 }

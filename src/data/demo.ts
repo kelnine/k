@@ -1,4 +1,4 @@
-import type { Candle, DataAdapter, SymbolInfo, Ticker, Timeframe } from './types'
+import type { Candle, DataAdapter, SymbolInfo, Ticker, Timeframe, Trade, TradeSource } from './types'
 import { TF_MS } from './types'
 
 /**
@@ -87,7 +87,37 @@ function buildCandle(symbol: string, bucket: number, tfMs: number, until?: numbe
   return { time: bucket, open, high, low, close, volume }
 }
 
-export class DemoAdapter implements DataAdapter {
+/**
+ * Synthetic tick data. Walks the same price function the candles come from and
+ * splits each step into prints, biasing aggressor side by the direction of the
+ * step — so the footprint agrees with the candle it sits under.
+ */
+function buildTrades(symbol: string, from: number, to: number, stepMs: number): Trade[] {
+  const seed = hashStr(symbol)
+  const out: Trade[] = []
+  let prev = price(symbol, from)
+  for (let t = from; t <= to; t += stepMs) {
+    const p = price(symbol, t)
+    const drift = p - prev
+    prev = p
+    const n = 6 + Math.floor((noise(seed ^ 0x2f2f, t, stepMs * 4) + 1) * 7)
+    for (let k = 0; k < n; k++) {
+      const jitter = noise(seed ^ (0x9000 + k), t + k * 977, stepMs) * p * 0.0012
+      const r = noise(seed ^ (0x4400 + k), t + k * 613, stepMs * 2)
+      // aggressive buying when the step is up, with enough noise to stay lifelike
+      const buyerMaker = r * 0.5 + (drift >= 0 ? -0.35 : 0.35) > 0
+      out.push({
+        time: t + Math.floor((k / n) * stepMs),
+        price: p + jitter,
+        qty: Math.abs(noise(seed ^ (0x7700 + k), t + k * 331, stepMs)) * 2.5 + 0.05,
+        buyerMaker,
+      })
+    }
+  }
+  return out
+}
+
+export class DemoAdapter implements DataAdapter, TradeSource {
   id = 'demo'
   name = 'Demo data'
 
@@ -118,6 +148,28 @@ export class DemoAdapter implements DataAdapter {
       const bucket = Math.floor(now / tfMs) * tfMs
       onCandle(buildCandle(symbol, bucket, tfMs, now))
     }, 1000)
+    return () => clearInterval(timer)
+  }
+
+  async priceTick(): Promise<number | null> {
+    return null
+  }
+
+  async fetchRecentTrades(symbol: string, since: number, cap: number): Promise<Trade[]> {
+    const now = Date.now()
+    const span = Math.max(60_000, now - since)
+    // aim for roughly `cap` prints across the window
+    const stepMs = Math.max(250, Math.floor(span / Math.max(1, cap / 12)))
+    return buildTrades(symbol, now - span, now, stepMs).slice(-cap)
+  }
+
+  subscribeTrades(symbol: string, onTrade: (t: Trade) => void): () => void {
+    let last = Date.now()
+    const timer = setInterval(() => {
+      const now = Date.now()
+      for (const t of buildTrades(symbol, last, now, 400)) onTrade(t)
+      last = now
+    }, 800)
     return () => clearInterval(timer)
   }
 
