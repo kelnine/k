@@ -68,6 +68,10 @@ showBos  = input.bool(true, "Label BOS / CHoCH", group = gZ)
 showOB   = input.bool(true, "Order blocks", group = gZ)
 showFVG  = input.bool(true, "Fair value gaps", group = gZ)
 keepZone = input.int(3, "Keep last N zones per side", minval = 1, maxval = 20, group = gZ)
+maxZone  = input.float(2.0, "Max zone height (ATR ×)", minval = 0.2, maxval = 20, step = 0.1, group = gZ,
+     tooltip = "A zone taller than this is a whole leg, not a level to react at — drawing it just tints the chart.")
+zoneLife = input.int(96, "Zone lifetime (bars)", minval = 5, maxval = 1000, group = gZ,
+     tooltip = "Unmitigated zones stop extending after this many bars instead of stretching across the whole chart.")
 showEma  = input.bool(true, "EMA ribbon", group = gZ)
 emaFastL = input.int(21, "EMA fast", minval = 2, group = gZ)
 emaSlowL = input.int(50, "EMA slow", minval = 2, group = gZ)
@@ -267,9 +271,9 @@ if showOB and bosUp
         if close[back] < open[back]
             found := back
         back += 1
-    if found > 0
+    if found > 0 and high[found] - low[found] <= atr14 * maxZone
         box nb = box.new(bar_index - found, high[found], bar_index + 1, low[found],
-             border_color = color.new(discCol, 45), bgcolor = color.new(discCol, 84),
+             border_color = color.new(discCol, 55), bgcolor = color.new(discCol, 88),
              text = "OB", text_color = color.new(discCol, 20), text_size = size.tiny,
              text_halign = text.align_left)
         array.push(bullOB, nb)
@@ -283,9 +287,9 @@ if showOB and bosDown
         if close[back] > open[back]
             found := back
         back += 1
-    if found > 0
+    if found > 0 and high[found] - low[found] <= atr14 * maxZone
         box nb = box.new(bar_index - found, high[found], bar_index + 1, low[found],
-             border_color = color.new(premCol, 45), bgcolor = color.new(premCol, 84),
+             border_color = color.new(premCol, 55), bgcolor = color.new(premCol, 88),
              text = "OB", text_color = color.new(premCol, 20), text_size = size.tiny,
              text_halign = text.align_left)
         array.push(bearOB, nb)
@@ -296,18 +300,18 @@ if showOB and bosDown
 var array<box> bullFVG = array.new<box>()
 var array<box> bearFVG = array.new<box>()
 
-if showFVG and low > high[2]
+if showFVG and low > high[2] and low - high[2] <= atr14 * maxZone
     box nb = box.new(bar_index - 2, low, bar_index + 1, high[2],
-         border_color = color.new(discCol, 70), bgcolor = color.new(discCol, 90),
+         border_color = color.new(discCol, 78), bgcolor = color.new(discCol, 93),
          text = "FVG", text_color = color.new(discCol, 35), text_size = size.tiny,
          text_halign = text.align_left)
     array.push(bullFVG, nb)
     if array.size(bullFVG) > keepZone
         box.delete(array.shift(bullFVG))
 
-if showFVG and high < low[2]
+if showFVG and high < low[2] and low[2] - high <= atr14 * maxZone
     box nb = box.new(bar_index - 2, low[2], bar_index + 1, high,
-         border_color = color.new(premCol, 70), bgcolor = color.new(premCol, 90),
+         border_color = color.new(premCol, 78), bgcolor = color.new(premCol, 93),
          text = "FVG", text_color = color.new(premCol, 35), text_size = size.tiny,
          text_halign = text.align_left)
     array.push(bearFVG, nb)
@@ -319,7 +323,8 @@ fAgeZones(zones, bullish) =>
     if array.size(zones) > 0
         for i = array.size(zones) - 1 to 0
             box b = array.get(zones, i)
-            bool dead = bullish ? close < box.get_bottom(b) : close > box.get_top(b)
+            bool mitigated = bullish ? close < box.get_bottom(b) : close > box.get_top(b)
+            bool dead = mitigated or bar_index - box.get_left(b) > zoneLife
             if dead
                 array.remove(zones, i)
             else
