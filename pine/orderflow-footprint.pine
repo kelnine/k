@@ -16,7 +16,7 @@
 // carry a footprint; the table reports how many were drawn.
 // =============================================================================
 
-indicator("Orderflow Footprint v4", overlay = true, max_boxes_count = 500, max_labels_count = 20, max_lines_count = 500)
+indicator("Orderflow Footprint v5", overlay = true, max_boxes_count = 500, max_labels_count = 20, max_lines_count = 500)
 
 // ----------------------------------------------------------------- inputs
 
@@ -37,6 +37,7 @@ i_transp  = input.int(25, "Cell transparency", minval = 0, maxval = 90, group = 
 i_prof    = input.bool(true, "Volume profile", group = g_draw)
 i_poc     = input.bool(true, "Point of control", group = g_draw)
 i_imbThr  = input.float(0.45, "Imbalance marker", minval = 0.0, maxval = 1.0, step = 0.05, group = g_draw, tooltip = "Outline rows whose diagonal imbalance exceeds this. 0 disables the markers.")
+i_textMax = input.int(40, "Hide numbers above N visible bars", minval = 5, maxval = 500, group = g_draw, tooltip = "A bid/ask pair needs roughly 60 pixels of bar width to be readable. When more bars than this are on screen the cells keep their colours but drop the numbers, so zooming out degrades to a clean heat map instead of mush.")
 i_candle  = input.bool(true, "Candle over the cells", group = g_draw)
 i_table   = input.bool(true, "Parameters table", group = g_draw)
 
@@ -286,6 +287,11 @@ if barstate.islast
     int    tfMs  = chartSec * 1000
     string tSize = i_size == "Small" ? size.small : i_size == "Normal" ? size.normal : size.tiny
 
+    // A footprint only reads when bars are wide. Rather than let the numbers
+    // collapse into mush when zoomed out, drop them and keep the heat map.
+    int  visBars  = chart.right_visible_bar_index - chart.left_visible_bar_index
+    bool showNums = i_text and visBars <= i_textMax
+
     for k = 0 to math.max(0, drawn - 1)
         if k >= drawn
             break
@@ -339,7 +345,7 @@ if barstate.islast
                 bw     := 2
 
             string txt = ""
-            if i_text
+            if showNums
                 txt := f_pad(f_cell(bidV), 4, true) + "  " + f_pad(f_cell(askV), 4, false)
 
             array.push(cells, box.new(colL, pHigh, cellR, pLow, xloc = xloc.bar_time,
@@ -364,7 +370,8 @@ if barstate.islast
 
     // ------------------------------------------------------------- table
     if i_table
-        table.cell(tbl, 0, 0, useLtf + " · " + str.tostring(barsPerCandle) + "/bar", text_color = color.gray, text_size = size.tiny)
+        string corner = useLtf + " · " + str.tostring(barsPerCandle) + "/bar" + (showNums ? "" : " · zoom in")
+        table.cell(tbl, 0, 0, corner, text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 1, "roc", text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 2, "volume", text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 3, "cum delta", text_color = color.gray, text_size = size.tiny)

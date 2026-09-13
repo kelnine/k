@@ -61,6 +61,17 @@ seconds-based intrabars, so if `RE10063` fires on this script, that API is out
 of reach too. Swapping it in only touches the aggregation block — the drawing,
 colours and table stay as they are.
 
+## Zoom matters
+
+A footprint only reads when bars are wide — a bid/ask pair needs roughly 60
+pixels of bar width. At 15 bars on screen it is comfortable; at 150 the numbers
+are unreadable no matter what the script does, which is equally true of
+TradingView's own native footprint.
+
+So the numbers switch off automatically above 40 visible bars (tunable) and the
+cells stay as a heat map, with `zoom in` shown in the table's corner. **Zoom
+until roughly 10–20 bars fill the screen.**
+
 ## Other limits worth knowing
 
 - **500 drawing objects per script.** Cells are drawn newest-first until the
