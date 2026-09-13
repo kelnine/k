@@ -68,9 +68,10 @@ pixels of bar width. At 15 bars on screen it is comfortable; at 150 the numbers
 are unreadable no matter what the script does, which is equally true of
 TradingView's own native footprint.
 
-So the numbers switch off automatically above 40 visible bars (tunable) and the
-cells stay as a heat map, with `zoom in` shown in the table's corner. **Zoom
-until roughly 10–20 bars fill the screen.**
+**Zoom until roughly 10–20 bars fill the screen.** Pine has no way to measure
+how wide a bar is on screen, so this cannot be automatic — when you want the
+overview rather than the detail, switch off `Bid × ask numbers` and the cells
+stay readable as a pure imbalance heat map.
 
 ## Other limits worth knowing
 
