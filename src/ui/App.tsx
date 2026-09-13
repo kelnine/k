@@ -4,8 +4,10 @@ import { TIMEFRAMES } from '../data'
 import type { DrawingTool } from '../engine/drawings'
 import { formatPrice } from '../engine/utils'
 import { INDICATORS } from '../indicators'
+import { getEntryStyle, setEntryStyle, type TraderOptions } from '../model'
 import { BotFeed } from './BotFeed'
 import { ChartView } from './ChartView'
+import { ModelPanel } from './ModelPanel'
 
 type Layout = '1' | '2h' | '2v' | '4'
 
@@ -191,6 +193,7 @@ export function App({ adapter }: { adapter: DataAdapter }) {
   const [activeCell, setActiveCell] = useState(0)
   const [tool, setTool] = useState<DrawingTool>('cursor')
   const [indMenuOpen, setIndMenuOpen] = useState(false)
+  const [entryStyle, setEntry] = useState<TraderOptions['entryStyle']>(getEntryStyle)
   const indMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -256,6 +259,21 @@ export function App({ adapter }: { adapter: DataAdapter }) {
             </div>
           )}
         </div>
+        <button
+          className={`bar-btn ai-btn${active.indicators.includes('frankenstein') ? ' on' : ''}`}
+          title="Run the Frankenstein ensemble on this chart (paper trades)"
+          onClick={() => {
+            const model = ['goldbach', 'frankenstein', 'frankscore']
+            const on = active.indicators.includes('frankenstein')
+            updateActive({
+              indicators: on
+                ? active.indicators.filter((x) => !model.includes(x))
+                : [...active.indicators.filter((x) => !model.includes(x)), ...model],
+            })
+          }}
+        >
+          🧠 AI Trader
+        </button>
         <div className="layout-group">
           {(['1', '2h', '2v', '4'] as Layout[]).map((l) => (
             <button
@@ -296,6 +314,7 @@ export function App({ adapter }: { adapter: DataAdapter }) {
               symbol={cell.symbol}
               tf={cell.tf}
               indicators={cell.indicators}
+              modelRevision={entryStyle}
               tool={tool}
               active={i === Math.min(activeCell, count - 1)}
               showFrame={count > 1}
@@ -322,6 +341,16 @@ export function App({ adapter }: { adapter: DataAdapter }) {
           <WatchAdd
             adapter={adapter}
             onAdd={(s) => setWatchlist((w) => (w.includes(s) ? w : [...w, s]))}
+          />
+          <ModelPanel
+            adapter={adapter}
+            symbol={active.symbol}
+            tf={active.tf}
+            entryStyle={entryStyle}
+            onEntryStyle={(style) => {
+              setEntryStyle(style)
+              setEntry(style)
+            }}
           />
           <BotFeed adapter={adapter} symbols={watchlist} />
         </aside>
