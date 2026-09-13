@@ -108,6 +108,10 @@ type FpBar
     float        delta
     float        vol
     int          poc
+    float        bOpen
+    float        bHigh
+    float        bLow
+    float        bClose
     float        cum = na
     float        roc = na
 
@@ -215,7 +219,9 @@ if canRun and nearEnd and n > 0 and rowSz > 0
                 poc  := r
 
         barDelta := askT - bidT
-        FpBar fb = FpBar.new(t = time, minRow = minRow, rowSz = rowSz, bid = bidA, ask = askA, delta = barDelta, vol = bidT + askT, poc = poc)
+        FpBar fb = FpBar.new(t = time, minRow = minRow, rowSz = rowSz, bid = bidA, ask = askA,
+             delta = barDelta, vol = bidT + askT, poc = poc,
+             bOpen = open, bHigh = high, bLow = low, bClose = close)
 
         // one entry per bar: replace on each realtime tick, append on a new bar
         int  lastIdx  = array.size(hist) - 1
@@ -247,11 +253,11 @@ var table      tbl   = table.new(position.bottom_center, 42, 5, border_width = 1
 var label      warn  = na
 
 if barstate.islast
-    for b in cells
-        box.delete(b)
+    for bx in cells
+        box.delete(bx)
     array.clear(cells)
-    for w in wicks
-        line.delete(w)
+    for ln in wicks
+        line.delete(ln)
     array.clear(wicks)
     label.delete(warn)
     warn := na
@@ -312,13 +318,13 @@ if barstate.islast
             maxRow := math.max(maxRow, array.get(b.bid, r) + array.get(b.ask, r))
 
         for r = 0 to rows - 1
-            float bid = array.get(b.bid, r)
-            float ask = array.get(b.ask, r)
+            float bidV = array.get(b.bid, r)
+            float askV = array.get(b.ask, r)
             // diagonal imbalance: this row's bid against the ask one row above,
             // the two sides that trade against each other as price steps down
             float askUp = r < rows - 1 ? array.get(b.ask, r + 1) : array.get(b.ask, r)
-            float denom = bid + askUp
-            float z = denom > 0 ? (bid - askUp) / denom : 0.0
+            float denom = bidV + askUp
+            float z = denom > 0 ? (bidV - askUp) / denom : 0.0
 
             float pLow  = (b.minRow + r) * bRow
             float pHigh = pLow + bRow
@@ -334,7 +340,7 @@ if barstate.islast
 
             string txt = ""
             if i_text
-                txt := f_pad(f_cell(bid), 4, true) + "  " + f_pad(f_cell(ask), 4, false)
+                txt := f_pad(f_cell(bidV), 4, true) + "  " + f_pad(f_cell(askV), 4, false)
 
             array.push(cells, box.new(colL, pHigh, cellR, pLow, xloc = xloc.bar_time,
                  bgcolor = color.new(f_imbColor(z), i_transp), border_color = border, border_width = bw,
@@ -343,7 +349,7 @@ if barstate.islast
                  text_font_family = font.family_monospace))
 
             if i_prof and maxRow > 0 and profSpan > 0
-                int w = int(profSpan * (bid + ask) / maxRow)
+                int w = int(profSpan * (bidV + askV) / maxRow)
                 if w > 0
                     array.push(cells, box.new(cellR, pHigh - bRow * 0.15, cellR + w, pLow + bRow * 0.15,
                          xloc = xloc.bar_time, bgcolor = color.new(#7c4dff, 20),
@@ -352,9 +358,9 @@ if barstate.islast
         // drawn last so it sits above the cells, down the middle of the numbers
         if i_candle
             int   cx  = colL + int((cellR - colL) / 2)
-            color col = b.close >= b.open ? #26a69a : #ef5350
-            array.push(wicks, line.new(cx, b.high, cx, b.low, xloc = xloc.bar_time, color = col, width = 1))
-            array.push(wicks, line.new(cx, b.open, cx, b.close, xloc = xloc.bar_time, color = col, width = 4))
+            color col = b.bClose >= b.bOpen ? #26a69a : #ef5350
+            array.push(wicks, line.new(cx, b.bHigh, cx, b.bLow, xloc = xloc.bar_time, color = col, width = 1))
+            array.push(wicks, line.new(cx, b.bOpen, cx, b.bClose, xloc = xloc.bar_time, color = col, width = 4))
 
     // ------------------------------------------------------------- table
     if i_table
