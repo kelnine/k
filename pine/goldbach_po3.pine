@@ -34,7 +34,7 @@ indicator("NQ Goldbach — PO3 Levels & Bot", shorttitle="NQ Goldbach", overlay 
 gR = "Dealing range"
 sizeMode = input.string("Auto", "PO3 size", group = gR,
      options = ["Auto", "3", "9", "27", "81", "243", "729", "2187", "6561", "19683"],
-     tooltip = "Auto picks the smallest power of three that comfortably contains a typical bar's range — 81 on NQ intraday, larger on BTC.")
+     tooltip = "Auto snaps to the power of three nearest the instrument's ATR — 81 on NQ intraday, larger on BTC. Pick a size by hand to pin it.")
 autoMult   = input.float(5.0, "Auto: ATR ×", minval = 0.5, maxval = 60, step = 0.5, group = gR,
      tooltip = "The range should frame a session's move, not one candle. ATR(14) × 5, snapped to the nearest power of three, lands on 81 for NQ intraday. Raise it for a bigger range, or just pick the size by hand.")
 showHigher = input.bool(true,  "Draw nested ×3 range", group = gR)
