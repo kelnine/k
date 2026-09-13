@@ -16,7 +16,7 @@
 // carry a footprint; the table reports how many were drawn.
 // =============================================================================
 
-indicator("Orderflow Footprint", overlay = true, max_boxes_count = 500, max_labels_count = 20)
+indicator("Orderflow Footprint", overlay = true, max_boxes_count = 500, max_labels_count = 20, max_lines_count = 500)
 
 // ----------------------------------------------------------------- inputs
 
@@ -37,6 +37,7 @@ i_transp  = input.int(25, "Cell transparency", minval = 0, maxval = 90, group = 
 i_prof    = input.bool(true, "Volume profile", group = g_draw)
 i_poc     = input.bool(true, "Point of control", group = g_draw)
 i_imbThr  = input.float(0.45, "Imbalance marker", minval = 0.0, maxval = 1.0, step = 0.05, group = g_draw, tooltip = "Outline rows whose diagonal imbalance exceeds this. 0 disables the markers.")
+i_candle  = input.bool(true, "Candle over the cells", group = g_draw)
 i_table   = input.bool(true, "Parameters table", group = g_draw)
 
 // ----------------------------------------------------------------- colours
@@ -75,6 +76,17 @@ f_tanh(x) =>
 f_num(v) =>
     float a = math.abs(v)
     a >= 1000000 ? str.tostring(v / 1000000, "#.#") + "M" :
+     a >= 1000 ? str.tostring(v / 1000, "#.#") + "k" :
+     a >= 10 ? str.tostring(v, "#") :
+     a >= 1 ? str.tostring(v, "#.#") :
+     a > 0 ? str.tostring(v, "#.##") : "0"
+
+// four characters at most, so a bid/ask pair fits inside one bar's width
+f_cell(v) =>
+    float a = math.abs(v)
+    a >= 10000000 ? str.tostring(v / 1000000, "#") + "M" :
+     a >= 1000000 ? str.tostring(v / 1000000, "#.#") + "M" :
+     a >= 10000 ? str.tostring(v / 1000, "#") + "k" :
      a >= 1000 ? str.tostring(v / 1000, "#.#") + "k" :
      a >= 10 ? str.tostring(v, "#") :
      a >= 1 ? str.tostring(v, "#.#") :
@@ -156,7 +168,9 @@ float barDelta = na
 // closing up puts its volume on the ask, closing down on the bid, and an
 // unchanged close falls back to the tick rule against the previous intrabar.
 // -----------------------------------------------------------------
-if canRun and n > 0 and rowSz > 0
+bool nearEnd = bar_index >= last_bar_index - 45
+
+if canRun and nearEnd and n > 0 and rowSz > 0
     int minRow = na
     int maxRow = na
     for i = 0 to n - 1
@@ -227,7 +241,8 @@ if array.size(hist) > 0
 
 // ----------------------------------------------------------------- drawing
 
-var array<box> cells = array.new<box>()
+var array<box>  cells = array.new<box>()
+var array<line> wicks = array.new<line>()
 var table      tbl   = table.new(position.bottom_center, 42, 5, border_width = 1)
 var label      warn  = na
 
@@ -235,6 +250,9 @@ if barstate.islast
     for b in cells
         box.delete(b)
     array.clear(cells)
+    for w in wicks
+        line.delete(w)
+    array.clear(wicks)
     label.delete(warn)
     warn := na
     table.clear(tbl, 0, 0, 41, 4)
@@ -260,17 +278,32 @@ if barstate.islast
             drawn += 1
 
     int    tfMs  = chartSec * 1000
-    int    half  = int(tfMs * i_width / 2)
     string tSize = i_size == "Small" ? size.small : i_size == "Normal" ? size.normal : size.tiny
 
     for k = 0 to math.max(0, drawn - 1)
         if k >= drawn
             break
-        FpBar b = array.get(hist, total - 1 - k)
+        int idx = total - 1 - k
+        FpBar b = array.get(hist, idx)
         int rows = array.size(b.bid)
         float bRow = b.rowSz
-        int colL = b.t - half
-        int colR = b.t + half
+
+        // The chart's x axis is linear in bar index, not in clock time: a fixed
+        // number of milliseconds either side of a bar covers a different slice
+        // of a bar depending on the gaps around it, which made columns overlap
+        // across weekends and session breaks. Anchoring the edges to the
+        // midpoint between neighbouring bars always lands on ±half a bar.
+        int tPrev = b.t - tfMs
+        if idx > 0
+            FpBar pb = array.get(hist, idx - 1)
+            tPrev := pb.t
+        int tNext = b.t + tfMs
+        if idx < total - 1
+            FpBar nb = array.get(hist, idx + 1)
+            tNext := nb.t
+
+        int colL = b.t - int((b.t - tPrev) * i_width / 2)
+        int colR = b.t + int((tNext - b.t) * i_width / 2)
         int cellR = i_prof ? colL + int((colR - colL) * 0.70) : colR
         int profSpan = colR - cellR
 
@@ -301,7 +334,7 @@ if barstate.islast
 
             string txt = ""
             if i_text
-                txt := f_pad(f_num(bid), 5, true) + "  " + f_pad(f_num(ask), 5, false)
+                txt := f_pad(f_cell(bid), 4, true) + "  " + f_pad(f_cell(ask), 4, false)
 
             array.push(cells, box.new(colL, pHigh, cellR, pLow, xloc = xloc.bar_time,
                  bgcolor = color.new(f_imbColor(z), i_transp), border_color = border, border_width = bw,
@@ -315,6 +348,13 @@ if barstate.islast
                     array.push(cells, box.new(cellR, pHigh - bRow * 0.15, cellR + w, pLow + bRow * 0.15,
                          xloc = xloc.bar_time, bgcolor = color.new(#7c4dff, 20),
                          border_color = color.new(color.white, 100), border_width = 0))
+
+        // drawn last so it sits above the cells, down the middle of the numbers
+        if i_candle
+            int   cx  = colL + int((cellR - colL) / 2)
+            color col = b.close >= b.open ? #26a69a : #ef5350
+            array.push(wicks, line.new(cx, b.high, cx, b.low, xloc = xloc.bar_time, color = col, width = 1))
+            array.push(wicks, line.new(cx, b.open, cx, b.close, xloc = xloc.bar_time, color = col, width = 4))
 
     // ------------------------------------------------------------- table
     if i_table
