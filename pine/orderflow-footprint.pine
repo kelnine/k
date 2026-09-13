@@ -22,6 +22,7 @@ indicator("Orderflow Footprint", overlay = true, max_boxes_count = 500, max_labe
 
 g_data = "Data"
 i_ltf     = input.string("Auto", "Intrabar timeframe", options = ["Auto", "1S", "5S", "15S", "30S", "1", "3", "5", "15"], group = g_data, tooltip = "Lower timeframe the bid/ask split is estimated from. Finer is more accurate but reaches back over fewer bars. Second-based timeframes need a paid plan.")
+i_seconds = input.bool(false, "Allow seconds-based intrabars", group = g_data, tooltip = "Second-based timeframes need a TradingView Premium plan or higher. Leave this off on other plans or the script stops with runtime error RE10063.")
 i_rowMode = input.string("Auto", "Row size", options = ["Auto", "Ticks"], group = g_data)
 i_rowsPer = input.int(14, "Auto: rows per bar", minval = 4, maxval = 40, group = g_data)
 i_rowTick = input.int(50, "Fixed: ticks per row", minval = 1, group = g_data)
@@ -98,26 +99,55 @@ type FpBar
     float        cum = na
     float        roc = na
 
+// Intrabar timeframe. Seconds-based intrabars are gated to Premium and higher
+// plans (runtime error RE10063 on anything below), so they are opt-in and the
+// automatic choice sticks to minutes, which every plan can request.
+int    chartSec = timeframe.in_seconds()
+string autoSec  = chartSec >= 900 ? "1" : chartSec >= 300 ? "15S" : chartSec >= 60 ? "5S" : "1S"
+string autoMin  = "1"
+string autoLtf  = i_seconds ? autoSec : autoMin
+string wantLtf  = i_ltf == "Auto" ? autoLtf : i_ltf
+bool   wantsSec = timeframe.in_seconds(wantLtf) < 60
+string useLtf   = wantsSec and not i_seconds ? autoMin : wantLtf
+// asking for a timeframe at or above the chart's is a runtime error, so when
+// there is nothing valid to request the script draws a note instead
+bool   canRun   = timeframe.in_seconds(useLtf) < chartSec
+
+array<float> ltfO = na
+array<float> ltfH = na
+array<float> ltfL = na
+array<float> ltfC = na
+array<float> ltfV = na
+if canRun
+    [qO, qH, qL, qC, qV] = request.security_lower_tf(syminfo.tickerid, useLtf, [open, high, low, close, volume])
+    ltfO := qO
+    ltfH := qH
+    ltfL := qL
+    ltfC := qC
+    ltfV := qV
+
+int n = na(ltfC) ? 0 : array.size(ltfC)
+
 // Row height, snapped to whole ticks. The auto size follows ATR, but it only
 // moves when volatility has really shifted — otherwise rows would drift a tick
-// at a time and stop lining up from one bar to the next.
-float atr     = ta.atr(20)
-float rawRow  = i_rowMode == "Auto" ? nz(atr, syminfo.mintick * i_rowsPer) / i_rowsPer : i_rowTick * syminfo.mintick
-int   rowTkNow = math.max(1, int(math.round(rawRow / syminfo.mintick)))
+// at a time and stop lining up from one bar to the next. It also never asks for
+// more rows than there are intrabars to fill them, which keeps the footprint
+// readable on coarse data (a 5m chart with 1m intrabars has five prints a bar).
+var int barsPerCandle = 1
+if n > 0
+    barsPerCandle := n
+int   rowsWanted = math.max(4, math.min(i_rowsPer, barsPerCandle))
+float atr        = ta.atr(20)
+float rawRow     = i_rowMode == "Auto" ? nz(atr, syminfo.mintick * rowsWanted) / rowsWanted : i_rowTick * syminfo.mintick
+int   rowTkNow   = math.max(1, int(math.round(rawRow / syminfo.mintick)))
 var int rowTk = na
 if na(rowTk) or i_rowMode != "Auto" or rowTkNow > rowTk * 1.5 or rowTkNow * 1.5 < rowTk
     rowTk := rowTkNow
-float rowSz   = rowTk * syminfo.mintick
+float rowSz = rowTk * syminfo.mintick
 
-// intrabar timeframe: never higher than the chart, or the request throws
-int    chartSec = timeframe.in_seconds()
-string autoLtf  = chartSec >= 900 ? "1" : chartSec >= 300 ? "15S" : chartSec >= 60 ? "5S" : "1S"
-string wantLtf  = i_ltf == "Auto" ? autoLtf : i_ltf
-bool   ltfOk    = timeframe.in_seconds(wantLtf) < chartSec
-string useLtf   = ltfOk ? wantLtf : autoLtf
-bool   canRun   = timeframe.in_seconds(useLtf) < chartSec
+var array<FpBar> hist = array.new<FpBar>()
 
-[ltfO, ltfH, ltfL, ltfC, ltfV] = request.security_lower_tf(syminfo.tickerid, useLtf, [open, high, low, close, volume])
+float barDelta = na
 
 // -----------------------------------------------------------------
 // Build one bar's rows from intrabar candles.
@@ -126,11 +156,6 @@ bool   canRun   = timeframe.in_seconds(useLtf) < chartSec
 // closing up puts its volume on the ask, closing down on the bid, and an
 // unchanged close falls back to the tick rule against the previous intrabar.
 // -----------------------------------------------------------------
-var array<FpBar> hist = array.new<FpBar>()
-
-float barDelta = na
-int   n        = na(ltfC) ? 0 : array.size(ltfC)
-
 if canRun and n > 0 and rowSz > 0
     int minRow = na
     int maxRow = na
@@ -216,7 +241,7 @@ if barstate.islast
 
     int total = array.size(hist)
     if not canRun
-        warn := label.new(bar_index, high, "Footprint needs an intrabar timeframe below the chart timeframe", style = label.style_label_down, color = color.new(color.red, 20), textcolor = color.white)
+        warn := label.new(bar_index, high, "No intrabar timeframe below this chart. Move to a 3m chart or higher, or turn on seconds-based intrabars (Premium plans only).", style = label.style_label_down, color = color.new(color.red, 20), textcolor = color.white)
     else if total == 0
         warn := label.new(bar_index, high, "No intrabar data available here — try a higher chart timeframe", style = label.style_label_down, color = color.new(color.orange, 20), textcolor = color.white)
 
@@ -293,7 +318,7 @@ if barstate.islast
 
     // ------------------------------------------------------------- table
     if i_table
-        table.cell(tbl, 0, 0, "", text_color = color.gray, text_size = size.tiny)
+        table.cell(tbl, 0, 0, useLtf + " · " + str.tostring(barsPerCandle) + "/bar", text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 1, "roc", text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 2, "volume", text_color = color.gray, text_size = size.tiny)
         table.cell(tbl, 0, 3, "cum delta", text_color = color.gray, text_size = size.tiny)
