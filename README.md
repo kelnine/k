@@ -18,6 +18,12 @@ fully custom canvas rendering engine, with no third-party charting library.
   structure (HH/HL/LH/LL), BOS/CHoCH market-structure breaks, order blocks and
   fair-value-gap zones (auto-extended until mitigated/filled), and equal-high/low
   liquidity pools, with a live trend read-out in the legend.
+- **SMC Liquidity Setup** — a four-stage, multi-timeframe liquidity model:
+  weekly sweep (previous week's high/low, optionally reclaimed) → higher-timeframe
+  key level (FVG and/or S/R pivot within an ATR band) → market structure shift on
+  an intermediate timeframe → a chart-timeframe inverse-FVG / CISD entry trigger.
+  Stages are strictly ordered and directional, and all three timeframes are
+  bucketed from the chart's own candles, so nothing repaints.
 - **Drawing tools** — trendlines, horizontal levels, Fibonacci retracements, and
   text notes. Select, drag, re-anchor endpoints, delete with `Del`. Saved per
   symbol in `localStorage`.
@@ -57,4 +63,5 @@ src/
     utils.ts     axis ticks, price/time formatting
   indicators/  pure-function indicator library + registry
   ui/          React shell: toolbar, layouts, watchlist, search
+pine/          Pine Script references for the ported SMC indicators
 ```
