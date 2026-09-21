@@ -60,7 +60,7 @@ srPad     = input.float(0.35, "S/R zone pad (x HTF ATR)", minval = 0.0, step = 0
 poiTouch  = input.string("Wick overlap", "Interaction mode", options = ["Wick overlap", "Close inside"], group = G2)
 poiInvOn  = input.string("HTF close", "Invalidate a zone on", options = ["HTF close", "15m close"], group = G2, tooltip = "Bullish zone dies when a confirmed candle closes below its lower edge; bearish, above its upper edge.")
 maxZones  = input.int(14, "Max live zones per side", minval = 2, maxval = 60, group = G2)
-zoneFar   = input.float(6.0, "Drop zones further than (x HTF ATR) · 0 = off", minval = 0.0, step = 0.5, group = G2, tooltip = "[A] Stops stale zones piling up far under/over a trending market.")
+zoneFar   = input.float(6.0, "Hide zones further than (x HTF ATR) · 0 = off", minval = 0.0, step = 0.5, group = G2, tooltip = "Declutter only - a hidden zone stays live and still qualifies a setup if price returns to it.")
 poiWeekly = input.bool(false, "Swept weekly level also counts as the key level", group = G2, tooltip = "[A] INTERPRETATION, off by default. On: the swept PWH/PWL qualifies as the HTF level, which removes the pivot-confirmation lag that can block a setup for hours after the sweep.")
 mLongOn   = input.bool(false, "Manual long zone", inline = "ml", group = G2)
 mLongTop  = input.float(0.0, "top", inline = "ml", group = G2)
@@ -110,6 +110,7 @@ showTrade = input.bool(true,  "Virtual trade levels", inline = "d2", group = G7)
 showDash  = input.bool(true,  "Dashboard", inline = "d3", group = G7)
 dashPos   = input.string("Top right", "", options = ["Top right", "Middle right", "Bottom right", "Top left", "Bottom left"], inline = "d3", group = G7)
 dashSize  = input.string("Small", "", options = ["Tiny", "Small", "Normal"], inline = "d3", group = G7)
+dashMode  = input.string("Compact", "Dashboard rows", options = ["Compact", "Full"], group = G7, tooltip = "Compact: 5 rows, warnings folded into the top line and only shown when they apply. Full: every field on its own row.")
 cBull     = input.color(#26a69a, "Bull", inline = "d4", group = G7)
 cBear     = input.color(#ef5350, "Bear", inline = "d4", group = G7)
 cNeut     = input.color(#8b93a3, "Neutral", inline = "d4", group = G7)
@@ -221,8 +222,12 @@ f_killZones(array<Zone> zs, float c, float atrv, float far) =>
         for i = array.size(zs) - 1 to 0
             z = array.get(zs, i)
             float dist = c > z.top ? c - z.top : c < z.bot ? z.bot - c : 0.0
-            bool gone = far > 0 and not na(atrv) and atrv > 0 and dist > far * atrv
-            bool dead = (z.dir == 1 and c < z.bot) or (z.dir == -1 and c > z.top) or gone
+            bool far_ = far > 0 and not na(atrv) and atrv > 0 and dist > far * atrv
+            bool dead = (z.dir == 1 and c < z.bot) or (z.dir == -1 and c > z.top)
+            // out of sight, still in play: hide a distant zone, never discard it
+            if not dead and not na(z.bx)
+                box.set_bgcolor(z.bx, far_ ? color.new(color.gray, 100) : color.new(z.dir == 1 ? cBull : cBear, z.kind == 0 ? 88 : 93))
+                box.set_border_color(z.bx, far_ ? color.new(color.gray, 100) : color.new(z.dir == 1 ? cBull : cBear, z.kind == 0 ? 50 : 72))
             if dead
                 if not na(z.bx)
                     box.delete(z.bx)
@@ -799,35 +804,47 @@ if showDash
         ts = f_txt(dashSize)
         bg = color.new(#0d1117, 8)
         hd = color.new(cNeut, 65)
-        table.cell(dash, 0, 0, "Weekly Sweep Model v2", text_color = color.white, bgcolor = hd, text_size = ts)
-        table.cell(dash, 1, 0, timeframe.period + " chart", text_color = color.white, bgcolor = hd, text_size = ts)
+        // warnings only occupy space when they actually apply
+        warnTxt = warnChart ? " · CHART TF TOO HIGH" : warnKey ? " · KEY TF TOO LOW" : ""
+        poiCell = st >= 2 ? poiTxt : "not qualified"
+        exeCell = st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "latched" : "armed, waiting")
+        trdCell = tOn ? (tDir == 1 ? "LONG " : "SHORT ") + str.tostring(tEntry, format.mintick) + (tBe ? " · BE" : "") + (tT1 ? " · TP1" : "") + (tWarn ? " · WARN" : "") : "flat · " + str.tostring(nWin) + "W/" + str.tostring(nLoss) + "L/" + str.tostring(nBe) + "B"
+        stCell  = f_state(st) + (st == 0 and noteTxt != "" ? " · " + noteTxt : "")
+        bCol    = bias == 1 ? cBull : bias == -1 ? cBear : cNeut
+        sCol    = lastStructDir == 1 ? cBull : lastStructDir == -1 ? cBear : cNeut
 
-        table.cell(dash, 0, 1, "weekly sweep", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 1, biasTxt, text_color = color.white, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 2, "bias", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 2, bias == 1 ? "long candidate" : bias == -1 ? "short candidate" : "none", text_color = bias == 1 ? cBull : bias == -1 ? cBear : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 3, "HTF " + keyTF + " level", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 3, st >= 2 ? poiTxt : "not qualified", text_color = st >= 2 ? color.white : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 4, confTF + " structure", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 4, lastStructTxt, text_color = lastStructDir == 1 ? cBull : lastStructDir == -1 ? cBear : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 5, "execution", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 5, st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "latched" : "armed, waiting"), text_color = st == 3 ? color.white : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 6, "state", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 6, f_state(st) + (st == 0 and noteTxt != "" ? " · " + noteTxt : ""), text_color = color.white, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 7, "virtual trade", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 7, tOn ? (tDir == 1 ? "LONG " : "SHORT ") + str.tostring(tEntry, format.mintick) + (tBe ? " · BE" : "") + (tT1 ? " · TP1" : "") + (tWarn ? " · WARN" : "") : "flat · " + str.tostring(nWin) + "W/" + str.tostring(nLoss) + "L/" + str.tostring(nBe) + "B", text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 8, "chart TF", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 8, warnChart ? "WARNING: use a TF below " + confTF : "ok", text_color = warnChart ? cBear : cNeut, bgcolor = bg, text_size = ts)
-
-        table.cell(dash, 0, 9, "key TF", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 9, warnKey ? "WARNING: must be above " + confTF : "ok", text_color = warnKey ? cBear : cNeut, bgcolor = bg, text_size = ts)
+        if dashMode == "Compact"
+            table.cell(dash, 0, 0, "WSM", text_color = color.white, bgcolor = hd, text_size = ts)
+            table.cell(dash, 1, 0, stCell + warnTxt, text_color = warnTxt == "" ? color.white : cBear, bgcolor = hd, text_size = ts)
+            table.cell(dash, 0, 1, "sweep", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 1, biasTxt, text_color = bCol, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 2, "POI", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 2, poiCell, text_color = st >= 2 ? color.white : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 3, confTF + "m", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 3, lastStructTxt, text_color = sCol, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 4, "exec", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 4, exeCell + " · " + trdCell, text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
+        else
+            table.cell(dash, 0, 0, "Weekly Sweep Model v2", text_color = color.white, bgcolor = hd, text_size = ts)
+            table.cell(dash, 1, 0, timeframe.period + " chart", text_color = color.white, bgcolor = hd, text_size = ts)
+            table.cell(dash, 0, 1, "weekly sweep", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 1, biasTxt, text_color = color.white, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 2, "bias", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 2, bias == 1 ? "long candidate" : bias == -1 ? "short candidate" : "none", text_color = bCol, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 3, "HTF " + keyTF + " level", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 3, poiCell, text_color = st >= 2 ? color.white : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 4, confTF + " structure", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 4, lastStructTxt, text_color = sCol, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 5, "execution", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 5, exeCell, text_color = st == 3 ? color.white : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 6, "state", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 6, stCell, text_color = color.white, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 7, "virtual trade", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 7, trdCell, text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 8, "chart TF", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 8, warnChart ? "WARNING: use a TF below " + confTF : "ok", text_color = warnChart ? cBear : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 0, 9, "key TF", text_color = cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 9, warnKey ? "WARNING: must be above " + confTF : "ok", text_color = warnKey ? cBear : cNeut, bgcolor = bg, text_size = ts)
 
 // ═══════════════════════════════════ ALERTS ═════════════════════════════════
 alertcondition(evSweepUp, "1 · Bullish weekly sweep + reclaim", "WSM: previous-week LOW swept and reclaimed - long candidate")
