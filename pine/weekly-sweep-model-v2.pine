@@ -506,7 +506,7 @@ if newC
         stNo := m15no
         stBar := bar_index
         poiTxt := "-"
-        noteTxt := "cancelled - opposite 15m break"
+        noteTxt := "setup cancelled"
 
     // ---- 5 · ordered transitions -------------------------------------------
     if st == 1 and (not strictOrd or m15no > stNo)
@@ -796,7 +796,7 @@ warnChart = chartSec >= confSec
 warnKey   = keySec <= confSec
 
 f_state(int s) =>
-    s == 0 ? "idle - need sweep" : s == 1 ? "waiting HTF level" : s == 2 ? "waiting 15m structure" : s == 3 ? "waiting execution" : "virtual trade open"
+    s == 0 ? "need sweep" : s == 1 ? "need HTF level" : s == 2 ? "need 15m break" : s == 3 ? "need execution" : "trade open"
 
 if showDash
     var table dash = table.new(f_pos(dashPos), 2, 10, border_width = 1, frame_color = color.new(cNeut, 55), frame_width = 1)
@@ -805,11 +805,11 @@ if showDash
         bg = color.new(#0d1117, 8)
         hd = color.new(cNeut, 65)
         // warnings only occupy space when they actually apply
-        warnTxt = warnChart ? " · CHART TF TOO HIGH" : warnKey ? " · KEY TF TOO LOW" : ""
+        warnTxt = warnChart ? " · TF!" : warnKey ? " · HTF!" : ""
         poiCell = st >= 2 ? poiTxt : "not qualified"
-        exeCell = st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "latched" : "armed, waiting")
+        exeCell = st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "set" : "armed")
         trdCell = tOn ? (tDir == 1 ? "LONG " : "SHORT ") + str.tostring(tEntry, format.mintick) + (tBe ? " · BE" : "") + (tT1 ? " · TP1" : "") + (tWarn ? " · WARN" : "") : "flat · " + str.tostring(nWin) + "W/" + str.tostring(nLoss) + "L/" + str.tostring(nBe) + "B"
-        stCell  = f_state(st) + (st == 0 and noteTxt != "" ? " · " + noteTxt : "")
+        stCell  = st == 0 and noteTxt != "" ? noteTxt : f_state(st)
         bCol    = bias == 1 ? cBull : bias == -1 ? cBear : cNeut
         sCol    = lastStructDir == 1 ? cBull : lastStructDir == -1 ? cBear : cNeut
 
@@ -842,9 +842,9 @@ if showDash
             table.cell(dash, 0, 7, "virtual trade", text_color = cNeut, bgcolor = bg, text_size = ts)
             table.cell(dash, 1, 7, trdCell, text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
             table.cell(dash, 0, 8, "chart TF", text_color = cNeut, bgcolor = bg, text_size = ts)
-            table.cell(dash, 1, 8, warnChart ? "WARNING: use a TF below " + confTF : "ok", text_color = warnChart ? cBear : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 8, warnChart ? "too high · use < " + confTF : "ok", text_color = warnChart ? cBear : cNeut, bgcolor = bg, text_size = ts)
             table.cell(dash, 0, 9, "key TF", text_color = cNeut, bgcolor = bg, text_size = ts)
-            table.cell(dash, 1, 9, warnKey ? "WARNING: must be above " + confTF : "ok", text_color = warnKey ? cBear : cNeut, bgcolor = bg, text_size = ts)
+            table.cell(dash, 1, 9, warnKey ? "too low · use > " + confTF : "ok", text_color = warnKey ? cBear : cNeut, bgcolor = bg, text_size = ts)
 
 // ═══════════════════════════════════ ALERTS ═════════════════════════════════
 alertcondition(evSweepUp, "1 · Bullish weekly sweep + reclaim", "WSM: previous-week LOW swept and reclaimed - long candidate")
