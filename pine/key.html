@@ -1,0 +1,120 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bull:#26a69a;--bear:#ef5350;--neut:#8b93a3;--bg:#0d1117;--card:#161b22;--line:#242c38;--txt:#e6edf3;--dim:#8b949e}
+*{margin:0;padding:0;box-sizing:border-box}
+body{width:1100px;background:var(--bg);color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding:40px 44px 34px}
+h1{font-size:33px;letter-spacing:-.4px;font-weight:700}
+.sub{font-size:16px;color:var(--dim);margin-top:7px;margin-bottom:26px}
+.sec{background:var(--card);border:1px solid var(--line);border-radius:13px;margin-bottom:15px;overflow:hidden}
+.hd{padding:13px 20px;font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:11px}
+.hd .n{color:var(--dim);font-weight:600}
+.hd .g{margin-left:auto;font-size:13px;letter-spacing:.3px;text-transform:none;color:var(--dim);font-weight:500}
+.row{display:grid;grid-template-columns:186px 1fr;gap:20px;align-items:center;
+  padding:14px 20px;border-bottom:1px solid rgba(36,44,56,.55)}
+.row:last-child{border-bottom:none}
+.art{display:flex;align-items:center;justify-content:center;height:40px}
+.nm{font-size:19px;font-weight:600;line-height:1.28}
+.ds{font-size:15px;color:var(--dim);margin-top:3px;line-height:1.4}
+.ln{width:150px;height:0}
+.bx{width:150px;height:34px;border-radius:3px;display:flex;align-items:center;padding-left:7px;
+  font-size:11px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.bd{display:inline-block;padding:4px 9px;border-radius:3px;color:#fff;font-size:13px;font-weight:600;
+  font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap}
+.dash{width:100%;border-collapse:collapse;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px}
+.dash td{padding:9px 20px;border-bottom:1px solid rgba(36,44,56,.55)}
+.dash tr:last-child td{border-bottom:none}
+.dash td.k{color:var(--dim);width:110px}
+.dash td.v{color:var(--txt);width:290px}
+.dash td.m{color:var(--dim);font-family:inherit;font-size:14.5px}
+.ft{margin-top:20px;padding:17px 21px;background:var(--card);border:1px solid var(--line);
+  border-radius:11px;font-size:14.5px;color:var(--dim);line-height:1.65}
+.ft b{color:var(--txt);font-weight:600}
+.ord{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:15px;margin-top:9px;color:var(--txt)}
+.pill{background:#1d2530;border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-weight:600;font-size:14px}
+.ar{color:var(--dim)}
+.mono{font-family:ui-monospace,Menlo,Consolas,"DejaVu Sans Mono",monospace}
+</style></head><body>
+
+<h1>Weekly Sweep Model &mdash; chart key</h1>
+<div class="sub">Every mark the indicator draws, and what it is telling you. Teal = bullish &middot; red = bearish &middot; grey = neutral.</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">1</span> Weekly &mdash; the bias <span class="g">must happen first</span></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px solid #ef5350"></div></div>
+    <div><div class="nm">PWH</div><div class="ds">Previous week&rsquo;s high. The liquidity sitting above the market.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px solid #26a69a"></div></div>
+    <div><div class="nm">PWL</div><div class="ds">Previous week&rsquo;s low. The liquidity sitting below the market.</div></div></div>
+  <div class="row"><div class="art"><span class="bd" style="background:#ef5350">sweep PWH</span></div>
+    <div><div class="nm">High taken &rarr; <span style="color:#ef5350">short bias</span></div><div class="ds">Marks the candle that raided last week&rsquo;s high. Now look for shorts only.</div></div></div>
+  <div class="row"><div class="art"><span class="bd" style="background:#26a69a">sweep PWL</span></div>
+    <div><div class="nm">Low taken &rarr; <span style="color:#26a69a">long bias</span></div><div class="ds">Marks the candle that raided last week&rsquo;s low. Now look for longs only.</div></div></div>
+</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">2</span> HTF key level &mdash; the location <span class="g">price must be inside one</span></div>
+  <div class="row"><div class="art"><div class="bx" style="background:rgba(38,166,154,.12);border:1px solid rgba(38,166,154,.5);color:#26a69a">HTF FVG</div></div>
+    <div><div class="nm">Bullish 4H fair value gap</div><div class="ds">A 3-candle imbalance. Valid place to look for a long. Dies if a 4H candle closes below it.</div></div></div>
+  <div class="row"><div class="art"><div class="bx" style="background:rgba(239,83,80,.12);border:1px solid rgba(239,83,80,.5);color:#ef5350">HTF FVG</div></div>
+    <div><div class="nm">Bearish 4H fair value gap</div><div class="ds">Valid place to look for a short. Dies if a 4H candle closes above it.</div></div></div>
+  <div class="row"><div class="art"><div class="bx" style="background:rgba(38,166,154,.07);border:1px dotted rgba(38,166,154,.28)"></div></div>
+    <div><div class="nm">4H support zone</div><div class="ds">Dotted border, no text. A confirmed 4H swing low, padded by ATR into a band.</div></div></div>
+  <div class="row"><div class="art"><div class="bx" style="background:rgba(239,83,80,.07);border:1px dotted rgba(239,83,80,.28)"></div></div>
+    <div><div class="nm">4H resistance zone</div><div class="ds">A confirmed 4H swing high, padded into a band.</div></div></div>
+  <div class="row"><div class="art"><div class="bx" style="background:transparent;border:1px solid rgba(139,147,163,.12)"></div></div>
+    <div><div class="nm">Hidden zone</div><div class="ds">Faded out because price is far away &mdash; but still live. It counts again if price returns.</div></div></div>
+</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">3</span> 15m structure &mdash; the confirmation <span class="g">must agree with the bias</span></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px dashed #26a69a"></div></div>
+    <div><div class="nm">Bullish break <span class="bd" style="background:#26a69a;margin-left:5px">15m ^</span></div><div class="ds">A 15m candle closed above the last confirmed swing high. Dashed line marks the broken level.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px dashed #ef5350"></div></div>
+    <div><div class="nm">Bearish break <span class="bd" style="background:#ef5350;margin-left:5px">15m v</span></div><div class="ds">A 15m candle closed below the last confirmed swing low.</div></div></div>
+  <div class="row"><div class="art"><span class="bd" style="background:#8b93a3">MSS</span>&nbsp;&nbsp;<span class="bd" style="background:#8b93a3">BOS</span></div>
+    <div><div class="nm">v1 tags only</div><div class="ds"><b>MSS</b> = structure flipped direction. <b>BOS</b> = broke the way it was already going. v2 shows <span class="mono">15m ^ / v</span> instead.</div></div></div>
+</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">4</span> Execution &mdash; the trigger <span class="g">on your 1&ndash;5m chart</span></div>
+  <div class="row"><div class="art"><div class="bx" style="background:rgba(38,166,154,.12);border:1px solid rgba(38,166,154,.55);color:#26a69a">iFVG</div></div>
+    <div><div class="nm">Inverted fair value gap</div><div class="ds">A gap price traded through, now flipped polarity. A bearish gap closed above becomes support.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:1.5px solid rgba(38,166,154,.55)"></div></div>
+    <div><div class="nm">CISD level, bullish</div><div class="ds">Open of the first candle of the down-run. Thin line, appears and vanishes. Close above it = trigger.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:1.5px solid rgba(239,83,80,.55)"></div></div>
+    <div><div class="nm">CISD level, bearish</div><div class="ds">Open of the first candle of the up-run. Close below it = trigger.</div></div></div>
+</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">5</span> Signal &amp; trade levels <span class="g">simulated &mdash; not orders</span></div>
+  <div class="row"><div class="art"><span class="bd" style="background:#26a69a">LONG</span>&nbsp;&nbsp;<span class="bd" style="background:#ef5350">SHORT</span></div>
+    <div><div class="nm">All four gates green</div><div class="ds">Badge prints below (long) or above (short) the trigger candle. v2 uses a compact <span class="mono">L</span> / <span class="mono">S</span>.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px solid #8b93a3"></div></div>
+    <div><div class="nm">Entry</div><div class="ds">Grey solid. The close of the trigger candle.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px dashed #ef5350"></div></div>
+    <div><div class="nm">Stop &mdash; <span class="mono" style="font-size:16px">SL 4.0123</span></div><div class="ds">Red dashed. Structural: beyond the recent swing and the trigger&rsquo;s own anchor, plus an ATR pad.</div></div></div>
+  <div class="row"><div class="art"><div class="ln" style="border-top:2px dotted #26a69a"></div></div>
+    <div><div class="nm">Targets &mdash; <span class="mono" style="font-size:16px">TP1 2R &middot; TP2 4R</span></div><div class="ds">Teal dotted. v1 uses 2R / 3R. Stop moves to breakeven at 2R.</div></div></div>
+  <div class="row"><div class="art"><span class="bd" style="background:#26a69a">TP2</span>&nbsp;<span class="bd" style="background:#ef5350">SL</span>&nbsp;<span class="bd" style="background:#8b93a3">BE</span></div>
+    <div><div class="nm">Outcome tag (v2)</div><div class="ds">How the virtual trade ended. If one candle hit both stop and target, the stop is assumed first.</div></div></div>
+</div>
+
+<div class="sec">
+  <div class="hd"><span class="n">6</span> Dashboard rows <span class="g">v2 compact</span></div>
+  <table class="dash">
+    <tr><td class="k">WSM</td><td class="v">waiting HTF level</td><td class="m">Which gate you are currently stuck on</td></tr>
+    <tr><td class="k">sweep</td><td class="v">PWH swept + reclaimed</td><td class="m">Gate 1 &mdash; the weekly raid and the bias it set</td></tr>
+    <tr><td class="k">POI</td><td class="v">not qualified</td><td class="m">Gate 2 &mdash; or names the level price is sitting in</td></tr>
+    <tr><td class="k">15m</td><td class="v">bear break</td><td class="m">Gate 3 &mdash; last confirmed structure break</td></tr>
+    <tr><td class="k">exec</td><td class="v">not armed &middot; flat &middot; 0W/0L/0B</td><td class="m">Gate 4, then the virtual trade record</td></tr>
+  </table>
+</div>
+
+<div class="ft">
+  <b>The order is the method.</b> A mark on its own means nothing &mdash; they only count in sequence:
+  <div class="ord"><span class="pill">weekly sweep</span><span class="ar">&rarr;</span><span class="pill">HTF key level</span><span class="ar">&rarr;</span><span class="pill">15m structure</span><span class="ar">&rarr;</span><span class="pill">iFVG / CISD</span><span class="ar">&rarr;</span><span class="pill" style="border-color:#26a69a;color:#26a69a">entry</span></div>
+  <div style="margin-top:13px">An opposite 15m break at any point cancels the setup. Each stage expires if the next one takes too long. Trade levels are drawn for study only &mdash; the indicator places no orders.</div>
+</div>
+
+</body></html>
