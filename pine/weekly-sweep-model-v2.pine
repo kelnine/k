@@ -60,6 +60,8 @@ srPad     = input.float(0.35, "S/R zone pad (x HTF ATR)", minval = 0.0, step = 0
 poiTouch  = input.string("Wick overlap", "Interaction mode", options = ["Wick overlap", "Close inside"], group = G2)
 poiInvOn  = input.string("HTF close", "Invalidate a zone on", options = ["HTF close", "15m close"], group = G2, tooltip = "Bullish zone dies when a confirmed candle closes below its lower edge; bearish, above its upper edge.")
 maxZones  = input.int(14, "Max live zones per side", minval = 2, maxval = 60, group = G2)
+zoneFar   = input.float(6.0, "Drop zones further than (x HTF ATR) · 0 = off", minval = 0.0, step = 0.5, group = G2, tooltip = "[A] Stops stale zones piling up far under/over a trending market.")
+poiWeekly = input.bool(false, "Swept weekly level also counts as the key level", group = G2, tooltip = "[A] INTERPRETATION, off by default. On: the swept PWH/PWL qualifies as the HTF level, which removes the pivot-confirmation lag that can block a setup for hours after the sweep.")
 mLongOn   = input.bool(false, "Manual long zone", inline = "ml", group = G2)
 mLongTop  = input.float(0.0, "top", inline = "ml", group = G2)
 mLongBot  = input.float(0.0, "bot", inline = "ml", group = G2)
@@ -86,6 +88,7 @@ expPOI    = input.int(64,  "Expiry: sweep -> HTF level (15m bars)", minval = 1, 
 expMSS    = input.int(32,  "Expiry: HTF level -> 15m structure (15m bars)", minval = 1, group = G5)
 expEXE    = input.int(12,  "Expiry: structure -> execution (15m bars)", minval = 1, group = G5)
 strictOrd = input.bool(true, "Strict ordering (each stage on a later 15m bar)", group = G5, tooltip = "[A] Prevents two stages being credited to one 15m candle, where their true intrabar order is unknown.")
+reArmCxl  = input.bool(false, "Re-arm after a cancelled setup", group = G5, tooltip = "[A] Off: a cancelled setup needs a fresh weekly sweep before it can re-arm.")
 reArm     = input.bool(true, "Re-arm to 'waiting HTF level' after a trade closes", group = G5, tooltip = "[A] Keeps the weekly bias alive for a second setup instead of demanding a fresh sweep.")
 keepBars  = input.int(400, "HTF/15m bars held in memory", minval = 60, maxval = 900, group = G5)
 
@@ -213,11 +216,13 @@ f_addZone(array<Zone> zs, float top, float bot, int dir, int kind, int m15at, si
                         box.delete(zi.bx)
                     array.remove(zs, i)
 
-f_killZones(array<Zone> zs, float c) =>
+f_killZones(array<Zone> zs, float c, float atrv, float far) =>
     if array.size(zs) > 0
         for i = array.size(zs) - 1 to 0
             z = array.get(zs, i)
-            bool dead = (z.dir == 1 and c < z.bot) or (z.dir == -1 and c > z.top)
+            float dist = c > z.top ? c - z.top : c < z.bot ? z.bot - c : 0.0
+            bool gone = far > 0 and not na(atrv) and atrv > 0 and dist > far * atrv
+            bool dead = (z.dir == 1 and c < z.bot) or (z.dir == -1 and c > z.top) or gone
             if dead
                 if not na(z.bx)
                     box.delete(z.bx)
@@ -274,6 +279,7 @@ var bool   brDn    = false   // breach above PWH open
 var int    brDnBar = 0
 var int    bias    = 0
 var string biasTxt = "none"
+var string noteTxt = ""
 
 // 15m structure
 var float phLvl = na
@@ -376,7 +382,7 @@ if newK
         if not na(pL)
             f_addZone(zones, pL + pad, pL - pad, 1, 1, m15no, maxZones)
     if poiInvOn == "HTF close"
-        f_killZones(zones, kC)
+        f_killZones(zones, kC, kATR, zoneFar)
 
 // keep live zone boxes stretched to the right edge
 if showZones and array.size(zones) > 0
@@ -389,7 +395,7 @@ if showZones and array.size(zones) > 0
 if newC
     f_push(m15A, cO, cH, cL, cC, cT, keepBars)
     if poiInvOn == "15m close"
-        f_killZones(zones, cC)
+        f_killZones(zones, cC, kATR, zoneFar)
 
     // ---- 1 · weekly sweep + reclaim, measured on closed 15m candles ---------
     bool rcUp = false
@@ -424,6 +430,7 @@ if newC
             biasTxt := "both sides - kept " + (bias == 1 ? "long" : bias == -1 ? "short" : "none")
     else if rcUp
         evSweepUp := true
+        noteTxt := ""
         bias := 1
         biasTxt := "PWL swept + reclaimed"
         if st < 4
@@ -434,6 +441,7 @@ if newC
             poiTxt := "-"
     else if rcDn
         evSweepDn := true
+        noteTxt := ""
         bias := -1
         biasTxt := "PWH swept + reclaimed"
         if st < 4
@@ -488,10 +496,12 @@ if newC
 
     // ---- 4 · opposite break cancels a pending setup -------------------------
     if st > 0 and st < 4 and ((stDir == 1 and brkDn) or (stDir == -1 and brkUp))
-        st := 0
-        stDir := 0
+        st := reArmCxl and bias != 0 ? 1 : 0
+        stDir := reArmCxl and bias != 0 ? bias : 0
+        stNo := m15no
+        stBar := bar_index
         poiTxt := "-"
-        biasTxt := "setup cancelled - opposite 15m break"
+        noteTxt := "cancelled - opposite 15m break"
 
     // ---- 5 · ordered transitions -------------------------------------------
     if st == 1 and (not strictOrd or m15no > stNo)
@@ -505,10 +515,17 @@ if newC
             mt := mShortTop
             mb := mShortBot
         bool manHit = f_touch(cH, cL, cC, mt, mb, poiTouch == "Close inside")
-        if not na(zt) or manHit
-            poiT := na(zt) ? mt : zt
-            poiB := na(zt) ? mb : zb
-            poiTxt := na(zt) ? f_kindName(2) : f_kindName(zk)
+        float wpad = nz(kATR) * srPad
+        bool wkHit = false
+        if poiWeekly
+            if stDir == 1 and not na(pwL)
+                wkHit := f_touch(cH, cL, cC, pwL + wpad, pwL - wpad, poiTouch == "Close inside")
+            if stDir == -1 and not na(pwH)
+                wkHit := f_touch(cH, cL, cC, pwH + wpad, pwH - wpad, poiTouch == "Close inside")
+        if not na(zt) or manHit or wkHit
+            poiT := not na(zt) ? zt : manHit ? mt : (stDir == 1 ? pwL + wpad : pwH + wpad)
+            poiB := not na(zt) ? zb : manHit ? mb : (stDir == 1 ? pwL - wpad : pwH - wpad)
+            poiTxt := not na(zt) ? f_kindName(zk) : manHit ? f_kindName(2) : "swept weekly level"
             evPOI := true
             st := 2
             stNo := m15no
@@ -801,7 +818,7 @@ if showDash
         table.cell(dash, 1, 5, st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "latched" : "armed, waiting"), text_color = st == 3 ? color.white : cNeut, bgcolor = bg, text_size = ts)
 
         table.cell(dash, 0, 6, "state", text_color = cNeut, bgcolor = bg, text_size = ts)
-        table.cell(dash, 1, 6, f_state(st), text_color = color.white, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 6, f_state(st) + (st == 0 and noteTxt != "" ? " · " + noteTxt : ""), text_color = color.white, bgcolor = bg, text_size = ts)
 
         table.cell(dash, 0, 7, "virtual trade", text_color = cNeut, bgcolor = bg, text_size = ts)
         table.cell(dash, 1, 7, tOn ? (tDir == 1 ? "LONG " : "SHORT ") + str.tostring(tEntry, format.mintick) + (tBe ? " · BE" : "") + (tT1 ? " · TP1" : "") + (tWarn ? " · WARN" : "") : "flat · " + str.tostring(nWin) + "W/" + str.tostring(nLoss) + "L/" + str.tostring(nBe) + "B", text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
