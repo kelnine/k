@@ -1,0 +1,452 @@
+//@version=6
+// =============================================================================
+//  Weekly Sweep Model  ·  Sweep -> HTF POI -> MSS -> iFVG / CISD
+//
+//  A top-down model in four mandatory steps. Nothing fires unless all agree.
+//
+//    1. BIAS      A weekly sweep is a must. Price must take out last week's
+//                 high or low, and that raid sets the direction of the next
+//                 move (swept the LOW -> long bias, swept the HIGH -> short).
+//    2. LOCATION  Before longing or shorting, price must be trading inside a
+//                 higher timeframe key level - an HTF FVG or HTF S/R.
+//    3. CONFIRM   A market structure shift (or breakout structure) on the 15m,
+//                 in the direction of the weekly bias.
+//    4. EXECUTE   Entry on the small timeframe from an inverted FVG (iFVG)
+//                 or a change in state of delivery (CISD).
+//
+//  Run it on the execution timeframe (1m-5m). Structure and POI are pulled
+//  from their own timeframes, so the chart timeframe only drives the trigger.
+//  The dashboard shows which of the four steps is missing, so the script also
+//  works as a pre-trade checklist.
+//
+//  Non-repainting on closed bars: HTF/structure series update only when their
+//  own bar closes. The forming bar of the current HTF candle can flicker, as
+//  it must - that is live price, not hindsight.
+// =============================================================================
+
+indicator("Weekly Sweep Model | Sweep-POI-MSS-iFVG/CISD", "WS Model", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ── 1 · weekly sweep ───────────────────────────────────────────────────────
+gW        = "1 · Weekly sweep (bias)"
+useWeekly = input.bool(true,  "Require a weekly sweep", group = gW, tooltip = "Off = trade the model without the weekly filter. The author treats it as mandatory.")
+sweepMode = input.string("Reversal", "Direction after sweep", options = ["Reversal", "Continuation"], group = gW, tooltip = "Reversal (default): sweep of last week's LOW = long bias. Continuation: the sweep is read as expansion in the same direction.")
+sweepWick = input.bool(true,  "Wick counts as a sweep", group = gW, tooltip = "Off = the sweep only counts once a bar CLOSES beyond last week's level.")
+showWeek  = input.bool(true,  "Show PWH / PWL", group = gW)
+
+// ── 2 · HTF key level ──────────────────────────────────────────────────────
+gH       = "2 · HTF key level (POI)"
+htfTF    = input.timeframe("240", "HTF", group = gH)
+useFvg   = input.bool(true, "HTF fair value gap", group = gH)
+useSR    = input.bool(true, "HTF support / resistance", group = gH)
+htfPiv   = input.int(5, "HTF swing strength", minval = 2, group = gH)
+srTol    = input.float(0.5, "S/R zone width (x ATR)", minval = 0.05, step = 0.05, group = gH)
+showPoi  = input.bool(true, "Draw POI zones", group = gH)
+
+// ── 3 · structure shift ────────────────────────────────────────────────────
+gS        = "3 · Structure shift"
+structTF  = input.timeframe("15", "Structure timeframe", group = gS)
+structPiv = input.int(4, "Structure swing strength", minval = 2, group = gS)
+mssAge    = input.int(40, "Entry window after the shift (bars)", minval = 1, group = gS, tooltip = "How long a structure break stays valid as context, in chart bars.")
+takeBos   = input.bool(true, "Accept BOS as well as MSS", group = gS, tooltip = "MSS = structure flipped direction (reversal). BOS = break in the direction it was already going (breakout structure).")
+onePer    = input.bool(true, "One signal per structure shift", group = gS)
+showMss   = input.bool(true, "Draw structure breaks", group = gS)
+
+// ── 4 · execution trigger ──────────────────────────────────────────────────
+gE       = "4 · Execution trigger"
+useIfvg  = input.bool(true, "iFVG (inverted fair value gap)", group = gE)
+ifvgMode = input.string("Inversion close", "iFVG entry", options = ["Inversion close", "Retest of inverted zone"], group = gE)
+useCisd  = input.bool(true, "CISD (change in state of delivery)", group = gE)
+fvgAge   = input.int(100, "Forget an FVG after (bars)", minval = 10, group = gE)
+showTrig = input.bool(true, "Draw trigger zones / CISD levels", group = gE)
+
+// ── 5 · risk ───────────────────────────────────────────────────────────────
+gR       = "5 · Risk"
+stopPiv  = input.int(5, "Stop: swing lookback (bars)", minval = 2, group = gR)
+stopBuf  = input.float(0.15, "Stop buffer (x ATR)", minval = 0, step = 0.05, group = gR)
+tp1R     = input.float(2.0, "TP1 (R)", minval = 0.5, step = 0.5, group = gR)
+tp2R     = input.float(3.0, "TP2 (R)", minval = 0.5, step = 0.5, group = gR)
+riskLen  = input.int(24, "Risk line length (bars)", minval = 4, group = gR)
+showRisk = input.bool(true, "Draw entry / stop / targets", group = gR)
+
+// ── 6 · display ────────────────────────────────────────────────────────────
+gD      = "6 · Display"
+showDash = input.bool(true, "Checklist dashboard", group = gD)
+dashPos  = input.string("Top right", "Dashboard position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = gD)
+colBull  = input.color(#26a69a, "Bullish", inline = "c", group = gD)
+colBear  = input.color(#ef5350, "Bearish", inline = "c", group = gD)
+colNeut  = input.color(#8b93a3, "Neutral", inline = "c", group = gD)
+
+// ── helpers ────────────────────────────────────────────────────────────────
+atr = ta.atr(14)
+tol = nz(atr) * srTol
+
+f_pos(simple string s) =>
+    s == "Top right" ? position.top_right : s == "Bottom right" ? position.bottom_right : s == "Top left" ? position.top_left : position.bottom_left
+
+// Last unmitigated FVG bounds + last swing S/R, evaluated on the HTF itself.
+f_htfPoi(simple int piv) =>
+    var float bTop = na
+    var float bBot = na
+    var float sTop = na
+    var float sBot = na
+    var float res  = na
+    var float sup  = na
+    if low > high[2]
+        bTop := low
+        bBot := high[2]
+    if high < low[2]
+        sTop := low[2]
+        sBot := high
+    ph = ta.pivothigh(high, piv, piv)
+    pl = ta.pivotlow(low, piv, piv)
+    if not na(ph)
+        res := ph
+    if not na(pl)
+        sup := pl
+    [bTop, bBot, sTop, sBot, res, sup]
+
+// Market structure state machine, evaluated on the structure timeframe.
+// btype: 1 = MSS (direction flipped), 2 = BOS (continuation).
+f_structure(simple int piv) =>
+    var float lastPH  = na
+    var float lastPL  = na
+    var bool  phTaken = true
+    var bool  plTaken = true
+    var int   dir     = 0
+    var float lvl     = na
+    var int   btime   = 0
+    var int   btype   = 0
+    ph = ta.pivothigh(high, piv, piv)
+    pl = ta.pivotlow(low, piv, piv)
+    if not na(ph)
+        lastPH  := ph
+        phTaken := false
+    if not na(pl)
+        lastPL  := pl
+        plTaken := false
+    if not na(lastPH) and not phTaken and close > lastPH
+        btype   := dir == -1 ? 1 : 2
+        dir     := 1
+        lvl     := lastPH
+        btime   := time
+        phTaken := true
+    if not na(lastPL) and not plTaken and close < lastPL
+        btype   := dir == 1 ? 1 : 2
+        dir     := -1
+        lvl     := lastPL
+        btime   := time
+        plTaken := true
+    [dir, lvl, btime, btype]
+
+type Fvg
+    float top      = na
+    float bot      = na
+    int   dir      = 0
+    bool  inverted = false
+    bool  armed    = false
+    int   bi       = 0
+    box   bx       = na
+
+// =============================================================================
+//  STEP 1 — weekly sweep sets the bias
+// =============================================================================
+[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+var int    wkBias  = 0
+var bool   hiSwept = false
+var bool   loSwept = false
+var string wkTxt   = "no sweep yet"
+
+if timeframe.change("W")
+    wkBias  := 0
+    hiSwept := false
+    loSwept := false
+    wkTxt   := "no sweep yet"
+
+tookHigh = not na(pwH) and (sweepWick ? high > pwH : close > pwH)
+tookLow  = not na(pwL) and (sweepWick ? low  < pwL : close < pwL)
+newHiSweep = tookHigh and not hiSwept
+newLoSweep = tookLow  and not loSwept
+
+if newHiSweep
+    hiSwept := true
+    wkBias  := sweepMode == "Reversal" ? -1 : 1
+    wkTxt   := "PWH swept"
+if newLoSweep
+    loSwept := true
+    wkBias  := sweepMode == "Reversal" ? 1 : -1
+    wkTxt   := "PWL swept"
+
+plot(showWeek ? pwH : na, "PWH", color = color.new(colBear, 25), style = plot.style_linebr)
+plot(showWeek ? pwL : na, "PWL", color = color.new(colBull, 25), style = plot.style_linebr)
+
+if showWeek and newHiSweep
+    label.new(bar_index, high, "sweep PWH", style = label.style_label_down, color = color.new(colBear, 25), textcolor = color.white, size = size.tiny)
+if showWeek and newLoSweep
+    label.new(bar_index, low, "sweep PWL", style = label.style_label_up, color = color.new(colBull, 25), textcolor = color.white, size = size.tiny)
+
+// =============================================================================
+//  STEP 2 — price must be inside an HTF key level
+// =============================================================================
+[fBullTop, fBullBot, fBearTop, fBearBot, htfRes, htfSup] = request.security(syminfo.tickerid, htfTF, f_htfPoi(htfPiv), lookahead = barmerge.lookahead_off)
+
+var float bullTop = na
+var float bullBot = na
+var float bearTop = na
+var float bearBot = na
+var box   bullBx  = na
+var box   bearBx  = na
+
+newBullFvg = not na(fBullBot) and (na(bullBot) or fBullBot != bullBot or fBullTop != bullTop)
+newBearFvg = not na(fBearBot) and (na(bearBot) or fBearBot != bearBot or fBearTop != bearTop)
+
+if newBullFvg
+    bullTop := fBullTop
+    bullBot := fBullBot
+    if showPoi and useFvg
+        if not na(bullBx)
+            box.delete(bullBx)
+        bullBx := box.new(bar_index, bullTop, bar_index + 3, bullBot, border_color = color.new(colBull, 45), bgcolor = color.new(colBull, 88), text = "HTF FVG", text_color = color.new(colBull, 25), text_size = size.tiny, text_halign = text.align_left)
+if newBearFvg
+    bearTop := fBearTop
+    bearBot := fBearBot
+    if showPoi and useFvg
+        if not na(bearBx)
+            box.delete(bearBx)
+        bearBx := box.new(bar_index, bearTop, bar_index + 3, bearBot, border_color = color.new(colBear, 45), bgcolor = color.new(colBear, 88), text = "HTF FVG", text_color = color.new(colBear, 25), text_size = size.tiny, text_halign = text.align_left)
+
+// mitigation: a gap that price has closed through is no longer a key level
+if not na(bullBot) and close < bullBot
+    bullTop := na
+    bullBot := na
+    if not na(bullBx)
+        box.delete(bullBx)
+        bullBx := na
+if not na(bearTop) and close > bearTop
+    bearTop := na
+    bearBot := na
+    if not na(bearBx)
+        box.delete(bearBx)
+        bearBx := na
+
+if not na(bullBx)
+    box.set_right(bullBx, bar_index + 3)
+if not na(bearBx)
+    box.set_right(bearBx, bar_index + 3)
+
+// S/R zones
+var box resBx = na
+var box supBx = na
+if showPoi and useSR and not na(htfRes)
+    newRes = na(htfRes[1]) or htfRes != htfRes[1]
+    if na(resBx)
+        resBx := box.new(bar_index, htfRes + tol, bar_index + 3, htfRes - tol, border_color = color.new(colBear, 70), bgcolor = color.new(colBear, 92))
+    if newRes
+        box.set_left(resBx, bar_index)
+    box.set_top(resBx, htfRes + tol)
+    box.set_bottom(resBx, htfRes - tol)
+    box.set_right(resBx, bar_index + 3)
+if showPoi and useSR and not na(htfSup)
+    newSup = na(htfSup[1]) or htfSup != htfSup[1]
+    if na(supBx)
+        supBx := box.new(bar_index, htfSup + tol, bar_index + 3, htfSup - tol, border_color = color.new(colBull, 70), bgcolor = color.new(colBull, 92))
+    if newSup
+        box.set_left(supBx, bar_index)
+    box.set_top(supBx, htfSup + tol)
+    box.set_bottom(supBx, htfSup - tol)
+    box.set_right(supBx, bar_index + 3)
+
+inBullFvg = useFvg and not na(bullBot) and high >= bullBot and low <= bullTop
+inBearFvg = useFvg and not na(bearBot) and high >= bearBot and low <= bearTop
+inSupport = useSR  and not na(htfSup) and high >= htfSup - tol and low <= htfSup + tol
+inResist  = useSR  and not na(htfRes) and high >= htfRes - tol and low <= htfRes + tol
+
+longPoi  = inBullFvg or inSupport
+shortPoi = inBearFvg or inResist
+poiTxt   = wkBias == 1 ? (inBullFvg ? "in HTF bull FVG" : inSupport ? "at HTF support" : "outside a level") : wkBias == -1 ? (inBearFvg ? "in HTF bear FVG" : inResist ? "at HTF resistance" : "outside a level") : (inBullFvg or inBearFvg or inSupport or inResist ? "in a level" : "outside a level")
+
+// =============================================================================
+//  STEP 3 — structure shift on the structure timeframe
+// =============================================================================
+[sDir, sLvl, sTime, sType] = request.security(syminfo.tickerid, structTF, f_structure(structPiv), lookahead = barmerge.lookahead_off)
+
+var int lastStructBar = na
+newStruct = not na(sTime) and sTime != 0 and (na(sTime[1]) or sTime != sTime[1])
+if newStruct
+    lastStructBar := bar_index
+
+structFresh = not na(lastStructBar) and (bar_index - lastStructBar) <= mssAge
+structKind  = sType == 1 ? "MSS" : "BOS"
+structOk    = structFresh and (takeBos or sType == 1)
+
+if showMss and newStruct and not na(sLvl)
+    c = sDir == 1 ? colBull : colBear
+    line.new(math.max(bar_index - 1, 0), sLvl, bar_index + 6, sLvl, color = color.new(c, 30), style = line.style_dashed)
+    label.new(bar_index + 6, sLvl, structKind, style = label.style_label_left, color = color.new(c, 20), textcolor = color.white, size = size.tiny)
+
+// =============================================================================
+//  STEP 4 — execution: iFVG or CISD on the chart timeframe
+// =============================================================================
+var array<Fvg> fvgs = array.new<Fvg>()
+
+bullIfvg = false
+bearIfvg = false
+
+if useIfvg and bar_index > 2
+    if low > high[2]
+        array.push(fvgs, Fvg.new(top = low, bot = high[2], dir = 1, bi = bar_index))
+    if high < low[2]
+        array.push(fvgs, Fvg.new(top = low[2], bot = high, dir = -1, bi = bar_index))
+
+if useIfvg and array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        f = array.get(fvgs, i)
+        if bar_index - f.bi > fvgAge
+            if not na(f.bx)
+                box.delete(f.bx)
+            array.remove(fvgs, i)
+            continue
+        if not f.inverted
+            if f.dir == -1 and close > f.top
+                f.inverted := true
+                f.dir      := 1
+                f.armed    := true
+                if ifvgMode == "Inversion close"
+                    bullIfvg := true
+                    f.armed  := false
+                if showTrig
+                    f.bx := box.new(f.bi, f.top, bar_index + 2, f.bot, border_color = color.new(colBull, 55), bgcolor = color.new(colBull, 90))
+            else if f.dir == 1 and close < f.bot
+                f.inverted := true
+                f.dir      := -1
+                f.armed    := true
+                if ifvgMode == "Inversion close"
+                    bearIfvg := true
+                    f.armed  := false
+                if showTrig
+                    f.bx := box.new(f.bi, f.top, bar_index + 2, f.bot, border_color = color.new(colBear, 55), bgcolor = color.new(colBear, 90))
+        else if f.armed
+            if f.dir == 1 and low <= f.top and close > f.bot
+                bullIfvg := true
+                f.armed  := false
+            else if f.dir == -1 and high >= f.bot and close < f.top
+                bearIfvg := true
+                f.armed  := false
+
+// CISD — the open of the first candle of the run that delivered the last move.
+// Closing back through it means delivery has changed state.
+var float cisdBullLvl = na
+var float cisdBearLvl = na
+var bool  cisdBullArm = false
+var bool  cisdBearArm = false
+
+isDn = close < open
+isUp = close > open
+
+if isDn and not isDn[1]
+    cisdBullLvl := open
+    cisdBullArm := true
+if isUp and not isUp[1]
+    cisdBearLvl := open
+    cisdBearArm := true
+
+bullCisd = useCisd and cisdBullArm and not na(cisdBullLvl) and close > cisdBullLvl
+bearCisd = useCisd and cisdBearArm and not na(cisdBearLvl) and close < cisdBearLvl
+if bullCisd
+    cisdBullArm := false
+if bearCisd
+    cisdBearArm := false
+
+plot(showTrig and cisdBullArm ? cisdBullLvl : na, "CISD up", color = color.new(colBull, 65), style = plot.style_linebr)
+plot(showTrig and cisdBearArm ? cisdBearLvl : na, "CISD down", color = color.new(colBear, 65), style = plot.style_linebr)
+
+trigLong  = bullIfvg or bullCisd
+trigShort = bearIfvg or bearCisd
+trigTxt   = bullIfvg or bearIfvg ? "iFVG" : bullCisd or bearCisd ? "CISD" : "waiting"
+
+// =============================================================================
+//  SIGNAL — all four steps agree
+// =============================================================================
+biasLong  = not useWeekly or wkBias == 1
+biasShort = not useWeekly or wkBias == -1
+
+var int lastSigStruct = na
+canSig = not onePer or na(lastSigStruct) or na(lastStructBar) or lastSigStruct != lastStructBar
+
+longSig  = biasLong  and longPoi  and sDir ==  1 and structOk and trigLong  and canSig
+shortSig = biasShort and shortPoi and sDir == -1 and structOk and trigShort and canSig
+
+if longSig or shortSig
+    lastSigStruct := lastStructBar
+
+swLow  = ta.lowest(low, stopPiv)
+swHigh = ta.highest(high, stopPiv)
+
+if showRisk and (longSig or shortSig)
+    e  = close
+    sl = longSig ? swLow - nz(atr) * stopBuf : swHigh + nz(atr) * stopBuf
+    r  = math.abs(e - sl)
+    t1 = longSig ? e + r * tp1R : e - r * tp1R
+    t2 = longSig ? e + r * tp2R : e - r * tp2R
+    xr = bar_index + riskLen
+    line.new(bar_index, e,  xr, e,  color = colNeut, width = 1)
+    line.new(bar_index, sl, xr, sl, color = colBear, width = 1, style = line.style_dashed)
+    line.new(bar_index, t1, xr, t1, color = colBull, width = 1, style = line.style_dotted)
+    line.new(bar_index, t2, xr, t2, color = colBull, width = 1, style = line.style_dotted)
+    label.new(xr, sl, "SL " + str.tostring(sl, format.mintick), style = label.style_label_left, color = color.new(colBear, 25), textcolor = color.white, size = size.tiny)
+    label.new(xr, t1, "TP1 " + str.tostring(tp1R, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 25), textcolor = color.white, size = size.tiny)
+    label.new(xr, t2, "TP2 " + str.tostring(tp2R, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 25), textcolor = color.white, size = size.tiny)
+
+plotshape(longSig,  "Long setup",  shape.labelup,   location.belowbar, color = colBull, text = "LONG",  textcolor = color.white, size = size.small)
+plotshape(shortSig, "Short setup", shape.labeldown, location.abovebar, color = colBear, text = "SHORT", textcolor = color.white, size = size.small)
+
+// =============================================================================
+//  DASHBOARD — which step is missing
+// =============================================================================
+f_mark(bool ok) =>
+    ok ? "OK" : "--"
+
+if showDash
+    var table dash = table.new(f_pos(dashPos), 3, 6, border_width = 1, frame_color = color.new(colNeut, 60), frame_width = 1)
+    if barstate.islast
+        bg = color.new(#0e1117, 10)
+        table.cell(dash, 0, 0, "Weekly Sweep Model", text_color = color.white, bgcolor = color.new(colNeut, 70), text_size = size.small)
+        table.cell(dash, 1, 0, "", bgcolor = color.new(colNeut, 70))
+        table.cell(dash, 2, 0, "", bgcolor = color.new(colNeut, 70))
+
+        okBias = useWeekly ? wkBias != 0 : true
+        okPoi  = wkBias == 1 ? longPoi : wkBias == -1 ? shortPoi : (longPoi or shortPoi)
+        okStr  = sDir != 0 and structOk and (wkBias == 0 or sDir == wkBias)
+        okTrig = trigLong or trigShort
+        ready  = longSig or shortSig
+
+        table.cell(dash, 0, 1, "1 · weekly", text_color = colNeut, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 1, 1, wkTxt, text_color = color.white, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 2, 1, f_mark(okBias), text_color = okBias ? colBull : colNeut, bgcolor = bg, text_size = size.small)
+
+        table.cell(dash, 0, 2, "2 · HTF " + htfTF, text_color = colNeut, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 1, 2, poiTxt, text_color = color.white, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 2, 2, f_mark(okPoi), text_color = okPoi ? colBull : colNeut, bgcolor = bg, text_size = size.small)
+
+        table.cell(dash, 0, 3, "3 · " + structTF + " structure", text_color = colNeut, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 1, 3, sDir == 0 ? "none" : structKind + (sDir == 1 ? " up" : " down") + (structFresh ? "" : " (stale)"), text_color = sDir == 1 ? colBull : sDir == -1 ? colBear : color.white, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 2, 3, f_mark(okStr), text_color = okStr ? colBull : colNeut, bgcolor = bg, text_size = size.small)
+
+        table.cell(dash, 0, 4, "4 · trigger", text_color = colNeut, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 1, 4, trigTxt, text_color = color.white, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 2, 4, f_mark(okTrig), text_color = okTrig ? colBull : colNeut, bgcolor = bg, text_size = size.small)
+
+        table.cell(dash, 0, 5, "setup", text_color = colNeut, bgcolor = bg, text_size = size.small)
+        table.cell(dash, 1, 5, ready ? (longSig ? "LONG" : "SHORT") : wkBias == 1 ? "long bias" : wkBias == -1 ? "short bias" : "stand down", text_color = ready ? color.white : colNeut, bgcolor = ready ? color.new(longSig ? colBull : colBear, 40) : bg, text_size = size.small)
+        table.cell(dash, 2, 5, f_mark(ready), text_color = ready ? colBull : colNeut, bgcolor = ready ? color.new(longSig ? colBull : colBear, 40) : bg, text_size = size.small)
+
+// =============================================================================
+//  ALERTS
+// =============================================================================
+alertcondition(longSig,  "WS Model · Long",  "Weekly Sweep Model LONG · {{ticker}} {{interval}}")
+alertcondition(shortSig, "WS Model · Short", "Weekly Sweep Model SHORT · {{ticker}} {{interval}}")
+
+if longSig
+    alert("WS Model LONG " + syminfo.ticker + " @ " + str.tostring(close, format.mintick) + " · " + poiTxt + " · " + structKind + " · " + trigTxt, alert.freq_once_per_bar_close)
+if shortSig
+    alert("WS Model SHORT " + syminfo.ticker + " @ " + str.tostring(close, format.mintick) + " · " + poiTxt + " · " + structKind + " · " + trigTxt, alert.freq_once_per_bar_close)
