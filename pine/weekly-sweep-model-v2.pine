@@ -1,0 +1,838 @@
+//@version=6
+// =============================================================================
+//  WEEKLY SWEEP MODEL v2  ·  Sweep -> HTF POI -> 15m MSS -> LTF iFVG / CISD
+//
+//  A mechanical APPROXIMATION of a discretionary top-down model. It is an
+//  indicator, not a strategy, and it places no orders. All trade levels drawn
+//  are SIMULATED chart levels for research, replay and paper trading.
+//
+//  PROVENANCE OF THE RULES  (see the three tiers in the accompanying README)
+//    [T] Stated by the trader:  weekly sweep is mandatory and sets direction;
+//        price must be inside an HTF key level (S/R or FVG) before entry;
+//        a 15m market structure shift / breakout structure confirms;
+//        execution comes from a small-timeframe iFVG or CISD.
+//    [O] Observed from public posts: NOT VERIFIED. The posts could not be
+//        opened from the build environment, so nothing here is sourced to them.
+//    [A] Mechanical assumption, added only to make the model codeable. Every
+//        [A] rule below is an input so it can be changed or switched off.
+//
+//  NON-REPAINTING DESIGN
+//    - Weekly, HTF and 15m series use request.security(..., expr[1],
+//      lookahead_on): the documented confirmed-HTF pattern. That returns the
+//      LAST CLOSED bar of the higher timeframe, so no future data is read.
+//    - Every 15m-driven transition is processed exactly once, on the chart bar
+//      where a new CLOSED 15m bar first appears, so a 15m event cannot be
+//      re-evaluated by the 60 chart bars that sit inside it.
+//    - Pivots become available only after all right-side bars have closed, and
+//      a break is credited only to a bar that closes AFTER that availability.
+//      Pivot signals are never backdated to the visual pivot candle.
+//    - Execution triggers require barstate.isconfirmed.
+//    - Historical vs realtime: identical, with one exception noted in the
+//      README - the state machine advances on the chart bar where a closed 15m
+//      bar first becomes visible, which in realtime is the live bar. Pine rolls
+//      back var state on every realtime tick, so the transition is recomputed
+//      identically and commits at that bar's close.
+// =============================================================================
+
+indicator("Weekly Sweep Model v2 | Sweep-POI-MSS-iFVG/CISD", "WSM v2", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ══════════════════════════════════ INPUTS ══════════════════════════════════
+G1 = "1 · Weekly sweep (bias)"
+G2 = "2 · HTF key level (POI)"
+G3 = "3 · 15m structure"
+G4 = "4 · LTF execution"
+G5 = "5 · State machine"
+G6 = "6 · Virtual trade"
+G7 = "7 · Display"
+
+// 1 · weekly -----------------------------------------------------------------
+swWindow  = input.int(16, "Breach -> reclaim window (confirmed 15m bars)", minval = 1, maxval = 400, group = G1, tooltip = "[A] How long after price trades through last week's level a reclaim still counts. 16 = four hours.")
+swBoth    = input.string("Most recent wins", "If both weekly sides are swept", options = ["Most recent wins", "No bias (stand down)"], group = G1, tooltip = "[A] Both sides raided in one week is ambiguous. Default takes the most recent confirmed reclaim.")
+swShow    = input.bool(true, "Plot PWH / PWL", group = G1)
+
+// 2 · HTF POI ----------------------------------------------------------------
+keyTF     = input.timeframe("240", "Key-level timeframe", group = G2, tooltip = "[T] 'higher timeframe'. [A] 4H default. Must be above the confirmation timeframe.")
+poiSR     = input.bool(true,  "Pivot S/R zones", group = G2)
+poiFVG    = input.bool(true,  "Fair value gap zones", group = G2)
+srL       = input.int(3, "S/R pivot left", minval = 1, maxval = 20, inline = "sr", group = G2)
+srR       = input.int(3, "S/R pivot right", minval = 1, maxval = 20, inline = "sr", group = G2)
+srPad     = input.float(0.35, "S/R zone pad (x HTF ATR)", minval = 0.0, step = 0.05, group = G2, tooltip = "[A] Turns a pivot line into a zone so an approach counts as an interaction.")
+poiTouch  = input.string("Wick overlap", "Interaction mode", options = ["Wick overlap", "Close inside"], group = G2)
+poiInvOn  = input.string("HTF close", "Invalidate a zone on", options = ["HTF close", "15m close"], group = G2, tooltip = "Bullish zone dies when a confirmed candle closes below its lower edge; bearish, above its upper edge.")
+maxZones  = input.int(14, "Max live zones per side", minval = 2, maxval = 60, group = G2)
+mLongOn   = input.bool(false, "Manual long zone", inline = "ml", group = G2)
+mLongTop  = input.float(0.0, "top", inline = "ml", group = G2)
+mLongBot  = input.float(0.0, "bot", inline = "ml", group = G2)
+mShortOn  = input.bool(false, "Manual short zone", inline = "ms", group = G2)
+mShortTop = input.float(0.0, "top", inline = "ms", group = G2)
+mShortBot = input.float(0.0, "bot", inline = "ms", group = G2)
+
+// 3 · structure --------------------------------------------------------------
+confTF    = input.timeframe("15", "Confirmation timeframe", group = G3, tooltip = "[T] 15m. Configurable, but the model is described on 15m.")
+msL       = input.int(3, "Structure pivot left", minval = 1, maxval = 20, inline = "ms2", group = G3)
+msR       = input.int(3, "Structure pivot right", minval = 1, maxval = 20, inline = "ms2", group = G3)
+dispAtr   = input.float(0.0, "Displacement: body >= x ATR(15m)", minval = 0.0, step = 0.1, group = G3, tooltip = "[A] 0 disables. Filters weak breaks.")
+dispBody  = input.float(0.0, "Displacement: body/range >=", minval = 0.0, maxval = 1.0, step = 0.05, group = G3, tooltip = "[A] 0 disables.")
+atrLen    = input.int(14, "ATR length (all timeframes)", minval = 2, group = G3)
+
+// 4 · execution --------------------------------------------------------------
+execMode  = input.string("Either", "Execution trigger", options = ["Either", "iFVG only", "CISD only", "Both required"], group = G4)
+ifvgEntry = input.string("Flip close", "iFVG entry", options = ["Flip close", "Retest close"], group = G4, tooltip = "Flip close: enter on the candle that inverts the gap. Retest close: wait for price to return into the inverted zone and close back out of it.")
+xAge      = input.int(240, "Forget an execution FVG after (chart bars)", minval = 10, group = G4)
+cisdAfter = input.bool(false, "CISD run must start after 15m confirmation", group = G4, tooltip = "[A] Off = the pullback already underway at confirmation is eligible, which is the more common reading.")
+
+// 5 · state machine ----------------------------------------------------------
+expPOI    = input.int(64,  "Expiry: sweep -> HTF level (15m bars)", minval = 1, group = G5)
+expMSS    = input.int(32,  "Expiry: HTF level -> 15m structure (15m bars)", minval = 1, group = G5)
+expEXE    = input.int(12,  "Expiry: structure -> execution (15m bars)", minval = 1, group = G5)
+strictOrd = input.bool(true, "Strict ordering (each stage on a later 15m bar)", group = G5, tooltip = "[A] Prevents two stages being credited to one 15m candle, where their true intrabar order is unknown.")
+reArm     = input.bool(true, "Re-arm to 'waiting HTF level' after a trade closes", group = G5, tooltip = "[A] Keeps the weekly bias alive for a second setup instead of demanding a fresh sweep.")
+keepBars  = input.int(400, "HTF/15m bars held in memory", minval = 60, maxval = 900, group = G5)
+
+// 6 · virtual trade ----------------------------------------------------------
+stopLook  = input.int(8, "Structural stop: execution-TF lookback", minval = 2, group = G6)
+stopAtr   = input.float(0.25, "Stop pad (x execution ATR)", minval = 0.0, step = 0.05, group = G6)
+stopTick  = input.int(0, "Stop pad (ticks)", minval = 0, group = G6)
+tp1R      = input.float(2.0, "TP1 (R)", minval = 0.1, step = 0.1, group = G6)
+tp2R      = input.float(4.0, "TP2 (R)", minval = 0.1, step = 0.1, group = G6)
+beR       = input.float(2.0, "Move stop to breakeven at (R)", minval = 0.1, step = 0.1, group = G6)
+beOn      = input.bool(true, "Use breakeven", group = G6)
+failClose = input.bool(false, "Close the virtual trade on thesis failure", group = G6, tooltip = "Thesis failure = an opposite 15m structure break while the trade is open. Warning only by default.")
+
+// 7 · display ----------------------------------------------------------------
+showZones = input.bool(true,  "HTF zones", inline = "d1", group = G7)
+showStruct= input.bool(true,  "15m structure levels", inline = "d1", group = G7)
+showExec  = input.bool(true,  "Execution zones", inline = "d2", group = G7)
+showTrade = input.bool(true,  "Virtual trade levels", inline = "d2", group = G7)
+showDash  = input.bool(true,  "Dashboard", inline = "d3", group = G7)
+dashPos   = input.string("Top right", "", options = ["Top right", "Middle right", "Bottom right", "Top left", "Bottom left"], inline = "d3", group = G7)
+dashSize  = input.string("Small", "", options = ["Tiny", "Small", "Normal"], inline = "d3", group = G7)
+cBull     = input.color(#26a69a, "Bull", inline = "d4", group = G7)
+cBear     = input.color(#ef5350, "Bear", inline = "d4", group = G7)
+cNeut     = input.color(#8b93a3, "Neutral", inline = "d4", group = G7)
+
+// ══════════════════════════════════ TYPES ═══════════════════════════════════
+type Bar
+    float o = na
+    float h = na
+    float l = na
+    float c = na
+    int   t = 0
+
+type Zone
+    float top   = na
+    float bot   = na
+    int   dir   = 0     // +1 bullish (support/bull FVG), -1 bearish
+    int   kind  = 0     // 0 = FVG, 1 = S/R, 2 = manual
+    int   cM15  = 0     // 15m-bar counter at which the zone became available
+    bool  alive = true
+    box   bx    = na
+
+type Xfvg
+    float top     = na
+    float bot     = na
+    int   dir     = 0   // original polarity: +1 bull FVG, -1 bear FVG
+    bool  flipped = false
+    bool  touched = false
+    int   bi      = 0
+
+// ═════════════════════════════════ HELPERS ══════════════════════════════════
+f_pos(simple string s) =>
+    s == "Top right" ? position.top_right : s == "Middle right" ? position.middle_right : s == "Bottom right" ? position.bottom_right : s == "Top left" ? position.top_left : position.bottom_left
+
+f_txt(simple string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : size.normal
+
+f_push(array<Bar> a, float o, float h, float l, float c, int t, simple int keep) =>
+    array.push(a, Bar.new(o, h, l, c, t))
+    if array.size(a) > keep
+        array.shift(a)
+
+// Strict fractal pivot on the bar that now has exactly R closed bars after it.
+f_pivHigh(array<Bar> a, simple int L, simple int R) =>
+    float res = na
+    n = array.size(a)
+    if n >= L + R + 1
+        ci = n - 1 - R
+        cand = array.get(a, ci).h
+        bool ok = true
+        for k = 1 to L
+            if array.get(a, ci - k).h >= cand
+                ok := false
+                break
+        if ok
+            for k = 1 to R
+                if array.get(a, ci + k).h >= cand
+                    ok := false
+                    break
+        if ok
+            res := cand
+    res
+
+f_pivLow(array<Bar> a, simple int L, simple int R) =>
+    float res = na
+    n = array.size(a)
+    if n >= L + R + 1
+        ci = n - 1 - R
+        cand = array.get(a, ci).l
+        bool ok = true
+        for k = 1 to L
+            if array.get(a, ci - k).l <= cand
+                ok := false
+                break
+        if ok
+            for k = 1 to R
+                if array.get(a, ci + k).l <= cand
+                    ok := false
+                    break
+        if ok
+            res := cand
+    res
+
+f_touch(float bh, float bl, float bc, float zt, float zb, bool closeIn) =>
+    bool r = false
+    if not na(zt) and not na(zb) and zt >= zb
+        r := closeIn ? (bc <= zt and bc >= zb) : (bl <= zt and bh >= zb)
+    r
+
+f_addZone(array<Zone> zs, float top, float bot, int dir, int kind, int m15at, simple int cap) =>
+    z = Zone.new(top, bot, dir, kind, m15at, true, na)
+    if showZones
+        col = dir == 1 ? cBull : cBear
+        z.bx := box.new(bar_index, top, bar_index + 3, bot, border_color = color.new(col, kind == 0 ? 50 : 72), bgcolor = color.new(col, kind == 0 ? 88 : 93), border_style = kind == 1 ? line.style_dotted : line.style_solid)
+    array.push(zs, z)
+    // prune oldest of the same side beyond the cap
+    int cnt = 0
+    if array.size(zs) > 0
+        for i = array.size(zs) - 1 to 0
+            zi = array.get(zs, i)
+            if zi.dir == dir
+                cnt += 1
+                if cnt > cap
+                    if not na(zi.bx)
+                        box.delete(zi.bx)
+                    array.remove(zs, i)
+
+f_killZones(array<Zone> zs, float c) =>
+    if array.size(zs) > 0
+        for i = array.size(zs) - 1 to 0
+            z = array.get(zs, i)
+            bool dead = (z.dir == 1 and c < z.bot) or (z.dir == -1 and c > z.top)
+            if dead
+                if not na(z.bx)
+                    box.delete(z.bx)
+                array.remove(zs, i)
+
+f_scanZones(array<Zone> zs, int dir, float bh, float bl, float bc, bool closeIn, int m15at, bool strict) =>
+    float ft = na
+    float fb = na
+    int   fk = -1
+    if array.size(zs) > 0
+        for i = array.size(zs) - 1 to 0
+            z = array.get(zs, i)
+            avail = strict ? m15at > z.cM15 : m15at >= z.cM15
+            if z.alive and z.dir == dir and avail and f_touch(bh, bl, bc, z.top, z.bot, closeIn)
+                ft := z.top
+                fb := z.bot
+                fk := z.kind
+                break
+    [ft, fb, fk]
+
+f_kindName(int k) =>
+    k == 0 ? "HTF FVG" : k == 1 ? "HTF S/R" : k == 2 ? "manual zone" : "none"
+
+// ═══════════════════════ CONFIRMED HIGHER-TIMEFRAME DATA ════════════════════
+// expr[1] + lookahead_on == the last CLOSED bar of that timeframe. No future data.
+[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[cO, cH, cL, cC, cT, cATR] = request.security(syminfo.tickerid, confTF, [open[1], high[1], low[1], close[1], time[1], ta.atr(atrLen)[1]], lookahead = barmerge.lookahead_on)
+[kO, kH, kL, kC, kT, kATR] = request.security(syminfo.tickerid, keyTF,  [open[1], high[1], low[1], close[1], time[1], ta.atr(atrLen)[1]], lookahead = barmerge.lookahead_on)
+
+// ta.* must be evaluated on EVERY bar, never inside a conditional block, or its
+// internal history is wrong. Hoisted here and referenced from the state machine.
+eAtr = ta.atr(atrLen)
+loN  = ta.lowest(low, stopLook)
+hiN  = ta.highest(high, stopLook)
+
+newC    = not na(cT) and (na(cT[1]) or cT != cT[1])
+newK    = not na(kT) and (na(kT[1]) or kT != kT[1])
+newWeek = timeframe.change("W")
+
+var int m15no = 0
+if newC
+    m15no += 1
+
+// ═══════════════════════════════ STATE STORAGE ══════════════════════════════
+var array<Bar>  m15A  = array.new<Bar>()
+var array<Bar>  htfA  = array.new<Bar>()
+var array<Zone> zones = array.new<Zone>()
+var array<Xfvg> xf    = array.new<Xfvg>()
+
+// weekly
+var bool   brUp    = false   // breach below PWL open
+var int    brUpBar = 0
+var bool   brDn    = false   // breach above PWH open
+var int    brDnBar = 0
+var int    bias    = 0
+var string biasTxt = "none"
+
+// 15m structure
+var float phLvl = na
+var bool  phUsed = true
+var int   phNo  = 0
+var float plLvl = na
+var bool  plUsed = true
+var int   plNo  = 0
+var float lastStructLvl = na
+var int   lastStructDir = 0
+var string lastStructTxt = "none"
+
+// state machine
+var int    st     = 0        // 0 idle · 1 wait POI · 2 wait structure · 3 wait execution · 4 in trade
+var int    stDir  = 0
+var int    stNo   = 0        // m15no at which the current state began
+var int    stBar  = 0        // bar_index at which the current state began
+var string poiTxt = "-"
+var float  poiT   = na
+var float  poiB   = na
+
+// execution latches
+var bool  latchI = false
+var bool  latchC = false
+var float ancI   = na        // iFVG anchor (zone edge)
+var float ancC   = na        // CISD anchor (countertrend run extreme)
+
+// CISD tracker
+var float cUpLvl = na
+var float cUpLow = na
+var bool  cUpArm = false
+var int   cUpBar = 0
+var float cDnLvl = na
+var float cDnHigh = na
+var bool  cDnArm = false
+var int   cDnBar = 0
+
+// virtual trade
+var bool   tOn    = false
+var int    tDir   = 0
+var float  tEntry = na
+var float  tStop  = na
+var float  tR     = na
+var float  tTp1   = na
+var float  tTp2   = na
+var bool   tBe    = false
+var bool   tT1    = false
+var bool   tWarn  = false
+var int    tBar   = 0
+var int    nWin   = 0
+var int    nLoss  = 0
+var int    nBe    = 0
+var line   lnE    = na
+var line   lnS    = na
+var line   lnT1   = na
+var line   lnT2   = na
+
+// per-bar event flags (global scope so alertcondition can see them)
+bool evSweepUp = false
+bool evSweepDn = false
+bool evPOI     = false
+bool evMssUp   = false
+bool evMssDn   = false
+bool evLong    = false
+bool evShort   = false
+bool evTp1     = false
+bool evTp2     = false
+bool evSl      = false
+bool evBe      = false
+bool evFail    = false
+
+// ═════════════════════════ WEEKLY ROLLOVER (bias expiry) ════════════════════
+if newWeek
+    brUp := false
+    brDn := false
+    bias := 0
+    biasTxt := "new week - none"
+    if st > 0 and st < 4
+        st := 0
+        stDir := 0
+        poiTxt := "-"
+
+// ══════════════════════ HTF BAR CLOSED -> build / kill zones ════════════════
+if newK
+    f_push(htfA, kO, kH, kL, kC, kT, keepBars)
+    n = array.size(htfA)
+    if poiFVG and n >= 3
+        b0 = array.get(htfA, n - 1)
+        b2 = array.get(htfA, n - 3)
+        if b0.l > b2.h
+            f_addZone(zones, b0.l, b2.h, 1, 0, m15no, maxZones)
+        if b0.h < b2.l
+            f_addZone(zones, b2.l, b0.h, -1, 0, m15no, maxZones)
+    if poiSR
+        pad = nz(kATR) * srPad
+        pH = f_pivHigh(htfA, srL, srR)
+        pL = f_pivLow(htfA, srL, srR)
+        if not na(pH)
+            f_addZone(zones, pH + pad, pH - pad, -1, 1, m15no, maxZones)
+        if not na(pL)
+            f_addZone(zones, pL + pad, pL - pad, 1, 1, m15no, maxZones)
+    if poiInvOn == "HTF close"
+        f_killZones(zones, kC)
+
+// keep live zone boxes stretched to the right edge
+if showZones and array.size(zones) > 0
+    for i = 0 to array.size(zones) - 1
+        zb = array.get(zones, i).bx
+        if not na(zb)
+            box.set_right(zb, bar_index + 3)
+
+// ═══════════════ CONFIRMED 15m BAR -> sweep, structure, transitions ═════════
+if newC
+    f_push(m15A, cO, cH, cL, cC, cT, keepBars)
+    if poiInvOn == "15m close"
+        f_killZones(zones, cC)
+
+    // ---- 1 · weekly sweep + reclaim, measured on closed 15m candles ---------
+    bool rcUp = false
+    bool rcDn = false
+    if not na(pwL)
+        if cL < pwL and not brUp
+            brUp := true
+            brUpBar := m15no
+        if brUp and cC > pwL and (m15no - brUpBar) <= swWindow
+            rcUp := true
+            brUp := false
+        else if brUp and (m15no - brUpBar) > swWindow
+            brUp := false
+    if not na(pwH)
+        if cH > pwH and not brDn
+            brDn := true
+            brDnBar := m15no
+        if brDn and cC < pwH and (m15no - brDnBar) <= swWindow
+            rcDn := true
+            brDn := false
+        else if brDn and (m15no - brDnBar) > swWindow
+            brDn := false
+
+    if rcUp and rcDn
+        // both sides reclaimed on one candle - genuinely ambiguous
+        if swBoth == "No bias (stand down)"
+            bias := 0
+            biasTxt := "both sides - stand down"
+            if st > 0 and st < 4
+                st := 0
+        else
+            biasTxt := "both sides - kept " + (bias == 1 ? "long" : bias == -1 ? "short" : "none")
+    else if rcUp
+        evSweepUp := true
+        bias := 1
+        biasTxt := "PWL swept + reclaimed"
+        if st < 4
+            st := 1
+            stDir := 1
+            stNo := m15no
+            stBar := bar_index
+            poiTxt := "-"
+    else if rcDn
+        evSweepDn := true
+        bias := -1
+        biasTxt := "PWH swept + reclaimed"
+        if st < 4
+            st := 1
+            stDir := -1
+            stNo := m15no
+            stBar := bar_index
+            poiTxt := "-"
+
+    // ---- 2 · 15m pivots become available (right side fully closed) ---------
+    pvH = f_pivHigh(m15A, msL, msR)
+    pvL = f_pivLow(m15A, msL, msR)
+    if not na(pvH)
+        phLvl := pvH
+        phUsed := false
+        phNo := m15no
+    if not na(pvL)
+        plLvl := pvL
+        plUsed := false
+        plNo := m15no
+
+    // ---- 3 · structure break on the bar that just closed -------------------
+    body  = math.abs(cC - cO)
+    rng   = math.max(cH - cL, syminfo.mintick)
+    okDsp = (dispAtr <= 0 or body >= dispAtr * nz(cATR, body)) and (dispBody <= 0 or body / rng >= dispBody)
+    bool brkUp = not na(phLvl) and not phUsed and m15no > phNo and cC > phLvl and okDsp
+    bool brkDn = not na(plLvl) and not plUsed and m15no > plNo and cC < plLvl and okDsp
+    if brkUp and brkDn
+        // ambiguous: consume both pivots, emit nothing
+        phUsed := true
+        plUsed := true
+        brkUp := false
+        brkDn := false
+    if brkUp
+        phUsed := true
+        lastStructDir := 1
+        lastStructLvl := phLvl
+        lastStructTxt := "bull break"
+        evMssUp := true
+        if showStruct
+            line.new(bar_index, phLvl, bar_index + 8, phLvl, color = color.new(cBull, 25), style = line.style_dashed)
+            label.new(bar_index + 8, phLvl, "15m ^", style = label.style_label_left, color = color.new(cBull, 20), textcolor = color.white, size = size.tiny)
+    if brkDn
+        plUsed := true
+        lastStructDir := -1
+        lastStructLvl := plLvl
+        lastStructTxt := "bear break"
+        evMssDn := true
+        if showStruct
+            line.new(bar_index, plLvl, bar_index + 8, plLvl, color = color.new(cBear, 25), style = line.style_dashed)
+            label.new(bar_index + 8, plLvl, "15m v", style = label.style_label_left, color = color.new(cBear, 20), textcolor = color.white, size = size.tiny)
+
+    // ---- 4 · opposite break cancels a pending setup -------------------------
+    if st > 0 and st < 4 and ((stDir == 1 and brkDn) or (stDir == -1 and brkUp))
+        st := 0
+        stDir := 0
+        poiTxt := "-"
+        biasTxt := "setup cancelled - opposite 15m break"
+
+    // ---- 5 · ordered transitions -------------------------------------------
+    if st == 1 and (not strictOrd or m15no > stNo)
+        [zt, zb, zk] = f_scanZones(zones, stDir, cH, cL, cC, poiTouch == "Close inside", m15no, strictOrd)
+        float mt = na
+        float mb = na
+        if stDir == 1 and mLongOn and mLongTop > mLongBot
+            mt := mLongTop
+            mb := mLongBot
+        if stDir == -1 and mShortOn and mShortTop > mShortBot
+            mt := mShortTop
+            mb := mShortBot
+        bool manHit = f_touch(cH, cL, cC, mt, mb, poiTouch == "Close inside")
+        if not na(zt) or manHit
+            poiT := na(zt) ? mt : zt
+            poiB := na(zt) ? mb : zb
+            poiTxt := na(zt) ? f_kindName(2) : f_kindName(zk)
+            evPOI := true
+            st := 2
+            stNo := m15no
+            stBar := bar_index
+
+    if st == 2 and (not strictOrd or m15no > stNo)
+        if (stDir == 1 and brkUp) or (stDir == -1 and brkDn)
+            st := 3
+            stNo := m15no
+            stBar := bar_index
+            latchI := false
+            latchC := false
+            ancI := na
+            ancC := na
+
+    // ---- 6 · expiries, in confirmed 15m bars -------------------------------
+    if st == 1 and m15no - stNo > expPOI
+        st := 0
+        poiTxt := "-"
+    else if st == 2 and m15no - stNo > expMSS
+        st := 0
+        poiTxt := "-"
+    else if st == 3 and m15no - stNo > expEXE
+        st := 0
+        poiTxt := "-"
+
+    // ---- 7 · thesis failure on an open virtual trade ------------------------
+    if tOn and ((tDir == 1 and brkDn) or (tDir == -1 and brkUp))
+        tWarn := true
+        evFail := true
+
+// ══════════════════ EXECUTION TIMEFRAME (confirmed chart bars) ══════════════
+if barstate.isconfirmed
+    // --- execution-TF FVG inventory ---
+    if bar_index > 2
+        if low > high[2]
+            array.push(xf, Xfvg.new(low, high[2], 1, false, false, bar_index))
+        if high < low[2]
+            array.push(xf, Xfvg.new(low[2], high, -1, false, false, bar_index))
+
+    bool trigI_up = false
+    bool trigI_dn = false
+    float anchor_up = na
+    float anchor_dn = na
+
+    if array.size(xf) > 0
+        for i = array.size(xf) - 1 to 0
+            f = array.get(xf, i)
+            if bar_index - f.bi > xAge
+                array.remove(xf, i)
+                continue
+            if not f.flipped
+                if f.dir == -1 and close > f.top
+                    f.flipped := true
+                    if ifvgEntry == "Flip close"
+                        trigI_up := true
+                        anchor_up := f.bot
+                    if showExec and st == 3 and stDir == 1
+                        box.new(f.bi, f.top, bar_index + 2, f.bot, border_color = color.new(cBull, 45), bgcolor = color.new(cBull, 88), text = "iFVG", text_color = color.new(cBull, 20), text_size = size.tiny)
+                else if f.dir == 1 and close < f.bot
+                    f.flipped := true
+                    if ifvgEntry == "Flip close"
+                        trigI_dn := true
+                        anchor_dn := f.top
+                    if showExec and st == 3 and stDir == -1
+                        box.new(f.bi, f.top, bar_index + 2, f.bot, border_color = color.new(cBear, 45), bgcolor = color.new(cBear, 88), text = "iFVG", text_color = color.new(cBear, 20), text_size = size.tiny)
+            else if ifvgEntry == "Retest close"
+                if f.dir == -1
+                    if low <= f.top
+                        f.touched := true
+                    if f.touched and close > f.top
+                        trigI_up := true
+                        anchor_up := f.bot
+                        f.touched := false
+                else
+                    if high >= f.bot
+                        f.touched := true
+                    if f.touched and close < f.bot
+                        trigI_dn := true
+                        anchor_dn := f.top
+                        f.touched := false
+
+    // --- CISD tracker ---
+    isDn = close < open
+    isUp = close > open
+    if isDn and not isDn[1]
+        cUpLvl := open
+        cUpLow := low
+        cUpArm := true
+        cUpBar := bar_index
+    else if cUpArm
+        cUpLow := math.min(cUpLow, low)
+    if isUp and not isUp[1]
+        cDnLvl := open
+        cDnHigh := high
+        cDnArm := true
+        cDnBar := bar_index
+    else if cDnArm
+        cDnHigh := math.max(cDnHigh, high)
+
+    bool rawC_up = cUpArm and not na(cUpLvl) and close > cUpLvl
+    bool rawC_dn = cDnArm and not na(cDnLvl) and close < cDnLvl
+    if rawC_up
+        cUpArm := false
+    if rawC_dn
+        cDnArm := false
+    bool trigC_up = rawC_up and (not cisdAfter or cUpBar >= stBar)
+    bool trigC_dn = rawC_dn and (not cisdAfter or cDnBar >= stBar)
+
+    // --- latch triggers while armed ---
+    if st == 3
+        if stDir == 1
+            if trigI_up
+                latchI := true
+                ancI := anchor_up
+            if trigC_up
+                latchC := true
+                ancC := cUpLow
+        else if stDir == -1
+            if trigI_dn
+                latchI := true
+                ancI := anchor_dn
+            if trigC_dn
+                latchC := true
+                ancC := cDnHigh
+
+        bool fire = execMode == "Either" ? (latchI or latchC) : execMode == "iFVG only" ? latchI : execMode == "CISD only" ? latchC : (latchI and latchC)
+
+        if fire and not tOn
+            pad  = nz(eAtr) * stopAtr + stopTick * syminfo.mintick
+            // structural stop: the further of the execution-TF swing extreme and
+            // the anchor of whichever trigger fired (iFVG edge / CISD run extreme)
+            float anch = stDir == 1 ? math.min(nz(ancI, 1e12), nz(ancC, 1e12)) : math.max(nz(ancI, -1e12), nz(ancC, -1e12))
+            float base = stDir == 1 ? math.min(loN, anch >= 1e12 ? loN : anch) : math.max(hiN, anch <= -1e12 ? hiN : anch)
+            tStop := stDir == 1 ? base - pad : base + pad
+            tEntry := close
+            tR := math.abs(tEntry - tStop)
+            if tR > 0
+                tDir := stDir
+                tOn := true
+                tBe := false
+                tT1 := false
+                tWarn := false
+                tBar := bar_index
+                tTp1 := tDir == 1 ? tEntry + tp1R * tR : tEntry - tp1R * tR
+                tTp2 := tDir == 1 ? tEntry + tp2R * tR : tEntry - tp2R * tR
+                st := 4
+                if tDir == 1
+                    evLong := true
+                else
+                    evShort := true
+                if showTrade
+                    lnE  := line.new(bar_index, tEntry, bar_index + 1, tEntry, color = cNeut, width = 1)
+                    lnS  := line.new(bar_index, tStop,  bar_index + 1, tStop,  color = cBear, width = 1, style = line.style_dashed)
+                    lnT1 := line.new(bar_index, tTp1,   bar_index + 1, tTp1,   color = cBull, width = 1, style = line.style_dotted)
+                    lnT2 := line.new(bar_index, tTp2,   bar_index + 1, tTp2,   color = cBull, width = 1, style = line.style_dotted)
+
+    // --- virtual trade management (stop is always checked first) ---
+    if tOn and bar_index > tBar
+        bool closed = false
+        string why = ""
+        if tDir == 1
+            if low <= tStop
+                closed := true
+                why := tBe ? "BE" : "SL"
+            else
+                if beOn and not tBe and high >= tEntry + beR * tR
+                    tStop := tEntry
+                    tBe := true
+                    evBe := true
+                    if showTrade and not na(lnS)
+                        line.set_y1(lnS, tStop)
+                        line.set_y2(lnS, tStop)
+                if not tT1 and high >= tTp1
+                    tT1 := true
+                    evTp1 := true
+                if high >= tTp2
+                    closed := true
+                    why := "TP2"
+                    evTp2 := true
+        else
+            if high >= tStop
+                closed := true
+                why := tBe ? "BE" : "SL"
+            else
+                if beOn and not tBe and low <= tEntry - beR * tR
+                    tStop := tEntry
+                    tBe := true
+                    evBe := true
+                    if showTrade and not na(lnS)
+                        line.set_y1(lnS, tStop)
+                        line.set_y2(lnS, tStop)
+                if not tT1 and low <= tTp1
+                    tT1 := true
+                    evTp1 := true
+                if low <= tTp2
+                    closed := true
+                    why := "TP2"
+                    evTp2 := true
+
+        if not closed and tWarn and failClose
+            closed := true
+            why := "thesis"
+
+        if showTrade
+            if not na(lnE)
+                line.set_x2(lnE, bar_index)
+            if not na(lnS)
+                line.set_x2(lnS, bar_index)
+            if not na(lnT1)
+                line.set_x2(lnT1, bar_index)
+            if not na(lnT2)
+                line.set_x2(lnT2, bar_index)
+
+        if closed
+            tOn := false
+            if why == "TP2"
+                nWin += 1
+            else if why == "BE"
+                nBe += 1
+            else if why == "SL"
+                nLoss += 1
+                evSl := true
+            else
+                nBe += 1
+            if showTrade
+                lc = why == "TP2" ? cBull : why == "SL" ? cBear : cNeut
+                label.new(bar_index, close, why, style = label.style_label_left, color = color.new(lc, 25), textcolor = color.white, size = size.tiny)
+            st := reArm and bias != 0 ? 1 : 0
+            stDir := reArm and bias != 0 ? bias : 0
+            stNo := m15no
+            stBar := bar_index
+            poiTxt := "-"
+
+// ═══════════════════════════════ MANUAL ZONES ═══════════════════════════════
+var box mlBx = na
+var box msBx = na
+if mLongOn and mLongTop > mLongBot
+    if na(mlBx)
+        mlBx := box.new(bar_index, mLongTop, bar_index + 3, mLongBot, border_color = color.new(cBull, 40), bgcolor = color.new(cBull, 90))
+    box.set_top(mlBx, mLongTop)
+    box.set_bottom(mlBx, mLongBot)
+    box.set_right(mlBx, bar_index + 3)
+if mShortOn and mShortTop > mShortBot
+    if na(msBx)
+        msBx := box.new(bar_index, mShortTop, bar_index + 3, mShortBot, border_color = color.new(cBear, 40), bgcolor = color.new(cBear, 90))
+    box.set_top(msBx, mShortTop)
+    box.set_bottom(msBx, mShortBot)
+    box.set_right(msBx, bar_index + 3)
+
+// ════════════════════════════════════ PLOTS ═════════════════════════════════
+plot(swShow ? pwH : na, "PWH", color = color.new(cBear, 20), style = plot.style_linebr)
+plot(swShow ? pwL : na, "PWL", color = color.new(cBull, 20), style = plot.style_linebr)
+plot(showStruct and lastStructDir != 0 ? lastStructLvl : na, "15m structure level", color = color.new(lastStructDir == 1 ? cBull : cBear, 45), style = plot.style_linebr)
+plotshape(evLong,  "Long execution",  shape.labelup,   location.belowbar, color = cBull, text = "L", textcolor = color.white, size = size.tiny)
+plotshape(evShort, "Short execution", shape.labeldown, location.abovebar, color = cBear, text = "S", textcolor = color.white, size = size.tiny)
+
+// ══════════════════════════════════ DASHBOARD ═══════════════════════════════
+chartSec = timeframe.in_seconds()
+confSec  = timeframe.in_seconds(confTF)
+keySec   = timeframe.in_seconds(keyTF)
+warnChart = chartSec >= confSec
+warnKey   = keySec <= confSec
+
+f_state(int s) =>
+    s == 0 ? "idle - need sweep" : s == 1 ? "waiting HTF level" : s == 2 ? "waiting 15m structure" : s == 3 ? "waiting execution" : "virtual trade open"
+
+if showDash
+    var table dash = table.new(f_pos(dashPos), 2, 10, border_width = 1, frame_color = color.new(cNeut, 55), frame_width = 1)
+    if barstate.islast
+        ts = f_txt(dashSize)
+        bg = color.new(#0d1117, 8)
+        hd = color.new(cNeut, 65)
+        table.cell(dash, 0, 0, "Weekly Sweep Model v2", text_color = color.white, bgcolor = hd, text_size = ts)
+        table.cell(dash, 1, 0, timeframe.period + " chart", text_color = color.white, bgcolor = hd, text_size = ts)
+
+        table.cell(dash, 0, 1, "weekly sweep", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 1, biasTxt, text_color = color.white, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 2, "bias", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 2, bias == 1 ? "long candidate" : bias == -1 ? "short candidate" : "none", text_color = bias == 1 ? cBull : bias == -1 ? cBear : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 3, "HTF " + keyTF + " level", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 3, st >= 2 ? poiTxt : "not qualified", text_color = st >= 2 ? color.white : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 4, confTF + " structure", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 4, lastStructTxt, text_color = lastStructDir == 1 ? cBull : lastStructDir == -1 ? cBear : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 5, "execution", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 5, st != 3 ? "not armed" : (latchI ? "iFVG " : "") + (latchC ? "CISD " : "") + (latchI or latchC ? "latched" : "armed, waiting"), text_color = st == 3 ? color.white : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 6, "state", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 6, f_state(st), text_color = color.white, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 7, "virtual trade", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 7, tOn ? (tDir == 1 ? "LONG " : "SHORT ") + str.tostring(tEntry, format.mintick) + (tBe ? " · BE" : "") + (tT1 ? " · TP1" : "") + (tWarn ? " · WARN" : "") : "flat · " + str.tostring(nWin) + "W/" + str.tostring(nLoss) + "L/" + str.tostring(nBe) + "B", text_color = tOn ? (tDir == 1 ? cBull : cBear) : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 8, "chart TF", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 8, warnChart ? "WARNING: use a TF below " + confTF : "ok", text_color = warnChart ? cBear : cNeut, bgcolor = bg, text_size = ts)
+
+        table.cell(dash, 0, 9, "key TF", text_color = cNeut, bgcolor = bg, text_size = ts)
+        table.cell(dash, 1, 9, warnKey ? "WARNING: must be above " + confTF : "ok", text_color = warnKey ? cBear : cNeut, bgcolor = bg, text_size = ts)
+
+// ═══════════════════════════════════ ALERTS ═════════════════════════════════
+alertcondition(evSweepUp, "1 · Bullish weekly sweep + reclaim", "WSM: previous-week LOW swept and reclaimed - long candidate")
+alertcondition(evSweepDn, "2 · Bearish weekly sweep + reclaim", "WSM: previous-week HIGH swept and reclaimed - short candidate")
+alertcondition(evPOI,     "3 · HTF key level qualified",        "WSM: price interacted with a directional HTF key level")
+alertcondition(evMssUp,   "4 · Bullish 15m structure",          "WSM: confirmed bullish 15m structure break")
+alertcondition(evMssDn,   "5 · Bearish 15m structure",          "WSM: confirmed bearish 15m structure break")
+alertcondition(evLong,    "6 · Long execution",                 "WSM: LONG execution trigger")
+alertcondition(evShort,   "7 · Short execution",                "WSM: SHORT execution trigger")
+alertcondition(evTp1,     "8 · TP1 reached",                    "WSM: virtual trade reached TP1")
+alertcondition(evTp2,     "9 · TP2 reached",                    "WSM: virtual trade reached TP2")
+alertcondition(evSl,      "10 · Stop loss hit",                 "WSM: virtual trade stopped out")
+alertcondition(evBe,      "11 · Breakeven activated",           "WSM: virtual stop moved to breakeven")
+alertcondition(evFail,    "12 · Thesis failure",                "WSM: opposite 15m structure break against an open virtual trade")
+
+if evLong
+    alert("WSM LONG " + syminfo.ticker + " " + timeframe.period + " · entry " + str.tostring(tEntry, format.mintick) + " · stop " + str.tostring(tStop, format.mintick) + " · TP1 " + str.tostring(tTp1, format.mintick) + " · TP2 " + str.tostring(tTp2, format.mintick) + " · POI " + poiTxt, alert.freq_once_per_bar_close)
+if evShort
+    alert("WSM SHORT " + syminfo.ticker + " " + timeframe.period + " · entry " + str.tostring(tEntry, format.mintick) + " · stop " + str.tostring(tStop, format.mintick) + " · TP1 " + str.tostring(tTp1, format.mintick) + " · TP2 " + str.tostring(tTp2, format.mintick) + " · POI " + poiTxt, alert.freq_once_per_bar_close)
+if evSweepUp
+    alert("WSM " + syminfo.ticker + " · PWL " + str.tostring(pwL, format.mintick) + " swept and reclaimed · long candidate", alert.freq_once_per_bar_close)
+if evSweepDn
+    alert("WSM " + syminfo.ticker + " · PWH " + str.tostring(pwH, format.mintick) + " swept and reclaimed · short candidate", alert.freq_once_per_bar_close)
+if evFail
+    alert("WSM " + syminfo.ticker + " · thesis failure warning on the open virtual trade", alert.freq_once_per_bar_close)
