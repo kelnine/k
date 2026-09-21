@@ -1,0 +1,368 @@
+//@version=6
+//
+// SMC Liquidity Setup — Weekly sweep → HTF zone → MSS → entry trigger.
+//
+// This is the reference specification for the "SMC Liquidity Setup" indicator
+// shipped in the KCharts app (src/indicators/liquidity.ts). The two are kept
+// deliberately close: same four stages, same directional state machine, same
+// zone/trigger combination modes.
+//
+// The model, in order:
+//   1. Weekly sweep  — price takes the previous week's high or low, optionally
+//                      only counting once the level is reclaimed on the close
+//   2. HTF key level — price then trades into a higher-timeframe fair value gap
+//                      and/or a higher-timeframe support/resistance pivot
+//   3. MSS           — an intermediate-timeframe market structure shift breaks
+//                      the last confirmed swing in the sweep's direction
+//   4. Entry trigger — a chart-timeframe inverse FVG and/or CISD fires
+//
+// Stages are strictly ordered and directional: a clean sweep arms one side and
+// disarms the other, a week that sweeps both sides has no directional bias and
+// is skipped, and everything resets on the weekly open.
+//
+indicator("SMC Liquidity Setup [Weekly → HTF → MSS → Entry]", overlay = true, max_labels_count = 200)
+
+//====================================================
+// INPUTS
+//====================================================
+
+requireReclaim = input.bool(true, "Require weekly level reclaim", group = "1. Weekly Sweep")
+
+htfTf          = input.timeframe("60", "HTF zone timeframe", group = "2. HTF Zone")
+htfPivotLen    = input.int(3, "HTF S/R pivot length", minval = 1, group = "2. HTF Zone")
+srAtrTolerance = input.float(0.25, "S/R tolerance (ATR)", minval = 0.05, step = 0.05, group = "2. HTF Zone")
+zoneMode       = input.string("FVG or S/R", "HTF zone requirement", options = ["FVG or S/R", "FVG only", "S/R only", "Both required"], group = "2. HTF Zone")
+
+mssTf       = input.timeframe("15", "MSS timeframe", group = "3. Structure")
+mssPivotLen = input.int(3, "MSS swing length", minval = 1, group = "3. Structure")
+
+executionMode = input.string("iFVG or CISD", "Entry trigger", options = ["iFVG or CISD", "iFVG only", "CISD only", "Both required"], group = "4. Execution")
+restrictExecTf = input.bool(true, "Only trigger on the execution timeframe", group = "4. Execution")
+execTf         = input.timeframe("5", "Execution timeframe", group = "4. Execution")
+
+showWeekly     = input.bool(true, "Previous week high / low", group = "5. Display")
+showActiveZone = input.bool(true, "Active HTF zone", group = "5. Display")
+showSweep      = input.bool(true, "Weekly sweep", group = "5. Display")
+showMSS        = input.bool(true, "Confirmed MSS", group = "5. Display")
+showDashboard  = input.bool(true, "Dashboard", group = "5. Display")
+
+//====================================================
+// FUNCTIONS
+//====================================================
+
+f_lastPivotHigh(_len) =>
+    _pivot = ta.pivothigh(high, _len, _len)
+    ta.valuewhen(not na(_pivot), _pivot, 0)
+
+f_lastPivotLow(_len) =>
+    _pivot = ta.pivotlow(low, _len, _len)
+    ta.valuewhen(not na(_pivot), _pivot, 0)
+
+// Bullish FVG: candle 3's low sits above candle 1's high
+f_bullFvgTop() =>
+    ta.valuewhen(low > high[2], low, 0)
+
+f_bullFvgBottom() =>
+    ta.valuewhen(low > high[2], high[2], 0)
+
+// Bearish FVG: candle 3's high sits below candle 1's low
+f_bearFvgTop() =>
+    ta.valuewhen(high < low[2], low[2], 0)
+
+f_bearFvgBottom() =>
+    ta.valuewhen(high < low[2], high, 0)
+
+f_bullMSS(_len) =>
+    _pivot = ta.pivothigh(high, _len, _len)
+    _swing = ta.valuewhen(not na(_pivot), _pivot, 0)
+    not na(_swing) and ta.crossover(close, _swing)
+
+f_bearMSS(_len) =>
+    _pivot = ta.pivotlow(low, _len, _len)
+    _swing = ta.valuewhen(not na(_pivot), _pivot, 0)
+    not na(_swing) and ta.crossunder(close, _swing)
+
+f_zoneValid(_fvg, _sr) =>
+    zoneMode == "FVG only"      ? _fvg :
+     zoneMode == "S/R only"     ? _sr :
+     zoneMode == "Both required" ? (_fvg and _sr) :
+     (_fvg or _sr)
+
+f_execValid(_ifvg, _cisd) =>
+    executionMode == "iFVG only"      ? _ifvg :
+     executionMode == "CISD only"     ? _cisd :
+     executionMode == "Both required" ? (_ifvg and _cisd) :
+     (_ifvg or _cisd)
+
+f_stageText(_stage) =>
+    _stage == 0 ? "Weekly sweep" :
+     _stage == 1 ? "HTF zone" :
+     _stage == 2 ? "MSS" :
+     _stage == 3 ? "Entry trigger" :
+     "Complete"
+
+//====================================================
+// PREVIOUS WEEK LIQUIDITY
+//====================================================
+
+previousWeekHigh = request.security(syminfo.tickerid, "W", high[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+previousWeekLow  = request.security(syminfo.tickerid, "W", low[1],  gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+newWeek = timeframe.change("W")
+
+//====================================================
+// WEEKLY SWEEP
+//====================================================
+
+var bool sellSideTaken = false
+var bool buySideTaken  = false
+
+var bool bullSweepConfirmed = false
+var bool bearSweepConfirmed = false
+
+// a week that takes both sides has no clean directional bias and is skipped
+var bool weekAmbiguous = false
+
+if newWeek
+    sellSideTaken       := false
+    buySideTaken        := false
+    bullSweepConfirmed  := false
+    bearSweepConfirmed  := false
+    weekAmbiguous       := false
+
+if not na(previousWeekLow) and low < previousWeekLow
+    sellSideTaken := true
+
+if not na(previousWeekHigh) and high > previousWeekHigh
+    buySideTaken := true
+
+bullSweepEvent = not weekAmbiguous and not bullSweepConfirmed and sellSideTaken and not na(previousWeekLow) and (not requireReclaim or close > previousWeekLow)
+bearSweepEvent = not weekAmbiguous and not bearSweepConfirmed and buySideTaken  and not na(previousWeekHigh) and (not requireReclaim or close < previousWeekHigh)
+
+if bullSweepEvent
+    bullSweepConfirmed := true
+
+if bearSweepEvent
+    bearSweepConfirmed := true
+
+if bullSweepEvent and bearSweepEvent
+    weekAmbiguous := true
+
+//====================================================
+// HTF ZONES
+//====================================================
+
+htfBullFvgTop    = request.security(syminfo.tickerid, htfTf, f_bullFvgTop(),    gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+htfBullFvgBottom = request.security(syminfo.tickerid, htfTf, f_bullFvgBottom(), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+htfBearFvgTop    = request.security(syminfo.tickerid, htfTf, f_bearFvgTop(),    gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+htfBearFvgBottom = request.security(syminfo.tickerid, htfTf, f_bearFvgBottom(), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+htfSupport    = request.security(syminfo.tickerid, htfTf, f_lastPivotLow(htfPivotLen),  gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+htfResistance = request.security(syminfo.tickerid, htfTf, f_lastPivotHigh(htfPivotLen), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+htfATR        = request.security(syminfo.tickerid, htfTf, ta.atr(14),                   gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+srTolerance = htfATR * srAtrTolerance
+
+bullFvgTouch = not na(htfBullFvgTop) and not na(htfBullFvgBottom) and high >= htfBullFvgBottom and low <= htfBullFvgTop
+bearFvgTouch = not na(htfBearFvgTop) and not na(htfBearFvgBottom) and high >= htfBearFvgBottom and low <= htfBearFvgTop
+
+bullSrTouch = not na(htfSupport)    and not na(srTolerance) and low  <= htfSupport + srTolerance    and high >= htfSupport - srTolerance
+bearSrTouch = not na(htfResistance) and not na(srTolerance) and high >= htfResistance - srTolerance and low  <= htfResistance + srTolerance
+
+bullKeyZone = f_zoneValid(bullFvgTouch, bullSrTouch)
+bearKeyZone = f_zoneValid(bearFvgTouch, bearSrTouch)
+
+//====================================================
+// MARKET STRUCTURE SHIFT
+//====================================================
+
+bullMssRaw = request.security(syminfo.tickerid, mssTf, f_bullMSS(mssPivotLen), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+bearMssRaw = request.security(syminfo.tickerid, mssTf, f_bearMSS(mssPivotLen), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+bullMssEvent = bullMssRaw and not bullMssRaw[1]
+bearMssEvent = bearMssRaw and not bearMssRaw[1]
+
+//====================================================
+// ENTRY TRIGGERS — INVERSE FVG AND CISD
+//====================================================
+
+var float lastBullFvgTop    = na
+var float lastBullFvgBottom = na
+var float lastBearFvgTop    = na
+var float lastBearFvgBottom = na
+
+// a bearish gap reclaimed upward / a bullish gap violated downward
+bullIFVG = not na(lastBearFvgTop)    and close > lastBearFvgTop    and close[1] <= lastBearFvgTop
+bearIFVG = not na(lastBullFvgBottom) and close < lastBullFvgBottom and close[1] >= lastBullFvgBottom
+
+// an inverted gap has done its job and is retired
+if bullIFVG
+    lastBearFvgTop    := na
+    lastBearFvgBottom := na
+
+if bearIFVG
+    lastBullFvgTop    := na
+    lastBullFvgBottom := na
+
+if low > high[2]
+    lastBullFvgTop    := low
+    lastBullFvgBottom := high[2]
+
+if high < low[2]
+    lastBearFvgTop    := low[2]
+    lastBearFvgBottom := high
+
+// CISD approximation: close back through the open of the latest opposing candle
+var float lastBearishOpen = na
+var float lastBullishOpen = na
+
+bullCISD = not na(lastBearishOpen) and close > lastBearishOpen and close[1] <= lastBearishOpen
+bearCISD = not na(lastBullishOpen) and close < lastBullishOpen and close[1] >= lastBullishOpen
+
+if close < open
+    lastBearishOpen := open
+
+if close > open
+    lastBullishOpen := open
+
+correctExecutionTf = not restrictExecTf or timeframe.period == execTf
+
+bullExecution = correctExecutionTf and f_execValid(bullIFVG, bullCISD)
+bearExecution = correctExecutionTf and f_execValid(bearIFVG, bearCISD)
+
+//====================================================
+// STAGE MACHINE
+//
+// 0 = waiting for the weekly sweep
+// 1 = swept, waiting for the HTF zone
+// 2 = in the zone, waiting for the MSS
+// 3 = structure shifted, waiting for the entry trigger
+// 4 = complete (resets on the weekly open)
+//====================================================
+
+var int bullStage = 0
+var int bearStage = 0
+
+bool bullZoneConfirm = false
+bool bearZoneConfirm = false
+bool bullMssConfirm  = false
+bool bearMssConfirm  = false
+bool longSignal      = false
+bool shortSignal     = false
+
+if newWeek
+    bullStage := 0
+    bearStage := 0
+
+if bullSweepEvent or bearSweepEvent
+    // a clean sweep arms one side and disarms the other; both at once is
+    // directionless, so neither side is armed
+    bullStage := (bullSweepEvent and not bearSweepEvent) ? 1 : 0
+    bearStage := (bearSweepEvent and not bullSweepEvent) ? 1 : 0
+else
+    if bullStage == 1 and bullKeyZone
+        bullZoneConfirm := true
+        bullStage := 2
+    else if bullStage == 2 and bullMssEvent
+        bullMssConfirm := true
+        bullStage := 3
+    else if bullStage == 3 and bullExecution
+        longSignal := true
+        bullStage := 4
+
+    if bearStage == 1 and bearKeyZone
+        bearZoneConfirm := true
+        bearStage := 2
+    else if bearStage == 2 and bearMssEvent
+        bearMssConfirm := true
+        bearStage := 3
+    else if bearStage == 3 and bearExecution
+        shortSignal := true
+        bearStage := 4
+
+cleanBullSweep = bullSweepEvent and not bearSweepEvent
+cleanBearSweep = bearSweepEvent and not bullSweepEvent
+
+//====================================================
+// PLOTS
+//====================================================
+
+plot(showWeekly ? previousWeekHigh : na, "Previous week high", color = color.new(color.red, 25),   linewidth = 1, style = plot.style_stepline)
+plot(showWeekly ? previousWeekLow  : na, "Previous week low",  color = color.new(color.green, 25), linewidth = 1, style = plot.style_stepline)
+
+bullActive = bullStage > 0
+bearActive = bearStage > 0
+
+bullTopPlot    = plot(showActiveZone and bullActive ? htfBullFvgTop    : na, "Active bull FVG top",    color = color.new(color.green, 40))
+bullBottomPlot = plot(showActiveZone and bullActive ? htfBullFvgBottom : na, "Active bull FVG bottom", color = color.new(color.green, 40))
+fill(bullTopPlot, bullBottomPlot, color = color.new(color.green, 90), title = "Bull HTF FVG")
+
+bearTopPlot    = plot(showActiveZone and bearActive ? htfBearFvgTop    : na, "Active bear FVG top",    color = color.new(color.red, 40))
+bearBottomPlot = plot(showActiveZone and bearActive ? htfBearFvgBottom : na, "Active bear FVG bottom", color = color.new(color.red, 40))
+fill(bearTopPlot, bearBottomPlot, color = color.new(color.red, 90), title = "Bear HTF FVG")
+
+plot(showActiveZone and bullActive ? htfSupport    : na, "Active HTF support",    color = color.new(color.aqua, 30),   linewidth = 1, style = plot.style_stepline)
+plot(showActiveZone and bearActive ? htfResistance : na, "Active HTF resistance", color = color.new(color.orange, 30), linewidth = 1, style = plot.style_stepline)
+
+//====================================================
+// MARKERS
+//====================================================
+
+plotshape(showSweep and cleanBullSweep, title = "Weekly low sweep",  style = shape.labelup,   location = location.belowbar, color = color.green, textcolor = color.white, text = "SSL\nSWEEP", size = size.tiny)
+plotshape(showSweep and cleanBearSweep, title = "Weekly high sweep", style = shape.labeldown, location = location.abovebar, color = color.red,   textcolor = color.white, text = "BSL\nSWEEP", size = size.tiny)
+
+plotshape(showMSS and bullMssConfirm, title = "Bullish MSS", style = shape.labelup,   location = location.belowbar, color = color.aqua,   textcolor = color.black, text = "MSS", size = size.tiny)
+plotshape(showMSS and bearMssConfirm, title = "Bearish MSS", style = shape.labeldown, location = location.abovebar, color = color.orange, textcolor = color.black, text = "MSS", size = size.tiny)
+
+plotshape(longSignal,  title = "LONG",  style = shape.labelup,   location = location.belowbar, color = color.green, textcolor = color.white, size = size.normal, text = "LONG")
+plotshape(shortSignal, title = "SHORT", style = shape.labeldown, location = location.abovebar, color = color.red,   textcolor = color.white, size = size.normal, text = "SHORT")
+
+//====================================================
+// DASHBOARD
+//====================================================
+
+activeStage = bullStage > 0 ? bullStage : (bearStage > 0 ? bearStage : 0)
+activeBias  = weekAmbiguous ? "SKIP" : (bullStage > 0 ? "LONG" : (bearStage > 0 ? "SHORT" : "NONE"))
+
+sweepDone = activeStage >= 1
+zoneDone  = activeStage >= 2
+mssDone   = activeStage >= 3
+entryDone = activeStage >= 4
+
+var table dashboard = table.new(position.top_right, 2, 7, border_width = 1)
+
+if barstate.islast
+    if showDashboard
+        table.cell(dashboard, 0, 0, "SMC SETUP", bgcolor = color.new(color.gray, 70), text_color = color.white)
+        table.cell(dashboard, 1, 0, activeBias, bgcolor = color.new(color.gray, 70), text_color = activeBias == "LONG" ? color.lime : activeBias == "SHORT" ? color.red : color.white)
+
+        table.cell(dashboard, 0, 1, "Weekly sweep")
+        table.cell(dashboard, 1, 1, sweepDone ? "DONE" : "WAIT", text_color = sweepDone ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 2, "HTF zone")
+        table.cell(dashboard, 1, 2, zoneDone ? "DONE" : "WAIT", text_color = zoneDone ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 3, "MSS")
+        table.cell(dashboard, 1, 3, mssDone ? "DONE" : "WAIT", text_color = mssDone ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 4, "Entry")
+        table.cell(dashboard, 1, 4, entryDone ? "DONE" : "WAIT", text_color = entryDone ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 5, "Next")
+        table.cell(dashboard, 1, 5, f_stageText(activeStage), text_color = color.white)
+
+        table.cell(dashboard, 0, 6, "Chart")
+        table.cell(dashboard, 1, 6, correctExecutionTf ? "READY" : "USE " + execTf, text_color = correctExecutionTf ? color.lime : color.orange)
+    else
+        table.clear(dashboard, 0, 0, 1, 6)
+
+//====================================================
+// ALERTS
+//====================================================
+
+alertcondition(cleanBullSweep, "Weekly sell-side sweep", "Previous week's low has been swept.")
+alertcondition(cleanBearSweep, "Weekly buy-side sweep",  "Previous week's high has been swept.")
+alertcondition(bullMssConfirm, "Bullish MSS confirmed",  "Bullish setup has confirmed a market structure shift.")
+alertcondition(bearMssConfirm, "Bearish MSS confirmed",  "Bearish setup has confirmed a market structure shift.")
+alertcondition(longSignal,  "SMC LONG",  "Weekly SSL sweep → HTF zone → bullish MSS → iFVG/CISD long.")
+alertcondition(shortSignal, "SMC SHORT", "Weekly BSL sweep → HTF zone → bearish MSS → iFVG/CISD short.")
