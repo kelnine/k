@@ -1,0 +1,502 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// Breakout Targets + ICT Levels + CISD
+//
+// Built from two chart setups:
+//  1. HTF range breakout ("Retirement Prices", BTC 1W)
+//     • Rolling range high/low, auto descending/ascending trendlines
+//     • Rejection-block zones (swing wick) with dashed 50% line
+//     • On a range breakout: measured-move targets = range edge ± k × range height
+//  2. LTF ICT execution ("Top ticked", MNQ 5m)
+//     • DO / TDO / 09:30 / 10:00 opens, PDH/PDL, PWH/PWL, PMH/PML,
+//       Asia & London session highs/lows
+//     • Liquidity sweep → CISD (close through the open of the last opposing
+//       delivery run) → Entry / SL / TP1 / TP2 projection
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Breakout Targets + ICT Levels + CISD", shorttitle = "BT+ICT", overlay = true,
+     max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// ───────────── Inputs ─────────────
+const string G_BRK = "Range Breakout / Targets"
+showBrk   = input.bool(true, "Show range breakout targets", group = G_BRK)
+rngLen    = input.int(26, "Range lookback (bars)", minval = 5, group = G_BRK)
+maxRngPct = input.float(0.0, "Max range height % (0 = off)", minval = 0, step = 1, group = G_BRK,
+     tooltip = "Only accept breakouts from ranges no taller than this % of the range low. Use it to require a real consolidation.")
+t1        = input.float(0.5,   "Target 1 (× range height)", minval = 0, step = 0.1, group = G_BRK)
+t2        = input.float(1.0,   "Target 2 (× range height)", minval = 0, step = 0.1, group = G_BRK)
+t3        = input.float(1.618, "Target 3 (× range height)", minval = 0, step = 0.1, group = G_BRK)
+tgtTitle  = input.string("Breakout Targets", "Target title", group = G_BRK)
+colTgt    = input.color(#4CAF50, "Target color", group = G_BRK)
+colRng    = input.color(#131722, "Range edge color", group = G_BRK)
+
+const string G_STR = "Structure"
+pvL        = input.int(5, "Pivot left bars",  minval = 1, group = G_STR)
+pvR        = input.int(5, "Pivot right bars", minval = 1, group = G_STR)
+showZones  = input.bool(true, "Show rejection-block zones", group = G_STR)
+maxZones   = input.int(8, "Max zones", minval = 1, maxval = 100, group = G_STR)
+delBroken  = input.bool(false, "Delete zones once closed through", group = G_STR)
+colZoneBd  = input.color(#00BCD4, "Zone border", group = G_STR)
+colZoneBg  = input.color(color.new(#787B86, 75), "Zone fill", group = G_STR)
+showTL     = input.bool(true, "Show auto trendlines", group = G_STR)
+colTL      = input.color(#131722, "Trendline color", group = G_STR)
+
+const string G_ICT = "ICT Levels (intraday only)"
+tz         = input.string("America/New_York", "Timezone", group = G_ICT)
+showDO     = input.bool(true, "Daily open (DO)", group = G_ICT)
+showTDO    = input.bool(true, "True day open (TDO, 00:00)", group = G_ICT)
+show930    = input.bool(true, "09:30 open", group = G_ICT)
+show1000   = input.bool(true, "10:00 open", group = G_ICT)
+showPD     = input.bool(true, "Previous day high/low", group = G_ICT)
+showPW     = input.bool(false, "Previous week high/low", group = G_ICT)
+showPM     = input.bool(true, "Previous month high/low", group = G_ICT)
+showAsia   = input.bool(true, "Asia high/low", group = G_ICT)
+asiaSess   = input.session("2000-0000", "Asia session", group = G_ICT)
+showLon    = input.bool(true, "London high/low", group = G_ICT)
+lonSess    = input.session("0200-0500", "London session", group = G_ICT)
+lvlExt     = input.int(15, "Label offset (bars right)", minval = 1, maxval = 400, group = G_ICT)
+colOpen    = input.color(#131722, "Opens color", group = G_ICT)
+colHTF     = input.color(#787B86, "PD/PW/PM color", group = G_ICT)
+colSess    = input.color(#2962FF, "Session H/L color", group = G_ICT)
+
+const string G_CISD = "CISD"
+showCisd   = input.bool(true, "Show CISD signals", group = G_CISD)
+reqSweep   = input.bool(true, "Require liquidity sweep first", group = G_CISD,
+     tooltip = "Sweep = high/low trades through a pivot, PDH/PDL, PWH/PWL, PMH/PML or a completed Asia/London high/low.")
+sweepLook  = input.int(12, "Sweep must be within (bars)", minval = 1, group = G_CISD)
+showTrade  = input.bool(true, "Project Entry / SL / TPs", group = G_CISD)
+tp1R       = input.float(1.0, "TP 1 (R multiple)", minval = 0, step = 0.25, group = G_CISD)
+tp2R       = input.float(2.0, "TP 2 (R multiple)", minval = 0, step = 0.25, group = G_CISD)
+colBull    = input.color(#2962FF, "Bullish color", group = G_CISD)
+colBear    = input.color(#F23645, "Bearish color", group = G_CISD)
+
+// ───────────── Types & helpers ─────────────
+type Zone
+    box   bx
+    line  mid
+    float top
+    float bot
+    bool  supply
+    bool  active = true
+
+type Lvl
+    line  ln
+    label lb
+
+method reset(Lvl self) =>
+    line.delete(self.ln)
+    label.delete(self.lb)
+    self.ln := na
+    self.lb := na
+    self
+
+method draw(Lvl self, bool show, int x1, float y, string txt, color col, string sty) =>
+    if show and not na(y) and not na(x1)
+        int x2 = bar_index + lvlExt
+        string t = txt + "  " + str.tostring(y, format.mintick)
+        if na(self.ln)
+            self.ln := line.new(x1, y, x2, y, color = col, style = sty, width = 1)
+            self.lb := label.new(x2, y, t, style = label.style_label_left, color = color(na), textcolor = col, size = size.small)
+        else
+            self.ln.set_xy1(x1, y)
+            self.ln.set_xy2(x2, y)
+            self.lb.set_xy(x2, y)
+            self.lb.set_text(t)
+    self
+
+clearAll(array<line> ls, array<label> lbs) =>
+    for l in ls
+        l.delete()
+    ls.clear()
+    for b in lbs
+        b.delete()
+    lbs.clear()
+
+// ───────────── Pivots ─────────────
+float ph   = ta.pivothigh(high, pvL, pvR)
+float pl   = ta.pivotlow(low, pvL, pvR)
+float minH = ta.atr(14) * 0.15
+
+// ───────────── Rejection-block zones ─────────────
+var array<Zone> zones = array.new<Zone>()
+
+newZone(int x, float top, float bot, bool supply) =>
+    float m = (top + bot) / 2
+    box  b  = box.new(x, top, bar_index, bot, border_color = colZoneBd, bgcolor = colZoneBg,
+         text = "RB", text_color = color.new(colZoneBd, 20), text_size = size.tiny, text_halign = text.align_right)
+    line ln = line.new(x, m, bar_index, m, color = colZoneBd, style = line.style_dashed)
+    Zone.new(b, ln, top, bot, supply, true)
+
+if showZones
+    if not na(ph)
+        float top = high[pvR]
+        float bot = math.max(open[pvR], close[pvR])
+        if top - bot < minH
+            bot := top - minH
+        zones.push(newZone(bar_index - pvR, top, bot, true))
+    if not na(pl)
+        float bot = low[pvR]
+        float top = math.min(open[pvR], close[pvR])
+        if top - bot < minH
+            top := bot + minH
+        zones.push(newZone(bar_index - pvR, top, bot, false))
+
+    while zones.size() > maxZones
+        Zone old = zones.shift()
+        old.bx.delete()
+        old.mid.delete()
+
+    for z in zones
+        if z.active
+            z.bx.set_right(bar_index)
+            z.mid.set_x2(bar_index)
+            bool broken = z.supply ? close > z.top : close < z.bot
+            if broken
+                z.active := false
+                if delBroken
+                    z.bx.delete()
+                    z.mid.delete()
+                else
+                    z.bx.set_bgcolor(color.new(#787B86, 92))
+                    z.bx.set_border_color(color.new(#787B86, 70))
+                    z.mid.set_color(color.new(#787B86, 70))
+
+// ───────────── Auto trendlines ─────────────
+// Descending: anchored at the swing high, drawn through each later lower high.
+var float dnAY = na
+var int   dnAX = na
+var float dnSlope = na
+var line  dnTL = na
+var bool  dnLive = false
+// Ascending: anchored at the swing low, drawn through each later higher low.
+var float upAY = na
+var int   upAX = na
+var float upSlope = na
+var line  upTL = na
+var bool  upLive = false
+
+if not na(ph)
+    int x = bar_index - pvR
+    if na(dnAY) or ph >= dnAY
+        if dnLive
+            dnTL.delete()
+        dnLive := false
+        dnAY := ph
+        dnAX := x
+    else if showTL
+        float s = (ph - dnAY) / (x - dnAX)
+        if close < dnAY + s * (bar_index - dnAX)
+            if dnLive
+                dnTL.delete()
+            dnSlope := s
+            dnTL := line.new(dnAX, dnAY, x, ph, color = colTL, width = 2, extend = extend.right)
+            dnLive := true
+
+if not na(pl)
+    int x = bar_index - pvR
+    if na(upAY) or pl <= upAY
+        if upLive
+            upTL.delete()
+        upLive := false
+        upAY := pl
+        upAX := x
+    else if showTL
+        float s = (pl - upAY) / (x - upAX)
+        if close > upAY + s * (bar_index - upAX)
+            if upLive
+                upTL.delete()
+            upSlope := s
+            upTL := line.new(upAX, upAY, x, pl, color = colTL, width = 2, extend = extend.right)
+            upLive := true
+
+bool tlBreakUp = false
+bool tlBreakDn = false
+if dnLive and close > dnAY + dnSlope * (bar_index - dnAX)
+    tlBreakUp := true
+    dnLive := false
+    dnTL.set_extend(extend.none)
+    dnTL.set_xy2(bar_index, dnAY + dnSlope * (bar_index - dnAX))
+    dnAY := na
+    label.new(bar_index, low, "TL break", style = label.style_label_up, color = color(na), textcolor = colBull, size = size.tiny)
+if upLive and close < upAY + upSlope * (bar_index - upAX)
+    tlBreakDn := true
+    upLive := false
+    upTL.set_extend(extend.none)
+    upTL.set_xy2(bar_index, upAY + upSlope * (bar_index - upAX))
+    upAY := na
+    label.new(bar_index, high, "TL break", style = label.style_label_down, color = color(na), textcolor = colBear, size = size.tiny)
+
+// ───────────── Range breakout + measured targets ─────────────
+float rngHi = ta.highest(high, rngLen)[1]
+float rngLo = ta.lowest(low, rngLen)[1]
+int   hiOff = ta.highestbars(high, rngLen)[1]
+int   loOff = ta.lowestbars(low, rngLen)[1]
+
+var int lastBrkBar = -100000
+var array<line>  brkLines  = array.new<line>()
+var array<label> brkLabels = array.new<label>()
+
+bool rngOk   = showBrk and not na(rngHi) and not na(rngLo) and bar_index - lastBrkBar > rngLen and
+     (maxRngPct <= 0 or (rngHi - rngLo) / rngLo * 100 <= maxRngPct)
+bool bullBrk = rngOk and close > rngHi
+bool bearBrk = rngOk and close < rngLo
+
+if bullBrk or bearBrk
+    lastBrkBar := bar_index
+    clearAll(brkLines, brkLabels)
+    bool  up    = bullBrk
+    float h     = rngHi - rngLo
+    float edge  = up ? rngHi : rngLo
+    float other = up ? rngLo : rngHi
+    int   xEdge = bar_index - 1 + (up ? hiOff : loOff)
+    int   xOth  = bar_index - 1 + (up ? loOff : hiOff)
+    int   xl    = bar_index + lvlExt
+    brkLines.push(line.new(xEdge, edge, bar_index, edge, color = colRng, width = 2, extend = extend.right))
+    brkLabels.push(label.new(xl, edge, (up ? "Range high  " : "Range low  ") + str.tostring(edge, format.mintick),
+         style = label.style_label_left, color = colRng, textcolor = color.white, size = size.small))
+    brkLines.push(line.new(xOth, other, bar_index, other, color = color.new(colRng, 50), style = line.style_dotted, extend = extend.right))
+    float first = na
+    float last  = na
+    for [i, r] in array.from(t1, t2, t3)
+        if r > 0
+            float p = up ? edge + h * r : edge - h * r
+            first := na(first) ? p : first
+            last  := p
+            brkLines.push(line.new(bar_index, p, bar_index + 1, p, color = colTgt, width = 2, extend = extend.right))
+            brkLabels.push(label.new(xl, p, "T" + str.tostring(i + 1) + " (" + str.tostring(r) + "x)  " + str.tostring(p, format.mintick),
+                 style = label.style_label_left, color = colTgt, textcolor = color.white, size = size.small))
+    if not na(first) and tgtTitle != ""
+        float ty = na(last) or last == first ? first + (up ? h * 0.15 : -h * 0.15) : (first + last) / 2
+        brkLabels.push(label.new(xl, ty, tgtTitle, style = label.style_label_right, color = color(na),
+             textcolor = chart.fg_color, size = size.large))
+
+if barstate.islast
+    for lb in brkLabels
+        lb.set_x(bar_index + lvlExt)
+
+// ───────────── ICT levels ─────────────
+bool showSess = timeframe.isintraday and timeframe.in_seconds() <= 3600
+
+inSess(string s) => not na(time(timeframe.period, s, tz))
+
+int  nyMin     = hour(time, tz) * 60 + minute(time, tz)
+int  nyMinPrev = nz(nyMin[1], -1)
+bool nyNewDay  = dayofmonth(time, tz) != dayofmonth(time[1], tz)
+bool newDay    = timeframe.change("D")
+crossT(int t) => nyMin >= t and (nyMinPrev < t or nyMinPrev > nyMin)
+
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pmh, pml] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+var Lvl lDO   = Lvl.new()
+var Lvl lTDO  = Lvl.new()
+var Lvl l930  = Lvl.new()
+var Lvl l1000 = Lvl.new()
+var Lvl lPDH  = Lvl.new()
+var Lvl lPDL  = Lvl.new()
+var Lvl lPWH  = Lvl.new()
+var Lvl lPWL  = Lvl.new()
+var Lvl lPMH  = Lvl.new()
+var Lvl lPML  = Lvl.new()
+var Lvl lAH   = Lvl.new()
+var Lvl lAL   = Lvl.new()
+var Lvl lLH   = Lvl.new()
+var Lvl lLL   = Lvl.new()
+
+var float dOpen = na
+var int   dayX  = na
+var float tdo   = na
+var int   tdoX  = na
+var float o930  = na
+var int   x930  = na
+var float o1000 = na
+var int   x1000 = na
+
+if newDay
+    dOpen := open
+    dayX  := bar_index
+    lDO.reset()
+    lPDH.reset()
+    lPDL.reset()
+    lPWH.reset()
+    lPWL.reset()
+    lPMH.reset()
+    lPML.reset()
+if nyNewDay
+    tdo  := open
+    tdoX := bar_index
+    lTDO.reset()
+if crossT(570)
+    o930 := open
+    x930 := bar_index
+    l930.reset()
+if crossT(600)
+    o1000 := open
+    x1000 := bar_index
+    l1000.reset()
+
+// Session highs/lows
+bool inAsia = inSess(asiaSess)
+bool inLon  = inSess(lonSess)
+var float asiaH = na
+var float asiaL = na
+var int   asiaX = na
+var float lonH  = na
+var float lonL  = na
+var int   lonX  = na
+
+if inAsia and not inAsia[1]
+    asiaH := high
+    asiaL := low
+    asiaX := bar_index
+    lAH.reset()
+    lAL.reset()
+else if inAsia
+    asiaH := math.max(asiaH, high)
+    asiaL := math.min(asiaL, low)
+
+if inLon and not inLon[1]
+    lonH := high
+    lonL := low
+    lonX := bar_index
+    lLH.reset()
+    lLL.reset()
+else if inLon
+    lonH := math.max(lonH, high)
+    lonL := math.min(lonL, low)
+
+if showSess and barstate.islast
+    lDO.draw(showDO,    dayX,  dOpen, "DO",    colOpen, line.style_dotted)
+    lTDO.draw(showTDO,  tdoX,  tdo,   "TDO",   colOpen, line.style_dashed)
+    l930.draw(show930,  x930,  o930,  "9:30",  colOpen, line.style_dotted)
+    l1000.draw(show1000, x1000, o1000, "10:00", colOpen, line.style_dotted)
+    lPDH.draw(showPD, dayX, pdh, "PDH", colHTF, line.style_dotted)
+    lPDL.draw(showPD, dayX, pdl, "PDL", colHTF, line.style_dotted)
+    lPWH.draw(showPW, dayX, pwh, "PWH", colHTF, line.style_dotted)
+    lPWL.draw(showPW, dayX, pwl, "PWL", colHTF, line.style_dotted)
+    lPMH.draw(showPM, dayX, pmh, "PMH", colHTF, line.style_dotted)
+    lPML.draw(showPM, dayX, pml, "PML", colHTF, line.style_dotted)
+    lAH.draw(showAsia, asiaX, asiaH, "Asia high", colSess, line.style_solid)
+    lAL.draw(showAsia, asiaX, asiaL, "Asia low",  colSess, line.style_solid)
+    lLH.draw(showLon,  lonX,  lonH,  "LNDN high", colSess, line.style_solid)
+    lLL.draw(showLon,  lonX,  lonL,  "LNDN low",  colSess, line.style_solid)
+
+// ───────────── Liquidity sweeps ─────────────
+tookHigh(float l) => not na(l) and high > l and high[1] <= l
+tookLow(float l)  => not na(l) and low < l and low[1] >= l
+
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+float sAH = showSess and not inAsia ? asiaH : na
+float sAL = showSess and not inAsia ? asiaL : na
+float sLH = showSess and not inLon  ? lonH  : na
+float sLL = showSess and not inLon  ? lonL  : na
+
+bool bslSwept = (not na(lastPH) and high > lastPH) or tookHigh(pdh) or tookHigh(pwh) or tookHigh(pmh) or tookHigh(sAH) or tookHigh(sLH)
+bool sslSwept = (not na(lastPL) and low < lastPL)  or tookLow(pdl)  or tookLow(pwl)  or tookLow(pml)  or tookLow(sAL)  or tookLow(sLL)
+
+var int lastBslBar = -100000
+var int lastSslBar = -100000
+if bslSwept
+    lastBslBar := bar_index
+    lastPH := na
+if sslSwept
+    lastSslBar := bar_index
+    lastPL := na
+
+// ───────────── CISD ─────────────
+// Bearish CISD: close below the open of the most recent run of up-close candles.
+// Bullish CISD: close above the open of the most recent run of down-close candles.
+bool bullBar = close > open
+bool bearBar = close < open
+
+var float bullRunOpen = na
+var int   bullRunX    = na
+var float bullRunHigh = na
+var float bearRunOpen = na
+var int   bearRunX    = na
+var float bearRunLow  = na
+
+if bullBar and not bullBar[1]
+    bullRunOpen := open
+    bullRunX    := bar_index
+    bullRunHigh := high
+else if not na(bullRunOpen)
+    bullRunHigh := math.max(bullRunHigh, high)
+
+if bearBar and not bearBar[1]
+    bearRunOpen := open
+    bearRunX    := bar_index
+    bearRunLow  := low
+else if not na(bearRunOpen)
+    bearRunLow := math.min(bearRunLow, low)
+
+bool  bearCisd = false
+bool  bullCisd = false
+float cisdLvl  = na
+float cisdExt  = na
+int   cisdX    = na
+
+if not na(bullRunOpen) and bar_index > bullRunX and close < bullRunOpen
+    bearCisd := not reqSweep or bar_index - lastBslBar <= sweepLook
+    cisdLvl  := bullRunOpen
+    cisdExt  := bullRunHigh
+    cisdX    := bullRunX
+    bullRunOpen := na
+
+if not bearCisd and not na(bearRunOpen) and bar_index > bearRunX and close > bearRunOpen
+    bullCisd := not reqSweep or bar_index - lastSslBar <= sweepLook
+    cisdLvl  := bearRunOpen
+    cisdExt  := bearRunLow
+    cisdX    := bearRunX
+    bearRunOpen := na
+
+bearCisd := showCisd and bearCisd
+bullCisd := showCisd and bullCisd
+
+var array<line>  tradeLines  = array.new<line>()
+var array<label> tradeLabels = array.new<label>()
+
+if bearCisd or bullCisd
+    color c = bearCisd ? colBear : colBull
+    line.new(cisdX, cisdLvl, bar_index, cisdLvl, color = c, width = 2)
+    label.new(math.round((cisdX + bar_index) / 2), cisdLvl, "CISD", color = color(na), textcolor = c, size = size.small,
+         style = bearCisd ? label.style_label_up : label.style_label_down)
+    if showTrade
+        clearAll(tradeLines, tradeLabels)
+        float entry = cisdLvl
+        float stop  = cisdExt
+        float risk  = math.abs(entry - stop)
+        float dir   = bearCisd ? -1.0 : 1.0
+        int   x2    = bar_index + 20
+        tradeLines.push(line.new(bar_index, entry, x2, entry, color = chart.fg_color, style = line.style_solid))
+        tradeLabels.push(label.new(x2, entry, "Entry " + str.tostring(entry, format.mintick), style = label.style_label_left,
+             color = color(na), textcolor = chart.fg_color, size = size.small))
+        tradeLines.push(line.new(bar_index, stop, x2, stop, color = colBear, style = line.style_dashed))
+        tradeLabels.push(label.new(x2, stop, "SL " + str.tostring(stop, format.mintick), style = label.style_label_left,
+             color = color(na), textcolor = colBear, size = size.small))
+        if risk > 0
+            for [i, r] in array.from(tp1R, tp2R)
+                if r > 0
+                    float tp = entry + dir * risk * r
+                    tradeLines.push(line.new(bar_index, tp, x2, tp, color = colTgt, style = line.style_dotted, width = 2))
+                    tradeLabels.push(label.new(x2, tp, "TP " + str.tostring(i + 1) + "  " + str.tostring(tp, format.mintick),
+                         style = label.style_label_left, color = color(na), textcolor = colTgt, size = size.small))
+
+// ───────────── Plots & alerts ─────────────
+plotshape(bearCisd, "Bearish CISD", shape.triangledown, location.abovebar, colBear, size = size.tiny)
+plotshape(bullCisd, "Bullish CISD", shape.triangleup,   location.belowbar, colBull, size = size.tiny)
+plotshape(bullBrk,  "Range breakout",  shape.flag, location.belowbar, colTgt,  size = size.small)
+plotshape(bearBrk,  "Range breakdown", shape.flag, location.abovebar, colBear, size = size.small)
+
+alertcondition(bullBrk,   "Range breakout",       "{{ticker}} closed above the range high: targets projected")
+alertcondition(bearBrk,   "Range breakdown",      "{{ticker}} closed below the range low: targets projected")
+alertcondition(tlBreakUp, "Trendline break up",   "{{ticker}} broke the descending trendline")
+alertcondition(tlBreakDn, "Trendline break down", "{{ticker}} broke the ascending trendline")
+alertcondition(bearCisd,  "Bearish CISD",         "{{ticker}} bearish CISD after buy-side sweep")
+alertcondition(bullCisd,  "Bullish CISD",         "{{ticker}} bullish CISD after sell-side sweep")
