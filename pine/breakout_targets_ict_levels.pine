@@ -922,7 +922,8 @@ cellTxt(int c, int r, string t, color tc, color bg) =>
 drawRow(int r, string tf, int d, float e, float s, float a, int st, int ag, int bi) =>
     color fg = chart.fg_color
     cellTxt(0, r, fmtTF(tf), fg, color(na))
-    cellTxt(1, r, bi > 0 ? "Bull" : bi < 0 ? "Bear" : "—", bi > 0 ? colBull : bi < 0 ? colBear : fg, color(na))
+    cellTxt(1, r, bi > 0 ? "Bull" : bi < 0 ? "Bear" : "—", bi != 0 ? color.white : fg,
+         bi > 0 ? color.new(colBull, 15) : bi < 0 ? color.new(colBear, 15) : color(na))
     if d == 0
         for c = 2 to 6
             cellTxt(c, r, "—", fg, color(na))
@@ -931,11 +932,11 @@ drawRow(int r, string tf, int d, float e, float s, float a, int st, int ag, int 
         color dc    = d > 0 ? colBull : colBear
         cellTxt(2, r, (d > 0 ? "LONG" : "SHORT") + " · " + str.tostring(ag), color.white, fresh ? dc : color.new(dc, 45))
         cellTxt(3, r, fmtP(e), fg, color(na))
-        cellTxt(4, r, fmtP(s), colBear, color(na))
-        cellTxt(5, r, fmtP(a), colTgt, color(na))
+        cellTxt(4, r, fmtP(s), color.white, color.new(colBear, 25))
+        cellTxt(5, r, fmtP(a), color.white, color.new(colTgt, 25))
         string stT = st == 0 ? "Active" : st == 1 ? "TP1 ✓" : st == 2 ? "TP2 ✓" : st == -1 ? "SL ✗" : "TP1 ✓ / SL"
         color  stC = st == 0 ? fg : st > 0 and st < 3 ? colTgt : colBear
-        cellTxt(6, r, stT, stC, color(na))
+        cellTxt(6, r, stT, st == 0 ? fg : color.white, st == 0 ? color(na) : color.new(stC, 10))
 
 if showScan and barstate.islast
     table.clear(scanT, 0, 0, 6, 4)
