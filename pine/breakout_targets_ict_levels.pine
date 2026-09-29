@@ -27,7 +27,7 @@ t2        = input.float(1.0,   "Target 2 (× range height)", minval = 0, step = 
 t3        = input.float(1.618, "Target 3 (× range height)", minval = 0, step = 0.1, group = G_BRK)
 tgtTitle  = input.string("Breakout Targets", "Target title", group = G_BRK)
 colTgt    = input.color(#4CAF50, "Target color", group = G_BRK)
-colRng    = input.color(#131722, "Range edge color", group = G_BRK)
+colRngIn  = input.color(#131722, "Range edge color", group = G_BRK)
 
 const string G_STR = "Structure"
 pvL        = input.int(5, "Pivot left bars",  minval = 1, group = G_STR)
@@ -38,7 +38,7 @@ delBroken  = input.bool(false, "Delete zones once closed through", group = G_STR
 colZoneBd  = input.color(#00BCD4, "Zone border", group = G_STR)
 colZoneBg  = input.color(color.new(#787B86, 75), "Zone fill", group = G_STR)
 showTL     = input.bool(true, "Show auto trendlines", group = G_STR)
-colTL      = input.color(#131722, "Trendline color", group = G_STR)
+colTLIn    = input.color(#131722, "Trendline color", group = G_STR)
 
 const string G_ICT = "ICT Levels (intraday only)"
 tz         = input.string("America/New_York", "Timezone", group = G_ICT)
@@ -54,7 +54,7 @@ asiaSess   = input.session("2000-0000", "Asia session", group = G_ICT)
 showLon    = input.bool(true, "London high/low", group = G_ICT)
 lonSess    = input.session("0200-0500", "London session", group = G_ICT)
 lvlExt     = input.int(15, "Label offset (bars right)", minval = 1, maxval = 400, group = G_ICT)
-colOpen    = input.color(#131722, "Opens color", group = G_ICT)
+colOpenIn  = input.color(#131722, "Opens color", group = G_ICT)
 colHTF     = input.color(#787B86, "PD/PW/PM color", group = G_ICT)
 colSess    = input.color(#2962FF, "Session H/L color", group = G_ICT)
 
@@ -68,6 +68,14 @@ tp1R       = input.float(1.0, "TP 1 (R multiple)", minval = 0, step = 0.25, grou
 tp2R       = input.float(2.0, "TP 2 (R multiple)", minval = 0, step = 0.25, group = G_CISD)
 colBull    = input.color(#2962FF, "Bullish color", group = G_CISD)
 colBear    = input.color(#F23645, "Bearish color", group = G_CISD)
+
+const string G_STY = "Style"
+autoCol    = input.bool(true, "Neutral lines follow chart text color", group = G_STY,
+     tooltip = "Keeps range edge, trendline and open lines visible on both light and dark themes. Turn off to use the custom colors above.")
+
+color colRng  = autoCol ? chart.fg_color : colRngIn
+color colTL   = autoCol ? chart.fg_color : colTLIn
+color colOpen = autoCol ? chart.fg_color : colOpenIn
 
 // ───────────── Types & helpers ─────────────
 type Zone
@@ -145,20 +153,23 @@ if showZones
         old.bx.delete()
         old.mid.delete()
 
-    for z in zones
-        if z.active
-            z.bx.set_right(bar_index)
-            z.mid.set_x2(bar_index)
-            bool broken = z.supply ? close > z.top : close < z.bot
-            if broken
-                z.active := false
-                if delBroken
-                    z.bx.delete()
-                    z.mid.delete()
-                else
-                    z.bx.set_bgcolor(color.new(#787B86, 92))
-                    z.bx.set_border_color(color.new(#787B86, 70))
-                    z.mid.set_color(color.new(#787B86, 70))
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            if z.active
+                z.bx.set_right(bar_index)
+                z.mid.set_x2(bar_index)
+                bool broken = z.supply ? close > z.top : close < z.bot
+                if broken
+                    z.active := false
+                    if delBroken
+                        z.bx.delete()
+                        z.mid.delete()
+                        zones.remove(i)
+                    else
+                        z.bx.set_bgcolor(color.new(#787B86, 92))
+                        z.bx.set_border_color(color.new(#787B86, 70))
+                        z.mid.set_color(color.new(#787B86, 70))
 
 // ───────────── Auto trendlines ─────────────
 // Descending: anchored at the swing high, drawn through each later lower high.
@@ -231,17 +242,21 @@ float rngLo = ta.lowest(low, rngLen)[1]
 int   hiOff = ta.highestbars(high, rngLen)[1]
 int   loOff = ta.lowestbars(low, rngLen)[1]
 
-var int lastBrkBar = -100000
+var int lastBullBrk = -100000
+var int lastBearBrk = -100000
 var array<line>  brkLines  = array.new<line>()
 var array<label> brkLabels = array.new<label>()
 
-bool rngOk   = showBrk and not na(rngHi) and not na(rngLo) and bar_index - lastBrkBar > rngLen and
+bool rngOk   = showBrk and not na(rngHi) and not na(rngLo) and
      (maxRngPct <= 0 or (rngHi - rngLo) / rngLo * 100 <= maxRngPct)
-bool bullBrk = rngOk and close > rngHi
-bool bearBrk = rngOk and close < rngLo
+bool bullBrk = rngOk and close > rngHi and bar_index - lastBullBrk > rngLen
+bool bearBrk = rngOk and close < rngLo and bar_index - lastBearBrk > rngLen
 
 if bullBrk or bearBrk
-    lastBrkBar := bar_index
+    if bullBrk
+        lastBullBrk := bar_index
+    else
+        lastBearBrk := bar_index
     clearAll(brkLines, brkLabels)
     bool  up    = bullBrk
     float h     = rngHi - rngLo
@@ -252,7 +267,7 @@ if bullBrk or bearBrk
     int   xl    = bar_index + lvlExt
     brkLines.push(line.new(xEdge, edge, bar_index, edge, color = colRng, width = 2, extend = extend.right))
     brkLabels.push(label.new(xl, edge, (up ? "Range high  " : "Range low  ") + str.tostring(edge, format.mintick),
-         style = label.style_label_left, color = colRng, textcolor = color.white, size = size.small))
+         style = label.style_label_left, color = colRng, textcolor = chart.bg_color, size = size.small))
     brkLines.push(line.new(xOth, other, bar_index, other, color = color.new(colRng, 50), style = line.style_dotted, extend = extend.right))
     float first = na
     float last  = na
@@ -280,9 +295,11 @@ inSess(string s) => not na(time(timeframe.period, s, tz))
 
 int  nyMin     = hour(time, tz) * 60 + minute(time, tz)
 int  nyMinPrev = nz(nyMin[1], -1)
-bool nyNewDay  = dayofmonth(time, tz) != dayofmonth(time[1], tz)
 bool newDay    = timeframe.change("D")
-crossT(int t) => nyMin >= t and (nyMinPrev < t or nyMinPrev > nyMin)
+// True only on the bar that opens exactly at minute t (NY time). If no bar starts
+// there (e.g. 9:30 on a 1h futures chart, 00:00 on a stock), the level is skipped
+// rather than showing the wrong bar's open.
+atMinute(int t) => nyMin == t and nyMinPrev != t
 
 [pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
 [pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
@@ -322,15 +339,15 @@ if newDay
     lPWL.reset()
     lPMH.reset()
     lPML.reset()
-if nyNewDay
+if atMinute(0)
     tdo  := open
     tdoX := bar_index
     lTDO.reset()
-if crossT(570)
+if atMinute(570)
     o930 := open
     x930 := bar_index
     l930.reset()
-if crossT(600)
+if atMinute(600)
     o1000 := open
     x1000 := bar_index
     l1000.reset()
@@ -397,8 +414,18 @@ float sAL = showSess and not inAsia ? asiaL : na
 float sLH = showSess and not inLon  ? lonH  : na
 float sLL = showSess and not inLon  ? lonL  : na
 
-bool bslSwept = (not na(lastPH) and high > lastPH) or tookHigh(pdh) or tookHigh(pwh) or tookHigh(pmh) or tookHigh(sAH) or tookHigh(sLH)
-bool sslSwept = (not na(lastPL) and low < lastPL)  or tookLow(pdl)  or tookLow(pwl)  or tookLow(pml)  or tookLow(sAL)  or tookLow(sLL)
+bool hPD = tookHigh(pdh)
+bool hPW = tookHigh(pwh)
+bool hPM = tookHigh(pmh)
+bool hA  = tookHigh(sAH)
+bool hL  = tookHigh(sLH)
+bool lPD = tookLow(pdl)
+bool lPW = tookLow(pwl)
+bool lPM = tookLow(pml)
+bool lA  = tookLow(sAL)
+bool lL  = tookLow(sLL)
+bool bslSwept = (not na(lastPH) and high > lastPH) or hPD or hPW or hPM or hA or hL
+bool sslSwept = (not na(lastPL) and low < lastPL)  or lPD or lPW or lPM or lA or lL
 
 var int lastBslBar = -100000
 var int lastSslBar = -100000
