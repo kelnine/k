@@ -19,7 +19,13 @@
 //   "Merge distance" of each other share one label (e.g. "PDL / PMH").
 // ─────────────────────────────────────────────────────────────────────────────
 indicator("Breakout Targets + ICT Levels + CISD", shorttitle = "BT+ICT", overlay = true,
-     max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+     max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// Drawings anchored further back than the history buffer throw a runtime error
+// when TradingView recalculates (e.g. after scrolling loads more bars), so every
+// x coordinate in the past is kept within MAX_BACK bars of the current bar.
+const int MAX_BACK = 4500
+clampX(int x) => math.max(x, bar_index - MAX_BACK)
 
 // ───────────── Inputs ─────────────
 const string G_BRK = "Range Breakout / Targets"
@@ -101,6 +107,7 @@ type Zone
     float bot
     bool  supply
     bool  active = true
+    int   left
 
 type Lvl
     line   ln
@@ -125,10 +132,10 @@ method draw(Lvl self, bool show, int x1, float y, string txt, color col, string 
         self.y   := y
         self.txt := txt
         if na(self.ln)
-            self.ln := line.new(x1, y, x2, y, color = col, style = sty, width = 1)
+            self.ln := line.new(clampX(x1), y, x2, y, color = col, style = sty, width = 1)
             self.lb := label.new(x2, y, "", style = label.style_label_left, color = color(na), textcolor = col, size = lblSz)
         else
-            self.ln.set_xy1(x1, y)
+            self.ln.set_xy1(clampX(x1), y)
             self.ln.set_xy2(x2, y)
             self.lb.set_xy(x2, y)
     self
@@ -163,7 +170,7 @@ newZone(int x, float top, float bot, bool supply) =>
     box  b  = box.new(x, top, bar_index, bot, border_color = colZoneBd, bgcolor = colZoneBg,
          text = "RB", text_color = color.new(colZoneBd, 20), text_size = size.tiny, text_halign = text.align_right)
     line ln = line.new(x, m, bar_index, m, color = colZoneBd, style = line.style_dashed)
-    Zone.new(b, ln, top, bot, supply, true)
+    Zone.new(b, ln, top, bot, supply, true, x)
 
 if showZones
     if not na(ph)
@@ -187,6 +194,11 @@ if showZones
     if zones.size() > 0
         for i = zones.size() - 1 to 0
             Zone z = zones.get(i)
+            if z.left < bar_index - MAX_BACK
+                z.bx.delete()
+                z.mid.delete()
+                zones.remove(i)
+                continue
             if z.active
                 z.bx.set_right(bar_index)
                 z.mid.set_x2(bar_index)
@@ -253,6 +265,19 @@ if not na(pl)
             upTL := line.new(upAX, upAY, x, pl, color = colTL, width = 2)
             upLive := true
 
+if not na(dnAX) and dnAX < bar_index - MAX_BACK
+    if dnLive
+        dnTL.delete()
+    dnLive := false
+    dnAY := na
+    dnAX := na
+if not na(upAX) and upAX < bar_index - MAX_BACK
+    if upLive
+        upTL.delete()
+    upLive := false
+    upAY := na
+    upAX := na
+
 bool tlBreakUp = false
 bool tlBreakDn = false
 if dnLive
@@ -302,8 +327,8 @@ if bullBrk or bearBrk
     float h     = rngHi - rngLo
     float edge  = up ? rngHi : rngLo
     float other = up ? rngLo : rngHi
-    int   xEdge = bar_index - 1 + (up ? hiOff : loOff)
-    int   xOth  = bar_index - 1 + (up ? loOff : hiOff)
+    int   xEdge = clampX(bar_index - 1 + (up ? hiOff : loOff))
+    int   xOth  = clampX(bar_index - 1 + (up ? loOff : hiOff))
     int   xl    = bar_index + tgtExt
     brkLines.push(line.new(xEdge, edge, bar_index, edge, color = colRng, width = 2, extend = extend.right))
     brkLabels.push(label.new(xl, edge, (up ? "Range high  " : "Range low  ") + str.tostring(edge, format.mintick),
@@ -573,6 +598,7 @@ var array<label> cisdLabels = array.new<label>()
 
 if bearCisd or bullCisd
     color c = bearCisd ? colBear : colBull
+    cisdX := clampX(cisdX)
     cisdLines.push(line.new(cisdX, cisdLvl, bar_index, cisdLvl, color = c, width = 2))
     cisdLabels.push(label.new(math.round((cisdX + bar_index) / 2), cisdLvl, "CISD", color = color(na), textcolor = c, size = size.tiny,
          style = bearCisd ? label.style_label_up : label.style_label_down))
@@ -646,7 +672,7 @@ if trLive and bar_index > trBar
     if trSL
         trLbS.set_text("SL ✗  " + fmt(trS))
     // Trade ends at SL, at TP 2, or at TP 1 when TP 2 is disabled.
-    if trSL or trTP2 or (trHit1 and na(trT2))
+    if trSL or trTP2 or (trHit1 and na(trT2)) or bar_index - trBar > MAX_BACK
         trLive := false
     int xEnd = bar_index + (trLive ? tradeExt : 0)
     for ln in array.from(trLnE, trLnS, trLnT1, trLnT2)
