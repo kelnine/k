@@ -868,8 +868,8 @@ scanCisd(int off) =>
     int age = tDir != 0 ? bar_index - tBar : na
     [tDir[off], tE[off], tS[off], tT1[off], tT2[off], tSt[off], age[off], tTime[off], bias[off]]
 
-scanRow(string tf) =>
-    bool higher = timeframe.in_seconds(tf) > timeframe.in_seconds()
+scanRow(simple string tf) =>
+    simple bool higher = timeframe.in_seconds(tf) > timeframe.in_seconds()
     request.security(syminfo.tickerid, tf, scanCisd(higher ? 1 : 0),
          lookahead = higher ? barmerge.lookahead_on : barmerge.lookahead_off)
 
