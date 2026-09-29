@@ -108,6 +108,8 @@ on4        = input.bool(true, "", inline = "s4", group = G_SCN)
 tf4        = input.timeframe("240", "Slot 4", inline = "s4", group = G_SCN)
 scanAlerts = input.bool(true, "Alert on new scanner signals", group = G_SCN,
      tooltip = "Create an alert with condition \"Any alert() function call\" to get these.")
+aplusOnly  = input.bool(false, "Alert only A+ signals", group = G_SCN,
+     tooltip = "A+ = the slot's signal agrees with the Bias of every enabled higher-timeframe slot.")
 scanPosIn  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_SCN)
 scanSzIn   = input.string("small", "Scanner size", options = ["tiny", "small", "normal", "large", "huge"], group = G_SCN)
 
@@ -881,14 +883,35 @@ fmtTF(string tf) =>
 
 fmtP(float p) => na(p) ? "—" : str.tostring(p, format.mintick)
 
-callText(string tf, int d, float e, float s, float a, float b) =>
-    syminfo.ticker + " " + fmtTF(tf) + ": " + (d > 0 ? "LONG" : "SHORT") + " CISD  Entry " + fmtP(e) +
+callText(string tf, int d, float e, float s, float a, float b, bool ap) =>
+    (ap ? "A+ " : "") + syminfo.ticker + " " + fmtTF(tf) + ": " + (d > 0 ? "LONG" : "SHORT") + " CISD  Entry " + fmtP(e) +
          "  SL " + fmtP(s) + "  TP1 " + fmtP(a) + (na(b) ? "" : "  TP2 " + fmtP(b))
 
 [d1, e1, s1, a1, b1, st1, ag1, tm1, bi1] = scanRow(tf1)
 [d2, e2, s2, a2, b2, st2, ag2, tm2, bi2] = scanRow(tf2)
 [d3, e3, s3, a3, b3, st3, ag3, tm3, bi3] = scanRow(tf3)
 [d4, e4, s4, a4, b4, st4, ag4, tm4, bi4] = scanRow(tf4)
+
+// A+ = slot has a signal and every enabled slot on a higher timeframe has a
+// Bias in the same direction (needs at least one higher slot enabled).
+array<bool> sOn  = array.from(on1, on2, on3, on4)
+array<int>  sSec = array.from(timeframe.in_seconds(tf1), timeframe.in_seconds(tf2), timeframe.in_seconds(tf3), timeframe.in_seconds(tf4))
+array<int>  sDir = array.from(nz(d1), nz(d2), nz(d3), nz(d4))
+array<int>  sBi  = array.from(nz(bi1), nz(bi2), nz(bi3), nz(bi4))
+aplus(int i) =>
+    int  d  = sDir.get(i)
+    bool ok = sOn.get(i) and d != 0
+    int  n  = 0
+    for j = 0 to 3
+        if ok and j != i and sOn.get(j) and sSec.get(j) > sSec.get(i)
+            n += 1
+            if sBi.get(j) != d
+                ok := false
+    ok and n > 0
+bool ap1 = aplus(0)
+bool ap2 = aplus(1)
+bool ap3 = aplus(2)
+bool ap4 = aplus(3)
 
 // Call-outs: fire once when a slot's latest signal changes.
 newSig(bool on, int d, int tm) => showScan and on and d != 0 and not na(tm) and tm != nz(tm[1])
@@ -897,14 +920,14 @@ bool n2 = newSig(on2, d2, tm2)
 bool n3 = newSig(on3, d3, tm3)
 bool n4 = newSig(on4, d4, tm4)
 if scanAlerts
-    if n1
-        alert(callText(tf1, d1, e1, s1, a1, b1), alert.freq_once_per_bar)
-    if n2
-        alert(callText(tf2, d2, e2, s2, a2, b2), alert.freq_once_per_bar)
-    if n3
-        alert(callText(tf3, d3, e3, s3, a3, b3), alert.freq_once_per_bar)
-    if n4
-        alert(callText(tf4, d4, e4, s4, a4, b4), alert.freq_once_per_bar)
+    if n1 and (ap1 or not aplusOnly)
+        alert(callText(tf1, d1, e1, s1, a1, b1, ap1), alert.freq_once_per_bar)
+    if n2 and (ap2 or not aplusOnly)
+        alert(callText(tf2, d2, e2, s2, a2, b2, ap2), alert.freq_once_per_bar)
+    if n3 and (ap3 or not aplusOnly)
+        alert(callText(tf3, d3, e3, s3, a3, b3, ap3), alert.freq_once_per_bar)
+    if n4 and (ap4 or not aplusOnly)
+        alert(callText(tf4, d4, e4, s4, a4, b4, ap4), alert.freq_once_per_bar)
 
 string scanPos = switch scanPosIn
     "Top left"     => position.top_left
@@ -919,9 +942,9 @@ var table scanT = table.new(scanPos, 7, 5, bgcolor = color.new(chart.bg_color, 5
 cellTxt(int c, int r, string t, color tc, color bg) =>
     table.cell(scanT, c, r, t, text_color = tc, bgcolor = bg, text_size = scanSz)
 
-drawRow(int r, string tf, int d, float e, float s, float a, int st, int ag, int bi) =>
+drawRow(int r, string tf, int d, float e, float s, float a, int st, int ag, int bi, bool ap) =>
     color fg = chart.fg_color
-    cellTxt(0, r, fmtTF(tf), fg, color(na))
+    cellTxt(0, r, ap ? fmtTF(tf) + " A+" : fmtTF(tf), ap ? #131722 : fg, ap ? #FFC107 : color(na))
     cellTxt(1, r, bi > 0 ? "Bull" : bi < 0 ? "Bear" : "—", bi != 0 ? color.white : fg,
          bi > 0 ? color.new(colBull, 15) : bi < 0 ? color.new(colBear, 15) : color(na))
     if d == 0
@@ -946,16 +969,16 @@ if showScan and barstate.islast
         cellTxt(c, 0, h, chart.fg_color, hc)
     int r = 1
     if on1
-        drawRow(r, tf1, d1, e1, s1, a1, st1, ag1, bi1)
+        drawRow(r, tf1, d1, e1, s1, a1, st1, ag1, bi1, ap1)
         r += 1
     if on2
-        drawRow(r, tf2, d2, e2, s2, a2, st2, ag2, bi2)
+        drawRow(r, tf2, d2, e2, s2, a2, st2, ag2, bi2, ap2)
         r += 1
     if on3
-        drawRow(r, tf3, d3, e3, s3, a3, st3, ag3, bi3)
+        drawRow(r, tf3, d3, e3, s3, a3, st3, ag3, bi3, ap3)
         r += 1
     if on4
-        drawRow(r, tf4, d4, e4, s4, a4, st4, ag4, bi4)
+        drawRow(r, tf4, d4, e4, s4, a4, st4, ag4, bi4, ap4)
 
 // ───────────── Plots & alerts ─────────────
 plotshape(bearCisd, "Bearish CISD", shape.triangledown, location.abovebar, colBear, size = size.tiny)
@@ -972,4 +995,6 @@ alertcondition(bullCisd,  "Bullish CISD",         "{{ticker}} bullish CISD after
 alertcondition(trTP1,     "Trade TP 1 hit",       "{{ticker}} CISD trade reached TP 1")
 alertcondition(trTP2,     "Trade TP 2 hit",       "{{ticker}} CISD trade reached TP 2")
 alertcondition(trSL,      "Trade stopped out",    "{{ticker}} CISD trade hit its stop")
+alertcondition((n1 and ap1) or (n2 and ap2) or (n3 and ap3) or (n4 and ap4), "Scanner: new A+ signal",
+     "{{ticker}} scanner: new A+ CISD signal (agrees with all higher-timeframe bias)")
 alertcondition(n1 or n2 or n3 or n4, "Scanner: new signal", "{{ticker}} scanner: new CISD signal on one of the scanner timeframes")
