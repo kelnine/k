@@ -109,17 +109,24 @@ tf4        = input.timeframe("240", "Slot 4", inline = "s4", group = G_SCN)
 scanAlerts = input.bool(true, "Alert on new scanner signals", group = G_SCN,
      tooltip = "Create an alert with condition \"Any alert() function call\" to get these.")
 scanPosIn  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_SCN)
-scanSzIn   = input.string("small", "Text size", options = ["tiny", "small", "normal"], group = G_SCN)
+scanSzIn   = input.string("small", "Scanner size", options = ["tiny", "small", "normal", "large", "huge"], group = G_SCN)
 
 const string G_STY = "Style"
 autoCol    = input.bool(true, "Neutral lines follow chart text color", group = G_STY,
      tooltip = "Keeps range edge, trendline and open lines visible on both light and dark themes. Turn off to use the custom colors above.")
-lblSizeIn  = input.string("small", "Label size", options = ["tiny", "small", "normal"], group = G_STY)
+lblSizeIn  = input.string("small", "Label size", options = ["tiny", "small", "normal", "large", "huge"], group = G_STY)
 
 color  colRng  = autoCol ? chart.fg_color : colRngIn
 color  colTL   = autoCol ? chart.fg_color : colTLIn
 color  colOpen = autoCol ? chart.fg_color : colOpenIn
-string lblSz   = lblSizeIn == "tiny" ? size.tiny : lblSizeIn == "normal" ? size.normal : size.small
+toSize(string s) =>
+    switch s
+        "tiny"   => size.tiny
+        "normal" => size.normal
+        "large"  => size.large
+        "huge"   => size.huge
+        => size.small
+string lblSz   = toSize(lblSizeIn)
 
 // ───────────── Types & helpers ─────────────
 type Zone
@@ -904,7 +911,7 @@ string scanPos = switch scanPosIn
     "Bottom right" => position.bottom_right
     "Bottom left"  => position.bottom_left
     => position.top_right
-string scanSz = scanSzIn == "tiny" ? size.tiny : scanSzIn == "normal" ? size.normal : size.small
+string scanSz = toSize(scanSzIn)
 
 var table scanT = table.new(scanPos, 7, 5, bgcolor = color.new(chart.bg_color, 5),
      frame_color = color.new(chart.fg_color, 70), frame_width = 1, border_color = color.new(chart.fg_color, 85), border_width = 1)
