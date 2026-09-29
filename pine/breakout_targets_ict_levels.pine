@@ -9,7 +9,7 @@
 //     • On a range breakout: measured-move targets = range edge ± k × range height
 //  2. LTF ICT execution ("Top ticked", MNQ 5m)
 //     • DO / TDO / 09:30 / 10:00 opens, PDH/PDL, PWH/PWL, PMH/PML,
-//       Asia & London session highs/lows
+//       Asia, London, NY AM & NY PM session highs/lows
 //     • Liquidity sweep → CISD (close through the open of the last opposing
 //       delivery run) → Entry / SL / TP1 / TP2, tracked until TP2 or SL
 //
@@ -67,6 +67,11 @@ showAsia   = input.bool(true, "Asia high/low", group = G_ICT)
 asiaSess   = input.session("2000-0000", "Asia session", group = G_ICT)
 showLon    = input.bool(true, "London high/low", group = G_ICT)
 lonSess    = input.session("0200-0500", "London session", group = G_ICT)
+showNYAM   = input.bool(true, "NY AM high/low", group = G_ICT)
+nyAmSess   = input.session("0930-1200", "NY AM session", group = G_ICT)
+showNYPM   = input.bool(false, "NY PM high/low", group = G_ICT)
+nyPmSess   = input.session("1330-1600", "NY PM session", group = G_ICT)
+shadeSess  = input.bool(false, "Shade London / NY AM / NY PM", group = G_ICT)
 lvlExt     = input.int(20, "Level label offset (bars right)", minval = 1, maxval = 450, group = G_ICT)
 mergeTol   = input.float(0.25, "Merge distance (× ATR)", minval = 0, step = 0.05, group = G_ICT,
      tooltip = "Levels closer than this share a single label, e.g. \"PDL / PMH\". 0 = only merge identical prices.")
@@ -77,7 +82,9 @@ colSess    = input.color(#2962FF, "Session H/L color", group = G_ICT)
 const string G_CISD = "CISD"
 showCisd   = input.bool(true, "Show CISD signals", group = G_CISD)
 reqSweep   = input.bool(true, "Require liquidity sweep first", group = G_CISD,
-     tooltip = "Sweep = high/low trades through a pivot, PDH/PDL, PWH/PWL, PMH/PML or a completed Asia/London high/low.")
+     tooltip = "Sweep = high/low trades through a pivot, PDH/PDL, PWH/PWL, PMH/PML or a completed Asia/London/NY AM high/low.")
+sigWindow  = input.string("Any time", "Signal only during", options = ["Any time", "NY AM", "NY AM + NY PM", "London + NY AM", "London + NY AM + NY PM"], group = G_CISD,
+     tooltip = "Restrict CISD signals to these sessions (intraday charts only). Sessions are set in the ICT Levels group.")
 sweepLook  = input.int(12, "Sweep must be within (bars)", minval = 1, group = G_CISD)
 minBody    = input.float(0.3, "Min CISD candle body (× ATR)", minval = 0, step = 0.1, group = G_CISD,
      tooltip = "Filters weak closes through the level. Raise it on 1m charts to cut noise.")
@@ -383,6 +390,10 @@ var Lvl lAH   = Lvl.new()
 var Lvl lAL   = Lvl.new()
 var Lvl lLH   = Lvl.new()
 var Lvl lLL   = Lvl.new()
+var Lvl lNAH  = Lvl.new()
+var Lvl lNAL  = Lvl.new()
+var Lvl lNPH  = Lvl.new()
+var Lvl lNPL  = Lvl.new()
 
 var array<Lvl> allLvls = array.new<Lvl>()
 if barstate.isfirst
@@ -400,6 +411,10 @@ if barstate.isfirst
     allLvls.push(lAL)
     allLvls.push(lLH)
     allLvls.push(lLL)
+    allLvls.push(lNAH)
+    allLvls.push(lNAL)
+    allLvls.push(lNPH)
+    allLvls.push(lNPL)
 
 var float dOpen = na
 var int   dayX  = na
@@ -453,6 +468,39 @@ else if inAsia
     asiaH := math.max(asiaH, high)
     asiaL := math.min(asiaL, low)
 
+bool inNYAM = inSess(nyAmSess)
+bool inNYPM = inSess(nyPmSess)
+var float nyAmH = na
+var float nyAmL = na
+var int   nyAmX = na
+var float nyPmH = na
+var float nyPmL = na
+var int   nyPmX = na
+
+if inNYAM and not inNYAM[1]
+    nyAmH := high
+    nyAmL := low
+    nyAmX := bar_index
+    lNAH.reset()
+    lNAL.reset()
+else if inNYAM
+    nyAmH := math.max(nyAmH, high)
+    nyAmL := math.min(nyAmL, low)
+
+if inNYPM and not inNYPM[1]
+    nyPmH := high
+    nyPmL := low
+    nyPmX := bar_index
+    lNPH.reset()
+    lNPL.reset()
+else if inNYPM
+    nyPmH := math.max(nyPmH, high)
+    nyPmL := math.min(nyPmL, low)
+
+bgcolor(shadeSess and showSess and inLon  ? color.new(colSess, 94) : na, title = "London shade")
+bgcolor(shadeSess and showSess and inNYAM ? color.new(#FF9800, 92) : na, title = "NY AM shade")
+bgcolor(shadeSess and showSess and inNYPM ? color.new(#FF9800, 95) : na, title = "NY PM shade")
+
 if inLon and not inLon[1]
     lonH := high
     lonL := low
@@ -478,6 +526,10 @@ if showSess and barstate.islast
     lAL.draw(showAsia, asiaX, asiaL, "Asia low",  colSess, line.style_solid)
     lLH.draw(showLon,  lonX,  lonH,  "LNDN high", colSess, line.style_solid)
     lLL.draw(showLon,  lonX,  lonL,  "LNDN low",  colSess, line.style_solid)
+    lNAH.draw(showNYAM, nyAmX, nyAmH, "NY AM high", #FF9800, line.style_solid)
+    lNAL.draw(showNYAM, nyAmX, nyAmL, "NY AM low",  #FF9800, line.style_solid)
+    lNPH.draw(showNYPM, nyPmX, nyPmH, "NY PM high", #FF9800, line.style_solid)
+    lNPL.draw(showNYPM, nyPmX, nyPmL, "NY PM low",  #FF9800, line.style_solid)
 
     // Merge pass: sort visible levels by price; levels within mergeTol × ATR of a
     // group's first level share its label ("PDL / PMH  30356.50").
@@ -519,6 +571,8 @@ float sAH = showSess and not inAsia ? asiaH : na
 float sAL = showSess and not inAsia ? asiaL : na
 float sLH = showSess and not inLon  ? lonH  : na
 float sLL = showSess and not inLon  ? lonL  : na
+float sNH = showSess and not inNYAM ? nyAmH : na
+float sNL = showSess and not inNYAM ? nyAmL : na
 
 bool hPD = tookHigh(pdh)
 bool hPW = tookHigh(pwh)
@@ -530,8 +584,10 @@ bool lPW = tookLow(pwl)
 bool lPM = tookLow(pml)
 bool lA  = tookLow(sAL)
 bool lL  = tookLow(sLL)
-bool bslSwept = (not na(lastPH) and high > lastPH) or hPD or hPW or hPM or hA or hL
-bool sslSwept = (not na(lastPL) and low < lastPL)  or lPD or lPW or lPM or lA or lL
+bool hN  = tookHigh(sNH)
+bool lN  = tookLow(sNL)
+bool bslSwept = (not na(lastPH) and high > lastPH) or hPD or hPW or hPM or hA or hL or hN
+bool sslSwept = (not na(lastPL) and low < lastPL)  or lPD or lPW or lPM or lA or lL or lN
 
 var int lastBslBar = -100000
 var int lastSslBar = -100000
@@ -590,8 +646,16 @@ if not bearCisd and not na(bearRunOpen) and bar_index > bearRunX and close > bea
     cisdX    := bearRunX
     bearRunOpen := na
 
-bearCisd := showCisd and bearCisd
-bullCisd := showCisd and bullCisd
+bool inWindow = switch sigWindow
+    "NY AM"                  => inNYAM
+    "NY AM + NY PM"          => inNYAM or inNYPM
+    "London + NY AM"         => inLon or inNYAM
+    "London + NY AM + NY PM" => inLon or inNYAM or inNYPM
+    => true
+inWindow := inWindow or not showSess
+
+bearCisd := showCisd and inWindow and bearCisd
+bullCisd := showCisd and inWindow and bullCisd
 
 var array<line>  cisdLines  = array.new<line>()
 var array<label> cisdLabels = array.new<label>()
