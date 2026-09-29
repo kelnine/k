@@ -1,0 +1,302 @@
+//@version=6
+indicator("Untested Highs & Lows: Tap / Break", shorttitle = "Untested H/L", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// The strategy from the video:
+//  • Only mark the previous day high/low, previous week high/low, and the
+//    Asia, London and New York session highs/lows.
+//  • Only UNTESTED levels count, meaning price hasn't traded back to them yet.
+//    A level is used up the first time price touches it.
+//  • Reversal: price taps an untested low and FAILS to close below it on the
+//    5m (or 15m), so go long for the bounce. At an untested high that price
+//    fails to close above, go short.
+//  • Continuation: in an uptrend, a 15m candle CLOSING above an untested high
+//    is a long. In a downtrend, a 15m close below an untested low is a short.
+// Made for 1m–15m charts. Works on ES, NQ, gold, silver, forex and anything else.
+
+// ───────────────────────── Inputs ─────────────────────────
+G_LVL = "Levels"
+bool   showD     = input.bool(true, "Previous day high / low", group = G_LVL)
+bool   showW     = input.bool(true, "Previous week high / low", group = G_LVL)
+bool   showA     = input.bool(true, "Asia", inline = "asia", group = G_LVL)
+string sesA      = input.session("1800-0300", "", inline = "asia", group = G_LVL)
+bool   showL     = input.bool(true, "London", inline = "lon", group = G_LVL)
+string sesL      = input.session("0300-0930", "", inline = "lon", group = G_LVL)
+bool   showN     = input.bool(true, "New York", inline = "ny", group = G_LVL)
+string sesN      = input.session("0930-1600", "", inline = "ny", group = G_LVL)
+string sesTz     = input.string("America/New_York", "Session time zone", options = ["America/New_York", "America/Chicago", "Europe/London", "Asia/Tokyo", "Etc/UTC"], group = G_LVL)
+int    keepDays  = input.int(2, "Drop untested day/session levels after (days)", minval = 1, group = G_LVL)
+int    keepWeeks = input.int(2, "Drop untested weekly levels after (weeks)", minval = 1, group = G_LVL)
+
+G_SIG = "Signals"
+bool   useRev  = input.bool(true, "Rejection signals (tap, no close through)", group = G_SIG)
+string rejTF   = input.timeframe("5", "Rejection candle", group = G_SIG, tooltip = "Price taps the level and must FAIL to close through it on a candle of this timeframe. The video uses 5m or 15m.")
+bool   needCol = input.bool(false, "Rejection candle must also close in trade direction", group = G_SIG, tooltip = "Longs need a green rejection candle, shorts a red one.")
+bool   useBrk  = input.bool(true, "Breakout signals (close through, with trend)", group = G_SIG)
+string brkTF   = input.timeframe("15", "Breakout candle", group = G_SIG, tooltip = "A candle of this timeframe must CLOSE through the level. The video uses 15m.")
+int    brkWin  = input.int(2, "Breakout must close within (candles)", minval = 1, group = G_SIG, tooltip = "Counted from the breakout-timeframe candle that first tapped the level. 1 = only that candle.")
+int    tolTk   = input.int(0, "Tap tolerance (ticks)", minval = 0, group = G_SIG, tooltip = "Count a near miss as a tap. 0 = price must trade at or through the level.")
+
+G_TR = "Trend (breakouts only)"
+bool   useTrend = input.bool(true, "Breakouts only with the trend", group = G_TR, tooltip = "Uptrend = fast EMA above slow EMA on the trend timeframe, using the last closed candle.")
+string trendTF  = input.timeframe("15", "Trend timeframe", group = G_TR)
+int    fastLen  = input.int(20, "Fast EMA", minval = 1, inline = "ema", group = G_TR)
+int    slowLen  = input.int(50, "Slow EMA", minval = 2, inline = "ema", group = G_TR)
+bool   plotEma  = input.bool(false, "Plot trend EMAs", group = G_TR)
+
+G_STY = "Style"
+color  colD      = input.color(#FF9800, "Day", inline = "c1", group = G_STY)
+color  colW      = input.color(#AB47BC, "Week", inline = "c1", group = G_STY)
+color  colA      = input.color(#F06292, "Asia", inline = "c2", group = G_STY)
+color  colL      = input.color(#42A5F5, "London", inline = "c2", group = G_STY)
+color  colN      = input.color(#26A69A, "NY", inline = "c2", group = G_STY)
+color  colUp     = input.color(#089981, "Long", inline = "c3", group = G_STY)
+color  colDn     = input.color(#F23645, "Short", inline = "c3", group = G_STY)
+int    lineW     = input.int(1, "Line width", minval = 1, maxval = 4, group = G_STY)
+bool   keepTaps  = input.bool(true, "Keep tapped levels on chart (dotted)", group = G_STY)
+bool   showPrice = input.bool(true, "Show price on level labels", group = G_STY)
+string txtSize   = input.string(size.small, "Text size", options = [size.tiny, size.small, size.normal], group = G_STY)
+bool   showPanel = input.bool(true, "Show status panel", group = G_STY)
+
+// ───────────────────────── Types / state ─────────────────────────
+// One marked high or low.
+type Level
+    float  price
+    bool   isHigh
+    string name
+    color  col
+    int    rank           // 3 week, 2 day, 1 session: decides the colour when tags merge
+    int    t0             // time of the candle that made the high/low
+    int    expires        // dropped after this time if still untested
+    int    state   = 0    // 0 untested, 1 tapped (judging the reaction), 2 done, 3 expired
+    bool   rejDone = false
+    bool   brkDone = false
+    int    brkBars = 0
+    line   ln
+    label  lb
+
+// Running high/low of a day, week or session.
+type Period
+    int   sid    = 0      // id of the current instance (its start time)
+    bool  active = false
+    bool  valid  = false  // false for the partial period at the start of chart history
+    float hi
+    float lo
+    int   hiT
+    int   loT
+
+var array<Level> levels = array.new<Level>()
+var Period pDay  = Period.new()
+var Period pWeek = Period.new()
+var Period pAsia = Period.new()
+var Period pLon  = Period.new()
+var Period pNy   = Period.new()
+
+int tfSec  = timeframe.in_seconds()
+int dayMs  = 86400000
+int nowSec = (hour(time, sesTz) * 60 + minute(time, sesTz)) * 60 + second(time, sesTz)
+
+// ───────────────────────── Helpers ─────────────────────────
+tfName(string tf) =>
+    int s = timeframe.in_seconds(tf)
+    s < 3600 ? str.tostring(math.round(s / 60)) + "m" : s < 86400 ? str.tostring(math.round(s / 3600)) + "h" : tf
+
+lvlText(string nm, float p) =>
+    showPrice ? nm + "  " + str.tostring(p, format.mintick) : nm
+
+lvlTip(string nm, int t) =>
+    nm + " · made " + str.format_time(t, "EEE d MMM, HH:mm", sesTz)
+
+// Mark a new untested level, or merge its tag into an untested level at the same price.
+addLevel(float p, bool isHi, string nm, color c, int rk, int t0, int keepMs) =>
+    if not na(p)
+        Level same = na
+        for lv in levels
+            if lv.state == 0 and lv.isHigh == isHi and math.abs(lv.price - p) < syminfo.mintick / 2
+                same := lv
+                break
+        if na(same)
+            line  ln = line.new(t0, p, time, p, xloc.bar_time, extend.right, c, line.style_solid, lineW)
+            label lb = label.new(time, p, lvlText(nm, p), xloc.bar_time, yloc.price, color(na), label.style_label_left, c, txtSize, tooltip = lvlTip(nm, t0))
+            levels.push(Level.new(price = p, isHigh = isHi, name = nm, col = c, rank = rk, t0 = t0, expires = time + keepMs, ln = ln, lb = lb))
+        else
+            same.name    := rk > same.rank ? nm + " · " + same.name : same.name + " · " + nm
+            same.expires := math.max(same.expires, time + keepMs)
+            if rk > same.rank
+                same.rank := rk
+                same.col  := c
+                same.ln.set_color(c)
+                same.lb.set_textcolor(c)
+            if t0 < same.t0
+                same.t0 := t0
+                same.ln.set_x1(t0)
+            same.lb.set_text(lvlText(same.name, same.price))
+            same.lb.set_tooltip(lvlTip(same.name, same.t0))
+    true
+
+// Feed one bar into a period tracker. When the period ends, its high and low become levels.
+track(Period s, bool inS, int sid, string nmH, string nmL, color c, int rk, int keepMs, bool enabled) =>
+    bool fresh = inS and sid != s.sid
+    if s.active and (not inS or fresh)
+        if s.valid and enabled
+            addLevel(s.hi, true, nmH, c, rk, s.hiT, keepMs)
+            addLevel(s.lo, false, nmL, c, rk, s.loT, keepMs)
+        s.active := false
+    if fresh
+        s.sid    := sid
+        s.valid  := bar_index > 0
+        s.active := true
+        s.hi     := high
+        s.lo     := low
+        s.hiT    := time
+        s.loT    := time
+    else if inS and s.active
+        if high > s.hi
+            s.hi  := high
+            s.hiT := time
+        if low < s.lo
+            s.lo  := low
+            s.loT := time
+    true
+
+// "HHMM" at position `pos` of a session string, in minutes after midnight.
+hhmm(string s, int pos) =>
+    int(str.tonumber(str.substring(s, pos, pos + 2))) * 60 + int(str.tonumber(str.substring(s, pos + 2, pos + 4)))
+
+// Is this bar inside the session, and which session instance (its start time) is it?
+sessWindow(string ses) =>
+    int st  = hhmm(ses, 0)
+    int len = (hhmm(ses, 5) - st + 1440) % 1440
+    int dur = (len == 0 ? 1440 : len) * 60
+    int el  = (nowSec - st * 60 + 86400) % 86400
+    [el < dur, time - el * 1000]
+
+// ───────────────────────── Build levels ─────────────────────────
+[inA, sidA] = sessWindow(sesA)
+[inL, sidL] = sessWindow(sesL)
+[inN, sidN] = sessWindow(sesN)
+
+track(pDay,  true, time("D"), "PDH", "PDL", colD, 2, keepDays * dayMs, showD)
+track(pWeek, true, time("W"), "PWH", "PWL", colW, 3, keepWeeks * 7 * dayMs, showW)
+track(pAsia, inA, sidA, "Asia H", "Asia L", colA, 1, keepDays * dayMs, showA)
+track(pLon,  inL, sidL, "London H", "London L", colL, 1, keepDays * dayMs, showL)
+track(pNy,   inN, sidN, "NY H", "NY L", colN, 1, keepDays * dayMs, showN)
+
+// ───────────────────────── Candle closes & trend ─────────────────────────
+// When the chart is already on (or above) a setting's timeframe, the chart's own candles are used.
+bool   rejChart = timeframe.in_seconds(rejTF) <= tfSec
+bool   brkChart = timeframe.in_seconds(brkTF) <= tfSec
+string rejEff   = rejChart ? timeframe.period : rejTF
+string brkEff   = brkChart ? timeframe.period : brkTF
+string trEff    = timeframe.in_seconds(trendTF) <= tfSec ? timeframe.period : trendTF
+
+// True on the chart bar that closes a rejection / breakout candle, never on an unfinished realtime bar.
+int  rejCT    = time_close(rejEff)
+int  brkCT    = time_close(brkEff)
+bool rejClose = barstate.isconfirmed and (rejChart or time_close >= rejCT)
+bool brkClose = barstate.isconfirmed and (brkChart or time_close >= brkCT)
+
+bool rejNew = timeframe.change(rejEff)
+var float rejOpen = na
+if rejChart or rejNew
+    rejOpen := open
+
+// Trend from the last CLOSED trend-timeframe candle, so it never repaints.
+[emaF, emaS] = request.security(syminfo.tickerid, trEff, [ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]], lookahead = barmerge.lookahead_on)
+bool upTrend = emaF > emaS
+bool dnTrend = emaF < emaS
+plot(plotEma ? emaF : na, "Trend fast EMA", #2962FF)
+plot(plotEma ? emaS : na, "Trend slow EMA", #FF6D00)
+
+// ───────────────────────── Judge taps ─────────────────────────
+float  tol     = tolTk * syminfo.mintick
+string rejName = tfName(rejEff)
+string brkName = tfName(brkEff)
+array<string> whyLong  = array.new<string>()
+array<string> whyShort = array.new<string>()
+bool longRev  = false
+bool shortRev = false
+bool longBrk  = false
+bool shortBrk = false
+
+int n = levels.size()
+if n > 0
+    for i = n - 1 to 0
+        Level lv = levels.get(i)
+
+        // 1) First touch of an untested level: it is now tested.
+        if lv.state == 0
+            bool tapped = lv.isHigh ? high >= lv.price - tol : low <= lv.price + tol
+            if tapped
+                lv.state := 1
+                lv.ln.set_extend(extend.none)
+                lv.ln.set_x2(time)
+                lv.ln.set_style(line.style_dotted)
+                lv.ln.set_color(color.new(lv.col, 40))
+                lv.lb.delete()
+            else if time > lv.expires
+                lv.ln.delete()
+                lv.lb.delete()
+                lv.state := 3
+
+        // 2) Tapped: did the candle fail to close through (reversal) or close through (breakout)?
+        if lv.state == 1
+            if not lv.rejDone and rejClose
+                lv.rejDone := true
+                bool held  = lv.isHigh ? close < lv.price : close > lv.price
+                bool colOk = not needCol or (lv.isHigh ? close < rejOpen : close > rejOpen)
+                if useRev and held and colOk
+                    if lv.isHigh
+                        shortRev := true
+                        whyShort.push(lv.name + " tapped, no " + rejName + " close above")
+                    else
+                        longRev := true
+                        whyLong.push(lv.name + " tapped, no " + rejName + " close below")
+            if not lv.brkDone and brkClose
+                lv.brkBars := lv.brkBars + 1
+                bool through = lv.isHigh ? close > lv.price : close < lv.price
+                if through
+                    lv.brkDone := true
+                    if useBrk and lv.isHigh and (not useTrend or upTrend)
+                        longBrk := true
+                        whyLong.push(lv.name + " broken, " + brkName + " close above")
+                    else if useBrk and not lv.isHigh and (not useTrend or dnTrend)
+                        shortBrk := true
+                        whyShort.push(lv.name + " broken, " + brkName + " close below")
+                else if lv.brkBars >= brkWin
+                    lv.brkDone := true
+            if lv.rejDone and lv.brkDone
+                lv.state := 2
+
+        // 3) Resolved or expired levels leave the watch list.
+        if lv.state >= 2
+            if lv.state == 2 and not keepTaps
+                lv.ln.delete()
+            levels.remove(i)
+
+// ───────────────────────── Signals & alerts ─────────────────────────
+if whyLong.size() > 0
+    label.new(bar_index, low, "▲ LONG\n" + whyLong.join("\n"), yloc = yloc.belowbar, color = colUp, style = label.style_label_up, textcolor = color.white, size = txtSize)
+    alert(syminfo.ticker + " LONG: " + whyLong.join(" | ") + " @ " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if whyShort.size() > 0
+    label.new(bar_index, high, "▼ SHORT\n" + whyShort.join("\n"), yloc = yloc.abovebar, color = colDn, style = label.style_label_down, textcolor = color.white, size = txtSize)
+    alert(syminfo.ticker + " SHORT: " + whyShort.join(" | ") + " @ " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+alertcondition(longRev,  "Long: low tapped and held",        "{{ticker}} LONG: untested low tapped, no close below")
+alertcondition(shortRev, "Short: high tapped and rejected",  "{{ticker}} SHORT: untested high tapped, no close above")
+alertcondition(longBrk,  "Long: close above untested high",  "{{ticker}} LONG: close above untested high in an uptrend")
+alertcondition(shortBrk, "Short: close below untested low",  "{{ticker}} SHORT: close below untested low in a downtrend")
+
+// ───────────────────────── Right-edge labels & status panel ─────────────────────────
+var table panel = table.new(position.top_right, 1, 3, bgcolor = color.new(color.gray, 85))
+if barstate.islast
+    int xr = time + 2 * tfSec * 1000
+    for lv in levels
+        if lv.state == 0
+            lv.lb.set_x(xr)
+    if showPanel
+        string trTxt = not useTrend ? "Trend filter off" : upTrend ? "▲ " + tfName(trEff) + " uptrend" : dnTrend ? "▼ " + tfName(trEff) + " downtrend" : tfName(trEff) + " trend: n/a"
+        color  trCol = not useTrend ? chart.fg_color : upTrend ? colUp : dnTrend ? colDn : chart.fg_color
+        panel.cell(0, 0, trTxt, text_color = trCol, text_size = txtSize, text_halign = text.align_left)
+        panel.cell(0, 1, "Rejection " + rejName + " · Break " + brkName, text_color = chart.fg_color, text_size = txtSize, text_halign = text.align_left)
+        if tfSec > 900
+            panel.cell(0, 2, "⚠ Made for 1m–15m charts", text_color = colDn, text_size = txtSize, text_halign = text.align_left)
