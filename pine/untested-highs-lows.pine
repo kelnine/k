@@ -55,7 +55,10 @@ int    lineW     = input.int(1, "Line width", minval = 1, maxval = 4, group = G_
 bool   keepTaps  = input.bool(true, "Keep tapped levels on chart (dotted)", group = G_STY)
 bool   showPrice = input.bool(true, "Show price on level labels", group = G_STY)
 string txtSize   = input.string(size.small, "Text size", options = [size.tiny, size.small, size.normal], group = G_STY)
-bool   showPanel = input.bool(true, "Show status panel", group = G_STY)
+bool   fillLbl   = input.bool(true, "Filled level labels (easier to read)", group = G_STY)
+bool   sigShort  = input.bool(true, "Compact signal labels (tap for details)", group = G_STY)
+bool   showPanel = input.bool(true, "Show status panel", inline = "pnl", group = G_STY)
+string panelPos  = input.string("Bottom right", "", options = ["Top right", "Bottom right", "Bottom left", "Top left"], inline = "pnl", group = G_STY)
 
 // ───────────────────────── Types / state ─────────────────────────
 // One marked high or low.
@@ -100,8 +103,10 @@ tfName(string tf) =>
     int s = timeframe.in_seconds(tf)
     s < 3600 ? str.tostring(math.round(s / 60)) + "m" : s < 86400 ? str.tostring(math.round(s / 3600)) + "h" : tf
 
-lvlText(string nm, float p) =>
-    showPrice ? nm + "  " + str.tostring(p, format.mintick) : nm
+// Name + weekday the high/low was made (tells an old PDH from yesterday's) + price.
+lvlText(string nm, float p, int t) =>
+    string txt = nm + " " + str.format_time(t, "EEE", sesTz)
+    showPrice ? txt + "  " + str.tostring(p, format.mintick) : txt
 
 lvlTip(string nm, int t) =>
     nm + " · made " + str.format_time(t, "EEE d MMM, HH:mm", sesTz)
@@ -116,7 +121,7 @@ addLevel(float p, bool isHi, string nm, color c, int rk, int t0, int keepMs) =>
                 break
         if na(same)
             line  ln = line.new(t0, p, time, p, xloc.bar_time, extend.right, c, line.style_solid, lineW)
-            label lb = label.new(time, p, lvlText(nm, p), xloc.bar_time, yloc.price, color(na), label.style_label_left, c, txtSize, tooltip = lvlTip(nm, t0))
+            label lb = label.new(time, p, lvlText(nm, p, t0), xloc.bar_time, yloc.price, fillLbl ? c : color(na), label.style_label_left, fillLbl ? color.white : c, txtSize, tooltip = lvlTip(nm, t0))
             levels.push(Level.new(price = p, isHigh = isHi, name = nm, col = c, rank = rk, t0 = t0, expires = time + keepMs, ln = ln, lb = lb))
         else
             same.name    := rk > same.rank ? nm + " · " + same.name : same.name + " · " + nm
@@ -125,11 +130,14 @@ addLevel(float p, bool isHi, string nm, color c, int rk, int t0, int keepMs) =>
                 same.rank := rk
                 same.col  := c
                 same.ln.set_color(c)
-                same.lb.set_textcolor(c)
+                if fillLbl
+                    same.lb.set_color(c)
+                else
+                    same.lb.set_textcolor(c)
             if t0 < same.t0
                 same.t0 := t0
                 same.ln.set_x1(t0)
-            same.lb.set_text(lvlText(same.name, same.price))
+            same.lb.set_text(lvlText(same.name, same.price, same.t0))
             same.lb.set_tooltip(lvlTip(same.name, same.t0))
     true
 
@@ -275,10 +283,10 @@ if n > 0
 
 // ───────────────────────── Signals & alerts ─────────────────────────
 if whyLong.size() > 0
-    label.new(bar_index, low, "▲ LONG\n" + whyLong.join("\n"), yloc = yloc.belowbar, color = colUp, style = label.style_label_up, textcolor = color.white, size = txtSize)
+    label.new(bar_index, low, sigShort ? "▲ LONG" : "▲ LONG\n" + whyLong.join("\n"), yloc = yloc.belowbar, color = colUp, style = label.style_label_up, textcolor = color.white, size = txtSize, tooltip = whyLong.join("\n"))
     alert(syminfo.ticker + " LONG: " + whyLong.join(" | ") + " @ " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
 if whyShort.size() > 0
-    label.new(bar_index, high, "▼ SHORT\n" + whyShort.join("\n"), yloc = yloc.abovebar, color = colDn, style = label.style_label_down, textcolor = color.white, size = txtSize)
+    label.new(bar_index, high, sigShort ? "▼ SHORT" : "▼ SHORT\n" + whyShort.join("\n"), yloc = yloc.abovebar, color = colDn, style = label.style_label_down, textcolor = color.white, size = txtSize, tooltip = whyShort.join("\n"))
     alert(syminfo.ticker + " SHORT: " + whyShort.join(" | ") + " @ " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
 
 alertcondition(longRev,  "Long: low tapped and held",        "{{ticker}} LONG: untested low tapped, no close below")
@@ -287,7 +295,9 @@ alertcondition(longBrk,  "Long: close above untested high",  "{{ticker}} LONG: c
 alertcondition(shortBrk, "Short: close below untested low",  "{{ticker}} SHORT: close below untested low in a downtrend")
 
 // ───────────────────────── Right-edge labels & status panel ─────────────────────────
-var table panel = table.new(position.top_right, 1, 3, bgcolor = color.new(color.gray, 85))
+// Bottom right by default: top right sits under TradingView's own legend on mobile.
+string pPos = panelPos == "Top right" ? position.top_right : panelPos == "Bottom left" ? position.bottom_left : panelPos == "Top left" ? position.top_left : position.bottom_right
+var table panel = table.new(pPos, 1, 3, bgcolor = color.new(color.gray, 85))
 if barstate.islast
     int xr = time + 2 * tfSec * 1000
     for lv in levels
