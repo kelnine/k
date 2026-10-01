@@ -110,7 +110,8 @@ scanAlerts = input.bool(true, "Alert on new scanner signals", group = G_SCN,
      tooltip = "Create an alert with condition \"Any alert() function call\" to get these.")
 aplusOnly  = input.bool(false, "Alert only A+ signals", group = G_SCN,
      tooltip = "A+ = the slot's signal agrees with the Bias of every enabled higher-timeframe slot.")
-scanPosIn  = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_SCN)
+scanPosIn  = input.string("Top right", "Position", options = ["Top right", "Top center", "Top left", "Middle right", "Middle left", "Bottom right", "Bottom center", "Bottom left"], group = G_SCN,
+     tooltip = "Top left sits under TradingView's symbol legend. Middle or bottom positions keep the table clear of it.")
 scanSzIn   = input.string("small", "Scanner size", options = ["tiny", "small", "normal", "large", "huge"], group = G_SCN)
 
 const string G_STY = "Style"
@@ -930,7 +931,11 @@ if scanAlerts
         alert(callText(tf4, d4, e4, s4, a4, b4, ap4), alert.freq_once_per_bar)
 
 string scanPos = switch scanPosIn
-    "Top left"     => position.top_left
+    "Top left"      => position.top_left
+    "Top center"    => position.top_center
+    "Middle right"  => position.middle_right
+    "Middle left"   => position.middle_left
+    "Bottom center" => position.bottom_center
     "Bottom right" => position.bottom_right
     "Bottom left"  => position.bottom_left
     => position.top_right
