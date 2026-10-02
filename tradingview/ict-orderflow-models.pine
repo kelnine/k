@@ -39,6 +39,7 @@ int    mssLen      = input.int(2, "1m swing strength (MSS)", minval = 1, maxval 
 float  dispMult    = input.float(1.5, "Displacement: body ≥ × avg body", minval = 0.5, step = 0.1, group = G_GEN, tooltip = "The middle candle of the FVG must have a body at least this many times the 20-bar average body.")
 int    minFvgTicks = input.int(0, "Min FVG size (ticks)", minval = 0, group = G_GEN)
 int    slBufTicks  = input.int(0, "Stop buffer (ticks)", minval = 0, group = G_GEN)
+float  minRR       = input.float(1.0, "Min RR for level targets", minval = 0.0, step = 0.25, group = G_GEN, tooltip = "When the opposite level or draw on liquidity is closer than this many R, the model's fixed RR target is used instead.")
 
 bool   useA   = input.bool(true, "Enable", group = G_A)
 int    aSwing = input.int(2, "15m swing strength", minval = 1, maxval = 10, group = G_A, tooltip = "Bars on each side for the 15m swing high/low. The most recent swings not yet taken out when the window opens are marked.")
@@ -87,7 +88,10 @@ bool  showTrades = input.bool(true, "Setups and trades", group = G_VIS)
 bool  showZones  = input.bool(true, "HTF FVG zones (C/D)", group = G_VIS)
 bool  showLevels = input.bool(true, "Key levels and draw on liquidity", group = G_VIS)
 bool  showAggr   = input.bool(false, "Mark aggressive volume bars (D)", group = G_VIS)
+string labelMode = input.string("Compact", "Trade labels", options = ["Compact", "Full"], group = G_VIS, tooltip = "Compact shows a short tag; tap or hover it for entry, stop and target. Full prints the prices on the chart.")
 bool  showStats  = input.bool(true, "Stats table", group = G_VIS)
+string statsPos  = input.string("Bottom right", "Stats table position", options = ["Bottom right", "Bottom left", "Top right", "Top left", "Middle right"], group = G_VIS)
+string statsSize = input.string("Small", "Stats table text", options = ["Tiny", "Small", "Normal"], group = G_VIS)
 color colBull    = input.color(#26a69a, "Bullish", group = G_VIS)
 color colBear    = input.color(#ef5350, "Bearish", group = G_VIS)
 color colRange   = input.color(#f0b90b, "Ranges", group = G_VIS)
@@ -439,8 +443,9 @@ method openTrade(Trade t, int dir, float entry, float sl, float tp, string tag, 
         t.lE := line.new(bar_index, entry, bar_index + 1, entry, color = colEntry, width = 2)
         t.lS := line.new(bar_index, sl, bar_index + 1, sl, color = colBear, style = line.style_dashed)
         t.lT := line.new(bar_index, tp, bar_index + 1, tp, color = colBull, style = line.style_dashed)
-        string txt = tag + (dir > 0 ? " LONG" : " SHORT") + "\nE " + f_px(entry) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp)
-        label.new(bar_index, dir > 0 ? low : high, txt, style = dir > 0 ? label.style_label_up : label.style_label_down, color = dir > 0 ? colBull : colBear, textcolor = color.white, size = size.small)
+        string prices = "E " + f_px(entry) + "\nSL " + f_px(sl) + "\nTP " + f_px(tp)
+        string txt    = labelMode == "Full" ? tag + (dir > 0 ? " LONG" : " SHORT") + "\n" + prices : tag + (dir > 0 ? " ▲" : " ▼")
+        label.new(bar_index, dir > 0 ? low : high, txt, style = dir > 0 ? label.style_label_up : label.style_label_down, color = dir > 0 ? colBull : colBear, textcolor = color.white, size = labelMode == "Full" ? size.small : size.tiny, tooltip = tag + (dir > 0 ? " LONG\n" : " SHORT\n") + prices)
     t
 
 // Stops are checked before targets, so a bar that touches both counts as a loss.
@@ -555,7 +560,7 @@ method run(SweepModel m, bool active, bool startNow, float nHi, float nLo, int r
                     m.entry := entryMode == "FVG edge" ? m.fvgTop : (m.fvgTop + m.fvgBot) / 2
                     m.sl    := m.ext - slBuf
                     float tgt = tgtMode == "Opposite level" ? m.hi : na
-                    m.tp    := not na(tgt) and tgt > m.entry ? tgt : m.entry + rr * (m.entry - m.sl)
+                    m.tp    := not na(tgt) and tgt - m.entry > 0 and tgt - m.entry >= minRR * (m.entry - m.sl) ? tgt : m.entry + rr * (m.entry - m.sl)
                     m.state := 2
                     ev := 1
                     if showTrades
@@ -582,7 +587,7 @@ method run(SweepModel m, bool active, bool startNow, float nHi, float nLo, int r
                     m.entry := entryMode == "FVG edge" ? m.fvgBot : (m.fvgTop + m.fvgBot) / 2
                     m.sl    := m.ext + slBuf
                     float tgt = tgtMode == "Opposite level" ? m.lo : na
-                    m.tp    := not na(tgt) and tgt < m.entry ? tgt : m.entry - rr * (m.sl - m.entry)
+                    m.tp    := not na(tgt) and m.entry - tgt > 0 and m.entry - tgt >= minRR * (m.sl - m.entry) ? tgt : m.entry - rr * (m.sl - m.entry)
                     m.state := 2
                     ev := -1
                     if showTrades
@@ -597,13 +602,13 @@ f_sweepMsg(string tag, int ev, SweepModel m, Trade t) =>
 f_tradeMsg(string tag, Trade t) =>
     syminfo.ticker + " · " + tag + " " + (t.dir > 0 ? "LONG" : "SHORT") + " @ " + f_px(t.entry) + "  SL " + f_px(t.sl) + "  TP " + f_px(t.tp)
 
-f_statRow(table tb, int r, string name, Stats st) =>
+f_statRow(table tb, int r, string name, Stats st, string sz) =>
     string wr = st.w + st.l > 0 ? str.tostring(100.0 * st.w / (st.w + st.l), "#") + "%" : "–"
-    table.cell(tb, 0, r, name, text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(tb, 1, r, str.tostring(st.n), text_color = color.white, text_size = size.small)
-    table.cell(tb, 2, r, str.tostring(st.w), text_color = colBull, text_size = size.small)
-    table.cell(tb, 3, r, str.tostring(st.l), text_color = colBear, text_size = size.small)
-    table.cell(tb, 4, r, wr, text_color = color.white, text_size = size.small)
+    table.cell(tb, 0, r, name, text_color = color.white, text_size = sz, text_halign = text.align_left)
+    table.cell(tb, 1, r, str.tostring(st.n), text_color = color.white, text_size = sz)
+    table.cell(tb, 2, r, str.tostring(st.w), text_color = colBull, text_size = sz)
+    table.cell(tb, 3, r, str.tostring(st.l), text_color = colBear, text_size = sz)
+    table.cell(tb, 4, r, wr, text_color = color.white, text_size = sz)
     r + 1
 
 // ───────────────────────────── Data requests ─────────────────────────────
@@ -815,7 +820,8 @@ if barstate.isconfirmed
                         float risk   = math.abs(close - sl)
                         if (viaIfvg or viaCisd) and risk > 0
                             float dol   = z.dir > 0 ? cBSL : cSSL
-                            bool  dolOk = cTgt == "Draw on liquidity" and not na(dol) and (z.dir > 0 ? dol > close : dol < close)
+                            float dolD  = z.dir > 0 ? dol - close : close - dol
+                            bool  dolOk = cTgt == "Draw on liquidity" and not na(dol) and dolD > 0 and dolD >= minRR * risk
                             float tp    = dolOk ? dol : close + z.dir * cRR * risk
                             tC.openTrade(z.dir, close, sl, tp, "C " + (viaIfvg ? "IFVG" : "CISD"), sC)
                             z.used := true
@@ -928,15 +934,29 @@ if barstate.isconfirmed
         alert(f_tradeMsg("Model D", tD), alert.freq_once_per_bar_close)
 
 // ───────────────────────────── Plots ─────────────────────────────
-plot(showLevels and useC ? cBSL : na, "Buy-side liquidity", color = color.new(colBull, 40), style = plot.style_linebr)
-plot(showLevels and useC ? cSSL : na, "Sell-side liquidity", color = color.new(colBear, 40), style = plot.style_linebr)
-plot(showLevels and useD and useLvls and useVA and not inON ? onVAH : na, "Overnight VAH", color = colLevel, style = plot.style_linebr)
-plot(showLevels and useD and useLvls and useVA and not inON ? onVAL : na, "Overnight VAL", color = colLevel, style = plot.style_linebr)
-plot(showLevels and useD and useLvls and useVA and not inON ? onPOC : na, "Overnight POC", color = color.new(colLevel, 50), style = plot.style_linebr)
-plot(showLevels and useD and useLvls and useON and not inON ? lvONH : na, "Overnight high", color = color.new(colLevel, 30), style = plot.style_circles, linewidth = 1)
-plot(showLevels and useD and useLvls and useON and not inON ? lvONL : na, "Overnight low", color = color.new(colLevel, 30), style = plot.style_circles, linewidth = 1)
-plot(showLevels and useD and useLvls and usePD ? pdh : na, "Previous day high", color = color.new(colRange, 40), style = plot.style_linebr)
-plot(showLevels and useD and useLvls and usePD ? pdl : na, "Previous day low", color = color.new(colRange, 40), style = plot.style_linebr)
+// A level that changes value starts a new segment instead of drawing a vertical jump.
+f_brk(float v) =>
+    v != v[1] ? na : v
+
+float pBSL = f_brk(cBSL)
+float pSSL = f_brk(cSSL)
+float pVAH = f_brk(onVAH)
+float pVAL = f_brk(onVAL)
+float pPOC = f_brk(onPOC)
+float pONH = f_brk(lvONH)
+float pONL = f_brk(lvONL)
+float pPDH = f_brk(pdh)
+float pPDL = f_brk(pdl)
+
+plot(showLevels and useC ? pBSL : na, "Buy-side liquidity", color = color.new(colBull, 40), style = plot.style_linebr)
+plot(showLevels and useC ? pSSL : na, "Sell-side liquidity", color = color.new(colBear, 40), style = plot.style_linebr)
+plot(showLevels and useD and useLvls and useVA and not inON ? pVAH : na, "Overnight VAH", color = colLevel, style = plot.style_linebr)
+plot(showLevels and useD and useLvls and useVA and not inON ? pVAL : na, "Overnight VAL", color = colLevel, style = plot.style_linebr)
+plot(showLevels and useD and useLvls and useVA and not inON ? pPOC : na, "Overnight POC", color = color.new(colLevel, 50), style = plot.style_linebr)
+plot(showLevels and useD and useLvls and useON and not inON ? pONH : na, "Overnight high", color = color.new(colLevel, 30), style = plot.style_circles, linewidth = 1)
+plot(showLevels and useD and useLvls and useON and not inON ? pONL : na, "Overnight low", color = color.new(colLevel, 30), style = plot.style_circles, linewidth = 1)
+plot(showLevels and useD and useLvls and usePD ? pPDH : na, "Previous day high", color = color.new(colRange, 40), style = plot.style_linebr)
+plot(showLevels and useD and useLvls and usePD ? pPDL : na, "Previous day low", color = color.new(colRange, 40), style = plot.style_linebr)
 
 plotshape(useD and showAggr and aggrBuy, "Aggressive buyers", shape.circle, location.belowbar, color.new(colBull, 30), size = size.tiny)
 plotshape(useD and showAggr and aggrSell, "Aggressive sellers", shape.circle, location.abovebar, color.new(colBear, 30), size = size.tiny)
@@ -952,27 +972,40 @@ alertcondition(evD == 1, "D long", "{{ticker}} Model D: long (sellers absorbed)"
 alertcondition(evD == -1, "D short", "{{ticker}} Model D: short (buyers absorbed)")
 
 // ───────────────────────────── Stats table ─────────────────────────────
-var table tbl = table.new(position.top_right, 5, 8, bgcolor = color.new(#131722, 15), border_color = color.new(color.gray, 70), border_width = 1)
+string tblPos = switch statsPos
+    "Bottom left"  => position.bottom_left
+    "Top right"    => position.top_right
+    "Top left"     => position.top_left
+    "Middle right" => position.middle_right
+    => position.bottom_right
+string tblTxt = switch statsSize
+    "Tiny"   => size.tiny
+    "Normal" => size.normal
+    => size.small
+int    biasSec = timeframe.in_seconds(cBiasTF)
+string biasTF  = biasSec >= 3600 and biasSec < 86400 and biasSec % 3600 == 0 ? str.tostring(biasSec / 3600, "#") + "H" : cBiasTF
+
+var table tbl = table.new(tblPos, 5, 8, bgcolor = color.new(#131722, 15), border_color = color.new(color.gray, 70), border_width = 1)
 if barstate.islast and showStats
-    table.cell(tbl, 0, 0, "Model", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
-    table.cell(tbl, 1, 0, "Trades", text_color = color.gray, text_size = size.small)
-    table.cell(tbl, 2, 0, "Win", text_color = color.gray, text_size = size.small)
-    table.cell(tbl, 3, 0, "Loss", text_color = color.gray, text_size = size.small)
-    table.cell(tbl, 4, 0, "Win %", text_color = color.gray, text_size = size.small)
+    table.cell(tbl, 0, 0, "Model", text_color = color.gray, text_size = tblTxt, text_halign = text.align_left)
+    table.cell(tbl, 1, 0, "Trades", text_color = color.gray, text_size = tblTxt)
+    table.cell(tbl, 2, 0, "Win", text_color = color.gray, text_size = tblTxt)
+    table.cell(tbl, 3, 0, "Loss", text_color = color.gray, text_size = tblTxt)
+    table.cell(tbl, 4, 0, "Win %", text_color = color.gray, text_size = tblTxt)
     int r = 1
     if useA
-        r := f_statRow(tbl, r, "A · 8 PM sweep", sA)
+        r := f_statRow(tbl, r, "A · 8 PM sweep", sA, tblTxt)
     if useB
-        r := f_statRow(tbl, r, "B · 8 AM sweep", sB)
+        r := f_statRow(tbl, r, "B · 8 AM sweep", sB, tblTxt)
     if useC
-        r := f_statRow(tbl, r, "C · Bias + IFVG/CISD", sC)
+        r := f_statRow(tbl, r, "C · Bias + IFVG/CISD", sC, tblTxt)
     if useD
-        r := f_statRow(tbl, r, "D · Absorption", sD)
+        r := f_statRow(tbl, r, "D · Absorption", sD, tblTxt)
     if useC
         string biasTxt = cBiasNow > 0 ? "Bullish" : cBiasNow < 0 ? "Bearish" : "Neutral"
         color  biasCol = cBiasNow > 0 ? colBull : cBiasNow < 0 ? colBear : color.gray
-        table.cell(tbl, 0, r, cBiasTF + " bias", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
-        table.cell(tbl, 1, r, biasTxt, text_color = biasCol, text_size = size.small)
+        table.cell(tbl, 0, r, biasTF + " bias", text_color = color.gray, text_size = tblTxt, text_halign = text.align_left)
+        table.cell(tbl, 1, r, biasTxt, text_color = biasCol, text_size = tblTxt)
         r += 1
     if timeframe.period != "1"
-        table.cell(tbl, 0, r, "⚠ Built for a 1-minute chart", text_color = color.orange, text_size = size.small, text_halign = text.align_left)
+        table.cell(tbl, 0, r, "⚠ Built for a 1-minute chart", text_color = color.orange, text_size = tblTxt, text_halign = text.align_left)
