@@ -1,0 +1,289 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// ICT CISD Strategy (backtest version of "Breakout Targets + ICT Levels + CISD")
+//
+// Same signal as the indicator:
+//   liquidity sweep (swing / PDH-PDL / PWH-PWL / PMH-PML / Asia / London / NY AM)
+//   → CISD (close through the open of the last opposing delivery run, min body)
+//   → enter at the CISD candle's close, stop at the sweep extreme,
+//     TP 1 / TP 2 as R multiples of the actual risk.
+//
+// Backtest extras: higher-timeframe bias filter, partial exit at TP 1,
+// stop to breakeven after TP 1, max trades per day, flatten at a set time,
+// max stop size. One position at a time: new signals are ignored while a
+// trade is open.
+// ─────────────────────────────────────────────────────────────────────────────
+strategy("ICT CISD Strategy", shorttitle = "CISD Strat", overlay = true,
+     initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, process_orders_on_close = true, calc_on_every_tick = false,
+     max_bars_back = 5000)
+
+// ───────────── Inputs ─────────────
+const string G_SIG = "Signal"
+dirMode    = input.string("Both", "Direction", options = ["Both", "Long only", "Short only"], group = G_SIG)
+reqSweep   = input.bool(true, "Require liquidity sweep first", group = G_SIG)
+sweepLook  = input.int(12, "Sweep must be within (bars)", minval = 1, group = G_SIG)
+minBody    = input.float(0.3, "Min CISD candle body (× ATR)", minval = 0, step = 0.1, group = G_SIG)
+pvL        = input.int(5, "Pivot left bars",  minval = 1, group = G_SIG)
+pvR        = input.int(5, "Pivot right bars", minval = 1, group = G_SIG)
+sigWindow  = input.string("NY AM", "Trade only during", options = ["Any time", "NY AM", "NY AM + NY PM", "London + NY AM", "London + NY AM + NY PM"], group = G_SIG,
+     tooltip = "Intraday charts only. On 1H and above use \"Any time\".")
+
+const string G_BIAS = "Higher-timeframe bias filter"
+useBias    = input.bool(true, "Only trade with HTF bias", group = G_BIAS,
+     tooltip = "Bias = direction of the last close through a swing high/low on the chosen timeframe (same as the scanner's Bias column).")
+biasTF     = input.timeframe("60", "Bias timeframe", group = G_BIAS)
+useBias2   = input.bool(false, "Also require 2nd HTF bias", group = G_BIAS)
+biasTF2    = input.timeframe("240", "2nd bias timeframe", group = G_BIAS)
+
+const string G_RISK = "Exits & risk"
+qty        = input.int(1, "Contracts", minval = 1, group = G_RISK)
+tp1R       = input.float(1.0, "TP 1 (R multiple)", minval = 0.1, step = 0.25, group = G_RISK)
+tp2R       = input.float(2.0, "TP 2 (R multiple, 0 = off)", minval = 0, step = 0.25, group = G_RISK)
+tp1Pct     = input.int(50, "Close at TP 1 (%)", minval = 1, maxval = 100, group = G_RISK,
+     tooltip = "Rest of the position runs to TP 2. 100 = everything closes at TP 1.")
+moveBE     = input.bool(true, "Move stop to breakeven after TP 1", group = G_RISK)
+maxStop    = input.float(0, "Max stop size in points (0 = off)", minval = 0, step = 1, group = G_RISK,
+     tooltip = "Skip signals whose stop is wider than this. On MNQ 1 point = $2 per contract.")
+maxPerDay  = input.int(2, "Max trades per day (0 = unlimited)", minval = 0, group = G_RISK)
+useFlat    = input.bool(true, "Flatten at set time (intraday)", group = G_RISK)
+flatHH     = input.int(15, "Flatten hour (NY)", minval = 0, maxval = 23, inline = "flat", group = G_RISK)
+flatMM     = input.int(55, "min", minval = 0, maxval = 59, inline = "flat", group = G_RISK)
+
+const string G_LVL = "Sweep levels & sessions"
+tz         = input.string("America/New_York", "Timezone", group = G_LVL)
+asiaSess   = input.session("2000-0000", "Asia session", group = G_LVL)
+lonSess    = input.session("0200-0500", "London session", group = G_LVL)
+nyAmSess   = input.session("0930-1200", "NY AM session", group = G_LVL)
+nyPmSess   = input.session("1330-1600", "NY PM session", group = G_LVL)
+useHTFlv   = input.bool(true, "Use PDH/PDL, PWH/PWL, PMH/PML as sweep levels", group = G_LVL)
+useSesLv   = input.bool(true, "Use Asia/London/NY AM highs/lows as sweep levels", group = G_LVL)
+
+const string G_VIS = "Visuals"
+showLvls   = input.bool(true, "Plot stop / targets while in a trade", group = G_VIS)
+colBull    = input.color(#2962FF, "Long color", group = G_VIS)
+colBear    = input.color(#F23645, "Short color", group = G_VIS)
+colTgt     = input.color(#4CAF50, "Target color", group = G_VIS)
+
+// ───────────── Helpers ─────────────
+bool intraday = timeframe.isintraday and timeframe.in_seconds() <= 3600
+inSess(string s) => not na(time(timeframe.period, s, tz))
+int  nyMin     = hour(time, tz) * 60 + minute(time, tz)
+int  nyMinPrev = nz(nyMin[1], -1)
+bool newDay    = timeframe.change("D")
+float atr      = ta.atr(14)
+
+// ───────────── HTF bias (confirmed bars only) ─────────────
+htfBias() =>
+    float a = ta.pivothigh(high, 3, 3)
+    float b = ta.pivotlow(low, 3, 3)
+    var float bh   = na
+    var float bl   = na
+    var int   bias = 0
+    if not na(a)
+        bh := a
+    if not na(b)
+        bl := b
+    if not na(bh) and close > bh
+        bias := 1
+        bh   := na
+    if not na(bl) and close < bl
+        bias := -1
+        bl   := na
+    bias
+
+htfBiasOff(int off) =>
+    int b = htfBias()
+    b[off]
+
+getBias(simple string tf) =>
+    simple bool higher = timeframe.in_seconds(tf) > timeframe.in_seconds()
+    request.security(syminfo.tickerid, tf, htfBiasOff(higher ? 1 : 0),
+         lookahead = higher ? barmerge.lookahead_on : barmerge.lookahead_off)
+
+int bias1 = nz(getBias(biasTF))
+int bias2 = nz(getBias(biasTF2))
+
+// ───────────── Sweep levels ─────────────
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pmh, pml] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+bool inAsia = inSess(asiaSess)
+bool inLon  = inSess(lonSess)
+bool inNYAM = inSess(nyAmSess)
+bool inNYPM = inSess(nyPmSess)
+
+var float asiaH = na
+var float asiaL = na
+var float lonH  = na
+var float lonL  = na
+var float nyH   = na
+var float nyL   = na
+if inAsia and not inAsia[1]
+    asiaH := high
+    asiaL := low
+else if inAsia
+    asiaH := math.max(asiaH, high)
+    asiaL := math.min(asiaL, low)
+if inLon and not inLon[1]
+    lonH := high
+    lonL := low
+else if inLon
+    lonH := math.max(lonH, high)
+    lonL := math.min(lonL, low)
+if inNYAM and not inNYAM[1]
+    nyH := high
+    nyL := low
+else if inNYAM
+    nyH := math.max(nyH, high)
+    nyL := math.min(nyL, low)
+
+tookHigh(float l) => not na(l) and high > l and high[1] <= l
+tookLow(float l)  => not na(l) and low < l and low[1] >= l
+
+bool sesOk = useSesLv and intraday
+bool htfOk = useHTFlv and intraday
+bool hPD = tookHigh(htfOk ? pdh : na)
+bool hPW = tookHigh(htfOk ? pwh : na)
+bool hPM = tookHigh(htfOk ? pmh : na)
+bool hA  = tookHigh(sesOk and not inAsia ? asiaH : na)
+bool hL  = tookHigh(sesOk and not inLon  ? lonH  : na)
+bool hN  = tookHigh(sesOk and not inNYAM ? nyH   : na)
+bool lPD = tookLow(htfOk ? pdl : na)
+bool lPW = tookLow(htfOk ? pwl : na)
+bool lPM = tookLow(htfOk ? pml : na)
+bool lA  = tookLow(sesOk and not inAsia ? asiaL : na)
+bool lL  = tookLow(sesOk and not inLon  ? lonL  : na)
+bool lN  = tookLow(sesOk and not inNYAM ? nyL   : na)
+
+float ph = ta.pivothigh(high, pvL, pvR)
+float pl = ta.pivotlow(low, pvL, pvR)
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+bool bslSwept = (not na(lastPH) and high > lastPH) or hPD or hPW or hPM or hA or hL or hN
+bool sslSwept = (not na(lastPL) and low < lastPL)  or lPD or lPW or lPM or lA or lL or lN
+var int lastBslBar = -100000
+var int lastSslBar = -100000
+if bslSwept
+    lastBslBar := bar_index
+    lastPH := na
+if sslSwept
+    lastSslBar := bar_index
+    lastPL := na
+
+// ───────────── CISD ─────────────
+bool bullBar = close > open
+bool bearBar = close < open
+bool bigBody = math.abs(close - open) >= minBody * nz(atr)
+
+var float bullRunOpen = na
+var int   bullRunX    = na
+var float bullRunHigh = na
+var float bearRunOpen = na
+var int   bearRunX    = na
+var float bearRunLow  = na
+
+if bullBar and not bullBar[1]
+    bullRunOpen := open
+    bullRunX    := bar_index
+    bullRunHigh := high
+else if not na(bullRunOpen)
+    bullRunHigh := math.max(bullRunHigh, high)
+
+if bearBar and not bearBar[1]
+    bearRunOpen := open
+    bearRunX    := bar_index
+    bearRunLow  := low
+else if not na(bearRunOpen)
+    bearRunLow := math.min(bearRunLow, low)
+
+bool  bearCisd = false
+bool  bullCisd = false
+float sweepExt = na
+
+if not na(bullRunOpen) and bar_index > bullRunX and close < bullRunOpen
+    bearCisd := bigBody and (not reqSweep or bar_index - lastBslBar <= sweepLook)
+    sweepExt := bullRunHigh
+    bullRunOpen := na
+
+if not bearCisd and not na(bearRunOpen) and bar_index > bearRunX and close > bearRunOpen
+    bullCisd := bigBody and (not reqSweep or bar_index - lastSslBar <= sweepLook)
+    sweepExt := bearRunLow
+    bearRunOpen := na
+
+// ───────────── Filters ─────────────
+bool inWindow = switch sigWindow
+    "NY AM"                  => inNYAM
+    "NY AM + NY PM"          => inNYAM or inNYPM
+    "London + NY AM"         => inLon or inNYAM
+    "London + NY AM + NY PM" => inLon or inNYAM or inNYPM
+    => true
+inWindow := inWindow or not intraday
+
+var int tradesToday = 0
+if newDay
+    tradesToday := 0
+
+bool biasLongOk  = (not useBias or bias1 > 0) and (not useBias2 or bias2 > 0)
+bool biasShortOk = (not useBias or bias1 < 0) and (not useBias2 or bias2 < 0)
+bool canTrade    = strategy.position_size == 0 and inWindow and (maxPerDay == 0 or tradesToday < maxPerDay)
+
+bool goLong  = bullCisd and canTrade and dirMode != "Short only" and biasLongOk
+bool goShort = bearCisd and canTrade and dirMode != "Long only"  and biasShortOk
+
+// ───────────── Orders ─────────────
+var float tStop = na
+var float tTP1  = na
+var float tTP2  = na
+var float tEnt  = na
+var bool  beDone = false
+
+placeExits(string id, float stp, float t1, float t2) =>
+    if na(t2) or tp1Pct >= 100
+        strategy.exit(id + " TP", id, stop = stp, limit = t1, comment_profit = "TP1", comment_loss = "SL")
+    else
+        strategy.exit(id + " TP1", id, qty_percent = tp1Pct, stop = stp, limit = t1, comment_profit = "TP1", comment_loss = "SL")
+        strategy.exit(id + " TP2", id, stop = stp, limit = t2, comment_profit = "TP2", comment_loss = "SL")
+
+if goLong or goShort
+    float risk = math.abs(close - sweepExt)
+    bool  okStop = risk > 0 and (maxStop <= 0 or risk <= maxStop)
+    if okStop
+        int   d  = goLong ? 1 : -1
+        string id = goLong ? "Long" : "Short"
+        tEnt   := close
+        tStop  := sweepExt
+        tTP1   := close + d * risk * tp1R
+        tTP2   := tp2R > 0 ? close + d * risk * tp2R : na
+        beDone := false
+        strategy.entry(id, goLong ? strategy.long : strategy.short, qty = qty)
+        placeExits(id, tStop, tTP1, tTP2)
+        tradesToday += 1
+
+// After TP 1 the position shrinks: move the runner's stop to breakeven.
+bool partial = strategy.position_size != 0 and math.abs(strategy.position_size) < qty
+if moveBE and partial and not beDone and not na(tTP2)
+    beDone := true
+    string id = strategy.position_size > 0 ? "Long" : "Short"
+    strategy.exit(id + " TP2", id, stop = tEnt, limit = tTP2, comment_profit = "TP2", comment_loss = "BE")
+
+// Flatten intraday at the set time.
+int flatMin = flatHH * 60 + flatMM
+if useFlat and intraday and strategy.position_size != 0 and nyMin >= flatMin and (nyMinPrev < flatMin or nyMinPrev > nyMin)
+    strategy.close_all(comment = "EOD")
+
+// ───────────── Visuals ─────────────
+bool inPos = strategy.position_size != 0
+plot(showLvls and inPos ? (beDone ? tEnt : tStop) : na, "Stop", colBear, 2, plot.style_linebr)
+plot(showLvls and inPos ? tTP1 : na, "TP 1", colTgt, 1, plot.style_linebr)
+plot(showLvls and inPos ? tTP2 : na, "TP 2", colTgt, 2, plot.style_linebr)
+plot(showLvls and inPos ? strategy.position_avg_price : na, "Entry", #787B86, 1, plot.style_linebr)
+plotshape(goLong,  "Long signal",  shape.triangleup,   location.belowbar, colBull, size = size.tiny)
+plotshape(goShort, "Short signal", shape.triangledown, location.abovebar, colBear, size = size.tiny)
