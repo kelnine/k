@@ -45,6 +45,10 @@ def test_fingerprint_changes_with_any_spec() -> None:
         (lambda d: d["listings"][0].update(venue="ghost"), "unknown venue 'ghost'"),
         (lambda d: d["listings"][0].update(cost_profile=None), "tradable listings need a cost"),
         (lambda d: d["listings"][0].update(cost_profile="ghost"), "unknown cost profile"),
+        (
+            lambda d: d["listings"][0].update(cost_profile="crypto_perp_binance"),
+            "charges funding, which only applies to PERPETUAL",
+        ),
         (lambda d: d["listings"][1].update(symbol_format="{root}"), "requires a futures"),
         (
             lambda d: d["aliases"].append({"source": "*", "alias": "GOLD", "instrument": "XAGUSD"}),

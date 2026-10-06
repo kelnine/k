@@ -29,7 +29,12 @@ from typing import Any
 import yaml
 
 from kterminal.core.canonical import hash_data
-from kterminal.domain.costs import CostCalculator, CostProfile, parse_cost_profiles
+from kterminal.domain.costs import (
+    CostCalculator,
+    CostProfile,
+    parse_cost_profiles,
+    profile_listing_problems,
+)
 from kterminal.domain.instruments import (
     AssetClass,
     ContractType,
@@ -352,8 +357,13 @@ class InstrumentCatalog:
                 problems.append(f"{where}: unknown instrument {item.instrument!r}")
             if item.trading_hours and item.trading_hours not in calendars:
                 problems.append(f"{where}: unknown calendar {item.trading_hours!r}")
-            if item.cost_profile and item.cost_profile not in self.cost_profiles:
+            profile = self.cost_profiles.get(item.cost_profile) if item.cost_profile else None
+            if item.cost_profile and profile is None:
                 problems.append(f"{where}: unknown cost profile {item.cost_profile!r}")
+            if profile is not None:
+                problems.extend(
+                    f"{where}: {reason}" for reason in profile_listing_problems(profile, item)
+                )
             if item.tradable and not item.cost_profile:
                 problems.append(
                     f"{where}: tradable listings need a cost_profile (costs are "

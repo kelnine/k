@@ -8,7 +8,7 @@ COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
 TEST_DB   ?= postgresql://kterminal:kterminal@localhost:5432/kterminal_test
 
 .PHONY: help install lint format typecheck contracts test test-unit check api engine worker \
-        config secrets up down logs dev-up dev-db migrate catalog strategies demo demo-db
+        config secrets up down logs dev-up dev-db migrate catalog strategies demo demo-db provision
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -62,6 +62,9 @@ demo: ## Run the lab demo in memory (two strategies, two Paper 50K accounts)
 
 demo-db: ## Run the lab demo recording everything in PostgreSQL (run make migrate first)
 	$(UV) kterminal lab demo --store postgres
+
+provision: ## Create each lab instance's persistent Paper account in PostgreSQL
+	$(UV) kterminal lab provision
 
 secrets: ## Generate deploy/secrets/* (never committed)
 	@install -d -m 700 deploy/secrets

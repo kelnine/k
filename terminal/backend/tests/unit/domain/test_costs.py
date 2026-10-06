@@ -1,6 +1,6 @@
 import decimal
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, tzinfo
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from hypothesis import strategies as st
 
 from kterminal.core.enums import Direction, OrderSide
 from kterminal.core.errors import ClockError
+from kterminal.domain import costs as costs_module
 from kterminal.domain.costs import (
     MONEY_QUANTUM,
     AnnualRateSwap,
@@ -274,6 +275,24 @@ def test_stop_fills_cross_half_the_spread_and_slip_adversely() -> None:
     assert c.stop_fill_price(BUY, D("2660.005"), T0) == D("2660.13")  # raw 2660.125 → up
 
 
+def test_triggered_stops_fill_at_the_bid_ask_level_or_the_gapped_open() -> None:
+    c = calc(spread=FixedSpread(D("0.20")), slippage=FixedTicksSlippage(2))
+    # Long stop-loss (SELL) at 2640.00: the bid reached it → stop − slippage, spread not re-charged.
+    fill = c.triggered_stop_fill(SELL, D("2640.00"), D("2645.00"), T0)
+    assert fill.price == D("2639.98")
+    assert fill.half_spread == D("0.10")
+    assert c.stop_triggered(SELL, D("2640.00"), D("2645"), D("2640.10"), T0)
+    # Gap: opened (mid) at 2635.00 → opening bid 2634.90 − slippage.
+    assert c.triggered_stop_fill(SELL, D("2640.00"), D("2635.00"), T0).price == D("2634.88")
+    # Short stop-loss (BUY) at 2660.00: ask level → stop + slippage; gap → opening ask + slippage.
+    assert c.triggered_stop_fill(BUY, D("2660.00"), D("2655.00"), T0).price == D("2660.02")
+    assert c.triggered_stop_fill(BUY, D("2660.00"), D("2665.00"), T0).price == D("2665.12")
+    # Never better than the stop itself, whatever the open.
+    for open_mid in (D("2600"), D("2639.95"), D("2640.10"), D("2700")):
+        assert c.triggered_stop_fill(SELL, D("2640.00"), open_mid, T0).price <= D("2640.00")
+        assert c.triggered_stop_fill(BUY, D("2640.00"), open_mid, T0).price >= D("2640.00")
+
+
 def test_limit_fills_exactly_at_the_limit_without_slippage() -> None:
     c = calc(spread=FixedSpread(D("0.20")), slippage=FixedTicksSlippage(5))
     assert c.limit_fill_price(SELL, D("2651.00")) == D("2651.00")
@@ -501,11 +520,14 @@ def test_swap_rollover_follows_new_york_dst_in_autumn() -> None:
 
 
 def test_swap_rollover_in_a_dst_gap_or_overlap_is_resolved_deterministically() -> None:
-    # Egypt changes clocks on weekdays: 00:00 → 01:00 on Fri 24 Apr 2026 and
-    # 24:00 → 23:00 on Thu 29 Oct 2026, so these rollovers hit a gap / an overlap.
-    gap = calc(EURUSD, swap=PointsSwap(D("-0.0001"), D(0), time(0, 30), "Africa/Cairo", 2))
-    events = gap.swap_events(LONG, D(1), D(1), utc(2026, 4, 23, 12), utc(2026, 4, 24, 12))
-    assert [e.ts for e in events] == [utc(2026, 4, 23, 22, 30)]  # 01:30 local: shifted by the gap
+    # Samoa skipped Friday 30 Dec 2011 (UTC-10 → UTC+14): its 17:00 rollover lies in
+    # a 24 h gap and is shifted forward by it, onto Saturday 17:00 local (03:00Z).
+    # Egypt changes clocks on weekdays: 24:00 → 23:00 on Thu 29 Oct 2026, so a
+    # 23:30 rollover is ambiguous and takes its first occurrence.
+    gap = calc(EURUSD, swap=PointsSwap(D("-0.0001"), D(0), time(17), "Pacific/Apia", 2))
+    events = gap.swap_events(LONG, D(1), D(1), utc(2011, 12, 30, 12), utc(2011, 12, 31, 12))
+    assert [e.ts for e in events] == [utc(2011, 12, 31, 3)]
+    assert [e.amount for e in events] == [D("-10.0000")]
     overlap = calc(EURUSD, swap=PointsSwap(D("-0.0001"), D(0), time(23, 30), "Africa/Cairo", 2))
     events = overlap.swap_events(LONG, D(1), D(1), utc(2026, 10, 29, 12), utc(2026, 10, 30, 12))
     assert [e.ts for e in events] == [utc(2026, 10, 29, 20, 30)]  # first occurrence (UTC+3)
@@ -954,7 +976,7 @@ YEAR_START = utc(2026, 1, 1, 0)
 @given(
     offsets=st.lists(st.integers(min_value=0, max_value=730 * 24 * 60), min_size=3, max_size=3),
     zone=st.sampled_from(ZONES),
-    rollover=st.sampled_from([time(17), time(0, 30), time(23, 30), time(2, 30), time(22)]),
+    rollover=st.sampled_from([time(17), time(12), time(23, 30), time(16, 59, 59), time(22)]),
     triple=st.integers(min_value=0, max_value=4),
     interval=st.sampled_from([1, 4, 8, 24]),
 )
@@ -978,7 +1000,7 @@ def test_property_split_intervals_charge_exactly_the_same_events(
 @given(
     week=st.integers(min_value=0, max_value=104),
     zone=st.sampled_from(ZONES),
-    rollover=st.sampled_from([time(17), time(0, 30), time(23, 30), time(2, 30)]),
+    rollover=st.sampled_from([time(17), time(12), time(23, 30), time(23, 59, 59)]),
     triple=st.integers(min_value=0, max_value=4),
 )
 def test_property_every_local_week_charges_seven_nights(
@@ -1054,3 +1076,136 @@ def test_every_yaml_profile_fits_the_listings_it_is_meant_for() -> None:
         for listing in listings:
             assert profile_listing_problems(profiles[profile_id], listing) == [], profile_id
             CostCalculator(profiles[profile_id], listing)
+
+
+@pytest.mark.parametrize(
+    ("rollover", "zone"), [("00:00", "Europe/Athens"), ("06:00", "Asia/Tokyo"), ("11:59", "UTC")]
+)
+def test_a_rollover_before_noon_is_rejected(rollover: str, zone: str) -> None:
+    # A morning rollover ends the *previous* local day (MT5 "server midnight" on a
+    # UTC+2/+3 server is Friday 17:00 New York at Saturday 00:00): the weekday
+    # rule would skip Friday's rollover, charge one at the Sunday open and put
+    # the triple a night early. Such configs must be written as the close.
+    with pytest.raises(CostConfigError, match="before noon"):
+        CostProfile.from_dict(
+            _profile_doc(swap={**SWAP, "rollover_time": rollover, "timezone": zone})
+        )
+    swap = {**SWAP, "rollover_time": "12:00", "timezone": zone}
+    assert CostProfile.from_dict(_profile_doc(swap=swap)).swap.to_dict() == swap
+
+
+class _SkipsTuesday(tzinfo):
+    """UTC−12 until local Tuesday 6 Oct 2026, then UTC+12: that Tuesday never exists
+    (like Manila skipping Tuesday 31 Dec 1844). Nonexistent local times take the
+    pre-jump offset, i.e. fold=0, exactly like zoneinfo."""
+
+    JUMP = datetime(2026, 10, 6)  # noqa: DTZ001 - a local wall-clock time of this zone
+    AFTER = datetime(2026, 10, 7)  # noqa: DTZ001
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        assert dt is not None
+        wall = dt.replace(tzinfo=None)
+        return timedelta(hours=12) if wall >= self.AFTER else timedelta(hours=-12)
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+    def tzname(self, dt: datetime | None) -> str:
+        return "SKIPS_TUESDAY"
+
+    def fromutc(self, dt: datetime) -> datetime:
+        wall = dt.replace(tzinfo=None) + timedelta(hours=-12)
+        if wall >= self.JUMP:
+            wall += timedelta(hours=24)
+        return wall.replace(tzinfo=self)
+
+
+def test_a_skipped_calendar_day_is_one_rollover_not_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The skipped Tuesday's 17:00 shifts forward by the 24 h gap onto Wednesday's
+    # own 17:00 rollover: one instant, so one event — with Wednesday's triple
+    # (the larger count), never two charges and never the smaller one.
+    c = calc(EURUSD, swap=fx_points_swap(triple=2))
+    monkeypatch.setattr(costs_module, "_zone", lambda name, where: _SkipsTuesday())
+    events = c.swap_events(LONG, D(1), D("1.17"), utc(2026, 10, 5, 0), utc(2026, 10, 8, 0))
+    assert [e.ts for e in events] == [utc(2026, 10, 6, 5), utc(2026, 10, 7, 5)]  # Mon, Wed
+    assert [e.amount for e in events] == [D("-8.0000"), D("-24.0000")]
+
+
+EVERY_MODEL: list[Any] = [
+    NoSpread(),
+    FixedSpread(D("0.20")),
+    FixedTicksSpread(2),
+    SessionSpread(D("0.30"), (("asia_session", D("0.50")), ("london_session", D("0.25")))),
+    QuoteSpread(D("0.20")),
+    NoCommission(),
+    PerQuantityCommission(D("3.50"), D("1.00")),
+    NotionalCommission(D("0.0002"), D("0.0005"), D("0.10")),
+    NoSlippage(),
+    FixedTicksSlippage(1),
+    NotionalBpsSlippage(D("1.5")),
+    NoFunding(),
+    ConstantFunding(D("-0.0001"), 4, (2, 6, 10, 14, 18, 22)),
+    NoSwap(),
+    PointsSwap(D("-0.50"), D("0.10"), time(17), "America/New_York", 2),
+    AnnualRateSwap(D("0.0625"), D("-0.01"), time(16, 59, 30), "Europe/London", 4, 360),
+]
+
+
+@pytest.mark.parametrize("model", EVERY_MODEL, ids=lambda m: f"{type(m).__name__}")
+def test_every_model_round_trips_through_its_document(model: Any) -> None:
+    document = model.to_dict()
+    assert document["model"] == type(model).model
+    assert type(model).from_dict(document) == model
+    assert type(model).from_dict(yaml.safe_load(yaml.safe_dump(document))) == model
+    assert hash(model) == hash(type(model).from_dict(document))
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: FixedSpread(D("NaN")), "finite"),
+        (lambda: FixedSpread(0.2), "must be a Decimal"),  # type: ignore[arg-type]
+        (lambda: FixedSpread.from_dict({"model": "fixed", "points": "Infinity"}), "finite"),
+        (lambda: FixedSpread.from_dict({"model": "fixed", "points": True}), "boolean"),
+        (lambda: FixedSpread.from_dict({"model": "fixed", "points": [1]}), "decimal string"),
+        (lambda: FixedSpread.from_dict({"model": "fixed_ticks", "points": "1"}), "expected model"),
+        (lambda: FixedSpread.from_dict("fixed"), "mapping"),  # type: ignore[arg-type]
+        (lambda: SessionSpread(D("0.2"), (("asia", D("0.5")), ("asia", D("0.6")))), "twice"),
+        (lambda: SessionSpread(D("0.2"), (("asia", D("0.5"), D(1)),)), "pair"),  # type: ignore[arg-type]
+        (lambda: SessionSpread(D("0.2"), "asia"), "pairs"),  # type: ignore[arg-type]
+        (lambda: ConstantFunding(D("0.0001"), 8, 0), "sequence"),  # type: ignore[arg-type]
+        (lambda: ConstantFunding(D("0.0001"), 8, (8, 0, 16)), "ascending"),
+        (lambda: ConstantFunding(D("0.0001"), 8, (0, 8, 24)), r"\[0, 23\]"),
+        (lambda: ConstantFunding(D("0.05"), 8), "implausibly large"),
+        (lambda: NotionalCommission(D("-0.0001"), D("0.0005")), "cannot be negative"),
+        (lambda: NotionalBpsSlippage(D("1000")), "implausibly large"),
+        (lambda: PointsSwap(D(-1), D(0), "17:00", "America/New_York", 2), "datetime.time"),  # type: ignore[arg-type]
+        (lambda: PointsSwap(D(-1), D(0), time(17, tzinfo=UTC), "America/New_York", 2), "local"),
+        (lambda: PointsSwap(D(-1), D(0), time(17), "", 2), "IANA"),
+        (lambda: PointsSwap(D(-1), D(0), time(17), "America/New_York", 5), r"\[0, 4\]"),
+        (lambda: AnnualRateSwap(D(1), D(0), time(17), "America/New_York", 4), "implausibly"),
+        (
+            lambda: PointsSwap.from_dict({**SWAP, "rollover_time": "24:00"}),
+            "HH:MM",
+        ),
+        (
+            lambda: CostProfile.from_dict({**_profile_doc(), "description": None}),
+            "description must be a string",
+        ),
+        (lambda: CostProfile.from_dict({**_profile_doc(), "id": 7}), "string 'id'"),
+        (lambda: CostProfile.from_dict(["not", "a", "mapping"]), "must be a mapping"),  # type: ignore[arg-type]
+        (lambda: CostProfile.zero("Zero"), "invalid cost profile id"),
+    ],
+)
+def test_invalid_models_are_rejected_with_clear_errors(
+    build: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(CostConfigError, match=message):
+        build()
+
+
+def test_cost_event_amount_must_be_a_finite_decimal() -> None:
+    with pytest.raises(ValueError, match="finite Decimal"):
+        CostEvent(T0, "FUNDING", D("NaN"), "")
+    with pytest.raises(ValueError, match="finite Decimal"):
+        CostEvent(T0, "FUNDING", 1.5, "")  # type: ignore[arg-type]

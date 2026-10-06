@@ -36,6 +36,7 @@ make catalog        # validate config/catalog (instruments, venues, sessions, co
 make strategies     # registered strategy definitions + the instances in config/lab.yaml
 make demo           # run them side by side on synthetic data into separate Paper 50K accounts
 make migrate && make demo-db   # same, recording everything in PostgreSQL
+make provision      # each instance's persistent Paper 50K account for forward testing
 ```
 
 Add a strategy by adding a folder under `backend/src/kterminal/strategies/`

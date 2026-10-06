@@ -29,10 +29,15 @@ x-backend: &backend
     # LIVE stays off unless BOTH are set deliberately (see docs/09-security.md §9.3).
     KT_TRADING__LIVE_ENABLED: ${KT_TRADING__LIVE_ENABLED:-false}
     KT_TRADING__LIVE_ACKNOWLEDGEMENT: ${KT_TRADING__LIVE_ACKNOWLEDGEMENT:-}
+    KT_PATHS__CONFIG_DIR: /app/config
+  volumes:
+    - ../config:/app/config:ro   # catalog, sessions, costs, lab.yaml (versioned in git)
   secrets: [postgres_password]
   depends_on:
     postgres:
       condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
 
 services:
   postgres:
@@ -49,6 +54,15 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks: [data]
+
+  migrate:                 # one-shot: apply database migrations, then exit
+    <<: *backend
+    command: ["db", "upgrade"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks: [data]
 
   api:

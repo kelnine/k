@@ -44,6 +44,13 @@ class ProvisionedAccount:
 
 
 class LabStore(Protocol):
+    async def apply_catalog(
+        self, *, document: dict[str, Any], fingerprint: str, applied_by: str
+    ) -> None:
+        """Make the catalog (venue profiles, listings, cost profiles) referenceable.
+        Idempotent per fingerprint; ``start_run`` applies the run's catalog itself."""
+        ...
+
     async def start_run(
         self,
         *,
@@ -60,8 +67,17 @@ class LabStore(Protocol):
         ...
 
     async def provision_account(
-        self, *, instance_id: str, name: str, settings: AccountSettings
-    ) -> ProvisionedAccount: ...
+        self,
+        *,
+        instance_id: str,
+        name: str,
+        settings: AccountSettings,
+        run_id: UUID | None = None,
+        opened_at: datetime | None = None,
+    ) -> ProvisionedAccount:
+        """The account an instance trades in. With ``run_id`` (simulations) a fresh
+        run-scoped account; without it, the instance's persistent dedicated account."""
+        ...
 
     async def write(self, records: Sequence[Record], *, run_id: UUID) -> None: ...
 
@@ -89,6 +105,12 @@ class InMemoryLabStore:
     records: dict[type, list[Any]] = field(default_factory=lambda: defaultdict(list))
     trades: dict[UUID, TradeRecord] = field(default_factory=dict)
     starting_balances: dict[UUID, Decimal] = field(default_factory=dict)
+    catalogs: set[str] = field(default_factory=set)
+
+    async def apply_catalog(
+        self, *, document: dict[str, Any], fingerprint: str, applied_by: str
+    ) -> None:
+        self.catalogs.add(fingerprint)
 
     async def start_run(
         self,
@@ -101,6 +123,7 @@ class InMemoryLabStore:
         started_at: datetime,
     ) -> UUID:
         run_id = uuid7()
+        self.catalogs.add(catalog_fingerprint)
         self.runs[run_id] = {
             "kind": kind,
             "name": name,
@@ -118,7 +141,13 @@ class InMemoryLabStore:
         return self.versions[key]
 
     async def provision_account(
-        self, *, instance_id: str, name: str, settings: AccountSettings
+        self,
+        *,
+        instance_id: str,
+        name: str,
+        settings: AccountSettings,
+        run_id: UUID | None = None,
+        opened_at: datetime | None = None,
     ) -> ProvisionedAccount:
         config_hash = hash_data(settings.document())
         existing = self.accounts.get(instance_id)

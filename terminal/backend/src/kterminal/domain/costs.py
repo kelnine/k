@@ -76,6 +76,7 @@ MAX_RATE = Decimal("0.05")
 MAX_BPS = Decimal(1_000)
 _BPS = Decimal(10_000)
 _ZERO = Decimal(0)
+_NOON = time(12)
 _COMPONENTS = ("spread", "commission", "slippage", "funding", "swap")
 #: Local times in documents: exactly "HH:MM" or "HH:MM:SS". ``time.fromisoformat``
 #: alone is too lenient — it reads "17.30" as 17:00:00.3, not 17:30.
@@ -238,6 +239,14 @@ def _check_rollover(
     if rollover_time.microsecond:
         raise CostConfigError(
             f"{where} rollover_time must be whole seconds (HH:MM[:SS]), got {rollover_time}"
+        )
+    if rollover_time < _NOON:
+        raise CostConfigError(
+            f"{where} rollover_time {_format_time(rollover_time)} is before noon: a rollover's "
+            "local date must be the trading day it ends, because weekends are skipped and the "
+            "triple day is matched on that date. A morning rollover ends the previous day — "
+            "write the trading-day close instead (MT5 'server midnight' on a UTC+2/+3 "
+            "New York-close server is 17:00 America/New_York)"
         )
     _zone(timezone, f"{where} timezone")
     _check_int(f"{where} triple_day", triple_day, 0, 4)  # Sat/Sun rollovers are skipped
@@ -690,6 +699,8 @@ class PointsSwap:
     York for FX/CFDs — "server midnight" on NY-close MT5 servers), so the local
     weekday of a rollover is the trading day it ends; Saturday and Sunday
     rollovers are skipped and the ``triple_day`` rollover counts three nights.
+    A rollover before local noon is rejected: it would end the *previous* day,
+    and the weekday rule would then skip Friday and charge the Sunday open.
     MT5 quotes swaps in *points* of the symbol's digits: convert to price units
     (e.g. −65 points on a 2-digit gold symbol = −0.65).
     """
@@ -978,8 +989,8 @@ def profile_listing_problems(profile: CostProfile, listing: Listing) -> list[str
     A profile is only meaningful for the contract type it was written for:
     funding exists only on perpetuals and overnight swap never applies to
     futures or perpetuals. Charging either on the wrong listing would silently
-    bias long/short results, so the catalog validates every listing's profile
-    with this and :class:`CostCalculator` refuses the pair.
+    bias long/short results, so :class:`CostCalculator` refuses the pair; the
+    catalog can call this to report every mismatch while validating listings.
     """
     problems: list[str] = []
     contract = listing.contract_type
@@ -1174,6 +1185,30 @@ class CostCalculator:
         self, side: OrderSide, stop_price: Decimal, at: datetime, quote: Quote | None = None
     ) -> Decimal:
         return self.stop_fill(side, stop_price, at, quote).price
+
+    @_exact
+    def triggered_stop_fill(
+        self, side: OrderSide, stop_price: Decimal, bar_open_mid: Decimal, at: datetime
+    ) -> FillPrice:
+        """The fill of a stop that :meth:`stop_triggered` reported within a mid-price bar.
+
+        The stop level is a *bid* (SELL) or *ask* (BUY) price, as on MT5 and the
+        trigger rule: a SELL stop fills at the stop minus slippage — or at the
+        opening bid when the bar gapped through it — and a BUY stop at the stop
+        plus slippage, or at the opening ask. The half spread is recorded as a
+        cost because the level already sits on the far side of the spread; it is
+        not charged a second time.
+        """
+        side = OrderSide(side)
+        _require_positive(stop_price, "stop_price")
+        _require_positive(bar_open_mid, "bar_open_mid")
+        at = ensure_utc(at)
+        half = self.spread(at) / 2
+        if side is OrderSide.SELL:
+            reference = min(bar_open_mid, stop_price + half)
+        else:
+            reference = max(bar_open_mid, stop_price - half)
+        return self._adverse_fill(side, reference, half, self.slippage(reference, at))
 
     def limit_fill_price(self, side: OrderSide, limit_price: Decimal) -> Decimal:
         """A limit order fills exactly at its price: no spread crossing, no slippage,
@@ -1400,15 +1435,26 @@ def _rollover_instants(
     The rollover is a *local* time in ``zone``, so its UTC instant follows DST.
     A local time in a spring-forward gap resolves (``fold=0``) to the instant
     the gap's length later on the wall clock; an ambiguous one to its first
-    occurrence — the same rule as the trading calendars.
+    occurrence — the same rule as the trading calendars. When a zone skips a
+    whole calendar day (Samoa 2011, Manila 1844) the skipped day's rollover
+    lands on the next day's: that is one instant, so one event, counting the
+    larger number of nights (never the flattering one).
     """
     day = start.astimezone(zone).date() - timedelta(days=1)
     last = end.astimezone(zone).date() + timedelta(days=1)
+    pending: tuple[datetime, int] | None = None
     while day <= last:
         weekday = day.weekday()
         if weekday < 5:  # Saturday and Sunday rollovers are skipped
             local = datetime.combine(day, rollover_time.replace(fold=0), tzinfo=zone)
             instant = local.astimezone(UTC)
-            if start < instant <= end:
-                yield instant, 3 if weekday == triple_day else 1
+            nights = 3 if weekday == triple_day else 1
+            if pending is not None and instant == pending[0]:
+                pending = (instant, max(nights, pending[1]))
+            else:
+                if pending is not None and start < pending[0] <= end:
+                    yield pending
+                pending = (instant, nights)
         day += timedelta(days=1)
+    if pending is not None and start < pending[0] <= end:
+        yield pending

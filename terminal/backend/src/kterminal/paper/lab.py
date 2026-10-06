@@ -28,6 +28,7 @@ from kterminal.analytics.summary import TradeSummary, summarize_trades
 from kterminal.core.enums import SignalAction
 from kterminal.core.ids import uuid7
 from kterminal.core.registry import Registry
+from kterminal.domain.accounts import AccountSettings
 from kterminal.domain.catalog import InstrumentCatalog
 from kterminal.domain.market import Bar
 from kterminal.domain.timeframes import Timeframe
@@ -36,7 +37,7 @@ from kterminal.observability.logging import get_logger
 from kterminal.paper.account import InstrumentSetup, PaperAccount
 from kterminal.paper.config import LabConfig
 from kterminal.paper.records import FaultRecord, Record, SignalRecord
-from kterminal.paper.store import LabStore
+from kterminal.paper.store import LabStore, ProvisionedAccount
 from kterminal.strategy_engine.base import StrategyMeta
 from kterminal.strategy_engine.hosts import HostState, InProcessHost, StrategyHost, SubprocessHost
 from kterminal.strategy_engine.instances import ResolvedInstance, resolve_instance
@@ -57,6 +58,8 @@ class LabMember:
     version_id: UUID
     host: StrategyHost
     accounts: list[PaperAccount]
+    settings: AccountSettings
+    markets: dict[str, InstrumentSetup]
     fault_recorded: bool = False
 
 
@@ -141,10 +144,6 @@ class Lab:
                     )
             version_id = await self.store.register_instance(resolved)
             settings = self.config.account_settings(instance)
-            name = f"{settings.display_name_prefix} · {spec.id}"
-            provisioned = await self.store.provision_account(
-                instance_id=spec.id, name=name, settings=settings
-            )
             markets = {}
             for symbol in spec.instruments:
                 listing = self.catalog.execution_listing(settings.venue_profile, symbol)
@@ -154,22 +153,61 @@ class Lab:
                     costs=self.catalog.cost_calculator(listing),
                     calendar=self.catalog.calendar_for(listing),
                 )
-            account = PaperAccount(
-                account_id=provisioned.account_id,
-                name=provisioned.name,
-                instance_id=spec.id,
-                settings=settings,
-                config_version_id=provisioned.config_version_id,
-                markets=markets,
-                timeframe=resolved.timeframe.code,
-                trading_day_rule=self.catalog.sessions.trading_day_rule(settings.trading_day),
-                classify=self.catalog.sessions.classify,
-                on_opposite_signal=resolved.definition.meta.on_opposite_signal,
-            )
             host_cls = SubprocessHost if spec.host == "subprocess" else InProcessHost
             host = host_cls(resolved, self.catalog.instruments, self.catalog.sessions)
-            self.members.append(LabMember(resolved, version_id, host, [account]))
+            self.members.append(LabMember(resolved, version_id, host, [], settings, markets))
         _log.info("lab.setup", instances=[m.resolved.id for m in self.members])
+
+    async def provision_dedicated(self) -> list[tuple[str, ProvisionedAccount]]:
+        """Create (or update) each instance's persistent forward-test account.
+
+        Idempotent: re-running with unchanged settings changes nothing; changed
+        settings create a new account configuration version.
+        """
+        if not self.members:
+            await self.setup()
+        await self.store.apply_catalog(
+            document=self.catalog.to_document(),
+            fingerprint=self.catalog.fingerprint,
+            applied_by="lab:provision",
+        )
+        provisioned = []
+        for member in self.members:
+            spec = member.resolved.spec
+            account = await self.store.provision_account(
+                instance_id=spec.id,
+                name=f"{member.settings.display_name_prefix} · {spec.id}",
+                settings=member.settings,
+            )
+            provisioned.append((spec.id, account))
+        return provisioned
+
+    async def _provision_accounts(self, run_id: UUID) -> None:
+        """One account per instance, created for this run (never shared between instances)."""
+        for member in self.members:
+            spec = member.resolved.spec
+            settings = member.settings
+            provisioned = await self.store.provision_account(
+                instance_id=spec.id,
+                name=f"{settings.display_name_prefix} · {spec.id}",
+                settings=settings,
+                run_id=run_id,
+                opened_at=self._clock_start,
+            )
+            member.accounts = [
+                PaperAccount(
+                    account_id=provisioned.account_id,
+                    name=provisioned.name,
+                    instance_id=spec.id,
+                    settings=settings,
+                    config_version_id=provisioned.config_version_id,
+                    markets=member.markets,
+                    timeframe=member.resolved.timeframe.code,
+                    trading_day_rule=self.catalog.sessions.trading_day_rule(settings.trading_day),
+                    classify=self.catalog.sessions.classify,
+                    on_opposite_signal=member.resolved.definition.meta.on_opposite_signal,
+                )
+            ]
 
     @property
     def timeframes(self) -> list[Timeframe]:
@@ -205,6 +243,7 @@ class Lab:
             catalog_fingerprint=self.catalog.fingerprint,
             started_at=self._clock_start,
         )
+        await self._provision_accounts(run_id)
         for member in self.members:
             member.host.start()
             if warmup_bars:

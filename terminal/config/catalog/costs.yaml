@@ -18,7 +18,8 @@
 # Format (kterminal.domain.costs):
 #   * Decimals are QUOTED STRINGS ("0.20"), never YAML floats — floats carry
 #     binary rounding noise and are rejected by the loader.
-#   * Local times are quoted ("17:00"): YAML 1.1 reads an unquoted 17:00 as 1020.
+#   * Local times are quoted "HH:MM" or "HH:MM:SS" ("17:00"): YAML 1.1 reads an
+#     unquoted 17:00 as the number 1020.
 #   * All five components are required; write {model: none} for "no cost".
 #   * spread      none | fixed {points} | fixed_ticks {ticks}
 #                 | session {default_points, by_window: {window_id: points}}
@@ -38,6 +39,9 @@
 #     Rollovers are the end of the trading day in local time (17:00 New York;
 #     "server midnight" on NY-close MT5 servers). Saturday and Sunday rollovers
 #     are skipped and the triple_day rollover counts three nights (7 per week).
+#     A rollover_time before 12:00 is rejected: a morning rollover ends the
+#     PREVIOUS local day, so write an MT5 server's 00:00 (UTC+2/+3, New York
+#     close) as "17:00" America/New_York — not "00:00" in the server zone.
 #
 # Spreads use `fixed` / `fixed_ticks` here. Once the session windows are
 # settled, a `session` spread (wider in Asia and around the 17:00 New York

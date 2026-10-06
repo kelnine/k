@@ -52,15 +52,27 @@ A strategy instance cannot see, influence or break another one:
 | State | No shared mutable state between instances, even of the same class | one object per instance; registration rejects classes with mutable class-level attributes; parameters are frozen |
 | Data | Every instance sees identical, immutable bars | frozen `Bar` objects; NumPy arrays handed to strategies are read-only |
 | Failure | An exception (or, with the subprocess host, a crash or infinite loop) faults only that instance | the runner catches and records faults; `SubprocessStrategyHost` runs each instance in its own OS process with a per-bar time budget |
-| Accounts | Each instance has its own paper account and ledger | `accounts.strategy_instance_id` is unique; signals are routed only to the instance's own allocations; per-account state objects |
+| Accounts | Each instance has its own paper account and ledger | dedicated accounts: `accounts.strategy_instance_id` is unique; run-scoped accounts: one `account_allocations` row to exactly one instance; signals are routed only to the instance's own account, and the account refuses signals of any other instance |
 | Comparison | Results are comparable | same bars, venue profile, account template; metrics recomputed from recorded trades |
 
 ## 12.3 Accounts
 
-Every instance is provisioned a dedicated `PAPER` account automatically
-(name `Paper 50K · <strategy_id>`), with a configurable starting balance that
-defaults to **$50,000**. The lab configuration (`terminal/config/lab.yaml`)
-sets defaults for all accounts and lets each instance override them:
+Every instance trades in its own `PAPER` account (name
+`Paper 50K · <instance_id>`), with a configurable starting balance that
+defaults to **$50,000**. There are two kinds:
+
+| Account | Created by | Used for | Lifetime |
+|---|---|---|---|
+| **Dedicated** (`accounts.strategy_instance_id` = the instance, unique) | `kterminal lab provision` (idempotent; a changed configuration becomes a new `account_config_versions` row) | forward testing on live data (Phase 3+) | persistent — one per instance, ever |
+| **Run-scoped** (`… · run <id>`, linked through `account_allocations`) | every simulation (`lab demo`, backtests, replays) | that run only | one per instance per run |
+
+Simulations never write to a dedicated account, so synthetic or historical
+results can never contaminate an instance's forward-test history, and two runs
+never share an account. Both kinds open with a single `DEPOSIT` ledger row;
+the balance is always the sum of the ledger.
+
+The lab configuration (`terminal/config/lab.yaml`) sets defaults for all
+accounts and lets each instance override them:
 
 ```yaml
 defaults:

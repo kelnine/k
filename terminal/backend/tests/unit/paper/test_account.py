@@ -146,6 +146,21 @@ def test_stop_assumed_first_and_gaps_fill_at_the_open() -> None:
     assert trade.r_multiple is not None and trade.r_multiple < Decimal(-1)
 
 
+def test_stop_level_is_a_bid_price_and_the_spread_is_not_charged_twice() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    acc.handle_signal(long_entry(), uuid7(), MON)
+    acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+    # mid low 3995.15: bid 3995.05 > stop 3995.00 → not triggered
+    acc.on_bar(bar(MON + timedelta(minutes=1), "4000.00", "4001.00", "3995.15", "3999.00"))
+    assert "XAUUSD" in acc.positions
+    # mid low 3995.10: bid 3995.00 reaches the stop → fill at the stop − 0.03 slippage
+    acc.on_bar(bar(MON + timedelta(minutes=2), "3999.00", "3999.50", "3995.10", "3996.00"))
+    (trade,) = [r for r in acc.drain() if isinstance(r, TradeRecord) and r.status == "CLOSED"]
+    assert trade.exit_reason == "STOP_LOSS"
+    assert trade.exit_price == Decimal("3994.97")
+
+
 def test_rejections_are_recorded_with_reasons() -> None:
     acc = account(max_open_positions=1)
     acc.marks["XAUUSD"] = Decimal("4000.00")

@@ -47,6 +47,8 @@ strategies_app = typer.Typer(help="Strategy definitions and lab instances.", no_
 app.add_typer(strategies_app, name="strategies")
 lab_app = typer.Typer(help="The strategy lab.", no_args_is_help=True)
 app.add_typer(lab_app, name="lab")
+db_app = typer.Typer(help="Database migrations, partitions and audit log.", no_args_is_help=True)
+app.add_typer(db_app, name="db")
 
 
 def _load_settings_or_exit() -> Settings:
@@ -263,7 +265,7 @@ def lab_demo(
     days: Annotated[float, typer.Option(help="Days of synthetic 1-minute data")] = 5,
     seed: Annotated[int, typer.Option(help="Random seed for the synthetic data")] = 21,
     subprocess: Annotated[bool, typer.Option(help="Run each instance in its own process")] = False,
-    store: Annotated[str, typer.Option(help="memory")] = "memory",
+    store: Annotated[str, typer.Option(help="memory | postgres")] = "memory",
     lab_config: Annotated[Path | None, typer.Option("--config", help="lab.yaml")] = None,
 ) -> None:
     """Run the configured instances simultaneously on synthetic data, each into its own
@@ -301,6 +303,36 @@ def lab_demo(
         raise typer.Exit(1) from None
 
 
+@lab_app.command("provision")
+def lab_provision(
+    lab_config: Annotated[Path | None, typer.Option("--config", help="lab.yaml")] = None,
+) -> None:
+    """Create each instance's persistent Paper account (default $50,000) in the database.
+
+    Registers definitions, instances and their current versions. Idempotent.
+    """
+    from kterminal.paper.config import LabConfig
+    from kterminal.paper.lab import Lab
+
+    settings = _bootstrap("lab")
+    catalog = _load_catalog(settings, None)
+    config = LabConfig.load(lab_config or settings.paths.lab_config)
+
+    async def _run() -> list[str]:
+        lab_store, cleanup = await _open_store("postgres", settings)
+        try:
+            lines = []
+            for instance_id, account in await Lab(config, catalog, lab_store).provision_dedicated():
+                state = "created" if account.created else "up to date"
+                lines.append(f"{instance_id:<24} {account.name:<36} {account.account_id}  {state}")
+            return lines
+        finally:
+            await cleanup()
+
+    for line in asyncio.run(_run()):
+        typer.echo(line)
+
+
 async def _open_store(kind: str, settings: Settings) -> tuple[Any, Callable[[], Awaitable[None]]]:
     from kterminal.paper.store import InMemoryLabStore
 
@@ -309,4 +341,106 @@ async def _open_store(kind: str, settings: Settings) -> tuple[Any, Callable[[], 
 
     if kind == "memory":
         return InMemoryLabStore(), nothing
-    raise typer.BadParameter(f"unknown store {kind!r} (only: memory)")
+    if kind == "postgres":
+        from kterminal.db.session import Database
+        from kterminal.paper.pg_store import PostgresLabStore
+
+        database = Database(settings.database, application_name=f"{settings.service_name}-lab")
+        return PostgresLabStore(database), database.dispose
+    raise typer.BadParameter(f"unknown store {kind!r} (memory | postgres)")
+
+
+# ── database ─────────────────────────────────────────────────────────────────
+@db_app.command("upgrade")
+def db_upgrade(revision: str = "head") -> None:
+    """Apply migrations (default: to the latest revision), then ensure partitions exist."""
+    from kterminal.db import migrate
+    from kterminal.db.partitions import ensure_monthly_partitions
+    from kterminal.db.session import Database
+
+    settings = _bootstrap("migrate")
+
+    async def _run() -> list[str]:
+        await migrate.upgrade(settings.database.dsn(), revision)
+        database = Database(settings.database, application_name="kterminal-migrate")
+        try:
+            return await ensure_monthly_partitions(database.engine, today=datetime.now(UTC).date())
+        finally:
+            await database.dispose()
+
+    created = asyncio.run(_run())
+    typer.echo(f"database at revision {revision}; {len(created)} new monthly partitions")
+
+
+@db_app.command("current")
+def db_current() -> None:
+    """Print the database's current migration revision."""
+    from kterminal.db import migrate
+
+    settings = _load_settings_or_exit()
+    typer.echo(asyncio.run(migrate.current(settings.database.dsn())) or "(empty database)")
+
+
+@db_app.command("check")
+def db_check() -> None:
+    """Fail if the live schema differs from the models (missing migration)."""
+    from kterminal.db import migrate
+
+    settings = _load_settings_or_exit()
+    differences = asyncio.run(migrate.check(settings.database.dsn()))
+    if differences:
+        typer.echo("schema differs from the models:", err=True)
+        for difference in differences:
+            typer.echo(f"  - {difference}", err=True)
+        raise typer.Exit(1)
+    typer.echo("schema matches the models")
+
+
+@db_app.command("verify-audit")
+def db_verify_audit() -> None:
+    """Recompute the audit log hash chain and report the first broken link."""
+    from kterminal.db.audit import verify
+    from kterminal.db.session import Database
+
+    settings = _load_settings_or_exit()
+
+    async def _run() -> Any:
+        database = Database(settings.database, application_name="kterminal-audit")
+        try:
+            async with database.session() as session:
+                return await verify(session)
+        finally:
+            await database.dispose()
+
+    result = asyncio.run(_run())
+    if not result.ok:
+        typer.echo(
+            f"audit chain BROKEN at seq {result.first_bad_seq} ({result.checked} entries checked)",
+            err=True,
+        )
+        raise typer.Exit(1)
+    typer.echo(f"audit chain OK ({result.checked} entries)")
+
+
+@catalog_app.command("apply")
+def catalog_apply(directory: CatalogDir = None) -> None:
+    """Write the catalog to the database (upsert) and record a snapshot of its fingerprint."""
+    from kterminal.db.repositories.catalog import apply_catalog
+    from kterminal.db.session import Database
+
+    settings = _bootstrap("catalog")
+    catalog = _load_catalog(settings, directory)
+
+    async def _run() -> Any:
+        database = Database(settings.database, application_name="kterminal-catalog")
+        try:
+            async with database.session() as session:
+                return await apply_catalog(
+                    session, catalog.to_document(), catalog.fingerprint, applied_by="cli"
+                )
+        finally:
+            await database.dispose()
+
+    snapshot = asyncio.run(_run())
+    state = "new snapshot" if snapshot.created else "unchanged"
+    typer.echo(f"catalog applied ({state}) fingerprint {snapshot.fingerprint}")

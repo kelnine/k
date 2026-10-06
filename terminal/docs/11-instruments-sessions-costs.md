@@ -100,7 +100,7 @@ independent and configurable:
 
 | Component | Models | Applied |
 |---|---|---|
-| Spread | `fixed` (price units), `fixed_ticks`, `session` (different spread per session window, e.g. wider in Asia), `quotes` (real bid/ask, default as fallback) | Market and stop fills cross half the spread; targets trigger only when the far side of the spread reaches them |
+| Spread | `fixed` (price units), `fixed_ticks`, `session` (different spread per session window, e.g. wider in Asia), `quotes` (real bid/ask, default as fallback) | Market fills cross half the spread. Stop levels are bid (sell stop) / ask (buy stop) prices, as on MT5: a stop triggers when that side of the spread reaches it and fills there (or at the opening bid/ask if the bar gaps through it), so the spread is paid once. Targets trigger only when the far side of the spread reaches them |
 | Commission | `none`, `per_quantity` (per lot / per contract per side — futures exchange + clearing + NFA + broker fees), `notional` (maker/taker rate of notional — crypto), optional minimum per order | Each fill |
 | Slippage | `none`, `fixed_ticks`, `notional_bps` | Adverse, on market and stop fills only (never on limit fills) |
 | Funding (perpetuals) | `none`, `constant` (rate per interval, interval hours, UTC anchor hours — e.g. 8 h at 00/08/16 or hourly) | Each funding time a position is open; positive rate = longs pay shorts |

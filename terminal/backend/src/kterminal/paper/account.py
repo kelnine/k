@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from kterminal.core.enums import Direction, OrderSide, OrderType, SignalAction
+from kterminal.core.enums import Direction, OrderType, SignalAction
 from kterminal.core.ids import uuid7
 from kterminal.domain.accounts import AccountSettings
 from kterminal.domain.costs import CostCalculator, Liquidity
@@ -552,8 +552,7 @@ class PaperAccount:
             else:
                 if not costs.stop_triggered(side, level, bar.high, bar.low, at):
                     return
-                trigger = max(bar.open, level) if side is OrderSide.BUY else min(bar.open, level)
-                fill = costs.stop_fill(side, trigger, at)
+                fill = costs.triggered_stop_fill(side, level, bar.open, at)
                 price, half_spread, slip = fill.price, fill.half_spread, fill.slippage
                 liquidity = Liquidity.TAKER
         self.pending_entries.pop(signal.symbol, None)
@@ -651,11 +650,7 @@ class PaperAccount:
         at = bar.close_time  # intrabar timing is unknown; book it at the bar's close
         exit_side = trade.direction.exit_side
         if costs.stop_triggered(exit_side, trade.current_stop, bar.high, bar.low, bar.open_time):
-            if trade.direction is Direction.LONG:
-                trigger = min(bar.open, trade.current_stop)
-            else:
-                trigger = max(bar.open, trade.current_stop)
-            fill = costs.stop_fill(exit_side, trigger, bar.open_time)
+            fill = costs.triggered_stop_fill(exit_side, trade.current_stop, bar.open, bar.open_time)
             self._close(
                 position,
                 fill.price,
