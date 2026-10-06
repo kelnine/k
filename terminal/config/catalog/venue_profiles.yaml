@@ -1,0 +1,142 @@
+# Venue profiles — docs/11-instruments-sessions-costs.md §11.5.
+#
+# A venue profile maps each canonical instrument to the LISTING whose
+# specification and costs an account simulates ("execution", must be
+# tradable) and, optionally, the listing it takes bars from ("data"). Two
+# strategies are only compared under "identical conditions" when their
+# accounts use the same venue profile, starting balance and account
+# configuration version. Changing a mapping changes the catalog fingerprint.
+#
+# Cost profiles behind every listing are ASSUMPTIONS (costs.yaml); listing
+# specs were verified on 2026-10-06 unless a listing says otherwise.
+
+venue_profiles:
+  # ── shared lab conditions ──────────────────────────────────────────────────
+  - id: lab_default
+    description: >-
+      Shared simulated conditions for strategy-lab paper accounts: CFDs
+      (metals, FX, US index CFDs) on a typical prop-firm MT5 server, MNQ/NQ on
+      CME Globex, BTCUSD on Binance USD-M and SOLUSD on Bybit linear perps
+      (Binance SOLUSDT lot size unverified), HYPEUSD on Hyperliquid, and
+      NEARUSD / ZECUSD / PUMPUSD on GENERIC lab_sim specs (no venue spec
+      verified yet). Bars come from TradingView: OANDA CFD feeds as proxies for
+      the prop server's prices, CME continuous futures, and each crypto
+      instrument's execution venue where possible (USDT/USDC = USD assumed).
+    execution:
+      XAUUSD: generic_mt5_cfd:XAUUSD
+      XAGUSD: generic_mt5_cfd:XAGUSD
+      NAS100: generic_mt5_cfd:NAS100
+      US30: generic_mt5_cfd:US30
+      US500: generic_mt5_cfd:US500
+      EURUSD: generic_mt5_cfd:EURUSD
+      GBPUSD: generic_mt5_cfd:GBPUSD
+      MNQ: cme:MNQ
+      NQ: cme:NQ                      # cme_emini_equity costs
+      BTCUSD: binance_usdm:BTCUSD
+      SOLUSD: bybit_linear:SOLUSD
+      NEARUSD: lab_sim:NEARUSD
+      ZECUSD: lab_sim:ZECUSD
+      HYPEUSD: hyperliquid:HYPEUSD
+      PUMPUSD: lab_sim:PUMPUSD
+    data:
+      XAUUSD: tradingview:XAUUSD      # OANDA:XAUUSD
+      XAGUSD: tradingview:XAGUSD      # OANDA:XAGUSD
+      NAS100: tradingview:NAS100      # OANDA:NAS100USD
+      US30: tradingview:US30          # OANDA:US30USD
+      US500: tradingview:US500        # OANDA:SPX500USD
+      EURUSD: tradingview:EURUSD      # OANDA:EURUSD
+      GBPUSD: tradingview:GBPUSD      # OANDA:GBPUSD
+      MNQ: tradingview:MNQ            # CME_MINI:MNQ1!
+      NQ: tradingview:NQ              # CME_MINI:NQ1!
+      BTCUSD: tradingview:BTCUSD      # BINANCE:BTCUSDT.P (= execution venue)
+      SOLUSD: tradingview:SOLUSD      # BYBIT:SOLUSDT.P (= execution venue)
+      NEARUSD: tradingview:NEARUSD    # BINANCE:NEARUSDT.P
+      ZECUSD: tradingview:ZECUSD      # COINBASE:ZECUSD (USD spot)
+      HYPEUSD: tradingview:HYPEUSD    # HYPERLIQUID:HYPEUSDC.P (symbol form unverified)
+      PUMPUSD: tradingview:PUMPUSD    # BINANCE:PUMPUSDT (spot)
+
+  # ── venue families ─────────────────────────────────────────────────────────
+  # Each contains ONLY the instruments that venue lists with verified, tradable
+  # specs. Without a data map, bars come from the execution venue itself.
+  - id: prop_cfd_mt5
+    description: >-
+      A typical prop-firm MT5 CFD server (generic_mt5_cfd): metals 100 oz /
+      5,000 oz lots, FX 100k lots, US index CFDs at $1 per point with 2-digit
+      prices (as on FTMO-Demo), raw-spread CFD cost assumptions. Not any one
+      firm — a real firm's server becomes its own venue and profile.
+    execution:
+      XAUUSD: generic_mt5_cfd:XAUUSD
+      XAGUSD: generic_mt5_cfd:XAGUSD
+      NAS100: generic_mt5_cfd:NAS100
+      US30: generic_mt5_cfd:US30
+      US500: generic_mt5_cfd:US500
+      EURUSD: generic_mt5_cfd:EURUSD
+      GBPUSD: generic_mt5_cfd:GBPUSD
+
+  - id: prop_cfd_tradelocker
+    description: >-
+      A typical prop-firm TradeLocker CFD server (generic_tradelocker_cfd):
+      metals and FX only, with standard CFD lots and raw-spread cost
+      assumptions. Index CFDs are excluded until a TradeLocker server's tick is
+      synced and verified.
+    execution:
+      XAUUSD: generic_tradelocker_cfd:XAUUSD
+      XAGUSD: generic_tradelocker_cfd:XAGUSD
+      EURUSD: generic_tradelocker_cfd:EURUSD
+      GBPUSD: generic_tradelocker_cfd:GBPUSD
+
+  - id: futures_cme
+    description: >-
+      CME Globex equity-index futures at exchange specs (MNQ $2/pt, NQ $20/pt,
+      tick 0.25) with all-in commission assumptions per contract size (micro
+      0.95, E-mini 2.50 USD per side); bars from TradingView's CME_MINI
+      continuous series.
+    execution:
+      MNQ: cme:MNQ
+      NQ: cme:NQ
+    data:
+      MNQ: tradingview:MNQ
+      NQ: tradingview:NQ
+
+  - id: crypto_binance_usdm
+    description: >-
+      Binance USD-M perpetuals (USDT-margined, base-unit sizing, VIP0 fees,
+      8 h funding assumption): BTCUSD, plus the XAUUSDT TradFi perp (needs a
+      separate agreement; observed 4 h funding).
+    execution:
+      BTCUSD: binance_usdm:BTCUSD
+      XAUUSD: binance_usdm:XAUUSD
+    data:
+      BTCUSD: tradingview:BTCUSD
+
+  - id: crypto_bybit_linear
+    description: >-
+      Bybit linear USDT perpetuals (non-VIP fees, 8 h funding assumption):
+      BTCUSD, SOLUSD, the XAU/XAG commodity perps (4 h funding, lower fees in
+      reality) and the EURUSD/GBPUSD forex perps.
+    execution:
+      BTCUSD: bybit_linear:BTCUSD
+      SOLUSD: bybit_linear:SOLUSD
+      XAUUSD: bybit_linear:XAUUSD
+      XAGUSD: bybit_linear:XAGUSD
+      EURUSD: bybit_linear:EURUSD
+      GBPUSD: bybit_linear:GBPUSD
+    data:
+      SOLUSD: tradingview:SOLUSD
+
+  - id: crypto_hyperliquid
+    description: >-
+      Hyperliquid perpetuals (USDC-margined, tier-0 fees, hourly funding):
+      main-dex BTC, SOL and HYPE plus trade.xyz HIP-3 gold, silver, EUR and GBP
+      markets, whose real fees and funding scaling differ from the main-dex
+      cost assumption (see the listings).
+    execution:
+      BTCUSD: hyperliquid:BTCUSD
+      SOLUSD: hyperliquid:SOLUSD
+      HYPEUSD: hyperliquid:HYPEUSD
+      XAUUSD: hyperliquid:XAUUSD
+      XAGUSD: hyperliquid:XAGUSD
+      EURUSD: hyperliquid:EURUSD
+      GBPUSD: hyperliquid:GBPUSD
+    data:
+      HYPEUSD: tradingview:HYPEUSD

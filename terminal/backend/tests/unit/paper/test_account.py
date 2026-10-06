@@ -1,3 +1,5 @@
+import decimal
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -8,6 +10,7 @@ import pytest
 from kterminal.core.enums import Direction, OrderType, SignalAction
 from kterminal.core.ids import uuid7
 from kterminal.domain.accounts import AccountSettings
+from kterminal.domain.costs import CostCalculator
 from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.paper.account import InstrumentSetup, PaperAccount
@@ -278,3 +281,191 @@ def test_decision_records_account_identity() -> None:
     assert decision.account_id == acc.account_id
     assert decision.account_config_version_id == acc.config_version_id
     assert decision.signal_id == sid
+
+
+# ── execution realism (review findings) ─────────────────────────────────────
+def closed_trades(acc: PaperAccount) -> list[TradeRecord]:
+    return [r for r in acc.drain() if isinstance(r, TradeRecord) and r.status == "CLOSED"]
+
+
+def test_a_bar_opening_beyond_the_target_fills_it_at_the_open() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    acc.handle_signal(long_entry(), uuid7(), MON)
+    acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+    # opens at 4015 (bid 4014.90 ≥ target 4010), then trades through the stop: the target
+    # came first — it is not a stop-out.
+    acc.on_bar(bar(MON + timedelta(minutes=1), "4015.00", "4015.00", "3994.00", "3996.00"))
+    (trade,) = closed_trades(acc)
+    assert trade.exit_reason == "TAKE_PROFIT"
+    assert trade.exit_price == Decimal("4014.90")
+
+
+def test_after_an_intrabar_limit_fill_only_later_prices_can_reach_the_target() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    limit = long_entry(entry="3990.00", stop="3985.00", order_type=OrderType.LIMIT)
+    assert acc.handle_signal(limit, uuid7(), MON).approved  # type: ignore[union-attr]
+    # opens at its high (4012 — beyond the 4010 target), falls to fill the limit, closes 3990.50
+    acc.on_bar(bar(MON, "4012.00", "4012.00", "3989.50", "3990.50"))
+    assert "XAUUSD" in acc.positions  # the high came *before* the fill: no target
+    trade = acc.positions["XAUUSD"].trade
+    assert trade.entry_price == Decimal("3990.00")
+    assert acc.positions["XAUUSD"].best == Decimal("3990.50")  # MFE only from the close
+
+
+def test_a_limit_the_bar_opens_through_fills_at_the_open() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    limit = long_entry(entry="3990.00", stop="3980.00", order_type=OrderType.LIMIT)
+    acc.handle_signal(limit, uuid7(), MON)
+    acc.on_bar(bar(MON, "3985.00", "3986.00", "3984.00", "3985.50"))
+    assert acc.positions["XAUUSD"].trade.entry_price == Decimal("3985.10")  # the opening ask
+
+
+def test_a_rejected_reversal_still_exits_the_opposite_position() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    acc.handle_signal(long_entry(), uuid7(), MON)
+    acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+    short = signal(
+        SignalAction.SHORT, entry=Decimal("4000.50"), stop_loss=Decimal("6000.00")
+    )  # its stop is so far away that the size rounds to zero
+    decision = acc.handle_signal(short, uuid7(), MON)
+    assert decision is not None and decision.primary_reason == "SIZE_TOO_SMALL"
+    acc.on_bar(bar(MON + timedelta(minutes=1), "4000.50", "4001.00", "4000.00", "4000.50"))
+    (trade,) = closed_trades(acc)
+    assert trade.exit_reason == "REVERSAL"
+    assert acc.positions == {}
+
+
+def test_stop_on_the_wrong_side_of_the_market_is_rejected() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")  # the market is 4000 …
+    stale = long_entry(entry="4010.00", stop="4005.00", target="4020.00")  # … stop above it
+    decision = acc.handle_signal(stale, uuid7(), MON)
+    assert decision is not None and decision.primary_reason == "STOP_WRONG_SIDE"
+
+
+def test_breakeven_is_recognised_at_the_strategys_entry_price() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    acc.handle_signal(long_entry(), uuid7(), MON)
+    acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+    acc.drain()
+    move = signal(SignalAction.MOVE_SL, stop_loss=Decimal("4000.00"))  # its entry, not the fill
+    assert acc.handle_signal(move, uuid7(), MON).approved  # type: ignore[union-attr]
+    events = [r for r in acc.drain() if type(r).__name__ == "TradeEventRecord"]
+    assert [e.kind for e in events] == ["BREAKEVEN"]
+    acc.on_bar(bar(MON + timedelta(minutes=1), "4000.50", "4000.60", "3999.00", "4000.00"))
+    (trade,) = closed_trades(acc)
+    assert trade.exit_reason == "BREAKEVEN_STOP"
+
+
+def test_levels_are_put_on_the_listing_grid_against_the_account() -> None:
+    acc = account()
+    setup = acc.markets["XAUUSD"]
+    coarse = replace(setup.listing, tick_size=Decimal("0.10"))
+    acc.markets["XAUUSD"] = replace(setup, listing=coarse)
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    limit = long_entry(
+        entry="3990.05", stop="3985.05", target="4010.05", order_type=OrderType.LIMIT
+    )
+    acc.handle_signal(limit, uuid7(), MON)
+    acc.on_bar(bar(MON, "3995.00", "3996.00", "3989.00", "3990.50"))
+    trade = acc.positions["XAUUSD"].trade
+    assert trade.entry_price == Decimal("3990.10")  # buy limit: up, never a better price
+    assert trade.initial_stop == Decimal("3985.00")  # sell stop: down
+    assert trade.initial_target == Decimal("4010.00")  # sell limit: down
+
+
+def test_money_maths_ignores_the_threads_decimal_context() -> None:
+    def run_once() -> tuple[Decimal, Decimal]:
+        acc = account()
+        acc.marks["XAUUSD"] = Decimal("4000.00")
+        acc.handle_signal(long_entry(), uuid7(), MON)
+        acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+        acc.on_bar(bar(MON + timedelta(minutes=1), "4008.00", "4010.20", "4007.00", "4009.00"))
+        return acc.balance, acc.mark(MON + timedelta(minutes=2)).equity
+
+    expected = run_once()
+    with decimal.localcontext() as ctx:
+        ctx.prec = 4  # what an in-process strategy could do to the thread
+        ctx.rounding = decimal.ROUND_DOWN
+        assert run_once() == expected
+
+
+def test_converted_costs_reconcile_trades_with_the_ledger() -> None:
+    catalog = lab_catalog()
+    listing = catalog.execution_listing("lab_default", "NEARUSD")  # USDT-quoted perpetual
+    acc = PaperAccount(
+        account_id=uuid7(),
+        name="Paper 50K · inst_a",
+        instance_id="inst_a",
+        settings=AccountSettings(stablecoin_usd_rate=Decimal("0.99937")),
+        config_version_id=uuid7(),
+        markets={
+            "NEARUSD": InstrumentSetup(
+                instrument=catalog.instrument("NEARUSD"),
+                listing=listing,
+                # notional commission + 8-hourly funding, in USDT
+                costs=CostCalculator(
+                    catalog.cost_profiles["crypto_perp_binance"], listing, catalog.sessions.labels
+                ),
+            )
+        },
+        timeframe="5m",
+    )
+    acc.marks["NEARUSD"] = Decimal("2.5000")
+    entry = signal(
+        SignalAction.LONG, symbol="NEARUSD", entry=Decimal("2.5000"), stop_loss=Decimal("2.4500")
+    )
+    assert acc.handle_signal(entry, uuid7(), MON).approved  # type: ignore[union-attr]
+    t = MON
+    for price in ("2.5000", "2.5300", "2.5600", "2.5900"):
+        acc.on_bar(Bar.of("NEARUSD", "1m", t, price, price, price, price))
+        t += timedelta(hours=9)  # crosses funding instants
+    acc.close_all(t)
+    out = acc.drain()
+    (trade,) = [r for r in out if isinstance(r, TradeRecord) and r.status == "CLOSED"]
+    ledger = [r for r in out if isinstance(r, LedgerRecord) and r.trade_id == trade.id]
+    assert trade.funding != 0
+    assert trade.net_pnl == sum(r.amount for r in ledger)
+    assert trade.commission == -sum(r.amount for r in ledger if r.kind == "COMMISSION")
+    assert trade.funding == sum(r.amount for r in ledger if r.kind == "FUNDING")
+
+
+def test_resting_entries_expire_after_primary_bars_not_wall_clock() -> None:
+    """A 5m order living 3 bars outlives the weekend, exactly like the theoretical book."""
+    acc = account()  # primary timeframe 5m
+    friday = datetime(2026, 1, 9, 21, 55, tzinfo=UTC)
+    sunday = datetime(2026, 1, 11, 23, 0, tzinfo=UTC)
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    limit = long_entry(
+        entry="3990.00", stop="3980.00", order_type=OrderType.LIMIT, expires_after_bars=3
+    )
+    assert acc.handle_signal(limit, uuid7(), friday).approved  # type: ignore[union-attr]
+    for minute in range(5):  # Fri 21:55-22:00: one 5m bar, not reached
+        acc.on_bar(bar(friday + timedelta(minutes=minute), "4000", "4001", "3999", "4000"))
+    acc.on_bar(bar(sunday, "3995.00", "3996.00", "3989.00", "3990.50"))  # bar 2: fills
+    assert "XAUUSD" in acc.positions
+
+
+def test_resting_reversal_closes_the_position_only_when_it_fills() -> None:
+    acc = account()
+    acc.marks["XAUUSD"] = Decimal("4000.00")
+    acc.handle_signal(long_entry(target=None), uuid7(), MON)
+    acc.on_bar(bar(MON, "4000.00", "4001.00", "3999.00", "4000.50"))
+    short_limit = signal(
+        SignalAction.SHORT,
+        entry=Decimal("4005.00"),
+        stop_loss=Decimal("4015.00"),
+        order_type=OrderType.LIMIT,
+    )
+    assert acc.handle_signal(short_limit, uuid7(), MON).approved  # type: ignore[union-attr]
+    acc.on_bar(bar(MON + timedelta(minutes=1), "4000.50", "4002.00", "4000.00", "4001.00"))
+    assert acc.positions["XAUUSD"].trade.direction is Direction.LONG  # not filled: still long
+    acc.on_bar(bar(MON + timedelta(minutes=2), "4001.00", "4006.00", "4000.50", "4004.00"))
+    (closed,) = closed_trades(acc)
+    assert closed.exit_reason == "REVERSAL" and closed.exit_price == Decimal("4005.00")
+    assert acc.positions["XAUUSD"].trade.direction is Direction.SHORT

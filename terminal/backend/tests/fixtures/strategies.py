@@ -3,13 +3,18 @@
 Kept in an importable module so the subprocess host can import them in its child process.
 """
 
+import decimal
 import os
+import time
+from dataclasses import dataclass, field
 from decimal import Decimal
 
+import numpy as np
 from pydantic import Field
 
 from kterminal.domain.market import Bar
 from kterminal.strategy_engine import SignalOutput, Strategy, StrategyMeta, StrategyParams
+from kterminal.strategy_engine.base import NoParams
 
 
 class ScriptParams(StrategyParams):
@@ -83,7 +88,8 @@ class SmaCross(Strategy[SmaParams]):
 
 class CrashParams(StrategyParams):
     crash_on: int = 3
-    mode: str = "raise"  # raise | exit | hang
+    mode: str = "raise"  # raise | exit | hang | sysexit | sleep
+    sleep_s: float = 0.0
 
 
 class Crasher(Strategy[CrashParams]):
@@ -101,6 +107,11 @@ class Crasher(Strategy[CrashParams]):
             if self.params.mode == "hang":
                 while True:  # simulates an infinite loop
                     pass
+            if self.params.mode == "sysexit":
+                raise SystemExit("strategy called sys.exit")
+            if self.params.mode == "sleep":
+                time.sleep(self.params.sleep_s)  # a slow (not crashed) strategy
+                return None
             raise ZeroDivisionError("strategy bug")
         return self.ctx.long(stop_loss=bar.close - 5) if self.count == 1 else None
 
@@ -116,6 +127,80 @@ class Misbehaving(Strategy[CrashParams]):
         wrong_identity = good.model_copy(update={"strategy_id": "someone_else"})
         wrong_side = good.model_copy(update={"stop_loss": bar.close + 5})
         return [good, wrong_identity, wrong_side, "not a signal"]  # type: ignore[list-item]
+
+
+class SabotageParams(StrategyParams):
+    mode: str = "float_stop"
+
+
+class Saboteur(Strategy[SabotageParams]):
+    """Bends the rules in the ways a careless (or hostile) strategy might."""
+
+    meta = StrategyMeta(id="saboteur", name="Saboteur", version="1.0.0", warmup_bars=0)
+    Params = SabotageParams
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        good = self.ctx.long(stop_loss=bar.close - 5)
+        mode = self.params.mode
+        if mode == "float_stop":  # model_copy skips validation: a float sneaks in
+            return good.model_copy(update={"stop_loss": float(bar.close) - 5.0})
+        if mode == "nan_meta":
+            return good.model_copy(update={"metadata": {"atr": float("nan")}})
+        if mode == "numpy_meta":
+            return good.model_copy(update={"metadata": {"idx": np.int64(7)}})
+        if mode == "spoof_time":
+            return good.model_copy(update={"timestamp": bar.close_time.replace(year=2030)})
+        if mode == "flood":
+            return [good] * 1_000
+        if mode == "decimal":
+            decimal.getcontext().prec = 4  # would break everyone's money maths if it leaked
+            decimal.getcontext().rounding = decimal.ROUND_DOWN
+            return good
+        return None
+
+
+@dataclass(frozen=True)
+class _Memory:
+    closes: list[Decimal] = field(default_factory=list)
+
+
+class SharedViaFrozenDataclass(Strategy[NoParams]):
+    meta = StrategyMeta(id="shared_dataclass", name="Shared", version="1.0.0")
+    Params = NoParams
+    MEMORY = _Memory()
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        self.MEMORY.closes.append(bar.close)
+        return None
+
+
+class SharedViaTuple(Strategy[NoParams]):
+    meta = StrategyMeta(id="shared_tuple", name="Shared", version="1.0.0")
+    Params = NoParams
+    SEEN = ([],)
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        return None
+
+
+class SharedViaNestedClass(Strategy[NoParams]):
+    meta = StrategyMeta(id="shared_nested", name="Shared", version="1.0.0")
+    Params = NoParams
+
+    class Cache:
+        hits: dict[str, int] = {}  # noqa: RUF012 - deliberately mutable (test subject)
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        return None
+
+
+class SharedViaDefaultArgument(Strategy[NoParams]):
+    meta = StrategyMeta(id="shared_default", name="Shared", version="1.0.0")
+    Params = NoParams
+
+    def on_bar(self, bar: Bar, seen: list[Decimal] = []) -> SignalOutput:  # noqa: B006
+        seen.append(bar.close)
+        return None
 
 
 class ContextProbe(Strategy[ScriptParams]):
@@ -145,4 +230,41 @@ class ContextProbe(Strategy[ScriptParams]):
         )
         if latest is not None and latest.close_time > bar.close_time:
             raise AssertionError("look-ahead: saw an hourly bar that has not closed")
+        return None
+
+
+class SetParamsModel(StrategyParams):
+    sessions: frozenset[str] = frozenset(
+        {"london_session", "ny_session", "asia_session", "ny_orb_15", "ny_pm", "tokyo"}
+    )
+
+
+class SetParams(Strategy[SetParamsModel]):
+    meta = StrategyMeta(id="set_params", name="Set params", version="1.0.0")
+    Params = SetParamsModel
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        return None
+
+
+class LevelsParams(StrategyParams):
+    levels: list[Decimal] = Field(default_factory=lambda: [Decimal(1)])
+
+
+class LevelHoarder(Strategy[LevelsParams]):
+    """Mutates its (shallowly frozen) params — must only ever affect itself."""
+
+    meta = StrategyMeta(id="level_hoarder", name="Level hoarder", version="1.0.0")
+    Params = LevelsParams
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        self.params.levels.append(bar.close)
+        return None
+
+
+class OrbProbe(Strategy[NoParams]):
+    meta = StrategyMeta(id="orb_probe", name="ORB probe", version="1.0.0", sessions=("ny_orb_15",))
+    Params = NoParams
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
         return None

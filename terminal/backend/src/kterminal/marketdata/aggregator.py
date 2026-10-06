@@ -6,7 +6,9 @@ exactly the same bars. A higher-timeframe bar is emitted only when its period
 is complete — when the base bar that ends exactly at the period boundary
 arrives, or, if data is missing at the end of a period (market closed, feed
 gap), as soon as a later base bar proves the period is over. Partial bars are
-never emitted.
+never emitted — including the first period of an instrument when its stream
+starts in the middle of that period (the bars before the start are unknown, so
+that period is dropped rather than emitted with a wrong open/high/low/volume).
 
 Intraday timeframes are aligned to the UTC epoch (``Timeframe.floor``);
 session-anchored daily bars arrive with the market-data layer in Phase 3/5.
@@ -39,6 +41,8 @@ class BarAggregator:
                 raise ValueError(f"{target} is not a whole multiple of the base timeframe {base}")
         self._partials: dict[tuple[str, Timeframe], _Partial] = {}
         self._last_open: dict[str, datetime] = {}
+        # periods an instrument's stream started inside of: never complete, never emitted
+        self._incomplete: dict[tuple[str, Timeframe], datetime] = {}
 
     @property
     def timeframes(self) -> tuple[Timeframe, ...]:
@@ -58,6 +62,10 @@ class BarAggregator:
                 f"({bar.open_time.isoformat()} after {last.isoformat()})"
             )
         self._last_open[bar.instrument] = bar.open_time
+        if last is None:
+            for target in self.targets:
+                if target.floor(bar.open_time) != bar.open_time:
+                    self._incomplete[(bar.instrument, target)] = target.floor(bar.open_time)
 
         closed: list[Bar] = [bar]
         for target in self.targets:
@@ -65,7 +73,7 @@ class BarAggregator:
             bucket_open = target.floor(bar.open_time)
             partial = self._partials.get(key)
             if partial is not None and partial.bar.open_time != bucket_open:
-                closed.append(partial.bar)  # period ended without its last base bar (gap)
+                self._emit(closed, key, partial.bar)  # period ended without its last bar (gap)
                 partial = None
             if partial is None:
                 merged = Bar(
@@ -90,12 +98,33 @@ class BarAggregator:
                     volume=previous.volume + bar.volume,
                 )
             if bar.close_time >= merged.close_time:
-                closed.append(merged)
+                self._emit(closed, key, merged)
                 self._partials.pop(key, None)
             else:
                 self._partials[key] = _Partial(merged)
         closed.sort(key=lambda b: (b.close_time, b.timeframe))
         return closed
+
+    def close_through(self, t: datetime) -> list[Bar]:
+        """Close every pending period that ended at or before ``t``, for *all* instruments.
+
+        In a time-ordered stream, a base bar opening at ``t`` proves those periods are
+        over even for an instrument whose data has a gap (closed market, feed outage), so
+        its bars land in the batch of their own close time instead of arriving late.
+        """
+        closed: list[Bar] = []
+        for key, partial in list(self._partials.items()):
+            if partial.bar.close_time <= t:
+                del self._partials[key]
+                self._emit(closed, key, partial.bar)
+        closed.sort(key=lambda b: (b.close_time, b.timeframe))
+        return closed
+
+    def _emit(self, closed: list[Bar], key: tuple[str, Timeframe], bar: Bar) -> None:
+        if self._incomplete.get(key) == bar.open_time:
+            del self._incomplete[key]  # started mid-period: drop, never emit a partial bar
+            return
+        closed.append(bar)
 
 
 def batches_by_close(bars: Iterable[Bar]) -> Iterator[list[Bar]]:
@@ -128,6 +157,8 @@ def aggregate_stream(
     for bar in base_bars:
         # A base bar opening at T proves every period ending at or before T is complete
         # for all instruments (bars of the same instant share a batch).
+        for closed in aggregator.close_through(bar.open_time):
+            pending.setdefault(closed.close_time, []).append(closed)
         yield from flush(bar.open_time)
         for closed in aggregator.add(bar):
             pending.setdefault(closed.close_time, []).append(closed)

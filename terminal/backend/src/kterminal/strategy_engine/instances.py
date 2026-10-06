@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from kterminal.core.canonical import canonical_data, decimal_text
 from kterminal.core.errors import KTerminalError
 from kterminal.core.registry import Registry
 from kterminal.domain.instruments import Instrument
@@ -157,8 +158,21 @@ def resolve_instance(
             - {timeframe}
         )
     )
+    for tf in (timeframe, *context):
+        if not tf.is_intraday:
+            raise InstanceConfigError(
+                f"instance {spec.id}: timeframe {tf} is not supported yet — bars are built "
+                "from the intraday base stream; session-anchored daily/weekly bars arrive "
+                "with the market-data layer"
+            )
 
     session_docs: dict[str, Any] = {}
+    classification: list[dict[str, Any]] = []
+    if sessions is not None:
+        # ctx.session() is always available, so the classification is part of every
+        # version: the ordered window ids and what each window is.
+        for window_id in getattr(sessions, "classification", ()):
+            classification.append({"id": window_id, **_behaviour(sessions.window(window_id))})
     if meta.sessions:
         if sessions is None:
             raise InstanceConfigError(
@@ -167,16 +181,16 @@ def resolve_instance(
             )
         for window_id in meta.sessions:
             try:
-                session_docs[window_id] = sessions.window(window_id).to_dict()
+                session_docs[window_id] = _behaviour(sessions.window(window_id))
             except KeyError as exc:
                 raise InstanceConfigError(f"instance {spec.id}: {exc}") from None
     trading_days: dict[str, Any] = {}
     if sessions is not None:
         for instrument in resolved_instruments.values():
             with contextlib.suppress(KeyError):  # instruments without a configured rule
-                trading_days[instrument.trading_day] = sessions.trading_day_rule(
-                    instrument.trading_day
-                ).to_dict()
+                trading_days[instrument.trading_day] = _behaviour(
+                    sessions.trading_day_rule(instrument.trading_day)
+                )
 
     config: dict[str, Any] = {
         "definition": {
@@ -185,10 +199,10 @@ def resolve_instance(
             "version": meta.version,
             "code_hash": definition.code_hash,
         },
-        "params": params.model_dump(mode="json"),
+        "params": canonical_data(params.model_dump()),
         "instruments": {
             symbol: {
-                "tick_size": str(inst.tick_size),
+                "tick_size": decimal_text(inst.tick_size),
                 "quote_currency": inst.quote_currency,
                 "trading_day": inst.trading_day,
             }
@@ -197,6 +211,7 @@ def resolve_instance(
         "timeframe": timeframe.code,
         "context_timeframes": [tf.code for tf in context],
         "sessions": session_docs,
+        "session_classification": classification,
         "trading_day_rules": trading_days,
         "behaviour": {
             "on_opposite_signal": meta.on_opposite_signal,
@@ -213,3 +228,9 @@ def resolve_instance(
         config=config,
         config_hash=hash_data(config),
     )
+
+
+def _behaviour(item: Any) -> dict[str, Any]:
+    """What a session window / trading-day rule *does* — its labels (name, description)
+    cannot change a signal, so editing them must not create a new version."""
+    return {k: v for k, v in item.to_dict().items() if k not in {"name", "description"}}

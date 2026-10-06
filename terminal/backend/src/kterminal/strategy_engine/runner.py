@@ -12,21 +12,36 @@ For every batch of bars that closed at the same instant the runner:
    identity, validates it against the standard, and applies valid ones to the
    book.
 
-Strategy exceptions are caught: the runner records a :class:`Fault` and stops
-emitting signals (fail closed). Nothing a strategy does can raise past the
-runner, so other instances are unaffected.
+Strategy exceptions — including ``SystemExit`` and other ``BaseException``
+subclasses, but not an operator's ``KeyboardInterrupt`` — are caught: the
+runner records a :class:`Fault` and stops emitting signals (fail closed).
+Strategy code runs in its own copy of the decimal context, returned signals are
+re-validated from scratch (``model_copy`` skips validation) and must carry the
+evaluated bar's identity, and a strategy may return at most
+:data:`MAX_OUTPUTS_PER_BAR` objects per bar. Nothing a strategy does can raise
+past the runner, so other instances are unaffected.
 """
 
+import json
 import time
 import traceback
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
+from decimal import localcontext
+from functools import partial
 from typing import Any
+
+from pydantic import ValidationError
 
 from kterminal.core.enums import SignalSource
 from kterminal.domain.instruments import Instrument
 from kterminal.domain.market import Bar
-from kterminal.domain.signals import InvalidSignalError, Signal, validate_signal
+from kterminal.domain.signals import (
+    MAX_METADATA_BYTES,
+    InvalidSignalError,
+    Signal,
+    validate_signal,
+)
 from kterminal.strategy_engine.base import Strategy
 from kterminal.strategy_engine.book import TheoreticalBook
 from kterminal.strategy_engine.context import SessionLookup, StrategyContext
@@ -35,6 +50,20 @@ from kterminal.strategy_engine.model import Fault, PositionEvent, RejectedSignal
 from kterminal.strategy_engine.series import DEFAULT_MAX_BARS, BarSeries
 
 DEFAULT_TIME_BUDGET_MS = 250.0
+MAX_OUTPUTS_PER_BAR = 64  # more than this from one bar is a runaway strategy: fault it
+MAX_REJECTED_PAYLOAD_BYTES = 2 * MAX_METADATA_BYTES
+
+
+def _contain(exc: BaseException) -> bool:
+    """Whether a strategy's exception is contained (everything but an operator interrupt)."""
+    return not isinstance(exc, KeyboardInterrupt)
+
+
+def _isolated[T](call: Callable[[], T]) -> T:
+    """Run strategy code in a private copy of the decimal context, so a strategy that
+    changes precision, rounding or traps cannot change anyone else's arithmetic."""
+    with localcontext():
+        return call()
 
 
 class StrategyRunner:
@@ -56,6 +85,11 @@ class StrategyRunner:
             for tf in resolved.timeframes
         }
         self.book = TheoreticalBook(instrument.symbol, on_opposite_signal=meta.on_opposite_signal)
+        self.source = (
+            SignalSource.INTERNAL
+            if resolved.definition.strategy_cls is not None
+            else SignalSource.TRADINGVIEW
+        )
         self.ctx = StrategyContext(
             instance_id=resolved.id,
             definition_id=resolved.definition.id,
@@ -65,9 +99,15 @@ class StrategyRunner:
             series=self.series,
             book=self.book,
             sessions=sessions,
-            source=SignalSource.INTERNAL
-            if resolved.definition.strategy_cls is not None
-            else SignalSource.TRADINGVIEW,
+            source=self.source,
+            windows=(
+                None
+                if sessions is None
+                else (
+                    *resolved.definition.meta.sessions,
+                    *getattr(sessions, "classification", ()),
+                )
+            ),
         )
         self.fault: Fault | None = None
         self.warming_up = False
@@ -94,9 +134,15 @@ class StrategyRunner:
         if cls is None:
             return None
         try:
-            self._strategy = cls(self.resolved.params, self.ctx)
-            self._strategy.on_start()
-        except Exception as exc:
+            # Each strategy object gets its own deep copy of the params: runners of one
+            # instance (one per instrument) must not share anything mutable.
+            params = self.resolved.params.model_copy(deep=True)
+            strategy = _isolated(lambda: cls(params, self.ctx))
+            self._strategy = strategy
+            _isolated(strategy.on_start)
+        except BaseException as exc:
+            if not _contain(exc):
+                raise
             self._record_fault("on_start", exc, None)
         return self.fault
 
@@ -119,8 +165,10 @@ class StrategyRunner:
     def stop(self) -> None:
         if self._strategy is not None and self.fault is None:
             try:
-                self._strategy.on_stop()
-            except Exception as exc:
+                _isolated(self._strategy.on_stop)
+            except BaseException as exc:
+                if not _contain(exc):
+                    raise
                 self._record_fault("on_stop", exc, None)
 
     # ── bars ────────────────────────────────────────────────────────────────
@@ -160,10 +208,17 @@ class StrategyRunner:
                 raise RuntimeError("strategy not started")
             stage = "on_position_event"
             for event in events:
-                raw.extend(_as_list(strategy.on_position_event(event)))
+                raw.extend(_as_list(_isolated(partial(strategy.on_position_event, event))))
             stage = "on_bar"
-            raw.extend(_as_list(strategy.on_bar(primary)))
-        except Exception as exc:
+            raw.extend(_as_list(_isolated(lambda: strategy.on_bar(primary))))
+            if len(raw) > MAX_OUTPUTS_PER_BAR:
+                stage = "output"
+                raise RuntimeError(
+                    f"returned {len(raw)} objects for one bar (max {MAX_OUTPUTS_PER_BAR})"
+                )
+        except BaseException as exc:
+            if not _contain(exc):
+                raise
             fault = self._record_fault(stage, exc, primary.close_time)
             return RunnerOutput(
                 self.instance_id, symbol, primary.close_time, events=tuple(events), fault=fault
@@ -180,7 +235,7 @@ class StrategyRunner:
 
         if self.warming_up:
             return None
-        signals, rejected = self._accept(raw, primary.close_time)
+        signals, rejected = self._accept(raw, primary.close_time, primary)
         return RunnerOutput(
             self.instance_id,
             symbol,
@@ -206,33 +261,49 @@ class StrategyRunner:
     def _advance_book(self, bar: Bar) -> list[PositionEvent]:
         return self.book.on_bar(bar)
 
-    def _accept(self, raw: list[Any], at: datetime) -> tuple[list[Signal], list[RejectedSignal]]:
+    def _accept(
+        self, raw: list[Any], at: datetime, bar: Bar | None = None
+    ) -> tuple[list[Signal], list[RejectedSignal]]:
         accepted: list[Signal] = []
         rejected: list[RejectedSignal] = []
         for item in raw:
             if not isinstance(item, Signal):
                 rejected.append(self._reject(at, "NOT_A_SIGNAL", f"returned {type(item).__name__}"))
                 continue
-            mismatch = self._identity_mismatch(item)
+            try:
+                # Re-validate from scratch: model_copy(update=...) skips type validation, so
+                # only a freshly validated copy (never the strategy's object) is routed.
+                signal = Signal.model_validate(item.model_dump(warnings=False))
+            except (ValidationError, TypeError, ValueError, ArithmeticError) as exc:
+                rejected.append(self._reject(at, "INVALID_SIGNAL", _first_line(exc), item))
+                continue
+            mismatch = self._identity_mismatch(signal, bar)
             if mismatch:
                 rejected.append(self._reject(at, "IDENTITY_MISMATCH", mismatch, item))
                 continue
             try:
-                validate_signal(item)
+                validate_signal(signal)
             except InvalidSignalError as exc:
                 rejected.append(self._reject(at, exc.code, exc.message, item))
                 continue
-            self.book.apply(item)
-            accepted.append(item)
+            except (TypeError, ValueError, ArithmeticError) as exc:
+                rejected.append(self._reject(at, "INVALID_SIGNAL", _first_line(exc), item))
+                continue
+            self.book.apply(signal)
+            accepted.append(signal)
         return accepted, rejected
 
-    def _identity_mismatch(self, signal: Signal) -> str | None:
-        expected = {
+    def _identity_mismatch(self, signal: Signal, bar: Bar | None) -> str | None:
+        expected: dict[str, Any] = {
             "strategy_id": self.instance_id,
             "strategy_version": self.resolved.version,
             "symbol": self.instrument.symbol,
             "timeframe": self.resolved.timeframe.code,
+            "source": self.source,
         }
+        if bar is not None:  # internal strategies decide at the close of the evaluated bar
+            expected["timestamp"] = bar.close_time
+            expected["bar_time"] = bar.open_time
         for name, value in expected.items():
             if getattr(signal, name) != value:
                 return f"{name} is {getattr(signal, name)!r}, expected {value!r}"
@@ -241,14 +312,14 @@ class StrategyRunner:
     def _reject(
         self, at: datetime, code: str, message: str, signal: Signal | None = None
     ) -> RejectedSignal:
-        self.ctx.log.warning("strategy.signal_rejected", code=code, detail=message)
+        self.ctx.log.warning("strategy.signal_rejected", code=code, detail=message[:500])
         return RejectedSignal(
             instance_id=self.instance_id,
             instrument=self.instrument.symbol,
             time=at,
             code=code,
-            message=message,
-            payload=signal.model_dump(mode="json") if signal is not None else {},
+            message=message[:2_000],
+            payload=_safe_payload(signal) if signal is not None else {},
         )
 
     def _record_fault(self, stage: str, exc: BaseException, at: datetime | None) -> Fault:
@@ -265,6 +336,26 @@ class StrategyRunner:
             "strategy.faulted", stage=stage, error=type(exc).__name__, detail=str(exc)[:500]
         )
         return self.fault
+
+
+def _first_line(exc: BaseException) -> str:
+    text = str(exc).strip().splitlines()
+    return f"{type(exc).__name__}: {text[0] if text else ''}"[:500]
+
+
+def _safe_payload(signal: Signal) -> dict[str, Any]:
+    """The rejected signal as storable JSON: never raises, no NaN/Infinity, bounded size."""
+    try:
+        payload = signal.model_dump(mode="json", fallback=repr, warnings=False)
+        text = json.dumps(payload, allow_nan=False)
+    except (TypeError, ValueError, ArithmeticError):
+        return {"unserializable": repr(signal)[:MAX_REJECTED_PAYLOAD_BYTES]}
+    if len(text) > MAX_REJECTED_PAYLOAD_BYTES:
+        payload["metadata"] = {"truncated_bytes": len(text)}
+        payload = {k: v for k, v in payload.items() if k != "reason"} | {
+            "reason": str(payload.get("reason") or "")[:500]
+        }
+    return dict(payload)
 
 
 def _as_list(output: object) -> list[Any]:

@@ -18,6 +18,7 @@ writes to PostgreSQL, and the fingerprint is recorded with every decision so
 the exact specification a trade was sized and costed with is never lost.
 """
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -106,6 +107,73 @@ def _dec(value: Any, where: str, problems: list[str]) -> Decimal:
     return result
 
 
+_VENUE_KEYS = frozenset(
+    {"id", "name", "kind", "platform", "timezone", "symbol_suffixes", "description"}
+)
+_INSTRUMENT_KEYS = frozenset(
+    {
+        "symbol",
+        "name",
+        "asset_class",
+        "base",
+        "quote_currency",
+        "tick_size",
+        "trading_hours",
+        "trading_day",
+        "underlying",
+        "futures",
+        "description",
+        "tags",
+    }
+)
+_LISTING_KEYS = frozenset(
+    {
+        "venue",
+        "instrument",
+        "venue_symbol",
+        "contract_type",
+        "tick_size",
+        "contract_size",
+        "quantity_unit",
+        "min_qty",
+        "qty_step",
+        "quote_currency",
+        "max_qty",
+        "min_notional",
+        "pnl_model",
+        "trading_hours",
+        "cost_profile",
+        "symbol_format",
+        "tradable",
+        "verified_on",
+        "source",
+        "notes",
+        "aliases",
+    }
+)
+_ALIAS_KEYS = frozenset({"source", "alias", "instrument"})
+_VENUE_PROFILE_KEYS = frozenset({"id", "description", "execution", "data"})
+
+
+def _check_keys(d: Any, allowed: frozenset[str], where: str, problems: list[str]) -> bool:
+    """Rows are strict: a misspelled key (``pnl_modle``) must not be silently ignored."""
+    if not isinstance(d, Mapping):
+        problems.append(f"{where}: expected a mapping, got {type(d).__name__}")
+        return False
+    unknown = sorted(set(d) - allowed)
+    if unknown:
+        problems.append(f"{where}: unknown key(s) {', '.join(map(str, unknown))}")
+        return False
+    return True
+
+
+def _strict_bool(value: Any, where: str, problems: list[str]) -> bool:
+    if not isinstance(value, bool):
+        problems.append(f"{where}: expected true or false, got {value!r}")
+        return False
+    return value
+
+
 def _opt_dec(value: Any, where: str, problems: list[str]) -> Decimal | None:
     return None if value in (None, "") else _dec(value, where, problems)
 
@@ -115,7 +183,9 @@ def _str_decimal(value: Decimal | None) -> str | None:
 
 
 def instrument_from_dict(d: Mapping[str, Any], problems: list[str]) -> Instrument | None:
-    where = f"instrument {d.get('symbol', '?')}"
+    where = f"instrument {d.get('symbol', '?') if isinstance(d, Mapping) else '?'}"
+    if not _check_keys(d, _INSTRUMENT_KEYS, where, problems):
+        return None
     try:
         futures = d.get("futures")
         return Instrument(
@@ -162,6 +232,9 @@ def instrument_to_dict(i: Instrument) -> dict[str, Any]:
 
 
 def venue_from_dict(d: Mapping[str, Any], problems: list[str]) -> Venue | None:
+    where = f"venue {d.get('id', '?') if isinstance(d, Mapping) else '?'}"
+    if not _check_keys(d, _VENUE_KEYS, where, problems):
+        return None
     try:
         return Venue(
             id=str(d["id"]),
@@ -189,8 +262,14 @@ def venue_to_dict(v: Venue) -> dict[str, Any]:
     }
 
 
-def listing_from_dict(d: Mapping[str, Any], problems: list[str]) -> Listing | None:
+def listing_from_dict(d: Any, problems: list[str]) -> Listing | None:
+    if not isinstance(d, Mapping):
+        problems.append(f"listing: expected a mapping, got {type(d).__name__}")
+        return None
     where = f"listing {d.get('venue', '?')}:{d.get('instrument', '?')}"
+    if not _check_keys(d, _LISTING_KEYS, where, problems):
+        return None
+    tradable = _strict_bool(d.get("tradable", True), f"{where}.tradable", problems)
     try:
         verified = d.get("verified_on")
         return Listing(
@@ -210,7 +289,7 @@ def listing_from_dict(d: Mapping[str, Any], problems: list[str]) -> Listing | No
             trading_hours=d.get("trading_hours") or None,
             cost_profile=d.get("cost_profile") or None,
             symbol_format=d.get("symbol_format") or None,
-            tradable=bool(d.get("tradable", True)),
+            tradable=tradable,
             verified_on=date.fromisoformat(str(verified)) if verified else None,
             source=str(d.get("source") or ""),
             notes=str(d.get("notes") or ""),
@@ -247,6 +326,11 @@ def listing_to_dict(item: Listing) -> dict[str, Any]:
     }
 
 
+def _duplicates(kind: str, keys: list[str]) -> list[str]:
+    counts = Counter(keys)
+    return [f"duplicate {kind} {key} ({n} rows)" for key, n in sorted(counts.items()) if n > 1]
+
+
 # ── the catalog ──────────────────────────────────────────────────────────────
 class InstrumentCatalog:
     def __init__(
@@ -260,6 +344,15 @@ class InstrumentCatalog:
         cost_profiles: Mapping[str, CostProfile],
         venue_profiles: Iterable[VenueProfile],
     ) -> None:
+        venues, instruments = list(venues), list(instruments)
+        listings, venue_profiles = list(listings), list(venue_profiles)
+        # A second row with the same key must never silently replace the first.
+        problems = [
+            *_duplicates("venue", [v.id for v in venues]),
+            *_duplicates("instrument", [i.symbol for i in instruments]),
+            *_duplicates("listing", [item.key for item in listings]),
+            *_duplicates("venue profile", [p.id for p in venue_profiles]),
+        ]
         self.venues = {v.id: v for v in venues}
         self.instruments = {i.symbol: i for i in instruments}
         self.listings = {item.key: item for item in listings}
@@ -267,7 +360,7 @@ class InstrumentCatalog:
         self.sessions = sessions
         self.cost_profiles = dict(cost_profiles)
         self.venue_profiles = {p.id: p for p in venue_profiles}
-        problems = self.validate()
+        problems.extend(self.validate())
         if problems:
             raise CatalogError(problems)
 
@@ -291,6 +384,8 @@ class InstrumentCatalog:
         ]
         aliases = []
         for d in document.get("aliases") or []:
+            if not _check_keys(d, _ALIAS_KEYS, f"alias {d!r}", problems):
+                continue
             try:
                 aliases.append(SymbolAlias(str(d["source"]), str(d["alias"]), str(d["instrument"])))
             except (KeyError, TypeError) as exc:
@@ -309,6 +404,9 @@ class InstrumentCatalog:
             cost_profiles = {}
         profiles = []
         for d in document.get("venue_profiles") or []:
+            where = f"venue profile {d.get('id', '?') if isinstance(d, Mapping) else d!r}"
+            if not _check_keys(d, _VENUE_PROFILE_KEYS, where, problems):
+                continue
             try:
                 profiles.append(
                     VenueProfile(
@@ -364,6 +462,11 @@ class InstrumentCatalog:
                 problems.extend(
                     f"{where}: {reason}" for reason in profile_listing_problems(profile, item)
                 )
+            if item.tradable and item.pnl_model is not PnlModel.LINEAR:
+                problems.append(
+                    f"{where}: {item.pnl_model} P&L is not supported yet "
+                    "(keep the listing tradable: false)"
+                )
             if item.tradable and not item.cost_profile:
                 problems.append(
                     f"{where}: tradable listings need a cost_profile (costs are "
@@ -371,6 +474,14 @@ class InstrumentCatalog:
                 )
             if item.symbol_format and (listed is None or listed.futures is None):
                 problems.append(f"{where}: symbol_format requires a futures instrument")
+            elif item.symbol_format and listed is not None:
+                try:  # render it once: an unknown token must fail here, not on first use
+                    item.venue_symbol_for(listed, date(2026, 1, 15))
+                except (KeyError, IndexError, ValueError) as exc:
+                    problems.append(
+                        f"{where}: invalid symbol_format {item.symbol_format!r}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
             symbol_key = (item.venue, item.venue_symbol.upper())
             other = seen_symbols.get(symbol_key)
             if other is not None and other != item.instrument:

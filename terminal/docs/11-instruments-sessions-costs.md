@@ -39,8 +39,22 @@ nothing in the code changes.
 converted to the account currency with configurable rates; USDT and USDC
 default to 1 USD as an explicit, recorded assumption). Quantities are always
 rounded **down** to the listing's step so sizing never exceeds the risk budget.
-Inverse (coin-margined) contracts are recognised but refused for sizing until
-they are implemented.
+Signal levels are put on the listing's tick grid, rounded against the account
+(the price an order gets is never better than requested). Every converted
+amount is rounded once — fees up, cash flows down — and the same rounded value
+goes to both the trade and the ledger, so trades always reconcile with the
+balance. Inverse (coin-margined) listings are recognised but cannot be marked
+tradable until they are implemented.
+
+**The catalog is strict.** `kterminal catalog validate` (and every load)
+reports, all at once: duplicate venues, instruments, listings or venue
+profiles (a second row never silently replaces the first), unknown or
+misspelled keys in any row, booleans that are not real `true`/`false`
+(`"false"` in quotes is an error, not *true*), futures symbol templates that do
+not render, cost profiles that do not fit their listing (funding only on
+perpetuals, swap never on futures or perpetuals), unknown calendars, rules,
+venues or cost profiles, tradable listings without costs, and venue profiles
+pointing at data-only listings.
 
 ## 11.2 Symbol mapping and aliases
 
@@ -100,8 +114,8 @@ independent and configurable:
 
 | Component | Models | Applied |
 |---|---|---|
-| Spread | `fixed` (price units), `fixed_ticks`, `session` (different spread per session window, e.g. wider in Asia), `quotes` (real bid/ask, default as fallback) | Market fills cross half the spread. Stop levels are bid (sell stop) / ask (buy stop) prices, as on MT5: a stop triggers when that side of the spread reaches it and fills there (or at the opening bid/ask if the bar gaps through it), so the spread is paid once. Targets trigger only when the far side of the spread reaches them |
-| Commission | `none`, `per_quantity` (per lot / per contract per side — futures exchange + clearing + NFA + broker fees), `notional` (maker/taker rate of notional — crypto), optional minimum per order | Each fill |
+| Spread | `fixed` (price units), `fixed_ticks`, `session` (different spread per session window, e.g. wider in Asia), `quotes` (real bid/ask, default as fallback) | Market fills cross half the spread. Stop levels are bid (sell stop) / ask (buy stop) prices, as on MT5: a stop triggers when that side of the spread reaches it and fills there (or at the opening bid/ask if the bar gaps through it), so the spread is paid once. Targets trigger only when the far side of the spread reaches them; a bar that opens beyond a target (or a resting limit entry) fills it at the opening bid/ask |
+| Commission | `none`, `per_quantity` (per lot / per contract per side — futures exchange + clearing + NFA + broker fees), `notional` (maker/taker rate of notional — crypto), optional minimum per order | Each fill (sizing reserves the round trip using the unrounded per-unit rate) |
 | Slippage | `none`, `fixed_ticks`, `notional_bps` | Adverse, on market and stop fills only (never on limit fills) |
 | Funding (perpetuals) | `none`, `constant` (rate per interval, interval hours, UTC anchor hours — e.g. 8 h at 00/08/16 or hourly) | Each funding time a position is open; positive rate = longs pay shorts |
 | Swap / overnight financing (CFD, FX) | `none`, `points` (price points per lot per night, long/short), `annual_rate` (of notional) with rollover time/zone and a triple-charge weekday | Each rollover a position is held through |

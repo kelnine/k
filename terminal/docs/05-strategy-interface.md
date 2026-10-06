@@ -44,8 +44,12 @@ class Signal(BaseModel, frozen=True, extra="forbid"):
 
 Strategy code never fills in `strategy_id`, `strategy_version`, `symbol`,
 `timeframe` or the timestamps: the `ctx.long/short/…` builders do, and the
-runner rejects any signal whose identity does not match the instance that
-produced it (`IDENTITY_MISMATCH`).
+runner rejects any signal whose identity — instance, version, symbol,
+timeframe, source, decision time (`timestamp` = the evaluated bar's close) or
+`bar_time` — does not match the instance and bar that produced it
+(`IDENTITY_MISMATCH`). Every returned signal is re-validated from scratch
+(`model_copy(update=…)` skips validation), so only a freshly validated copy
+is ever routed; one that fails is rejected as `INVALID_SIGNAL`.
 
 ### Validation rules (enforced by the framework before anything else sees the signal)
 
@@ -54,12 +58,15 @@ produced it (`IDENTITY_MISMATCH`).
 | `LONG` | required | **required** | optional | `stop_loss < entry`; `take_profit > entry` if set |
 | `SHORT` | required | **required** | optional | `stop_loss > entry`; `take_profit < entry` if set |
 | `EXIT_LONG` / `EXIT_SHORT` | optional (reference) | — | — | Closes this strategy's position on `symbol` |
-| `MOVE_SL` | — | **required** (new stop) | optional (new target) | Must not widen risk unless the risk profile allows it |
+| `MOVE_SL` | — | **required** (new stop) | optional (new target) | Must not widen risk: the book and every account refuse it (`STOP_WIDENING_NOT_ALLOWED`) |
 | `NO_TRADE` | — | — | — | `reason` recommended |
 
 Every entry must carry a stop-loss: position size is derived from the stop
 distance, so "no stop" means "no trade". Prices are rounded to the
-instrument's tick size; `risk` must be `> 0` and `confidence` within `[0, 1]`.
+instrument's tick size; `risk` must be `> 0` and `confidence` within `[0, 1]`
+(finite numbers only); `metadata` must be plain JSON — no NaN/Infinity, no
+NumPy scalars (`METADATA_NOT_JSON`) — and at most 16 KiB. A strategy may return
+at most 64 objects per bar; more faults the instance as a runaway.
 
 ### Semantics of `risk` and `confidence`
 
@@ -122,8 +129,14 @@ class Strategy[P: StrategyParams](ABC):
 | `ctx.series("1h")` | A declared context timeframe. Higher timeframes contain only bars that have **closed** by now (no look-ahead); lower ones (e.g. `1m` precision) every bar up to the current close |
 | `ctx.bar`, `ctx.now` | The bar being evaluated and its close time (strategy time) |
 | `ctx.position` | This instance's *theoretical* position on the symbol (5.3) or `None` |
-| `ctx.window("ny_orb_15")`, `ctx.in_window(id)` | Configured session windows (ORB ranges, London/New York sessions, kill zones) with DST-correct `window_on(date)`, `window_at(ts)`, `contains(ts)` |
+| `ctx.window("ny_orb_15")`, `ctx.in_window(id)` | Configured session windows (ORB ranges, London/New York sessions, kill zones) with DST-correct `window_on(date)`, `window_at(ts)`, `contains(ts)`. Only windows declared in `meta.sessions` (or used by the session classification) are available, so every window a strategy depends on is part of its version |
 | `ctx.trading_day()`, `ctx.session()` | Trading day per the instrument's rollover rule (e.g. 17:00 New York) and the session label (`asia_session` / `london_session` / `ny_session`) |
+
+Without an explicit time, `in_window`, `trading_day` and `session` look at the
+evaluated bar's **open** time — a bar belongs to the window it starts in, as
+with Pine's `time()` session filters. For `ny_orb_15` (09:30–09:45 New York)
+the 5-minute bars opening 09:30, 09:35 and 09:40 are inside; the 09:25 bar is
+not.
 | `ctx.long(...)`, `ctx.short(...)`, `ctx.exit_long()`, `ctx.exit_short()`, `ctx.move_sl(...)`, `ctx.no_trade(reason)` | Signal builders: fill identity and timestamps, default `entry` to the current close, round prices to the tick |
 | `ctx.log` | Logger bound with strategy/instrument/timeframe |
 | `ctx.rng` | Seeded NumPy generator (deterministic per instance and instrument) |
@@ -145,8 +158,15 @@ class Strategy[P: StrategyParams](ABC):
    budget) faults only that instance.
 5. **No class-level mutable state**: lists, dicts, sets or arrays assigned on
    the class would be shared between instances of the same strategy and are
-   rejected at registration. Initialise per-instance state in `on_start`.
-6. **Budget**: `on_bar` should finish in well under 50 ms; the runner records
+   rejected at registration — also when hidden inside tuples, frozen
+   dataclasses/models, nested classes, `ClassVar`s of `Params`, function
+   default arguments or `functools.cache`. Initialise per-instance state in
+   `on_start`. Each strategy object (one per instrument) gets its own copy of
+   the parameters. Module-level globals cannot be checked: run such (or any
+   untrusted) code with `host: subprocess`.
+6. **Timeframes are intraday** (1m … 4h) until session-anchored daily bars
+   arrive with the market-data layer; `1D`/`1W` are rejected at configuration.
+7. **Budget**: `on_bar` should finish in well under 50 ms; the runner records
    timings and warns about slow bars.
 
 ## 5.3 The theoretical position ("strategy book")
@@ -160,8 +180,20 @@ applies `EXIT_*` and `MOVE_SL` only to account positions that actually exist
 for that strategy and records "no matching position" otherwise.
 
 * `LONG` while flat → open long. `LONG` while long → ignored unless
-  `max_pyramiding > 1`. `LONG` while short → reverse (`on_opposite_signal`).
+  `max_pyramiding > 1`. `LONG` while short → reverse (`on_opposite_signal`):
+  a MARKET reversal at the next open; a LIMIT/STOP reversal only **when it
+  fills** (one order closes and re-opens, as in Pine).
+* Resting entries expire after `expires_after_bars` primary bars that trade —
+  counted in bars, not wall-clock time, so a weekend does not expire them.
 * SL/TP hits close the theoretical position and fire `on_position_event`.
+  A bar that *opens* beyond the target takes profit at the open; otherwise,
+  when one bar reaches both, the stop is assumed first. On the bar a resting
+  entry fills inside the bar, the target counts only if the bar closes beyond
+  it (the high/low may have come before the fill). `MOVE_SL` reports
+  `STOP_MOVED` / `TARGET_MOVED` on the next bar.
+* The paper accounts apply exactly the same rules (plus spread, slippage and
+  costs), so a strategy's `ctx.position` and its account agree unless the
+  account rejected something.
 
 ## 5.4 Registration, discovery, instances and versions
 
@@ -196,11 +228,14 @@ class DemoSmaCross(Strategy[SmaCrossParams]):
 * **Versions:** for every instance the framework builds a canonical document
   of the definition id and version, a **SHA-256 of the strategy's source
   folder**, the effective parameters (defaults included), instruments with
-  their canonical tick sizes, timeframes, the session windows and trading-day
-  rules it uses, and behaviour flags. Its hash (`config_hash`) is the
-  instance's version and is stamped on every signal as `strategy_version`.
-  Editing code — even without bumping `version` — or parameters creates a new
-  version; names, descriptions and the host choice do not.
+  their canonical tick sizes, timeframes, the session windows, session
+  classification and trading-day rules it uses, and behaviour flags. Its hash
+  (`config_hash`) is the instance's version and is stamped on every signal as
+  `strategy_version`. Editing code — the strategy's folder *and* any strategy
+  base class it inherits from, even without bumping `version` — parameters or
+  a session/trading-day rule creates a new version. Names, descriptions, the
+  host choice and how numbers are spelled (`2`, `2.0`, `"2.00"`) do not, and
+  the hash is identical in every process (sets are sorted).
 
 ## 5.5 External (TradingView) strategies
 
@@ -247,5 +282,5 @@ its own account; everything downstream is identical.
 | `strategy.exit(loss=, profit=)` in ticks | Convert with `ctx.instrument.tick_size` |
 | `strategy.risk.*`, qty settings | Not ported — the risk profile owns sizing and limits |
 | `pyramiding` | `meta.max_pyramiding` |
-| Session / `time()` filters | Use instrument sessions with explicit time zone |
+| Session / `time()` filters | Declare the window in `meta.sessions` and use `ctx.in_window(id)` — like `time()`, it tests the bar's open time, DST-correct |
 | `syminfo.mintick` rounding | `ctx.instrument.tick_size` |

@@ -9,7 +9,9 @@ import pytest
 from kterminal.core.registry import Registry
 from kterminal.domain.market import Bar
 from kterminal.marketdata.synthetic import synthetic_bars
+from kterminal.paper.account import PaperAccount
 from kterminal.paper.config import LabConfig
+from kterminal.paper.demo import demo_bars
 from kterminal.paper.lab import Lab, LabResult
 from kterminal.paper.records import (
     DecisionRecord,
@@ -264,3 +266,86 @@ def test_experiment_members_must_share_identical_conditions() -> None:
                 "experiments": [{"id": "x", "name": "x", "members": members}],
             }
         )
+
+
+# ── failure containment & run bookkeeping (review findings) ─────────────────
+async def test_a_signal_that_breaks_its_own_account_faults_only_that_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bars = gold(1_500)
+    reference, _ = await run(config(SMA), bars)
+    original = PaperAccount.handle_signal
+
+    def explode_for_breakout(self: PaperAccount, signal: Any, *args: Any) -> Any:
+        if self.instance_id == "demo_breakout_xau":
+            raise RuntimeError("account cannot process this signal")
+        return original(self, signal, *args)
+
+    monkeypatch.setattr(PaperAccount, "handle_signal", explode_for_breakout)
+    result, store = await run(config(SMA, BREAKOUT), bars)
+    accounts = {a.instance_id: a for a in result.accounts}
+    assert accounts["demo_breakout_xau"].host_state == "FAULTED"
+    assert accounts["demo_breakout_xau"].fault is not None
+    assert "account cannot process" in accounts["demo_breakout_xau"].fault
+    (healthy,) = reference.accounts
+    assert accounts["demo_sma_fast"].summary == healthy.summary
+    assert accounts["demo_sma_fast"].balance == healthy.balance
+    assert [f.instance_id for f in store.of(FaultRecord)] == ["demo_breakout_xau"]
+
+
+class FailingStore(InMemoryLabStore):
+    def __init__(self, fail_after: int) -> None:
+        super().__init__()
+        self.fail_after = fail_after
+
+    async def write(self, records: Sequence[Any], *, run_id: Any) -> None:
+        self.fail_after -= 1
+        if self.fail_after < 0:
+            raise ConnectionError("database went away")
+        await super().write(records, run_id=run_id)
+
+
+async def test_a_failed_run_is_recorded_and_every_host_is_stopped() -> None:
+    store = FailingStore(fail_after=50)
+    cfg = config({**SMA, "host": "subprocess"}, BREAKOUT)
+    lab = Lab(cfg, lab_catalog(), store, discover=False)
+    with pytest.raises(ConnectionError):
+        await lab.run(gold(1_500))
+    (run_state,) = store.runs.values()
+    assert run_state["status"] == "FAILED"
+    assert "database went away" in run_state["summary"]["error"]
+    assert all(m.host.state.value in {"STOPPED", "FAULTED"} for m in lab.members)
+    sub = lab.members[0].host
+    assert getattr(sub, "pid", None) is None  # the child process was terminated
+
+
+async def test_every_run_trades_in_fresh_accounts_never_the_dedicated_one() -> None:
+    store = InMemoryLabStore()
+    cfg = config(SMA)
+    dedicated = dict(await Lab(cfg, lab_catalog(), store, discover=False).provision_dedicated())
+    first = await Lab(cfg, lab_catalog(), store, discover=False).run(gold(1_500))
+    second = await Lab(cfg, lab_catalog(), store, discover=False).run(gold(1_500))
+    ids = {
+        dedicated["demo_sma_fast"].account_id,
+        first.accounts[0].account_id,
+        second.accounts[0].account_id,
+    }
+    assert len(ids) == 3
+    assert first.accounts[0].summary == second.accounts[0].summary  # same bars, fresh account
+    for result in (first, second):
+        (check,) = await store.isolation_checks(result.run_id)
+        assert check.ok and check.account_id == str(result.accounts[0].account_id)
+    assert await store.closed_trades(dedicated["demo_sma_fast"].account_id) == []
+
+
+def test_demo_data_of_a_symbol_does_not_depend_on_other_instances() -> None:
+    catalog = lab_catalog()
+    alone = demo_bars(catalog, config(SMA), days=1)
+    mnq = {
+        "id": "mnq_probe",
+        "strategy": "demo_sma_cross",
+        "instruments": ["MNQ"],
+        "timeframe": "5m",
+    }
+    together = demo_bars(catalog, config(SMA, mnq), days=1)
+    assert [b for b in together if b.instrument == "XAUUSD"] == alone

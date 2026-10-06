@@ -8,15 +8,23 @@ Registration enforces the isolation rules that can be checked statically:
 
 * ``meta`` is a valid :class:`StrategyMeta` and ``Params`` a strict, frozen model;
 * the class holds **no mutable class-level state** (lists, dicts, sets, arrays …)
-  that two instances of the same strategy could share — per-instance state
-  belongs in ``on_start``;
+  that two instances of the same strategy could share — checked deeply: inside
+  tuples, frozensets, frozen dataclasses/models, nested classes and function
+  default arguments too. Per-instance state belongs in ``on_start``;
 * ``on_bar`` is implemented.
+
+Module-level globals cannot be checked statically: a definition that keeps
+state in its module shares it between its in-process instances. Run such (or
+any untrusted) definitions with ``host: subprocess``, which gives every
+instance its own interpreter.
 """
 
+import dataclasses
 import importlib.util
 import inspect
 import re
 from dataclasses import dataclass
+from datetime import date, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -36,7 +44,7 @@ from kterminal.strategy_engine.versioning import (
 ENTRY_POINT_GROUP = "kterminal.strategies"
 STRATEGIES_PACKAGE = "kterminal.strategies"
 
-_IMMUTABLE_TYPES = (
+_IMMUTABLE_SCALARS = (
     str,
     bytes,
     int,
@@ -44,11 +52,34 @@ _IMMUTABLE_TYPES = (
     complex,
     bool,
     type(None),
-    tuple,
-    frozenset,
     Enum,
     Decimal,
     re.Pattern,
+    date,  # includes datetime
+    time,
+    timedelta,
+    range,
+)
+_MAX_DEPTH = 8
+# Interpreter-managed class attributes that are not strategy state.
+_CLASS_MACHINERY = frozenset(
+    {
+        "__module__",
+        "__qualname__",
+        "__doc__",
+        "__dict__",
+        "__weakref__",
+        "__annotations__",
+        "__annotate_func__",
+        "__annotations_cache__",
+        "__orig_bases__",
+        "__parameters__",
+        "__type_params__",
+        "__firstlineno__",
+        "__static_attributes__",
+        "__abstractmethods__",
+        "_abc_impl",
+    }
 )
 
 
@@ -80,29 +111,106 @@ DEFINITIONS: Registry[StrategyDefinition] = Registry(
 
 
 def _mutable_class_attributes(cls: type) -> list[str]:
-    offenders = []
+    offenders: list[str] = []
     for klass in cls.__mro__:
         if klass in (Strategy, object) or klass.__module__ == "abc":
             continue
-        for name, value in vars(klass).items():
-            if name.startswith("__") or name in {"meta", "Params", "_abc_impl"}:
-                continue
-            if isinstance(value, (FunctionType, staticmethod, classmethod, property, type)):
-                continue
-            if inspect.isdatadescriptor(value) or inspect.ismethoddescriptor(value):
-                continue
-            if isinstance(value, _IMMUTABLE_TYPES) or _is_frozen(value):
-                continue
-            offenders.append(f"{klass.__name__}.{name} ({type(value).__name__})")
+        offenders.extend(_class_body_offenders(klass, klass.__name__, 0))
+    params = getattr(cls, "Params", None)
+    if isinstance(params, type) and issubclass(params, StrategyParams):
+        # Class variables of the Params model are shared by every instance's params.
+        for name in sorted(getattr(params, "__class_vars__", ())):
+            value = getattr(params, name, None)
+            offenders.extend(_mutable_parts(value, f"{params.__name__}.{name}", 1))
     return offenders
 
 
-def _is_frozen(value: object) -> bool:
+def _class_body_offenders(klass: type, path: str, depth: int) -> list[str]:
+    offenders: list[str] = []
+    for name, value in vars(klass).items():
+        if name in _CLASS_MACHINERY or name in {"meta", "Params"}:
+            continue
+        offenders.extend(_mutable_parts(value, f"{path}.{name}", depth))
+    return offenders
+
+
+def _mutable_parts(value: object, path: str, depth: int) -> list[str]:
+    """Paths of the mutable objects reachable from a class attribute (empty = immutable)."""
+    if depth > _MAX_DEPTH:
+        return [f"{path} (nested too deeply to verify)"]
+    if isinstance(value, _IMMUTABLE_SCALARS):
+        return []
+    if isinstance(value, (staticmethod, classmethod)):
+        value = value.__func__
+    if hasattr(value, "cache_info") or hasattr(value, "cache_clear"):
+        return [f"{path} (cached function: its cache is shared by every instance)"]
+    if isinstance(value, FunctionType):
+        defaults = [*(value.__defaults__ or ()), *(value.__kwdefaults__ or {}).values()]
+        return [
+            part
+            for i, default in enumerate(defaults)
+            for part in _mutable_parts(default, f"{path}(default #{i})", depth + 1)
+        ]
+    if isinstance(value, property):
+        return []
+    if isinstance(value, type):
+        if issubclass(value, (Enum, StrategyParams)) or value.__module__ in {"builtins", "abc"}:
+            return []
+        return [
+            part
+            for klass in value.__mro__
+            if klass is not object
+            for part in _class_body_offenders(klass, f"{path}.{klass.__name__}", depth + 1)
+        ]
+    if inspect.isdatadescriptor(value) or inspect.ismethoddescriptor(value):
+        return []
+    if isinstance(value, (tuple, frozenset)):
+        return [
+            part
+            for i, item in enumerate(value)
+            for part in _mutable_parts(item, f"{path}[{i}]", depth + 1)
+        ]
+    fields = _frozen_fields(value)
+    if fields is not None:
+        return [
+            part
+            for name in fields
+            for part in _mutable_parts(getattr(value, name), f"{path}.{name}", depth + 1)
+        ]
+    return [f"{path} ({type(value).__name__})"]
+
+
+def _frozen_fields(value: object) -> list[str] | None:
+    """Field names of a frozen dataclass / frozen pydantic model instance, else None."""
     params = getattr(type(value), "__dataclass_params__", None)
     if params is not None and getattr(params, "frozen", False):
-        return True
+        return [f.name for f in dataclasses.fields(value)]  # type: ignore[arg-type]
     config = getattr(type(value), "model_config", None)
-    return isinstance(config, dict) and bool(config.get("frozen"))
+    if isinstance(config, dict) and config.get("frozen"):
+        return list(getattr(type(value), "model_fields", {}))
+    return None
+
+
+def _source_locations(cls: type, strategies_root: Path | None) -> list[Path]:
+    """The code units that define a strategy's behaviour: its own folder/module first,
+    then those of every strategy base class it inherits logic from."""
+    locations: list[Path] = []
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, Strategy)) or klass is Strategy:
+            continue
+        if klass.__module__.startswith("kterminal.strategy_engine"):
+            continue
+        location = strategy_source_location(Path(inspect.getfile(klass)), strategies_root)
+        if location not in locations:
+            locations.append(location)
+    return locations
+
+
+def _combined_code_hash(locations: list[Path]) -> str:
+    if len(locations) == 1:
+        return code_hash(locations[0])
+    parts = [f"{loc.name}:{code_hash(loc)}" for loc in locations]
+    return sha256_text("\n".join(parts))
 
 
 def definition_from_class(cls: type[Strategy[Any]]) -> StrategyDefinition:
@@ -129,14 +237,14 @@ def definition_from_class(cls: type[Strategy[Any]]) -> StrategyDefinition:
             f"{meta.id}: mutable class-level state would be shared between instances: "
             f"{', '.join(offenders)}. Initialise per-instance state in on_start()."
         )
-    module_file = Path(inspect.getfile(cls))
     strategies_root = _strategies_root()
-    location = strategy_source_location(module_file, strategies_root)
+    locations = _source_locations(cls, strategies_root)
+    location = locations[0]
     return StrategyDefinition(
         id=meta.id,
         kind=StrategyKind.INTERNAL,
         meta=meta,
-        code_hash=code_hash(location),
+        code_hash=_combined_code_hash(locations),
         strategy_cls=cls,
         module=cls.__module__,
         qualname=cls.__qualname__,

@@ -8,7 +8,7 @@ prices to the instrument's tick, so strategy code only expresses intent.
 """
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Protocol
@@ -70,6 +70,7 @@ class StrategyContext:
         book: TheoreticalBook,
         sessions: SessionLookup | None = None,
         source: SignalSource = SignalSource.INTERNAL,
+        windows: Iterable[str] | None = None,
     ) -> None:
         if timeframe not in series:
             raise ValueError(f"primary timeframe {timeframe} has no series")
@@ -81,6 +82,9 @@ class StrategyContext:
         self._series = dict(series)
         self._book = book
         self._sessions: SessionLookup = sessions or NoSessions()
+        # Session windows the strategy may use: the ones its version is built from
+        # (declared in meta.sessions, plus the session classification). None = any.
+        self._windows = frozenset(windows) if windows is not None else None
         self._source = source
         self._bar: Bar | None = None
         self.rng = np.random.default_rng(stable_seed(instance_id, instrument.symbol))
@@ -127,22 +131,38 @@ class StrategyContext:
         return self._book.position
 
     # ── sessions & time zones ───────────────────────────────────────────────
+    # Without an explicit ``ts`` these helpers look at the evaluated bar's *open* time
+    # — the bar belongs to the window/session/trading day it starts in, exactly like
+    # Pine's ``time``-based session filters. (``now``, the close, is the first instant
+    # *after* the bar.)
     def window(self, window_id: str) -> Any:
-        """A configured session window (e.g. ``ny_orb_15``) with ``contains`` / ``window_on``."""
+        """A configured session window (e.g. ``ny_orb_15``) with ``contains`` / ``window_on``.
+
+        Only windows in ``meta.sessions`` (or the session classification) are available,
+        so that every window a strategy depends on is part of its version.
+        """
+        if self._windows is not None and window_id not in self._windows:
+            raise KeyError(
+                f"session window {window_id!r} is not declared: add it to meta.sessions "
+                f"(declared: {', '.join(sorted(self._windows)) or 'none'})"
+            )
         return self._sessions.window(window_id)
 
     def in_window(self, window_id: str, ts: datetime | None = None) -> bool:
-        return bool(self._sessions.window(window_id).contains(ts or self.now))
+        """Whether the evaluated bar (or ``ts``) is inside the window."""
+        return bool(self.window(window_id).contains(ts or self.bar.open_time))
 
     def trading_day(self, ts: datetime | None = None) -> date:
-        """Trading day per the instrument's rollover rule (e.g. 17:00 New York)."""
+        """Trading day of the evaluated bar (or ``ts``) per the instrument's rollover rule
+        (e.g. 17:00 New York)."""
         rule = self._sessions.trading_day_rule(self.instrument.trading_day)
-        result: date = rule.trading_day(ts or self.now)
+        result: date = rule.trading_day(ts or self.bar.open_time)
         return result
 
     def session(self, ts: datetime | None = None) -> str:
-        """Session label (e.g. ``asia_session`` / ``london_session`` / ``ny_session``)."""
-        return self._sessions.classify(ts or self.now)
+        """Session label of the evaluated bar (or ``ts``), e.g. ``asia_session`` /
+        ``london_session`` / ``ny_session``."""
+        return self._sessions.classify(ts or self.bar.open_time)
 
     # ── signal builders ─────────────────────────────────────────────────────
     def long(

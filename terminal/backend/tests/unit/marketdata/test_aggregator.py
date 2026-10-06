@@ -6,7 +6,7 @@ import pytest
 from kterminal.domain.timeframes import H1, M1, M5, M15, Timeframe
 from kterminal.marketdata.aggregator import BarAggregator, aggregate_stream, batches_by_close
 from kterminal.marketdata.synthetic import merge_streams, synthetic_bars
-from tests.fixtures.instruments import T0, bars
+from tests.fixtures.instruments import T0, bars, gold_minutes
 
 
 def minute_rows(n: int) -> list[tuple[float, float, float, float]]:
@@ -112,3 +112,40 @@ def test_synthetic_is_deterministic_and_respects_calendar() -> None:
         )
     )
     assert all(b.open_time.weekday() < 5 for b in weekdays_only)
+
+
+def test_a_stream_starting_mid_period_never_emits_that_partial_period() -> None:
+    minutes = list(gold_minutes(180))  # 00:00 – 03:00
+    late = minutes[97:]  # starts at 01:37, inside the 01:00 hour and the 01:35 five minutes
+    hourly = [
+        b for batch in aggregate_stream(late, M1, [M5, H1]) for b in batch if b.timeframe == H1
+    ]
+    fives = [
+        b for batch in aggregate_stream(late, M1, [M5, H1]) for b in batch if b.timeframe == M5
+    ]
+    assert [b.open_time.hour for b in hourly] == [2]  # 01:00 is incomplete: dropped
+    assert fives[0].open_time.minute == 40  # 01:35 is incomplete: dropped
+    full = {
+        (b.timeframe, b.open_time): b
+        for batch in aggregate_stream(minutes, M1, [M5, H1])
+        for b in batch
+    }
+    assert all(full[(b.timeframe, b.open_time)] == b for b in [*hourly, *fives])
+
+
+def test_a_gap_in_one_instrument_never_sends_batches_back_in_time() -> None:
+    near = list(
+        synthetic_bars(
+            "NEARUSD",
+            start=T0,
+            count=30,
+            start_price=Decimal(2),
+            tick_size=Decimal("0.0001"),
+            seed=1,
+        )
+    )
+    gold = [b for b in gold_minutes(30) if not 8 <= b.open_time.minute < 12]  # feed gap
+    closes = [
+        batch[0].close_time for batch in aggregate_stream(merge_streams(near, gold), M1, [M5])
+    ]
+    assert closes == sorted(closes) and len(closes) == len(set(closes))

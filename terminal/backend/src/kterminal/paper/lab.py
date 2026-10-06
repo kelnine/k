@@ -13,11 +13,14 @@ For every batch of bars that closed at the same instant the lab:
 4. snapshots equity on a fixed cadence and flushes all records to the store in
    one write per batch.
 
-Faulted instances stop producing signals; everyone else carries on.
+Faulted instances stop producing signals; everyone else carries on. A signal
+that its own account cannot process faults that instance only. If the run
+itself fails, every host is stopped and the run is recorded as FAILED.
 """
 
 import itertools
-from collections.abc import Iterable, Sequence
+import traceback
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -41,7 +44,7 @@ from kterminal.paper.store import LabStore, ProvisionedAccount
 from kterminal.strategy_engine.base import StrategyMeta
 from kterminal.strategy_engine.hosts import HostState, InProcessHost, StrategyHost, SubprocessHost
 from kterminal.strategy_engine.instances import ResolvedInstance, resolve_instance
-from kterminal.strategy_engine.model import RunnerOutput
+from kterminal.strategy_engine.model import Fault, RunnerOutput
 from kterminal.strategy_engine.registry import (
     DEFINITIONS,
     StrategyDefinition,
@@ -61,6 +64,7 @@ class LabMember:
     settings: AccountSettings
     markets: dict[str, InstrumentSetup]
     fault_recorded: bool = False
+    routing_stopped: bool = False  # set when the instance's output broke its own account
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,8 +237,6 @@ class Lab:
         if first is None:
             raise ValueError("the lab needs at least one base bar")
         self._clock_start = warmup_bars[0].open_time if warmup_bars else first.open_time
-        started: datetime | None = None
-        last: datetime | None = None
         run_id = await self.store.start_run(
             kind=self.run_kind,
             name=self.run_name,
@@ -243,28 +245,59 @@ class Lab:
             catalog_fingerprint=self.catalog.fingerprint,
             started_at=self._clock_start,
         )
+        try:
+            return await self._run(run_id, first, bars_iter, warmup_bars, close_at_end)
+        except BaseException as exc:
+            for member in self.members:
+                member.host.stop()
+            await self.store.finish_run(
+                run_id,
+                status="FAILED",
+                summary={"error": f"{type(exc).__name__}: {exc}"[:2_000]},
+                finished_at=self._clock_start,
+            )
+            raise
+
+    async def _run(
+        self,
+        run_id: UUID,
+        first: Bar,
+        bars_iter: Iterator[Bar],
+        warmup_bars: Sequence[Bar],
+        close_at_end: bool,
+    ) -> LabResult:
+        started: datetime | None = None
+        last: datetime | None = None
         await self._provision_accounts(run_id)
+        # One aggregator over warm-up and live bars: a higher-timeframe period that spans
+        # the boundary is built from all of its base bars, never from the live part only.
+        batches = aggregate_stream(
+            itertools.chain(warmup_bars, [first], bars_iter), self.base_timeframe, self.timeframes
+        )
+        warm: list[Bar] = []
+        live_head: list[list[Bar]] = []
+        if warmup_bars:
+            warm_end = warmup_bars[-1].close_time
+            for batch in batches:
+                if batch[0].close_time > warm_end:
+                    live_head.append(batch)
+                    break
+                warm.extend(batch)
         for member in self.members:
             member.host.start()
-            if warmup_bars:
-                warm = [
-                    b
-                    for batch in aggregate_stream(warmup_bars, self.base_timeframe, self.timeframes)
-                    for b in batch
-                ]
+            if warm:
                 member.host.warmup(warm)
             self._check_fault(member, None)
         await self._flush(run_id)
 
         snapshot_every = timedelta(minutes=self.config.equity_snapshot_minutes)
         last_snapshot: datetime | None = None
-        batches = 0
-        stream = itertools.chain([first], bars_iter)
-        for batch in aggregate_stream(stream, self.base_timeframe, self.timeframes):
+        count = 0
+        for batch in itertools.chain(live_head, batches):
             at = batch[0].close_time
             started = started or batch[0].open_time
             last = at
-            batches += 1
+            count += 1
             base = [b for b in batch if b.timeframe == self.base_timeframe]
             for account in self.accounts:  # 1. fills/brackets/costs on this batch's bars
                 for bar in base:
@@ -289,11 +322,11 @@ class Lab:
         for member in self.members:
             member.host.stop()
         await self._flush(run_id)
-        result = await self._result(run_id, batches, started, last)
+        result = await self._result(run_id, count, started, last)
         await self.store.finish_run(
             run_id,
             status="COMPLETED",
-            summary={"batches": batches, "accounts": len(result.accounts)},
+            summary={"batches": count, "accounts": len(result.accounts)},
             finished_at=last or self._clock_start,
         )
         return result
@@ -302,6 +335,8 @@ class Lab:
         self, member: LabMember, output: RunnerOutput, batch: Sequence[Bar], run_id: UUID
     ) -> None:
         resolved = member.resolved
+        if member.routing_stopped:
+            return
         for rejected in output.rejected:
             self._records.append(
                 SignalRecord(
@@ -343,7 +378,14 @@ class Lab:
             )
             if routed:
                 for account in member.accounts:  # only this instance's own accounts
-                    account.handle_signal(signal, signal_id, signal.timestamp)
+                    try:
+                        account.handle_signal(signal, signal_id, output.time)
+                    except Exception as exc:
+                        # The instance's output broke its own account: fault that instance
+                        # (its account keeps its state); nobody else is affected.
+                        member.host.fail(_route_fault(resolved.id, signal.symbol, output.time, exc))
+                        member.routing_stopped = True
+                        return
 
     def _check_fault(self, member: LabMember, at: datetime | None) -> None:
         fault = member.host.fault
@@ -393,6 +435,18 @@ class Lab:
                     )
                 )
         return result
+
+
+def _route_fault(instance_id: str, symbol: str, at: datetime, exc: Exception) -> Fault:
+    return Fault(
+        instance_id=instance_id,
+        instrument=symbol,
+        time=at,
+        stage="route",
+        error_type=type(exc).__name__,
+        message=str(exc)[:2_000],
+        traceback="".join(traceback.format_exception(exc))[-8_000:],
+    )
 
 
 def _snapshot(

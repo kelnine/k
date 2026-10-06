@@ -49,11 +49,14 @@ A strategy instance cannot see, influence or break another one:
 | Layer | Guarantee | How |
 |---|---|---|
 | Code | A strategy cannot touch accounts, orders, brokers, storage or the API | import-linter sandbox contract; the context exposes read-only data only |
-| State | No shared mutable state between instances, even of the same class | one object per instance; registration rejects classes with mutable class-level attributes; parameters are frozen |
-| Data | Every instance sees identical, immutable bars | frozen `Bar` objects; NumPy arrays handed to strategies are read-only |
-| Failure | An exception (or, with the subprocess host, a crash or infinite loop) faults only that instance | the runner catches and records faults; `SubprocessStrategyHost` runs each instance in its own OS process with a per-bar time budget |
+| State | No shared mutable state between instances, even of the same class | one object per instance and instrument, each with its own copy of the parameters; registration rejects mutable class-level state, also hidden in tuples, frozen dataclasses, nested classes, `Params` class variables, default arguments or `functools.cache`; module globals cannot be checked statically — use `host: subprocess` for such code |
+| Data | Every instance sees identical, immutable bars | frozen `Bar` objects; NumPy arrays handed to strategies are read-only; one aggregator builds every timeframe (warm-up and live alike), never emits a partial period and keeps batches in time order across data gaps |
+| Arithmetic | No instance can change another's numbers | strategy code runs in its own copy of the decimal context; all money arithmetic runs in a private context |
+| Output | What an instance returns cannot hurt anyone else | every signal is re-validated from scratch and must carry its own instance, version and bar time; metadata must be finite, plain JSON; at most 64 objects per bar; rejected payloads are bounded |
+| Failure | An exception — including `SystemExit` — (or, with the subprocess host, a crash or infinite loop) faults only that instance | the runner contains everything but an operator's Ctrl-C; a signal that breaks its own account faults only that instance; `SubprocessHost` runs each instance in its own OS process, and its time budget runs from dispatch, so collection order never matters; a run that fails anyway stops every host and is recorded as `FAILED` |
 | Accounts | Each instance has its own paper account and ledger | dedicated accounts: `accounts.strategy_instance_id` is unique; run-scoped accounts: one `account_allocations` row to exactly one instance; signals are routed only to the instance's own account, and the account refuses signals of any other instance |
 | Comparison | Results are comparable | same bars, venue profile, account template; metrics recomputed from recorded trades |
+| Proof | Isolation is checked, not assumed | `kterminal lab demo` audits the recorded rows (every decision and trade traces back to a signal of the account's own instance; balance = deposit + own ledger entries) **and** re-runs every instance *alone* on the same bars: its signals, trades and final balance must be identical to the run alongside the others |
 
 ## 12.3 Accounts
 

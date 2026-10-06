@@ -43,6 +43,7 @@ from sqlalchemy import bindparam, insert, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kterminal.core.canonical import json_default as core_default
 from kterminal.core.clock import ensure_utc
 from kterminal.db.locks import lock_key
 from kterminal.db.models import AuditLogRow, table_of
@@ -57,16 +58,11 @@ _NEXT_SEQ = text("SELECT nextval(pg_get_serial_sequence('audit_log', 'seq'))")
 
 # ── canonical JSON ───────────────────────────────────────────────────────────
 def _default(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, (datetime, date, dt_time)):
-        return value.isoformat()
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, (set, frozenset)):
-        return sorted(value)
+    # Same rules as kterminal.core.canonical (byte-identical output), plus UUIDs.
     if isinstance(value, UUID):
         return str(value)
+    if isinstance(value, (Decimal, datetime, date, dt_time, Enum, set, frozenset)):
+        return core_default(value)
     raise TypeError(f"not JSON serialisable: {type(value).__name__}")
 
 

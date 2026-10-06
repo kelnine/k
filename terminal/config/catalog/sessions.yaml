@@ -40,7 +40,8 @@ calendars:
   # re-check every entry against the official notice and add the next year
   # before it starts. Times below are America/Chicago (CT).
   #   2026 dates were checked against CME's 2026 holiday notices (as reported by
-  #     futures brokers' 2026 schedules); Nov/Dec 2026 follow CME's standard
+  #     futures brokers' 2026 schedules), except the Good Friday halt time (see
+  #     2026-04-03); Nov/Dec 2026 follow CME's standard
   #     Thanksgiving / Christmas hours, final notices not yet published (2026-10-06).
   #   2027 entries are the dates on CME's holiday calendar with CME's standard
   #     holiday hours; final 2027 hours are not published yet.
@@ -66,7 +67,10 @@ calendars:
     early_closes:
       "2026-01-19": "12:00"  # Martin Luther King Jr. Day
       "2026-02-16": "12:00"  # Presidents' Day
-      "2026-04-03": "08:15"  # Good Friday: abbreviated session for the NFP release
+      # Good Friday: abbreviated session for the NFP release. The halt TIME is
+      # UNCONFIRMED: third-party reports conflict (08:15, 09:15 and 12:30 CT);
+      # 08:15 CT follows CME's 2021 Good Friday/NFP precedent. Check the CME notice.
+      "2026-04-03": "08:15"
       "2026-05-25": "12:00"  # Memorial Day
       "2026-06-19": "12:00"  # Juneteenth
       "2026-07-03": "12:00"  # Independence Day observed
@@ -138,7 +142,7 @@ calendars:
     early_closes:
       "2026-01-19": "13:00"
       "2026-02-16": "13:00"
-      "2026-04-03": "09:15"
+      "2026-04-03": "09:15"  # unconfirmed, see cme_globex_equity
       "2026-05-25": "13:00"
       "2026-06-19": "13:00"
       "2026-07-03": "13:00"

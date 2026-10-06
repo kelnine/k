@@ -49,6 +49,32 @@ def test_fingerprint_changes_with_any_spec() -> None:
             lambda d: d["listings"][0].update(cost_profile="crypto_perp_binance"),
             "charges funding, which only applies to PERPETUAL",
         ),
+        (
+            lambda d: d["listings"][0].update(pnl_model="INVERSE"),
+            "INVERSE P&L is not supported yet",
+        ),
+        (
+            lambda d: d["listings"].append(copy.deepcopy(d["listings"][0])),
+            "duplicate listing",  # a second row must never silently replace the first
+        ),
+        (
+            lambda d: d["instruments"].append(copy.deepcopy(d["instruments"][0])),
+            "duplicate instrument",
+        ),
+        (
+            lambda d: d["venue_profiles"].append(copy.deepcopy(d["venue_profiles"][0])),
+            "duplicate venue profile",
+        ),
+        (lambda d: d["listings"][0].update(pnl_modle="INVERSE"), "unknown key(s) pnl_modle"),
+        (lambda d: d["venues"][0].update(tz="UTC"), "unknown key(s) tz"),
+        (lambda d: d["instruments"][0].update(tick="0.01"), "unknown key(s) tick"),
+        (lambda d: d["listings"][0].update(tradable="false"), "expected true or false"),
+        (
+            lambda d: next(r for r in d["listings"] if r.get("symbol_format")).update(
+                symbol_format="{root}{code}{year}"
+            ),
+            "invalid symbol_format",
+        ),
         (lambda d: d["listings"][1].update(symbol_format="{root}"), "requires a futures"),
         (
             lambda d: d["aliases"].append({"source": "*", "alias": "GOLD", "instrument": "XAGUSD"}),

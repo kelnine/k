@@ -22,6 +22,7 @@ NO_TRADE       —         —           —            ``reason`` recommended
 """
 
 import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -139,11 +140,25 @@ def validate_signal(signal: Signal) -> Signal:
 
     if not action.is_entry and signal.order_type is not OrderType.MARKET:
         raise InvalidSignalError("ORDER_TYPE_NOT_APPLICABLE", f"{action} is always a market action")
-    if signal.risk is not None and not (Decimal(0) < signal.risk <= Decimal(100)):
+    risk = signal.risk
+    if risk is not None and not (
+        isinstance(risk, Decimal) and risk.is_finite() and Decimal(0) < risk <= Decimal(100)
+    ):
         raise InvalidSignalError("INVALID_RISK", "risk must be a percentage in (0, 100]")
-    if signal.confidence is not None and not 0.0 <= signal.confidence <= 1.0:
+    confidence = signal.confidence
+    if confidence is not None and not (
+        isinstance(confidence, (int, float))
+        and math.isfinite(confidence)
+        and 0.0 <= confidence <= 1.0
+    ):
         raise InvalidSignalError("INVALID_CONFIDENCE", "confidence must be within [0, 1]")
-    size = len(json.dumps(signal.metadata, default=str).encode())
+    try:
+        # Strict JSON: no NaN/Infinity and no non-JSON objects (they could not be stored).
+        size = len(json.dumps(signal.metadata, allow_nan=False).encode())
+    except (TypeError, ValueError) as exc:
+        raise InvalidSignalError(
+            "METADATA_NOT_JSON", f"metadata must be plain JSON (no NaN/Infinity): {exc}"
+        ) from None
     if size > MAX_METADATA_BYTES:
         raise InvalidSignalError("METADATA_TOO_LARGE", f"metadata is {size} bytes (max 16 KiB)")
     return signal

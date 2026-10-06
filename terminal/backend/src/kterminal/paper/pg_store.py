@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -619,14 +619,20 @@ class PostgresLabStore:
                     .select_from(m.TradeRow)
                     .where(m.TradeRow.account_id == account_id, m.TradeRow.run_id == run_id),
                 )
+                # A trade belongs to the instance whose *signal* opened it — checked against
+                # the signal row, not only the trade's own instance column.
                 other_trades = await _count(
                     session,
                     select(func.count())
                     .select_from(m.TradeRow)
+                    .join(m.SignalRow, m.SignalRow.id == m.TradeRow.entry_signal_id)
                     .where(
                         m.TradeRow.account_id == account_id,
                         m.TradeRow.run_id == run_id,
-                        m.TradeRow.strategy_instance_id != instance,
+                        or_(
+                            m.TradeRow.strategy_instance_id != instance,
+                            m.SignalRow.strategy_instance_id != instance,
+                        ),
                     ),
                 )
                 ledger_total = (

@@ -1,3 +1,4 @@
+import functools
 from pathlib import Path
 from typing import ClassVar
 
@@ -19,7 +20,14 @@ from kterminal.strategy_engine.registry import (
     discover_strategies,
     register_external,
 )
-from tests.fixtures.strategies import Scripted, SmaCross
+from tests.fixtures.strategies import (
+    Scripted,
+    SharedViaDefaultArgument,
+    SharedViaFrozenDataclass,
+    SharedViaNestedClass,
+    SharedViaTuple,
+    SmaCross,
+)
 
 
 def meta(id_: str = "probe") -> StrategyMeta:
@@ -47,6 +55,20 @@ def test_mutable_class_state_is_rejected() -> None:
 
     with pytest.raises(StrategyDefinitionError, match=r"Leaky\.history .*Leaky\.lookup"):
         definition_from_class(Leaky)
+
+
+@pytest.mark.parametrize(
+    ("cls", "where"),
+    [
+        (SharedViaFrozenDataclass, r"MEMORY\.closes \(list\)"),
+        (SharedViaTuple, r"SEEN\[0\] \(list\)"),
+        (SharedViaNestedClass, r"Cache\.hits \(dict\)"),
+        (SharedViaDefaultArgument, r"on_bar\(default #0\) \(list\)"),
+    ],
+)
+def test_mutable_state_hidden_in_immutable_wrappers_is_rejected(cls: type, where: str) -> None:
+    with pytest.raises(StrategyDefinitionError, match=where):
+        definition_from_class(cls)  # type: ignore[arg-type]
 
 
 def test_params_must_stay_frozen_and_strict() -> None:
@@ -109,6 +131,62 @@ def test_code_hash_changes_with_source(tmp_path: Path, monkeypatch: pytest.Monke
     del sys.modules["hashpkg.mod"]
     second = definition_from_class(importlib.import_module("hashpkg.mod").S)
     assert first.code_hash != second.code_hash  # edited code without bumping version → new hash
+
+
+def test_code_hash_covers_inherited_strategy_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("inhpkg", "inhpkg/orb_base", "inhpkg/orb_xau"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "__init__.py").write_text("")
+    base = (
+        "from kterminal.strategy_engine import Strategy, StrategyMeta, StrategyParams\n"
+        "class OrbBase(Strategy[StrategyParams]):\n"
+        "    def on_bar(self, bar):\n"
+        "        return None  # threshold 1\n"
+    )
+    (tmp_path / "inhpkg/orb_base/strategy.py").write_text(base)
+    (tmp_path / "inhpkg/orb_xau/strategy.py").write_text(
+        "from kterminal.strategy_engine import StrategyMeta\n"
+        "from inhpkg.orb_base.strategy import OrbBase\n"
+        "class OrbXau(OrbBase):\n"
+        "    meta = StrategyMeta(id='orb_xau_probe', name='o', version='1.0.0')\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    import importlib
+    import sys
+
+    first = definition_from_class(importlib.import_module("inhpkg.orb_xau.strategy").OrbXau)
+    (tmp_path / "inhpkg/orb_base/strategy.py").write_text(base.replace("1", "50"))
+    for module in [m for m in sys.modules if m.startswith("inhpkg")]:
+        del sys.modules[module]
+    second = definition_from_class(importlib.import_module("inhpkg.orb_xau.strategy").OrbXau)
+    assert first.code_hash != second.code_hash  # the inherited logic changed
+
+
+def test_state_shared_through_params_dunders_or_caches_is_rejected() -> None:
+    class P(StrategyParams):
+        seen: ClassVar[dict[str, int]] = {}
+
+    class Sneaky(Strategy[P]):
+        meta = StrategyMeta(id="sneaky", name="Sneaky", version="1.0.0")
+        Params = P
+        __levels__: ClassVar[list[float]] = []
+
+        @staticmethod
+        @functools.cache
+        def table() -> list[float]:
+            return []
+
+        def on_bar(self, bar: Bar) -> SignalOutput:
+            return None
+
+    with pytest.raises(StrategyDefinitionError) as excinfo:
+        definition_from_class(Sneaky)
+    message = str(excinfo.value)
+    assert "Sneaky.__levels__ (list)" in message
+    assert "Sneaky.table (cached function" in message
+    assert "P.seen (dict)" in message
 
 
 def test_register_external_definitions() -> None:

@@ -109,3 +109,34 @@ def test_subprocess_contains_hard_crashes_and_infinite_loops(mode: str, expected
     bystander.stop()
     reference = run(InProcessHost(resolved("sma_b", "sma_cross_test"), INSTRUMENTS), batches)
     assert signals_of(bystander_out) == signals_of(reference)
+
+
+def test_time_budget_runs_from_dispatch_whatever_the_collection_order() -> None:
+    """A slow instance is faulted (or not) on its own merits: being collected after
+    another slow instance must not extend its budget."""
+    batches = five_minute_batches(40)
+
+    def fate(order: Sequence[str]) -> dict[str, HostState]:
+        sleeps = {"slow_a": 0.6, "slow_b": 1.5}
+        hosts = {
+            name: SubprocessHost(
+                resolved(name, "crasher", crash_on=2, mode="sleep", sleep_s=sleeps[name]),
+                INSTRUMENTS,
+                call_timeout_s=1.0,
+            )
+            for name in order
+        }
+        for host in hosts.values():
+            host.start()
+        for batch in batches[:15]:  # three 5-minute bars
+            for host in hosts.values():
+                host.dispatch(batch)
+            for host in hosts.values():
+                host.collect()
+        states = {name: host.state for name, host in hosts.items()}
+        for host in hosts.values():
+            host.stop()
+        return states
+
+    assert fate(["slow_b"]) == {"slow_b": HostState.FAULTED}
+    assert fate(["slow_a", "slow_b"]) == {"slow_a": HostState.RUNNING, "slow_b": HostState.FAULTED}

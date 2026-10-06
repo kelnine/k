@@ -20,6 +20,7 @@ hosts compute in parallel, outputs stay deterministic.
 
 import multiprocessing as mp
 import multiprocessing.connection as mpc
+import time
 import traceback
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -61,6 +62,10 @@ class StrategyHost(Protocol):
     def on_bars(self, bars: Sequence[Bar]) -> list[RunnerOutput]: ...
 
     def submit_external(self, signal: Signal) -> list[RunnerOutput]: ...
+
+    def fail(self, fault: Fault) -> None:
+        """Fault the instance from outside (e.g. its output broke its own account)."""
+        ...
 
     def stop(self) -> None: ...
 
@@ -173,6 +178,12 @@ class InProcessHost:
     def submit_external(self, signal: Signal) -> list[RunnerOutput]:
         return self._core.submit_external(signal) if self.state is HostState.RUNNING else []
 
+    def fail(self, fault: Fault) -> None:
+        if self._core.fault is None:
+            self._core.fault = fault
+        self._pending = []
+        self.state = HostState.FAULTED
+
     def stop(self) -> None:
         if self.state is HostState.RUNNING:
             self._core.stop()
@@ -237,6 +248,7 @@ class SubprocessHost:
         self._conn: mpc.Connection | None = None
         self._process: Any = None
         self._awaiting = False
+        self._deadline = 0.0
 
     @property
     def pid(self) -> int | None:
@@ -271,6 +283,9 @@ class SubprocessHost:
         try:
             self._conn.send(("bars", list(bars)))
             self._awaiting = True
+            # The budget runs from dispatch, independently of when (and after which other
+            # hosts) the lab collects, so an instance's fate never depends on the others.
+            self._deadline = time.monotonic() + self.call_timeout_s
         except (OSError, ValueError) as exc:
             self._host_fault("IPC send failed", exc)
 
@@ -278,7 +293,7 @@ class SubprocessHost:
         if not self._awaiting:
             return []
         self._awaiting = False
-        outputs, fault = self._receive(self.call_timeout_s)
+        outputs, fault = self._receive(max(0.0, self._deadline - time.monotonic()))
         if fault is not None:
             self._set_fault(fault)
         return outputs
@@ -297,6 +312,11 @@ class SubprocessHost:
         if fault is not None:
             self._set_fault(fault)
         return list(outputs)
+
+    def fail(self, fault: Fault) -> None:
+        self._set_fault(fault)
+        self._awaiting = False
+        self._terminate()
 
     def stop(self) -> None:
         if self.state is HostState.RUNNING:
@@ -336,9 +356,7 @@ class SubprocessHost:
             return "dead", None
         try:
             if not conn.poll(timeout):
-                self._host_fault(
-                    f"no response within {timeout:.1f}s (time budget exceeded or hung)", None
-                )
+                self._host_fault("no response within the time budget (too slow or hung)", None)
                 return "timeout", None
             message: tuple[str, Any] = conn.recv()
             return message

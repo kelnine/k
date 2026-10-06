@@ -100,7 +100,11 @@ def test_exit_and_move_sl() -> None:
     book.on_bar(b[0])
     assert book.apply(sig(SignalAction.MOVE_SL, stop_loss=Decimal("99.5"))) is None
     assert book.position is not None and book.position.stop_loss == Decimal("99.5")
-    (stopped,) = book.on_bar(b[1])  # low 99.5 touches the moved stop
+    assert book.apply(sig(SignalAction.MOVE_SL, stop_loss=Decimal("99"))) == (
+        "STOP_WIDENING_NOT_ALLOWED"  # accounts refuse it too: the book must not diverge
+    )
+    moved, stopped = book.on_bar(b[1])  # the move is reported; low 99.5 touches the stop
+    assert moved.kind is PositionEventKind.STOP_MOVED and moved.price == Decimal("99.5")
     assert stopped.reason is CloseReason.STOP_LOSS
     book.apply(long_signal())
     book.on_bar(b[2])
@@ -138,3 +142,35 @@ def test_exit_cancels_resting_entry() -> None:
     assert book.has_pending_entry
     assert book.apply(sig(SignalAction.EXIT_LONG)) is None
     assert not book.has_pending_entry
+
+
+def test_a_bar_opening_beyond_the_target_takes_profit_at_the_open() -> None:
+    book = TheoreticalBook("XAUUSD")
+    book.apply(long_signal())  # stop 95, target 110
+    b = bars("XAUUSD", "5m", [(100, 100.5, 99.8, 100.2), (112, 113, 94, 95)])
+    book.on_bar(b[0])
+    position = book.position
+    assert position is not None and position.take_profit is not None
+    (closed,) = book.on_bar(b[1])
+    assert closed.reason is CloseReason.TAKE_PROFIT and closed.price == Decimal(112)
+
+
+def test_resting_reversal_closes_only_when_it_fills() -> None:
+    book = TheoreticalBook("XAUUSD")
+    book.apply(long_signal())
+    b = bars("XAUUSD", "5m", [(100, 100.5, 99.8, 100.2)] * 3 + [(100.2, 102, 100, 101)])
+    book.on_bar(b[0])
+    short_limit = sig(
+        SignalAction.SHORT,
+        entry=Decimal(101),
+        stop_loss=Decimal(103),
+        order_type=OrderType.LIMIT,
+        expires_after_bars=3,
+    )
+    assert book.apply(short_limit) is None
+    assert book.on_bar(b[1]) == [] and book.on_bar(b[2]) == []  # not reached: still long
+    position = book.position
+    assert position is not None and position.is_long
+    reversed_, opened = book.on_bar(b[3])  # high 102 reaches the 101 limit
+    assert reversed_.reason is CloseReason.REVERSAL and reversed_.price == Decimal(101)
+    assert opened.kind is PositionEventKind.OPENED and opened.price == Decimal(101)

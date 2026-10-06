@@ -1,0 +1,163 @@
+# OKX USDT-margined perpetual swaps. Orders are sized in CONTRACTS: one
+# contract = ctVal base units, so contract_size = ctVal and
+# P&L = Δprice × contracts × ctVal. ctVal varies by orders of magnitude
+# (BTC 0.01, ETH 0.1, LTC 1, ADA/XRP 100, DOGE/TRX 1000): sizing without the
+# venue's ctVal is wrong by 10-1000x. Specs from
+# GET /api/v5/public/instruments?instType=SWAP (ctVal, ctValCcy, tickSz, lotSz,
+# minSz); funding from /api/v5/public/funding-rate.
+#
+# Verified rows: BTC from the ccxt fixture (also nautilus_trader test data and
+# OKX's agent-trade-kit); XAU and XAG from OKX production fixtures supplied by
+# the verify pass. Funding defaults to 8 h at 00/08/16 UTC and can step down
+# (4/2/1 h) while capped.
+#
+# No OKX profile exists in costs.yaml: crypto_perp_binance is the closest
+# (same 0.02 % maker / 0.05 % taker regular-tier swap fees and 8 h funding at
+# 00/08/16 UTC) — an assumption.
+#
+# Rows marked "spec unverified" carry PLACEHOLDER numbers — including
+# contract_size, which stands in for an UNKNOWN ctVal — and are tradable: false.
+
+venue: okx_swap
+
+listings:
+  - instrument: BTCUSD
+    venue_symbol: BTC-USDT-SWAP
+    contract_type: PERPETUAL
+    tick_size: "0.1"
+    contract_size: "0.01"       # ctVal 0.01 BTC per contract
+    quantity_unit: CONTRACTS
+    min_qty: "0.01"             # minSz 0.01 contracts = 0.0001 BTC
+    qty_step: "0.01"            # lotSz
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/okx.json
+    notes: >-
+      ctType linear, ctVal 0.01 BTC, ctMult 1, settleCcy USDT, tickSz 0.1,
+      lotSz = minSz = 0.01 contracts, maxMktSz 35,000 contracts, lever 100.
+      Notional = contracts x 0.01 x price. Costs use crypto_perp_binance (no
+      OKX profile yet).
+
+  - instrument: SOLUSD
+    venue_symbol: SOL-USDT-SWAP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.01"           # research (low confidence)
+    contract_size: "1"          # placeholder — ctVal UNKNOWN (1 SOL assumed by research; 0.01 also claimed)
+    quantity_unit: CONTRACTS
+    min_qty: "0.01"             # research (low confidence)
+    qty_step: "0.01"            # research (low confidence)
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://raw.githubusercontent.com/okx/agent-trade-kit/github-main/skills/okx-cex-trade/SKILL.md
+    notes: >-
+      spec unverified — enable after syncing from the venue API (ctVal,
+      lotSz, minSz, tickSz). Search summaries conflicted on ctVal (1 SOL vs
+      0.01 SOL).
+
+  - instrument: NEARUSD
+    venue_symbol: NEAR-USDT-SWAP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.00001"        # placeholder
+    contract_size: "1"          # placeholder — ctVal UNKNOWN (recollection: 10 NEAR, not seeded)
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    notes: >-
+      spec unverified — enable after syncing from the venue API (ctVal,
+      tickSz, lotSz, minSz). OKX spot NEAR-USDT also exists (no okx_spot venue
+      yet).
+
+  - instrument: ZECUSD
+    venue_symbol: ZEC-USDT-SWAP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0001"         # placeholder (a news summary said 0.01 — rejected by the verify pass as unconfirmed)
+    contract_size: "1"          # placeholder — ctVal UNKNOWN (0.01 ZEC claimed by a news summary, unconfirmed)
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://blockchain.news/news/okx-introduces-perpetual-futures-for-dash-and-zec
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Relisted
+      2025-11-06 03:15 UTC (up to 50x) after the January 2024 privacy-coin
+      delisting; funding reportedly every 4 h, hourly while capped at +/-1.5 %
+      (unverified). Pre-2024 ZEC swaps may have had a different face value.
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPE-USDT-SWAP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.001"          # placeholder
+    contract_size: "1"          # placeholder — ctVal UNKNOWN
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://crypto.news/hype-secures-listing-on-okx-pre-market-futures/
+    notes: >-
+      spec unverified — enable after syncing from the venue API. First listed
+      as a pre-market future (normally converted to a standard perp). OKX HYPE
+      spot opened 2025-11-03.
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMP-USDT-SWAP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0000001"      # placeholder
+    contract_size: "1"          # placeholder — ctVal UNKNOWN (sub-cent tokens usually have a large ctVal)
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://www.okx.com/en-us/help/okx-to-list-pump-pump-for-spot-trading
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Pre-market
+      futures from 2025-07-11; spot opened 2025-07-18 07:00 UTC.
+
+  # ── commodity perpetuals ───────────────────────────────────────────────────
+  # Reportedly 24/7 with the index anchored to the last commodity close on
+  # weekends (unverified) — the instruments' metals_otc calendar applies.
+  - instrument: XAUUSD
+    venue_symbol: XAU-USDT-SWAP
+    contract_type: PERPETUAL
+    tick_size: "0.1"
+    contract_size: "0.001"      # ctVal 0.001 XAU per contract
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # minSz 1 contract = 0.001 oz
+    qty_step: "1"               # lotSz
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    verified_on: "2026-10-06"
+    source: https://www.okx.com/en-us/help/okx-will-rename-xautusdt-perpetual-to-xauusdt-perpetual
+    notes: >-
+      Production specs: ctType linear, ctVal 0.001 XAU, tickSz 0.1, lotSz =
+      minSz 1, lever 100; funding 8 h (00/08/16 UTC), max +/-0.75 %. Renamed
+      from XAUT-USDT-SWAP on 2026-01-15 (ctValCcy XAUT -> XAU, now a blended
+      gold index): history BEFORE 2026-01-15 tracks the XAUT token, not spot
+      gold — exclude it from spot-gold backtests.
+
+  - instrument: XAGUSD
+    venue_symbol: XAG-USDT-SWAP
+    contract_type: PERPETUAL
+    tick_size: "0.01"
+    contract_size: "0.01"       # ctVal 0.01 XAG per contract
+    quantity_unit: CONTRACTS
+    min_qty: "1"                # minSz 1 contract = 0.01 oz
+    qty_step: "1"
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    verified_on: "2026-10-06"
+    source: https://www.okx.com/help/commodity-perpetuals
+    notes: >-
+      Production specs: listed 2026-01-28 12:00 UTC, ctType linear, ctVal
+      0.01 XAG, tickSz 0.01, lotSz = minSz 1, lever 50; funding 8 h, cap
+      +/-1.5 %.

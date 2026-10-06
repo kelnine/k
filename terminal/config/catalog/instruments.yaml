@@ -1,0 +1,347 @@
+# Canonical instruments — docs/11-instruments-sessions-costs.md §11.1–11.2.
+#
+# Strategies only ever see these symbols. Everything venue-specific (symbol,
+# tick, contract size, quantity unit, costs) is a LISTING in
+# catalog/listings/<venue>.yaml.
+#
+# Seeded 2026-10-06 from the instrument research and its independent verify
+# pass (corrections override the research; nothing unverified is used to size
+# or cost a trade).
+#
+# tick_size here is the CANONICAL tick: only used to round strategy prices
+# before they reach a listing, which re-rounds to its own tick. It is the
+# FINEST tick among the VERIFIED, TRADABLE venue listings (verified_on set and
+# tradable) — or, where no venue spec is verified, the lab_sim generic tick —
+# so strategy levels never lose precision on any venue an account can trade.
+# Listings that are verified but held back (OANDA metals/FX, Coinbase spot:
+# no fitting cost profile yet) do not count; when one is enabled, re-check
+# this tick. A comment on each instrument names the listing it comes from.
+# tests/unit/domain/test_seed_catalog.py enforces this rule.
+#
+# Aliases
+#   instruments[].aliases   GLOBAL aliases ("what a trader types"). An alias may
+#                           not equal another instrument's canonical symbol and
+#                           may not map to two instruments.
+#   aliases: (bottom)       SOURCE-specific aliases {source: <venue id>, alias,
+#                           instrument}, e.g. TradingView feed symbols that would
+#                           not resolve otherwise. EXCHANGE: prefixes and the .P
+#                           perpetual suffix are stripped automatically, and
+#                           venue symbols / listing aliases resolve on their own.
+#   Deliberately NOT aliased: futures continuous symbols to the CFDs (NQ1!,
+#   ES1!, YM1! are not NAS100/US500/US30), CME metals/FX futures (GC1!, MGC1!,
+#   6E1!), gold tokens (XAUTUSDT, PAXGUSDT — a different underlying), EURUSDT
+#   spot (EUR vs USDT), second-month continuous series (MNQ2!).
+
+instruments:
+  # ── metals (spot, OTC) ─────────────────────────────────────────────────────
+  - symbol: XAUUSD
+    name: Gold spot / US Dollar
+    asset_class: METAL
+    base: XAU
+    quote_currency: USD
+    # 0.01 = generic MT5/TradeLocker CFD (2 digits), Binance and Bybit XAUUSDT
+    # perps. OANDA XAU_USD quotes 0.001 (3 digits, as do some CFD servers) but
+    # is not tradable yet (no per-unit cost profile).
+    tick_size: "0.01"
+    trading_hours: metals_otc
+    trading_day: ny_1700
+    underlying: GOLD
+    description: >-
+      Spot gold, 1 troy ounce priced in USD (loco-London T+2 convention). Not
+      COMEX gold futures (GC/MGC — separate instruments, they carry basis) and
+      not gold tokens (XAUT, PAXG).
+    tags: [metal, spot, otc]
+    aliases: [GOLD, XAU, XAU/USD, XAUUSDT]
+
+  - symbol: XAGUSD
+    name: Silver spot / US Dollar
+    asset_class: METAL
+    base: XAG
+    quote_currency: USD
+    # 0.001 = generic MT5/TradeLocker CFD (3 digits) and Hyperliquid xyz:SILVER
+    # (effective tick near $61). OANDA XAG_USD quotes 0.00001 but is not
+    # tradable yet (no per-unit cost profile).
+    tick_size: "0.001"
+    trading_hours: metals_otc
+    trading_day: ny_1700
+    underlying: SILVER
+    description: >-
+      Spot silver, 1 troy ounce priced in USD (T+2). Not COMEX silver futures
+      (SI/SIL).
+    tags: [metal, spot, otc]
+    aliases: [SILVER, XAG, XAG/USD, XAGUSDT]
+
+  # ── US index CFDs (cash) ───────────────────────────────────────────────────
+  # Cash index CFDs, priced from the CME E-mini futures adjusted by fair value.
+  # They are NOT the futures: MNQ/NQ are separate instruments in the same
+  # underlying group (NASDAQ100). The cash-index data symbols (NASDAQ:NDX,
+  # DJ:DJI, SP:SPX) attach to these instruments as data, so NDX/DJI/SPX
+  # resolve here.
+  - symbol: NAS100
+    name: Nasdaq-100 index CFD (US Tech 100)
+    asset_class: INDEX
+    base: NDX
+    quote_currency: USD
+    # 0.01 = FTMO US100.cash / Tickmill USTEC (2 digits, verified); OANDA and
+    # Capital.com quote 0.1.
+    tick_size: "0.01"
+    trading_hours: cfd_us_indices
+    trading_day: ny_1700
+    underlying: NASDAQ100
+    description: >-
+      Nasdaq-100 cash index CFD (no expiry, daily financing, dividend
+      adjustments). Contract size per lot differs by broker (1 is common;
+      10 and 20 exist), so size from the listing. Related futures: MNQ, NQ.
+    tags: [index, cfd, us]
+    # NDX is the cash index; it resolves here (the cash CFD), never to the
+    # futures. NQ100 is deliberately absent (too close to the NQ future).
+    aliases: [US100, USTEC, USTECH100, NASDAQ100, NASDAQ, NDX, NDX100, NAS100USD]
+
+  - symbol: US30
+    name: Dow Jones Industrial Average index CFD (Wall Street 30)
+    asset_class: INDEX
+    base: DJI
+    quote_currency: USD
+    # 0.01 = FTMO US30.cash (2 digits, verified); OANDA/Capital.com 0.1.
+    tick_size: "0.01"
+    trading_hours: cfd_us_indices
+    trading_day: ny_1700
+    underlying: DOWJONES30
+    description: >-
+      Dow Jones Industrial Average cash index CFD (priced from CBOT YM). The
+      Dow is price-weighted: daily ranges are hundreds of points. Related
+      futures YM/MYM are separate instruments.
+    tags: [index, cfd, us]
+    aliases: [DJ30, WS30, DOW, DOW30, DJIA, DJI, USA30, US30USD]
+
+  - symbol: US500
+    name: S&P 500 index CFD (US 500)
+    asset_class: INDEX
+    base: SPX
+    quote_currency: USD
+    # 0.01 = FTMO US500.cash (2 digits, verified); OANDA/Capital.com 0.1.
+    tick_size: "0.01"
+    trading_hours: cfd_us_indices
+    trading_day: ny_1700
+    underlying: SP500
+    description: >-
+      S&P 500 cash index CFD (priced from CME ES). Related futures ES/MES are
+      separate instruments.
+    tags: [index, cfd, us]
+    aliases: [SPX500, SP500, SPX, S&P500, USA500, SPX500USD]
+
+  # ── CME equity-index futures ───────────────────────────────────────────────
+  # Quarterly H/M/U/Z, last trade 09:30 New York on the 3rd Friday (SOQ cash
+  # settlement). Roll = last-trade date minus 8 calendar days (verify pass: do
+  # NOT implement it as "the 2nd Thursday"; they differ when a month starts on
+  # a Friday, e.g. Sep 2028). Next rolls: 2026-12-10 (Z26→H27), 2027-03-11,
+  # 2027-06-10. Holidays: cme_globex_equity in sessions.yaml.
+  - symbol: MNQ
+    name: Micro E-mini Nasdaq-100 futures
+    asset_class: INDEX
+    base: NDX
+    quote_currency: USD
+    tick_size: "0.25"
+    trading_hours: cme_globex_equity
+    trading_day: ny_1700
+    underlying: NASDAQ100
+    futures:
+      root: MNQ
+      contract_months: HMUZ
+      expiry_rule: third_friday
+      roll_days_before_expiry: 8
+    description: >-
+      CME Micro E-mini Nasdaq-100: $2 × index, tick 0.25 = $0.50. 10 MNQ = 1 NQ
+      in exposure. Not the NAS100 cash CFD.
+    tags: [index, future, cme, micro]
+    aliases: [MNQ1!]
+
+  - symbol: NQ
+    name: E-mini Nasdaq-100 futures
+    asset_class: INDEX
+    base: NDX
+    quote_currency: USD
+    tick_size: "0.25"
+    trading_hours: cme_globex_equity
+    trading_day: ny_1700
+    underlying: NASDAQ100
+    futures:
+      root: NQ
+      contract_months: HMUZ
+      expiry_rule: third_friday
+      roll_days_before_expiry: 8
+    description: >-
+      CME E-mini Nasdaq-100: $20 × index, tick 0.25 = $5.00. Full-size
+      sibling of MNQ. ProjectX names the root ENQ.
+    tags: [index, future, cme]
+    aliases: [NQ1!]
+
+  # ── FX majors ──────────────────────────────────────────────────────────────
+  - symbol: EURUSD
+    name: Euro / US Dollar
+    asset_class: FX
+    base: EUR
+    quote_currency: USD
+    tick_size: "0.00001"  # 5-digit pricing (1/10 pip) at CFD servers and OANDA
+    trading_hours: fx_otc
+    trading_day: ny_1700
+    underlying: EURUSD
+    description: >-
+      Spot EUR/USD (USD per 1 EUR, T+2). CME 6E/M6E futures carry forward
+      points and are separate instruments; Binance EURUSDT spot is EUR vs USDT
+      and is not aliased.
+    tags: [fx, major]
+    aliases: [EUR/USD]
+
+  - symbol: GBPUSD
+    name: British Pound / US Dollar
+    asset_class: FX
+    base: GBP
+    quote_currency: USD
+    tick_size: "0.00001"  # 5-digit pricing at CFD servers and OANDA
+    trading_hours: fx_otc
+    trading_day: ny_1700
+    underlying: GBPUSD
+    description: Spot GBP/USD (USD per 1 GBP, T+2). CME 6B/M6B futures are separate.
+    tags: [fx, major]
+    aliases: [GBP/USD, CABLE]
+
+  # ── crypto (USD-normalised) ────────────────────────────────────────────────
+  # The canonical is the economic exposure priced in USD. Each listing keeps its
+  # own quote currency (USD, USDT or USDC); USDT/USDC = 1 USD is an explicit,
+  # recorded assumption (CurrencyRates), not a fact. Spot, USDT perps and USDC
+  # perps differ by stablecoin basis and funding premium, so a strategy should
+  # take bars from the same listing it executes on (see venue_profiles.yaml).
+  - symbol: BTCUSD
+    name: Bitcoin / US Dollar
+    asset_class: CRYPTO
+    base: BTC
+    quote_currency: USD
+    tick_size: "0.01"  # binance_spot BTCUSDT (perps 0.1, Hyperliquid 1)
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: BTC
+    description: >-
+      Bitcoin priced in USD. CME bitcoin futures (BTC, MBT) are separate
+      instruments and do not resolve from "BTC".
+    tags: [crypto, major]
+    # XBTUSD: BitMEX's XBTUSD is an INVERSE perp; no BitMEX listing exists, and
+    # inverse contracts are refused for sizing anyway.
+    # BTC/USDT:USDT and BTC/USDC:USDC are ccxt's linear-perp symbols (bots send
+    # them; the resolver would read the part after ':' as an exchange prefix).
+    aliases: [BTC, BTCUSDT, BTCUSDC, BTC/USD, BTC/USDT, BTC/USDT:USDT, BTC/USDC:USDC,
+              BITCOIN, XBT, XBTUSD]
+
+  - symbol: SOLUSD
+    name: Solana / US Dollar
+    asset_class: CRYPTO
+    base: SOL
+    quote_currency: USD
+    tick_size: "0.001"  # hyperliquid SOL effective tick below $100 (Coinbase INTX 0.001 too)
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: SOL
+    description: >-
+      Solana priced in USD. CME Solana futures (SOL, MSL) are separate
+      instruments and do not resolve from "SOL".
+    tags: [crypto, major]
+    aliases: [SOL, SOLUSDT, SOLUSDC, SOL/USD, SOL/USDT, SOL/USDT:USDT, SOL/USDC:USDC,
+              SOLANA]
+
+  - symbol: NEARUSD
+    name: NEAR Protocol / US Dollar
+    asset_class: CRYPTO
+    base: NEAR
+    quote_currency: USD
+    tick_size: "0.00001"  # lab_sim generic spec (no venue tick verified yet)
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: NEAR
+    description: >-
+      NEAR Protocol token priced in USD. No venue's tick/step was verifiable on
+      2026-10-06; strategy-lab accounts use the lab_sim generic listing until a
+      venue listing is synced from its API.
+    tags: [crypto, alt]
+    aliases: [NEAR, NEARUSDT, NEARUSDC, NEAR/USDT, NEAR/USDT:USDT, NEAR/USDC:USDC]
+
+  - symbol: ZECUSD
+    name: Zcash / US Dollar
+    asset_class: CRYPTO
+    base: ZEC
+    quote_currency: USD
+    tick_size: "0.0001"  # lab_sim generic spec (no venue tick verified yet)
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: ZEC
+    description: >-
+      Zcash (privacy coin) priced in USD. Listing status is time-varying: OKX
+      delisted ZEC in Jan 2024 and relisted it in Nov 2025; the EU AMLR bars
+      anonymity-enhancing coins at CASPs from 2027-07-10.
+    tags: [crypto, alt, privacy]
+    aliases: [ZEC, ZECUSDT, ZECUSDC, ZEC/USDT, ZEC/USDT:USDT, ZEC/USDC:USDC, ZCASH]
+
+  - symbol: HYPEUSD
+    name: Hyperliquid HYPE / US Dollar
+    asset_class: CRYPTO
+    base: HYPE
+    quote_currency: USD
+    tick_size: "0.001"  # hyperliquid HYPE effective tick at $10-99.99 (verified perp)
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: HYPE
+    description: >-
+      HYPE, the Hyperliquid L1 token, priced in USD. Not HYPER (Hyperlane).
+      Hyperliquid's main-dex HYPE perp is the only venue listing with verified
+      specs (2026-10-06); CEX listings are unverified until synced.
+    tags: [crypto, alt]
+    aliases: [HYPE, HYPEUSDT, HYPEUSDC, HYPE/USDT, HYPE/USDC:USDC]
+
+  - symbol: PUMPUSD
+    name: pump.fun PUMP / US Dollar
+    asset_class: CRYPTO
+    base: PUMP
+    quote_currency: USD
+    tick_size: "0.0000001"  # lab_sim generic spec; the token trades below one cent
+    trading_hours: crypto_24x7
+    trading_day: utc_midnight
+    underlying: PUMP
+    description: >-
+      PUMP, the pump.fun token (Solana SPL, 1 trillion supply), priced in USD.
+      The ticker collides with PumpBTC (not in this catalog); Bybit calls the
+      pump.fun token PUMPFUN and Hyperliquid spot UPUMP. Low-priced tokens may
+      be listed with a 1000x prefix (1000PUMP / kPUMP) at some venues —
+      confirm at sync time.
+    tags: [crypto, alt, meme]
+    # The research recommends scoping a bare "PUMP" to a venue (PumpBTC); it is
+    # global here because the user trades pump.fun PUMP and PumpBTC is absent.
+    aliases: [PUMP, PUMPUSDT, PUMPUSDC, PUMPFUN, PUMPFUNUSDT, PUMP/USDT]
+
+# ── source-specific aliases ──────────────────────────────────────────────────
+# TradingView feed symbols. Ones marked "explicit" would also resolve through
+# prefix stripping / global aliases; the rest would not resolve otherwise.
+aliases:
+  # metals — TradingView composite data series (data only, not fill prices)
+  - {source: tradingview, alias: "TVC:GOLD", instrument: XAUUSD}      # explicit
+  - {source: tradingview, alias: "TVC:SILVER", instrument: XAGUSD}    # explicit
+  # Nasdaq-100: NASDAQ:NDX is the official cash index (data, RTH only)
+  - {source: tradingview, alias: "NASDAQ:NDX", instrument: NAS100}    # explicit
+  - {source: tradingview, alias: "TVC:NDQ", instrument: NAS100}       # TradingView "US 100 Index"
+  - {source: tradingview, alias: "CAPITALCOM:US100", instrument: NAS100}  # explicit
+  - {source: tradingview, alias: "EIGHTCAP:NDQ100", instrument: NAS100}
+  # FOREX.com runs both NAS100/US30/SPX500 and NSXUSD/DJI/SPXUSD feeds in 2026
+  # (verify pass: alternates, not legacy) — possibly distinct feeds, so do not
+  # mix them within one lab comparison.
+  - {source: tradingview, alias: "FOREXCOM:NSXUSD", instrument: NAS100}
+  - {source: tradingview, alias: "FOREXCOM:SPXUSD", instrument: US500}
+  # Dow / S&P cash indices (data only)
+  - {source: tradingview, alias: "DJ:DJI", instrument: US30}          # explicit
+  - {source: tradingview, alias: "TVC:DJI", instrument: US30}         # explicit
+  - {source: tradingview, alias: "SP:SPX", instrument: US500}         # explicit
+  - {source: tradingview, alias: "TVC:SPX", instrument: US500}        # explicit
+  # CME continuous front-month futures (data; alerts must be mapped to the
+  # dated contract by the execution adapter — venue_symbol_for does that)
+  - {source: tradingview, alias: "CME_MINI:MNQ1!", instrument: MNQ}   # explicit
+  - {source: tradingview, alias: "CME_MINI:NQ1!", instrument: NQ}     # explicit
+  # crypto perpetual feeds
+  - {source: tradingview, alias: "BINANCE:NEARUSDT.P", instrument: NEARUSD}  # explicit
+  - {source: tradingview, alias: "BINANCE:XAUUSDT.P", instrument: XAUUSD}    # explicit

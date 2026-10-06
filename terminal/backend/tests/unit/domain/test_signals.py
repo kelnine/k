@@ -112,3 +112,28 @@ def test_model_level_validation() -> None:
 def test_signal_from_payload() -> None:
     payload = make().model_dump(mode="json")
     assert signal_from_payload(payload) == make()
+
+
+@pytest.mark.parametrize(
+    ("update", "code"),
+    [
+        ({"metadata": {"atr": float("nan")}}, "METADATA_NOT_JSON"),
+        ({"metadata": {"x": float("inf")}}, "METADATA_NOT_JSON"),
+        ({"confidence": float("nan")}, "INVALID_CONFIDENCE"),
+        ({"risk": Decimal("NaN")}, "INVALID_RISK"),
+    ],
+)
+def test_non_finite_numbers_are_rejected(update: dict[str, Any], code: str) -> None:
+    base = Signal(
+        strategy_id="a",
+        strategy_version="v",
+        symbol="XAUUSD",
+        timeframe="5m",
+        timestamp=T0,
+        signal=SignalAction.LONG,
+        entry=Decimal(100),
+        stop_loss=Decimal(99),
+    )
+    with pytest.raises(InvalidSignalError) as excinfo:
+        validate_signal(base.model_copy(update=update))
+    assert excinfo.value.code == code

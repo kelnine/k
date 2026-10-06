@@ -17,11 +17,15 @@ those costs are defined (docs/11-instruments-sessions-costs.md §11.4):
   arithmetic in a private decimal context, so a strategy or library that
   changes the thread's ambient context (precision, rounding) cannot change
   what any lab account is charged.
-* **Never flattering.** Market and stop fills cross half the spread and pay
-  slippage, then round to the listing's tick *adversely* (buys up, sells down).
-  Limit orders (targets) fill exactly at their price but trigger only when the
-  far side of the spread reaches them. Fees round up; funding and swap cash
-  flows round towards −∞. All rounding is to :data:`MONEY_QUANTUM`.
+* **Never flattering.** Market fills cross half the spread and pay slippage,
+  then round to the listing's tick *adversely* (buys up, sells down). Stop
+  levels are bid (sell stop) / ask (buy stop) prices, as on MT5: a stop
+  triggers when that side of the spread reaches it and fills there minus/plus
+  slippage — or at the opening bid/ask when a bar gaps through it — so the
+  spread is paid once (:meth:`CostCalculator.triggered_stop_fill`). Limit
+  orders (targets) fill exactly at their price but trigger only when the far
+  side of the spread reaches them. Fees round up; funding and swap cash flows
+  round towards −∞, both to :data:`MONEY_QUANTUM`.
 * **Attributable.** Spread, slippage, commission, funding and swap are returned
   separately (:class:`FillPrice` breaks a fill down) so analytics can report
   each cost per strategy.
@@ -38,6 +42,7 @@ instant while the local rollover time (e.g. 17:00 New York) stays put.
 import functools
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from decimal import (
@@ -245,8 +250,9 @@ def _check_rollover(
             f"{where} rollover_time {_format_time(rollover_time)} is before noon: a rollover's "
             "local date must be the trading day it ends, because weekends are skipped and the "
             "triple day is matched on that date. A morning rollover ends the previous day — "
-            "write the trading-day close instead (MT5 'server midnight' on a UTC+2/+3 "
-            "New York-close server is 17:00 America/New_York)"
+            "write the same instant in a zone where it falls on that day instead (MT5 'server "
+            "midnight' on a UTC+2/+3 New York-close server is 17:00 America/New_York; a fixed "
+            "07:00 Asia/Tokyo is 22:00 UTC)"
         )
     _zone(timezone, f"{where} timezone")
     _check_int(f"{where} triple_day", triple_day, 0, 4)  # Sat/Sun rollovers are skipped
@@ -281,6 +287,22 @@ def _exact[**P, R](method: Callable[P, R]) -> Callable[P, R]:
             return method(*args, **kwargs)
 
     return wrapper
+
+
+def _check_price_source(source: object, name: str) -> None:
+    """Validate a :data:`PriceSource` up front, whether or not an event falls due.
+
+    Otherwise a float or zero price would pass whenever the window held no
+    event (or the model ignores the price) and fail only when one fell due —
+    a caller bug surfacing at the mercy of the clock. A function is checked
+    on every call instead (:func:`_price_at`).
+    """
+    if isinstance(source, Decimal):
+        _require_positive(source, name)
+    elif not callable(source):
+        raise TypeError(
+            f"{name} must be a Decimal or a callable returning one, got {type(source).__name__}"
+        )
 
 
 def _price_at(source: PriceSource, at: datetime, name: str) -> Decimal:
@@ -386,7 +408,7 @@ class SessionSpread:
     def window_ids(self) -> frozenset[str]:
         return frozenset(window_id for window_id, _ in self.by_window)
 
-    def points_for(self, active_windows: frozenset[str]) -> Decimal:
+    def points_for(self, active_windows: AbstractSet[str]) -> Decimal:
         for window_id, points in self.by_window:
             if window_id in active_windows:
                 return points
@@ -500,7 +522,8 @@ class NotionalCommission:
         _check_decimal("notional commission minimum", self.minimum, non_negative=True)
 
     def rate(self, liquidity: Liquidity) -> Decimal:
-        return self.maker_rate if liquidity is Liquidity.MAKER else self.taker_rate
+        # Normalised first: a plain "MAKER" string is equal to, not identical to, the member.
+        return self.maker_rate if Liquidity(liquidity) is Liquidity.MAKER else self.taker_rate
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
@@ -718,7 +741,8 @@ class PointsSwap:
         _check_rollover("points swap", self.rollover_time, self.timezone, self.triple_day)
 
     def points(self, direction: Direction) -> Decimal:
-        return self.long_points if direction is Direction.LONG else self.short_points
+        # Normalised first: a plain "LONG" string is equal to, not identical to, the member.
+        return self.long_points if Direction(direction) is Direction.LONG else self.short_points
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
@@ -768,7 +792,7 @@ class AnnualRateSwap:
             )
 
     def rate(self, direction: Direction) -> Decimal:
-        return self.long_rate if direction is Direction.LONG else self.short_rate
+        return self.long_rate if Direction(direction) is Direction.LONG else self.short_rate
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
@@ -989,8 +1013,8 @@ def profile_listing_problems(profile: CostProfile, listing: Listing) -> list[str
     A profile is only meaningful for the contract type it was written for:
     funding exists only on perpetuals and overnight swap never applies to
     futures or perpetuals. Charging either on the wrong listing would silently
-    bias long/short results, so :class:`CostCalculator` refuses the pair; the
-    catalog can call this to report every mismatch while validating listings.
+    bias long/short results, so :class:`CostCalculator` refuses the pair and
+    the instrument catalog reports every mismatch while validating listings.
     """
     problems: list[str] = []
     contract = listing.contract_type
@@ -1028,6 +1052,11 @@ class CostEvent:
             ) from None
         if not isinstance(self.amount, Decimal) or not self.amount.is_finite():
             raise ValueError(f"cost event amount must be a finite Decimal, got {self.amount!r}")
+        for name in ("detail", "currency"):  # written verbatim to the ledger's text columns
+            if not isinstance(getattr(self, name), str):
+                raise TypeError(
+                    f"cost event {name} must be a string, got {type(getattr(self, name)).__name__}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1040,15 +1069,23 @@ class FillPrice:
 
     side: OrderSide
     price: Decimal
-    reference: Decimal  # the mid (market) or stop level the fill started from
+    # The mid the fill started from: the market mid, a mid-level stop, or — for a
+    # triggered bid/ask stop — the mid at which that side of the spread sits at
+    # the stop (or the gapped open).
+    reference: Decimal
     half_spread: Decimal
     slippage: Decimal
     rounding: Decimal  # adverse rounding to the listing's tick
 
     @property
     def adverse(self) -> Decimal:
-        """Total distance from the reference against the trader."""
-        return self.half_spread + self.slippage + self.rounding
+        """Total distance from the reference against the trader.
+
+        Summed in the module's exact context: analytics attribute this per fill,
+        so a caller's low-precision ambient context must not re-round it.
+        """
+        with localcontext(_CONTEXT):
+            return self.half_spread + self.slippage + self.rounding
 
 
 # ── the calculator ───────────────────────────────────────────────────────────
@@ -1073,6 +1110,13 @@ class CostCalculator:
         listing: Listing,
         window_lookup: WindowLookup | None = None,
     ) -> None:
+        if not isinstance(profile, CostProfile) or not isinstance(listing, Listing):
+            raise TypeError(
+                "CostCalculator needs a CostProfile and a Listing, got "
+                f"{type(profile).__name__} and {type(listing).__name__}"
+            )
+        if window_lookup is not None and not callable(window_lookup):
+            raise TypeError(f"window_lookup must be callable, got {type(window_lookup).__name__}")
         if (
             isinstance(profile.spread, SessionSpread)
             and profile.spread.by_window
@@ -1103,8 +1147,15 @@ class CostCalculator:
     # ── spread & slippage (price units) ─────────────────────────────────────
     @_exact
     def spread(self, at: datetime, quote: Quote | None = None) -> Decimal:
-        """The full bid/ask spread at ``at`` in price units."""
+        """The full bid/ask spread at ``at`` in price units.
+
+        A ``quote`` is only *used* by the ``quotes`` model, but it is checked
+        (instrument, no look-ahead) under every model: passing a wrong or
+        future quote is a caller bug whatever the profile says.
+        """
         at = ensure_utc(at)
+        if quote is not None:
+            self._checked_quote(quote, at)
         model = self._profile.spread
         match model:
             case NoSpread():
@@ -1114,12 +1165,9 @@ class CostCalculator:
             case FixedTicksSpread(ticks=ticks):
                 return ticks * self._listing.tick_size
             case SessionSpread():
-                lookup = self._window_lookup
-                return model.points_for(lookup(at) if lookup is not None else frozenset())
+                return model.points_for(self._active_windows(at))
             case QuoteSpread(fallback_points=fallback):
-                if quote is None:
-                    return fallback
-                return self._checked_quote(quote, at).spread
+                return fallback if quote is None else quote.spread
             case _:  # pragma: no cover - exhaustive
                 assert_never(model)
 
@@ -1172,8 +1220,10 @@ class CostCalculator:
         """A triggered stop, treated as a mid-price level: a SELL stop fills
         below it (stop − spread/2 − slippage), a BUY stop above, rounded adversely.
 
-        When a bar gaps through the stop the simulator passes the (worse) open
-        as ``stop_price``.
+        This is the mid-level convention. Stops evaluated with
+        :meth:`stop_triggered` (whose levels are bid/ask prices, docs/11 §11.4)
+        must be filled with :meth:`triggered_stop_fill` instead: combining the
+        two rules here would charge half a spread twice.
         """
         side = OrderSide(side)
         _require_positive(stop_price, "stop_price")
@@ -1285,6 +1335,29 @@ class CostCalculator:
             case _:  # pragma: no cover - exhaustive
                 assert_never(model)
 
+    @_exact
+    def commission_per_unit(
+        self, price: Decimal, liquidity: Liquidity = Liquidity.TAKER
+    ) -> Decimal:
+        """The *unrounded* fee per 1.0 quantity for one fill, ignoring per-fill minimums.
+
+        Used to reserve expected costs when sizing a position: rounding a per-unit fee
+        up to the money quantum would overstate it many times on low-priced instruments.
+        Fills themselves are charged by :meth:`commission`.
+        """
+        _require_positive(price, "price")
+        liquidity = Liquidity(liquidity)
+        model = self._profile.commission
+        match model:
+            case NoCommission():
+                return _ZERO
+            case PerQuantityCommission(per_side=per_side):
+                return per_side
+            case NotionalCommission():
+                return self._listing.notional(Decimal(1), price) * model.rate(liquidity)
+            case _:  # pragma: no cover - exhaustive
+                assert_never(model)
+
     # ── time-based costs (signed cash flows) ────────────────────────────────
     @_exact
     def funding_events(
@@ -1301,6 +1374,7 @@ class CostCalculator:
         and received by shorts."""
         direction = Direction(direction)
         _require_positive(qty, "qty")
+        _check_price_source(mark_price, "mark_price")
         start, end = _interval(start, end)
         model = self._profile.funding
         if isinstance(model, NoFunding):
@@ -1331,6 +1405,7 @@ class CostCalculator:
         rollover t with start < t <= end; the triple-day rollover counts 3 nights."""
         direction = Direction(direction)
         _require_positive(qty, "qty")
+        _check_price_source(price, "price")  # even for points swaps, which ignore it
         start, end = _interval(start, end)
         model = self._profile.swap
         if isinstance(model, NoSwap):
@@ -1401,6 +1476,19 @@ class CostCalculator:
             )
         return quote
 
+    def _active_windows(self, at: datetime) -> AbstractSet[str]:
+        lookup = self._window_lookup
+        if lookup is None:
+            return frozenset()
+        active: object = lookup(at)
+        # A bare string would be matched by substring (`"asia" in "asia_late"`).
+        if not isinstance(active, AbstractSet):
+            raise TypeError(
+                f"window_lookup must return a set of window ids, got {type(active).__name__} "
+                f"{active!r} at {at.isoformat()}"
+            )
+        return active
+
     @staticmethod
     def _check_bar(high: Decimal, low: Decimal) -> None:
         _require_positive(high, "bar_high_mid")
@@ -1437,8 +1525,9 @@ def _rollover_instants(
     the gap's length later on the wall clock; an ambiguous one to its first
     occurrence — the same rule as the trading calendars. When a zone skips a
     whole calendar day (Samoa 2011, Manila 1844) the skipped day's rollover
-    lands on the next day's: that is one instant, so one event, counting the
-    larger number of nights (never the flattering one).
+    lands on the next day's: that is one instant, so one event — never two
+    charges at the same instant — counting the larger of the two night counts
+    (a triple day keeps its triple; the skipped day's own night never existed).
     """
     day = start.astimezone(zone).date() - timedelta(days=1)
     last = end.astimezone(zone).date() + timedelta(days=1)

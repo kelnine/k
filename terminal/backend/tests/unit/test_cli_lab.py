@@ -78,5 +78,8 @@ def test_lab_demo_in_memory(config_dir: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Paper 50K · demo_sma_fast" in result.output
     assert "Paper 50K · demo_breakout_xau" in result.output
-    assert result.output.count("[OK ]") == 2
+    audit, _, solo = result.output.partition("Alone vs. together")
+    assert audit.count("[OK ]") == 2  # isolation audit from the recorded rows
+    assert solo.count("[OK ]") == 2  # each instance alone == alongside the other
+    assert "identical" in solo
     assert "FAIL" not in result.output

@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -125,3 +129,51 @@ def test_spec_validation() -> None:
         spec(instruments=[])
     with pytest.raises(ValidationError, match="duplicate"):
         spec(instruments=["XAUUSD", "XAUUSD"])
+
+
+def test_version_is_stable_across_numeric_spellings(
+    registry: Registry[StrategyDefinition],
+) -> None:
+    base = resolve_instance(spec(), instruments=INSTRUMENTS, definitions=registry)
+    for stop_atr in (Decimal("1.50"), "1.5", 1.5):
+        same = resolve_instance(
+            spec(params={"fast": 5, "slow": 20, "stop_atr": stop_atr}),
+            instruments=INSTRUMENTS,
+            definitions=registry,
+        )
+        assert same.config_hash == base.config_hash, stop_atr
+
+
+def test_version_of_set_params_is_deterministic() -> None:
+    """Set iteration order depends on the process hash seed; the version must not."""
+    script = (
+        "from tests.fixtures.instruments import INSTRUMENTS\n"
+        "from kterminal.core.registry import Registry\n"
+        "from kterminal.strategy_engine.instances import InstanceSpec, resolve_instance\n"
+        "from kterminal.strategy_engine.registry import definition_from_class\n"
+        "from tests.fixtures.strategies import SetParams\n"
+        "d = definition_from_class(SetParams); r = Registry('d'); r.register(d.id, d)\n"
+        "s = InstanceSpec(id='x_set', strategy=d.id, instruments=('XAUUSD',), timeframe='5m')\n"
+        "print(resolve_instance(s, instruments=INSTRUMENTS, definitions=r).config_hash)\n"
+    )
+    hashes = set()
+    for seed in ("0", "1", "2", "3"):
+        out = subprocess.run(  # noqa: S603 - a fixed script run by our own interpreter
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[3],
+        )
+        hashes.add(out.stdout.strip())
+    assert len(hashes) == 1
+
+
+def test_daily_timeframes_are_rejected_until_supported(
+    registry: Registry[StrategyDefinition],
+) -> None:
+    with pytest.raises(InstanceConfigError, match="1D is not supported yet"):
+        resolve_instance(
+            spec(context_timeframes=("1h", "1D")), instruments=INSTRUMENTS, definitions=registry
+        )

@@ -100,7 +100,8 @@ class LabStore(Protocol):
 class InMemoryLabStore:
     runs: dict[UUID, dict[str, Any]] = field(default_factory=dict)
     versions: dict[tuple[str, str], UUID] = field(default_factory=dict)
-    accounts: dict[str, ProvisionedAccount] = field(default_factory=dict)
+    accounts: dict[str, ProvisionedAccount] = field(default_factory=dict)  # dedicated
+    run_accounts: dict[UUID, dict[str, ProvisionedAccount]] = field(default_factory=dict)
     account_configs: dict[UUID, list[tuple[UUID, str]]] = field(default_factory=dict)
     records: dict[type, list[Any]] = field(default_factory=lambda: defaultdict(list))
     trades: dict[UUID, TradeRecord] = field(default_factory=dict)
@@ -150,6 +151,12 @@ class InMemoryLabStore:
         opened_at: datetime | None = None,
     ) -> ProvisionedAccount:
         config_hash = hash_data(settings.document())
+        if run_id is not None:  # simulations: a fresh account per run, never the dedicated one
+            account = ProvisionedAccount(uuid7(), uuid7(), name, True)
+            self.run_accounts.setdefault(run_id, {})[instance_id] = account
+            self.starting_balances[account.account_id] = settings.starting_balance
+            self.account_configs[account.account_id] = [(account.config_version_id, config_hash)]
+            return account
         existing = self.accounts.get(instance_id)
         if existing is not None:
             history = self.account_configs[existing.account_id]
@@ -195,16 +202,21 @@ class InMemoryLabStore:
     async def isolation_checks(self, run_id: UUID) -> list["IsolationCheck"]:
         from kterminal.paper.demo import IsolationCheck
 
-        signal_owner = {s.id: s.instance_id for s in self.records[SignalRecord]}
+        # Evidence that does not come from the account itself: who produced each signal
+        # (the signal's own strategy_id), and the ledger amounts re-added from the deposit.
+        signal_owner = {
+            s.id: (s.signal.strategy_id if s.signal is not None else s.instance_id)
+            for s in self.records[SignalRecord]
+        }
         checks = []
-        for instance_id, account in sorted(self.accounts.items()):
+        for instance_id, account in sorted(self.run_accounts.get(run_id, {}).items()):
             decisions = [
                 d for d in self.records[DecisionRecord] if d.account_id == account.account_id
             ]
             trades = [t for t in self.trades.values() if t.account_id == account.account_id]
             ledger = [e for e in self.records[LedgerRecord] if e.account_id == account.account_id]
             start = self.starting_balances.get(account.account_id, Decimal(0))
-            balance = ledger[-1].balance_after if ledger else start
+            recorded = ledger[-1].balance_after if ledger else start
             checks.append(
                 IsolationCheck(
                     instance_id=instance_id,
@@ -215,10 +227,13 @@ class InMemoryLabStore:
                     ),
                     trades=len(trades),
                     trades_of_other_instances=sum(
-                        1 for t in trades if t.instance_id != instance_id
+                        1
+                        for t in trades
+                        if t.instance_id != instance_id
+                        or signal_owner.get(t.entry_signal_id) != instance_id
                     ),
                     ledger_entries=len(ledger),
-                    balance_matches_ledger=balance == start + sum(e.amount for e in ledger),
+                    balance_matches_ledger=recorded == start + sum(e.amount for e in ledger),
                 )
             )
         return checks

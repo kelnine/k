@@ -205,6 +205,12 @@ cost_profiles:
       day_count: 360
 
   # ── CME micro equity-index futures (MNQ, MES, MYM) ─────────────────────────
+  # Effective cost note: futures bars are trade prices, so the "mid" is on the
+  # tick grid, and an odd tick spread puts the bid/ask half a tick off it. Fills
+  # round ADVERSELY to the tick, so each market/stop fill here costs 2 ticks
+  # (0.125 half spread + 0.25 slippage = 0.375, rounded up to 0.50), i.e. 4 ticks
+  # (2.00 USD on MNQ) per round turn before commission — 1 tick more than the
+  # nominal 1-tick spread + 1-tick slippage. Deliberately conservative.
   - id: cme_micro_equity
     description: >-
       ASSUMPTION — CME micro equity-index futures (MNQ: tick 0.25 = 0.50 USD).
@@ -216,6 +222,24 @@ cost_profiles:
       carry is in the futures price and contracts are rolled, not financed.
     spread: {model: fixed_ticks, ticks: 1}
     commission: {model: per_quantity, per_side: "0.95", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 1}
+    funding: {model: none}
+    swap: {model: none}
+
+  # ── CME E-mini equity-index futures (NQ, ES, YM) ───────────────────────────
+  # Same tick-based spread/slippage as the micros (they scale with the tick
+  # value), but E-mini exchange fees are ~4x the micro ones, so the micro
+  # profile's 0.95 USD/side would understate them. Same adverse-rounding note.
+  - id: cme_emini_equity
+    description: >-
+      ASSUMPTION — CME E-mini equity-index futures (NQ: tick 0.25 = 5.00 USD).
+      Spread 1 tick. All-in 2.50 USD per contract per side: CME Globex
+      non-member exchange fee ~1.38 (E-mini Nasdaq-100) + NFA 0.01-0.02 +
+      clearing ~0.19 + broker/platform ~0.25-0.90 (prop-firm platforms
+      commonly quote ~2.00-2.50 all-in). Slippage 1 tick on market/stop fills.
+      No funding or swap: the cost of carry is in the futures price.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: per_quantity, per_side: "2.50", minimum: "0"}
     slippage: {model: fixed_ticks, ticks: 1}
     funding: {model: none}
     swap: {model: none}

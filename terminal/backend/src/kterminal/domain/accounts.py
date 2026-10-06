@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from kterminal.core.canonical import canonical_data, canonical_json
 from kterminal.core.enums import TradingMode
 
 DEFAULT_STARTING_BALANCE = Decimal("50000")
@@ -48,12 +49,14 @@ class AccountSettings(BaseModel):
         return value
 
     def document(self) -> dict[str, object]:
-        """JSON-safe representation used for hashing and storage."""
-        return self.model_dump(mode="json")
+        """JSON-safe, canonical representation used for hashing and storage: numbers are
+        written without redundant zeros, so ``50000`` and ``50000.00`` are the same."""
+        data: dict[str, object] = canonical_data(self.model_dump())
+        return data
 
     def document_json(self) -> str:
         """Canonical string form (equal settings ⇔ equal strings)."""
-        return self.model_dump_json()
+        return canonical_json(self.document())
 
     @property
     def display_name_prefix(self) -> str:

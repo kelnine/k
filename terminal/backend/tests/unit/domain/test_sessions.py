@@ -5,6 +5,7 @@ starts 2026-03-29 and ends 2026-10-25. Between those pairs of dates London
 and New York are only four hours apart instead of five.
 """
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -13,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from kterminal.core.errors import ClockError
@@ -753,10 +754,12 @@ def test_calendar_from_dict_errors() -> None:
         TradingCalendar.from_dict({**base, "weekly": "MON 09:00 - MON 10:00"})
     with pytest.raises(ValueError, match="true or false"):
         TradingCalendar.from_dict({**base, "always_open": "yes"})
-    unquoted = yaml.safe_load("holidays: [2026-01-01]\nearly_closes: {2026-01-02: '12:00'}")
+    # Unquoted YAML dates arrive as dates. (The early close is inside the Monday
+    # session: one outside the schedule would close nothing and is rejected.)
+    unquoted = yaml.safe_load("holidays: [2026-01-01]\nearly_closes: {2026-01-05: '09:30'}")
     calendar = TradingCalendar.from_dict({**base, **unquoted})
     assert calendar.holidays == {date(2026, 1, 1)}
-    assert calendar.early_closes == ((date(2026, 1, 2), time(12)),)
+    assert calendar.early_closes == ((date(2026, 1, 5), time(9, 30)),)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -951,3 +954,574 @@ def test_to_utc_round_trips_or_shifts_forward(day: date, at: time, tz: str) -> N
     else:
         # A nonexistent time is shifted forward by the gap (one hour in these zones).
         assert back - wall_clock == timedelta(hours=1)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Review: holiday / early-close semantics with adjacent sessions, validation
+# ════════════════════════════════════════════════════════════════════════════
+DAILY_FX_SESSIONS = weekly(
+    "SUN 17:00 - MON 17:00",
+    "MON 17:00 - TUE 17:00",
+    "TUE 17:00 - WED 17:00",
+    "WED 17:00 - THU 17:00",
+    "THU 17:00 - FRI 17:00",
+)
+
+
+def test_trade_date_holiday_cancels_only_the_adjacent_session_closing_on_it() -> None:
+    """Touching weekly intervals are separate sessions: a trade-date holiday cancels the
+    one that closes on it, not the whole merged week (and never nothing)."""
+    wednesday = TradingCalendar(
+        id="fx_daily_wed",
+        timezone=NY,
+        intervals=DAILY_FX_SESSIONS,
+        holiday_rule=HolidayRule.TRADE_DATE,
+        holidays=frozenset({date(2026, 10, 7)}),
+    )
+    assert wednesday.is_open(local(NY, 2026, 10, 6, 16, 59))
+    assert not wednesday.is_open(local(NY, 2026, 10, 6, 17))  # Tue 17:00 → Wed 17:00 cancelled
+    assert not wednesday.is_open(local(NY, 2026, 10, 7, 12))
+    assert wednesday.is_open(local(NY, 2026, 10, 7, 17))  # trade date Thu opens on the holiday
+    assert wednesday.open_intervals(local(NY, 2026, 10, 4), local(NY, 2026, 10, 10)) == [
+        (local(NY, 2026, 10, 4, 17), local(NY, 2026, 10, 6, 17)),
+        (local(NY, 2026, 10, 7, 17), local(NY, 2026, 10, 9, 17)),
+    ]
+    friday = TradingCalendar(
+        id="fx_daily_fri",
+        timezone=NY,
+        intervals=DAILY_FX_SESSIONS,
+        holiday_rule=HolidayRule.TRADE_DATE,
+        holidays=frozenset({date(2026, 10, 9)}),
+    )
+    assert friday.is_open(local(NY, 2026, 10, 5, 12))  # Monday is unaffected
+    assert friday.next_close(local(NY, 2026, 10, 5, 12)) == local(NY, 2026, 10, 8, 17)
+
+
+def test_early_close_reopens_at_the_next_session_open_of_adjacent_sessions() -> None:
+    fx = TradingCalendar(
+        id="fx_daily_early",
+        timezone=NY,
+        intervals=DAILY_FX_SESSIONS,
+        early_closes=((date(2026, 11, 26), time(13)),),  # Thanksgiving
+    )
+    assert not fx.is_open(local(NY, 2026, 11, 26, 13))
+    assert fx.next_open(local(NY, 2026, 11, 26, 14)) == local(NY, 2026, 11, 26, 17)
+    # An interval that opens *inside* another one is not a session open.
+    nested = TradingCalendar(
+        id="nested",
+        timezone=NY,
+        intervals=weekly("MON 09:00 - MON 16:00", "MON 12:00 - MON 13:00"),
+        early_closes=((date(2026, 10, 5), time(10)),),
+    )
+    assert not nested.is_open(local(NY, 2026, 10, 5, 12, 30))
+    assert nested.next_open(local(NY, 2026, 10, 5, 10)) == local(NY, 2026, 10, 12, 9)
+
+
+def test_trade_date_holiday_that_cancels_no_session_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"2026-10-07.*WED.*would close nothing"):
+        TradingCalendar(
+            id="fx_week",
+            timezone=NY,
+            intervals=weekly("SUN 17:00 - FRI 17:00"),  # one session, closing on Friday
+            holiday_rule=HolidayRule.TRADE_DATE,
+            holidays=frozenset({date(2026, 10, 7)}),
+        )
+    # A session closing at 00:00 belongs to the day before.
+    late = TradingCalendar(
+        id="late_session",
+        timezone=NY,
+        intervals=weekly("MON 18:00 - TUE 00:00"),
+        holiday_rule=HolidayRule.TRADE_DATE,
+        holidays=frozenset({date(2026, 10, 5)}),
+    )
+    assert not late.is_open(local(NY, 2026, 10, 5, 20))
+    with pytest.raises(ValueError, match="would close nothing"):
+        TradingCalendar.from_dict(
+            {**late.to_dict(), "id": "late_session_2", "holidays": ["2026-10-06"]}
+        )
+
+
+@pytest.mark.parametrize(
+    ("early_close", "message"),
+    [
+        ((date(2026, 10, 10), time(12)), r"2026-10-10 \(SAT\) 12:00.*outside the weekly schedule"),
+        ((date(2026, 10, 6), time(16, 30)), "outside the weekly schedule"),  # in the daily halt
+        ((date(2026, 10, 6), time(16)), "outside the weekly schedule"),  # at the close itself
+        ((date(2026, 12, 24), time(18)), r"cancelled by the holiday 2026-12-25"),
+    ],
+)
+def test_early_close_that_would_close_nothing_is_rejected(
+    early_close: tuple[date, time], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        TradingCalendar(
+            id="cme_like",
+            timezone=CHI,
+            intervals=weekly(
+                "SUN 17:00 - MON 16:00",
+                "MON 17:00 - TUE 16:00",
+                "TUE 17:00 - WED 16:00",
+                "WED 17:00 - THU 16:00",
+                "THU 17:00 - FRI 16:00",
+            ),
+            holiday_rule=HolidayRule.TRADE_DATE,
+            holidays=frozenset({date(2026, 12, 25)}),
+            early_closes=(early_close,),
+        )
+
+
+def test_windows_between_an_empty_range_is_empty(book: SessionBook) -> None:
+    orb = book.window("ny_orb_15")
+    inside = local(NY, 2026, 10, 5, 9, 40)
+    assert orb.contains(inside)
+    assert orb.windows_between(inside, inside) == []  # like open_intervals(t, t)
+    assert book.calendar("fx_otc").open_intervals(inside, inside) == []
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: TradingCalendar(
+            id="str_holiday",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            holidays=frozenset({"2026-12-25"}),  # type: ignore[arg-type]
+        ),
+        lambda: TradingCalendar(
+            id="str_close_time",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            early_closes={date(2026, 10, 5): "12:00"},  # type: ignore[arg-type]
+        ),
+        lambda: TradingCalendar(
+            id="str_close_date",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            early_closes={"2026-10-05": time(12)},  # type: ignore[arg-type]
+        ),
+        lambda: TradingCalendar(
+            id="bad_pairs",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            early_closes=(date(2026, 10, 5),),  # type: ignore[arg-type]
+        ),
+        lambda: TradingCalendar(
+            id="bad_interval",
+            timezone=NY,
+            intervals=(42,),  # type: ignore[arg-type]
+        ),
+        lambda: TradingCalendar(
+            id="bad_flag",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            always_open="no",  # type: ignore[arg-type]
+        ),
+        lambda: WeeklyInterval(Weekday.MON, "09:00", Weekday.MON, time(10)),  # type: ignore[arg-type]
+        lambda: SessionWindow(
+            id="str_start",
+            name="x",
+            timezone=NY,
+            start="09:00",  # type: ignore[arg-type]
+            end=time(10),
+            days=MON_FRI,
+        ),
+        lambda: TradingDayRule(id="str_rollover", timezone=NY, rollover="17:00"),  # type: ignore[arg-type]
+        lambda: SessionBook(classification="ny_session"),
+    ],
+)
+def test_constructors_reject_wrong_types_with_value_errors(build: Any) -> None:
+    with pytest.raises(ValueError, match=r"expected|must be"):
+        build()
+
+
+def test_constructors_normalise_friendly_inputs() -> None:
+    text_intervals: Any = ("MON 09:30 - MON 16:00",)
+    calendar = TradingCalendar(id="text_intervals", timezone=NY, intervals=text_intervals)
+    assert calendar.intervals == weekly("MON 09:30 - MON 16:00")
+    window = SessionWindow(
+        id="range_days",
+        name="x",
+        timezone=NY,
+        start=time(9),
+        end=time(10),
+        days="MON-FRI",  # type: ignore[arg-type]
+    )
+    assert window.days == MON_FRI
+
+
+def test_date_arguments_reject_datetimes(book: SessionBook) -> None:
+    """A datetime *is* a date in Python; silently taking its (UTC) date picks the wrong
+    local day, so the date-based methods refuse it."""
+    instant = utc(2026, 10, 6, 2)  # Monday 22:00 in New York
+    with pytest.raises(TypeError, match="window_at"):
+        book.window("ny_orb_15").window_on(instant)
+    with pytest.raises(TypeError, match="trading_day"):
+        book.trading_day_rule("ny_1700").day_bounds(instant)
+    cme = book.calendar("cme_globex_equity")
+    with pytest.raises(TypeError, match="date"):
+        cme.is_holiday(utc(2026, 12, 25))
+    with pytest.raises(TypeError, match="date"):
+        cme.early_close_on(utc(2026, 11, 26))
+
+
+@pytest.mark.parametrize("raw", ["١٧:٠٠", "１７:００"])
+def test_parse_time_accepts_ascii_digits_only(raw: str) -> None:
+    with pytest.raises(ValueError, match="time"):
+        parse_time(raw)
+
+
+def test_parse_date_accepts_ascii_digits_only() -> None:
+    with pytest.raises(ValueError, match="date"):
+        parse_date("٢٠٢٦-١٢-٢٥")
+
+
+# ── an independent, brute-force model of the calendar rules ───────────────
+def _reference_is_open(calendar: TradingCalendar, ts: datetime) -> bool:
+    """Literal transcription of the documented rules, one instant at a time."""
+    if calendar.always_open:
+        return True
+    tz = ZoneInfo(calendar.timezone)
+    week = timedelta(days=7)
+    monday = datetime.combine(ts.astimezone(tz).date(), time(0))
+    monday -= timedelta(days=monday.weekday())
+
+    def trade_date(close: datetime) -> date:
+        return (close - timedelta(days=1)).date() if close.time() == time(0) else close.date()
+
+    scheduled = False
+    for interval in calendar.intervals:
+        for k in (-2, -1, 0, 1):
+            opened = monday + k * week + interval.open_offset
+            closed = opened + interval.duration
+            if (
+                calendar.holiday_rule is HolidayRule.TRADE_DATE
+                and trade_date(closed) in calendar.holidays
+            ):
+                continue
+            scheduled |= to_utc(opened, tz) <= ts < to_utc(closed, tz)
+    if not scheduled:
+        return False
+    if calendar.holiday_rule is HolidayRule.CALENDAR_DATE:
+        for day in calendar.holidays:
+            day_start = to_utc(datetime.combine(day, time(0)), tz)
+            if day_start <= ts < to_utc(datetime.combine(day + timedelta(days=1), time(0)), tz):
+                return False
+    session_opens = [
+        interval.open_offset
+        for interval in calendar.intervals
+        if not any(
+            other.open_offset < at < other.open_offset + other.duration
+            for other in calendar.intervals
+            for at in (interval.open_offset, interval.open_offset + week)
+        )
+    ]
+    for day, at in calendar.early_closes:
+        halt = datetime.combine(day, at)
+        base = datetime.combine(day - timedelta(days=day.weekday()), time(0))
+        reopen = min(
+            base + k * week + offset
+            for k in (-1, 0, 1, 2)
+            for offset in session_opens
+            if base + k * week + offset > halt
+        )
+        if to_utc(halt, tz) <= ts < to_utc(reopen, tz):
+            return False
+    return True
+
+
+_quarter_hours = st.builds(time, st.integers(0, 23), st.sampled_from([0, 15, 30, 45]))
+
+
+@st.composite
+def _weekly_intervals(draw: st.DrawFn) -> WeeklyInterval:
+    open_day, close_day = draw(st.sampled_from(list(Weekday))), draw(st.sampled_from(list(Weekday)))
+    open_time, close_time = draw(_quarter_hours), draw(_quarter_hours)
+    assume((open_day, open_time) != (close_day, close_time))  # zero length is rejected
+    interval = WeeklyInterval(open_day, open_time, close_day, close_time)
+    assume(interval.duration <= timedelta(days=3))
+    return interval
+
+
+# Exceptions and probes live in a window that holds the US (03-08), UK (03-29),
+# Lord Howe and Santiago (04-05) DST changes, so they interact with each other.
+_FIRST_DAY, _LAST_DAY = date(2026, 3, 1), date(2026, 4, 30)
+_exception_days = st.dates(min_value=_FIRST_DAY, max_value=_LAST_DAY)
+
+
+def _time_of_day(week_offset: timedelta) -> time:
+    minutes = int((week_offset % timedelta(days=1)).total_seconds()) // 60
+    return time(minutes // 60, minutes % 60)
+
+
+@st.composite
+def _touching_sessions(draw: st.DrawFn) -> tuple[WeeklyInterval, ...]:
+    """2-5 sessions, each opening where the previous one closes (FX-style daily sessions)."""
+    cursor = timedelta(days=draw(st.integers(0, 6)), minutes=15 * draw(st.integers(0, 95)))
+    intervals = []
+    for _ in range(draw(st.integers(2, 5))):
+        length = timedelta(minutes=15 * draw(st.integers(4, 4 * 30)))
+        close = cursor + length
+        intervals.append(
+            WeeklyInterval(
+                Weekday((cursor // timedelta(days=1)) % 7),
+                _time_of_day(cursor),
+                Weekday((close // timedelta(days=1)) % 7),
+                _time_of_day(close),
+            )
+        )
+        cursor = close
+    return tuple(intervals)
+
+
+@st.composite
+def _random_calendars(draw: st.DrawFn) -> TradingCalendar:
+    tz = draw(st.sampled_from([*ZONES, "Australia/Lord_Howe"]))
+    intervals = draw(
+        st.one_of(
+            st.lists(_weekly_intervals(), min_size=1, max_size=4).map(tuple),
+            _touching_sessions(),
+        )
+    )
+    rule = draw(st.sampled_from(list(HolidayRule)))
+    try:
+        base = TradingCalendar(id="random_cal", timezone=tz, intervals=intervals, holiday_rule=rule)
+    except ValueError:
+        assume(False)
+    holidays: set[date] = set()
+    for day in draw(st.lists(_exception_days, max_size=6)):
+        try:
+            replace(base, holidays=frozenset({day}))
+            holidays.add(day)
+        except ValueError:
+            pass  # a trade-date holiday on a day no session closes
+    early: dict[date, time] = {}
+    for _ in range(draw(st.integers(0, 6))):
+        # A wall-clock instant inside a configured session.
+        interval = draw(st.sampled_from(intervals))
+        week = (
+            _FIRST_DAY
+            - timedelta(days=_FIRST_DAY.weekday())
+            + timedelta(weeks=draw(st.integers(0, 8)))
+        )
+        quarters = interval.duration // timedelta(minutes=15)
+        halt = (
+            datetime.combine(week, time(0))
+            + interval.open_offset
+            + timedelta(minutes=15 * draw(st.integers(0, quarters - 1)))
+        )
+        if halt.date() in holidays or halt.date() in early:
+            continue
+        try:
+            replace(base, holidays=frozenset(holidays), early_closes=((halt.date(), halt.time()),))
+            early[halt.date()] = halt.time()
+        except ValueError:
+            pass  # inside a session a trade-date holiday already cancels
+    return replace(base, holidays=frozenset(holidays), early_closes=tuple(early.items()))
+
+
+@settings(max_examples=150, deadline=None)
+@given(calendar=_random_calendars(), data=st.data())
+def test_random_calendars_match_the_reference_model(
+    calendar: TradingCalendar, data: st.DataObject
+) -> None:
+    """Holidays, early closes, touching and overlapping sessions and DST against an
+    independent instant-by-instant model of the documented rules."""
+    start, end = utc(2026, 2, 20), utc(2026, 5, 10)
+    spans = calendar.open_intervals(start, end)
+    probes = st.integers(0, (end - start) // timedelta(minutes=15) - 1).map(
+        lambda q: start + timedelta(minutes=15 * q)
+    ) | st.integers(0, int((end - start).total_seconds()) - 1).map(
+        lambda s: start + timedelta(seconds=s)
+    )
+    for ts in data.draw(st.lists(probes, min_size=40, max_size=40)):
+        expected = _reference_is_open(calendar, ts)
+        assert calendar.is_open(ts) == expected, ts
+        assert any(s <= ts < e for s, e in spans) == expected, ts
+        reopen = calendar.next_open(ts)
+        assert reopen is not None
+        assert _reference_is_open(calendar, reopen), ts
+        if reopen > ts:
+            assert not _reference_is_open(calendar, reopen - timedelta(seconds=1)), ts
+        close = calendar.next_close(ts)
+        assert close is not None
+        assert close > ts
+        assert not _reference_is_open(calendar, close), ts
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Review (2): zones, document readers, ordering, untested branches
+# ════════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("name", ["localtime", "posixrules", "Factory"])
+def test_host_dependent_pseudo_zones_are_rejected(name: str) -> None:
+    """zoneinfo finds these files in the system zone directory, but ``localtime`` is the
+    *host's* zone (the same YAML would mean different hours on different machines) and
+    the others are placeholders, not IANA zones."""
+    with pytest.raises(ValueError, match="not an IANA time zone"):
+        zone(name)
+    with pytest.raises(ValueError, match="not an IANA time zone"):
+        TradingDayRule.from_dict({"id": "host_day", "timezone": name, "rollover": "17:00"})
+
+
+@pytest.mark.parametrize("value", [date(2026, 3, 8), "2026-03-08 02:30", 1_772_951_400])
+def test_to_utc_rejects_values_that_are_not_datetimes(value: Any) -> None:
+    with pytest.raises(TypeError, match="naive local datetime"):
+        to_utc(value, NY)
+
+
+@pytest.mark.parametrize("raw", [b"\x00\x01", {"MON": True}, bytearray(b"\x00")])
+def test_parse_weekdays_rejects_bytes_and_mappings(raw: Any) -> None:
+    with pytest.raises(ValueError, match="weekdays must be"):
+        parse_weekdays(raw)
+
+
+@pytest.mark.parametrize(
+    ("reader", "entry", "key"),
+    [
+        (
+            TradingDayRule.from_dict,
+            {"id": "day_rule", "timezone": NY, "rollover": "17:00"},
+            "description",
+        ),
+        (
+            TradingCalendar.from_dict,
+            {"id": "cal", "timezone": NY, "weekly": ["MON 09:30 - MON 16:00"]},
+            "description",
+        ),
+        (
+            SessionWindow.from_dict,
+            {"id": "win", "timezone": NY, "start": "09:00", "end": "10:00", "days": ["MON"]},
+            "description",
+        ),
+        (
+            SessionWindow.from_dict,
+            {"id": "win", "timezone": NY, "start": "09:00", "end": "10:00", "days": ["MON"]},
+            "name",
+        ),
+    ],
+)
+@pytest.mark.parametrize("bad", [False, 0, []])
+def test_document_text_fields_report_wrong_types(
+    reader: Any, entry: dict[str, Any], key: str, bad: Any
+) -> None:
+    """``description: false`` or ``name: 0`` is a typo; it used to be swallowed
+    (read as "" / the id) by ``data.get(key) or default``."""
+    with pytest.raises(ValueError, match=rf"{key}: expected a string"):
+        reader({**entry, key: bad})
+    # Only a missing or null value takes the default.
+    assert reader({**entry, key: None}) == reader(entry)
+
+
+def test_window_name_defaults_to_the_id_and_must_not_be_blank() -> None:
+    entry = {"id": "ny_win", "timezone": NY, "start": "09:00", "end": "10:00", "days": ["MON"]}
+    assert SessionWindow.from_dict(entry).name == "ny_win"
+    assert SessionWindow.from_dict({**entry, "name": None}).name == "ny_win"
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="name must not be blank"):
+            SessionWindow.from_dict({**entry, "name": blank})
+        # A blank name would not survive from_dict(to_dict()) (it reads back as the id).
+        with pytest.raises(ValueError, match="name must not be blank"):
+            SessionWindow(
+                id="ny_win", name=blank, timezone=NY, start=time(9), end=time(10), days=MON_FRI
+            )
+
+
+def test_calendar_early_closes_document_forms() -> None:
+    base = {"id": "early_forms", "timezone": NY, "weekly": ["MON 09:30 - MON 16:00"]}
+    plain = TradingCalendar.from_dict(base)
+    assert TradingCalendar.from_dict({**base, "early_closes": None}) == plain
+    assert TradingCalendar.from_dict({**base, "early_closes": []}) == plain
+    for bad in (0, False, "2026-10-05 12:00", [["2026-10-05", "12:00"]]):
+        with pytest.raises(ValueError, match="early_closes: expected a mapping"):
+            TradingCalendar.from_dict({**base, "early_closes": bad})
+    # The same day written once as a YAML date and once as a string.
+    with pytest.raises(ValueError, match="2026-10-05 is listed twice"):
+        TradingCalendar.from_dict(
+            {**base, "early_closes": {date(2026, 10, 5): "12:00", "2026-10-05": "13:00"}}
+        )
+
+
+def test_classification_must_be_ordered(book: SessionBook) -> None:
+    """A set has no order and string hashes are salted per process, so overlapping
+    classification windows would be labelled differently from run to run."""
+    windows = [book.window("new_york"), book.window("ny_orb_15")]
+    for unordered in ({"ny_orb_15", "new_york"}, frozenset({"new_york"}), {"new_york": 1}):
+        with pytest.raises(ValueError, match="ordered list"):
+            SessionBook(windows=windows, classification=unordered)  # type: ignore[arg-type]
+    ordered = SessionBook(windows=windows, classification=("ny_orb_15", "new_york"))
+    assert ordered.classify(local(NY, 2026, 10, 5, 9, 40)) == "ny_orb_15"
+    assert ordered.classify(local(NY, 2026, 10, 5, 12)) == "new_york"
+    assert SessionBook(windows=windows, classification=["new_york"]).classification == ("new_york",)
+
+
+def test_constructor_validation_branches() -> None:
+    with pytest.raises(ValueError, match="holiday_rule must be one of calendar_date, trade_date"):
+        TradingCalendar(
+            id="bad_rule",
+            timezone=NY,
+            intervals=weekly("MON 09:30 - MON 16:00"),
+            holiday_rule="exchange",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="intervals must be a list"):
+        TradingCalendar(id="bad_list", timezone=NY, intervals=42)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="intervals must be a list"):
+        TradingCalendar(id="bad_list", timezone=NY, intervals="MON 09:30 - MON 16:00")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"session window 'bad_days': days: unknown weekday"):
+        SessionWindow(
+            id="bad_days",
+            name="x",
+            timezone=NY,
+            start=time(9),
+            end=time(10),
+            days=frozenset({"FUNDAY"}),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="sub-second"):
+        TradingDayRule(id="sub_second", timezone=NY, rollover=time(17, 0, 0, 1))
+    with pytest.raises(ValueError, match="description: expected a string"):
+        TradingDayRule(id="bad_text", timezone=NY, rollover=time(17), description=None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"takes a datetime\.date"):
+        BOOK.window("ny_orb_15").window_on("2026-10-05")  # type: ignore[arg-type]
+
+
+def test_times_with_seconds_round_trip() -> None:
+    rule = TradingDayRule.from_dict({"id": "odd_rollover", "timezone": NY, "rollover": "16:59:30"})
+    assert rule.rollover == time(16, 59, 30)
+    assert rule.to_dict()["rollover"] == "16:59:30"
+    assert TradingDayRule.from_dict(rule.to_dict()) == rule
+    interval = WeeklyInterval.parse("SUN 17:00:15 - MON 16:00:45")
+    assert str(interval) == "SUN 17:00:15 - MON 16:00:45"
+    assert WeeklyInterval.parse(str(interval)) == interval
+
+
+def test_book_equality_and_repr(book: SessionBook) -> None:
+    assert book != "a session book"
+    assert book.__eq__(42) is NotImplemented
+    text = repr(book)
+    assert "cme_globex_equity" in text
+    assert "ny_1700" in text
+    assert "ny_orb_15" in text
+    other = SessionBook(windows=[book.window("ny_orb_15")])
+    assert other != book
+
+
+def test_week_memo_eviction_keeps_answers_correct() -> None:
+    """Point queries are memoised per local week (bounded); sweeping more weeks than the
+    memo holds evicts it, and every answer must still match the range query."""
+    calendar = TradingCalendar(
+        id="memo_sweep",
+        timezone=NY,
+        intervals=weekly("MON 09:30 - MON 16:00", "FRI 22:00 - MON 01:00"),
+        holidays=frozenset({date(2026, 10, 5)}),
+    )
+    probe = local(NY, 2026, 10, 12, 10)  # a regular Monday morning: open
+    assert calendar.is_open(probe)
+    start = utc(2010, 1, 4, 15)
+    for week in range(1_100):  # > the per-calendar memo size
+        ts = start + timedelta(weeks=week)
+        expected = any(s <= ts < e for s, e in calendar.open_intervals(ts - _DAY, ts + _DAY))
+        assert calendar.is_open(ts) == expected, ts
+    assert calendar.is_open(probe)
+    assert not calendar.is_open(local(NY, 2026, 10, 5, 10))  # the holiday
+    assert calendar.next_open(local(NY, 2026, 10, 5, 10)) == local(NY, 2026, 10, 9, 22)
+
+
+_DAY = timedelta(days=1)

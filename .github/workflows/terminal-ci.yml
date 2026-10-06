@@ -56,6 +56,21 @@ jobs:
         run: uv run lint-imports
       - name: Tests (unit + integration on PostgreSQL)
         run: uv run pytest --cov=kterminal --cov-report=term-missing:skip-covered
+      - name: Seed catalog + strategy lab demo (isolation audit must pass)
+        env:
+          KT_PATHS__CONFIG_DIR: ../config
+          KT_DATABASE__URL: postgresql://kterminal:kterminal@localhost:5432/kterminal_lab_demo
+        run: |
+          uv run kterminal catalog validate
+          uv run kterminal strategies list
+          uv run kterminal lab demo --days 3
+          uv run kterminal lab demo --days 1 --subprocess
+          PGPASSWORD=kterminal psql -h localhost -U kterminal -d kterminal_test \
+            -c 'CREATE DATABASE kterminal_lab_demo'
+          uv run kterminal db upgrade
+          uv run kterminal db check
+          uv run kterminal lab provision
+          uv run kterminal lab demo --days 3 --store postgres
 
   container:
     name: Docker image · Compose · Caddy

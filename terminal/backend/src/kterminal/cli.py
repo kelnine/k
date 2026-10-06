@@ -280,7 +280,7 @@ def lab_demo(
     async def _run() -> str:
         lab_store, cleanup = await _open_store(store, settings)
         try:
-            result = await run_demo(
+            demo = await run_demo(
                 catalog,
                 config,
                 lab_store,
@@ -288,11 +288,11 @@ def lab_demo(
                 seed=seed,
                 host="subprocess" if subprocess else None,
             )
-            checks = await lab_store.isolation_checks(result.run_id)
+            checks = await lab_store.isolation_checks(demo.result.run_id)
         finally:
             await cleanup()
-        report = format_report(result, checks)
-        if not all(check.ok for check in checks):
+        report = format_report(demo.result, checks, demo.solo)
+        if not checks or not all(check.ok for check in [*checks, *demo.solo]):
             raise RuntimeError(report)
         return report
 

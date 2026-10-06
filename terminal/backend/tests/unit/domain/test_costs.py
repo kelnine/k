@@ -1,4 +1,5 @@
 import decimal
+import typing
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta, tzinfo
 from decimal import Decimal
@@ -291,6 +292,16 @@ def test_triggered_stops_fill_at_the_bid_ask_level_or_the_gapped_open() -> None:
     for open_mid in (D("2600"), D("2639.95"), D("2640.10"), D("2700")):
         assert c.triggered_stop_fill(SELL, D("2640.00"), open_mid, T0).price <= D("2640.00")
         assert c.triggered_stop_fill(BUY, D("2640.00"), open_mid, T0).price >= D("2640.00")
+
+
+def test_commission_per_unit_is_the_unrounded_rate() -> None:
+    perp = calc(commission=NotionalCommission(D("0.0002"), D("0.0005")))
+    price = D("0.0001200")
+    exact = GOLD.notional(D(1), price) * D("0.0005")  # far below the 0.0001 money quantum
+    assert perp.commission_per_unit(price) == exact
+    assert exact < D("0.0001") == perp.commission(D(1), price)  # one fill still rounds up
+    lots = calc(commission=PerQuantityCommission(D("3.50"), minimum=D("1.00")))
+    assert lots.commission_per_unit(D("2650")) == D("3.50")
 
 
 def test_limit_fills_exactly_at_the_limit_without_slippage() -> None:
@@ -1064,6 +1075,11 @@ def test_every_yaml_profile_fits_the_listings_it_is_meant_for() -> None:
         "cfd_us_indices_us30": (make_listing("US30", "0.01", "1"),),
         "cfd_us_indices_us500": (make_listing("US500", "0.01", "1"),),
         "cme_micro_equity": (MNQ,),
+        "cme_emini_equity": (
+            make_listing(
+                "NQ", "0.25", "20", contract_type=ContractType.FUTURE, unit=QuantityUnit.CONTRACTS
+            ),
+        ),
         "crypto_spot_taker": (
             make_listing("BTCUSD", "0.01", "1", contract_type=ContractType.SPOT, step="0.00001"),
         ),
@@ -1209,3 +1225,302 @@ def test_cost_event_amount_must_be_a_finite_decimal() -> None:
         CostEvent(T0, "FUNDING", D("NaN"), "")
     with pytest.raises(ValueError, match="finite Decimal"):
         CostEvent(T0, "FUNDING", 1.5, "")  # type: ignore[arg-type]
+
+
+# ── second adversarial review ────────────────────────────────────────────────
+WEEKEND = (ny(2026, 10, 10, 12), ny(2026, 10, 11, 12))  # Saturday → Sunday: no rollover
+NO_ANCHOR = (utc(2026, 10, 5, 1), utc(2026, 10, 5, 7))  # between Binance funding anchors
+
+
+@pytest.mark.parametrize(
+    ("components", "listing", "window"),
+    [
+        ({"swap": gold_points_swap()}, GOLD, (ny(2026, 10, 5, 12), ny(2026, 10, 8, 12))),
+        ({"swap": gold_points_swap()}, GOLD, WEEKEND),
+        (
+            {"swap": AnnualRateSwap(D("0.05"), D(0), time(17), "America/New_York", 4)},
+            NAS100,
+            WEEKEND,
+        ),
+        ({"funding": BINANCE_FUNDING}, NEAR, NO_ANCHOR),
+        ({}, NEAR, NO_ANCHOR),
+    ],
+)
+def test_a_fixed_price_source_is_validated_whether_or_not_an_event_falls_due(
+    components: dict[str, Any], listing: Listing, window: tuple[datetime, datetime]
+) -> None:
+    # A float or non-positive price used to pass silently whenever the window held
+    # no event (or the model ignores the price), and fail only when one fell due —
+    # a caller bug that surfaced depending on the clock.
+    c = calc(listing, **components)
+    for events_of in (c.swap_events, c.funding_events):
+        with pytest.raises(TypeError, match="Decimal"):
+            events_of(LONG, D(1), 2.5, *window)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="positive"):
+            events_of(LONG, D(1), D(0), *window)
+        with pytest.raises(TypeError, match="Decimal or a callable"):
+            events_of(LONG, D(1), "2.5", *window)  # type: ignore[arg-type]
+        events_of(LONG, D(1), lambda _: D("2.5"), *window)  # a price function is fine
+
+
+def test_any_quote_is_checked_whatever_the_spread_model() -> None:
+    # A quote for another instrument, or from after the fill instant, is a caller
+    # bug (or look-ahead) under every spread model, not only under `quotes`.
+    c = calc(spread=FixedSpread(D("0.20")))
+    other = Quote("EURUSD", T0, D("1.1"), D("1.2"))
+    future = Quote("XAUUSD", T0 + timedelta(seconds=1), D("2650.00"), D("2650.40"))
+    for quote, message in ((other, "EURUSD"), (future, "look-ahead")):
+        with pytest.raises(ValueError, match=message):
+            c.spread(T0, quote)
+        with pytest.raises(ValueError, match=message):
+            c.market_fill_price(BUY, D("2650"), T0, quote)
+        with pytest.raises(ValueError, match=message):
+            c.stop_fill_price(SELL, D("2650"), T0, quote)
+    same_instant = Quote("XAUUSD", T0, D("2649.50"), D("2650.50"))
+    assert c.market_fill_price(BUY, D("2650.00"), T0, same_instant) == D("2650.10")
+
+
+def test_a_window_lookup_must_return_a_set_not_a_string() -> None:
+    # `"asia" in "asia_session_late"` is a substring test: a lookup returning a
+    # bare window id must not silently match a different, shorter window id.
+    spread = SessionSpread(D("0.20"), (("asia", D("0.50")),))
+    c = CostCalculator(make_profile(spread=spread), GOLD, lambda _: "asia_session_late")  # type: ignore[arg-type,return-value]
+    with pytest.raises(TypeError, match="set of window ids"):
+        c.spread(T0)
+    ok = CostCalculator(make_profile(spread=spread), GOLD, lambda _: {"asia"})  # type: ignore[arg-type,return-value]
+    assert ok.spread(T0) == D("0.50")
+
+
+def test_cost_event_detail_and_currency_must_be_strings() -> None:
+    with pytest.raises(TypeError, match="detail"):
+        CostEvent(T0, "SWAP", D(1), None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="currency"):
+        CostEvent(T0, "SWAP", D(1), "", None)  # type: ignore[arg-type]
+
+
+def test_model_helpers_accept_plain_enum_strings() -> None:
+    # `"LONG" is Direction.LONG` is False: an identity test silently picked the
+    # short side (and the taker rate) for a plain-string argument.
+    swap = gold_points_swap()
+    assert swap.points("LONG") == swap.points(LONG) == D("-0.65")  # type: ignore[arg-type]
+    rate = AnnualRateSwap(D("0.0625"), D("-0.01"), time(17), "America/New_York", 4)
+    assert rate.rate("LONG") == D("0.0625")  # type: ignore[arg-type]
+    fees = NotionalCommission(D("0.0002"), D("0.0005"))
+    assert fees.rate("MAKER") == D("0.0002")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="FLAT"):
+        swap.points("FLAT")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="maker"):
+        fees.rate("maker")  # type: ignore[arg-type]
+
+
+@given(
+    bid=st.decimals(min_value=D("1.00"), max_value=D("50000"), places=2),
+    width=st.integers(min_value=0, max_value=200),
+    slip_ticks=st.integers(min_value=0, max_value=5),
+)
+def test_property_quote_fills_are_at_or_beyond_the_touch(
+    bid: Decimal, width: int, slip_ticks: int
+) -> None:
+    c = calc(spread=QuoteSpread(D("0.20")), slippage=FixedTicksSlippage(slip_ticks))
+    ask = bid + width * GOLD.tick_size
+    quote = Quote("XAUUSD", T0, bid=bid, ask=ask)
+    assume(bid - slip_ticks * GOLD.tick_size > 0)
+    buy = c.market_fill_price(BUY, quote.mid, T0, quote)
+    sell = c.market_fill_price(SELL, quote.mid, T0, quote)
+    assert buy == ask + slip_ticks * GOLD.tick_size
+    assert sell == bid - slip_ticks * GOLD.tick_size
+    assert buy >= ask >= bid >= sell
+
+
+@given(
+    stop=st.decimals(min_value=D("100.00"), max_value=D("5000"), places=2),
+    open_offset=st.decimals(min_value=D("-50"), max_value=D("50"), places=3),
+    spread=st.decimals(min_value=D(0), max_value=D("2"), places=2),
+    slip_ticks=st.integers(min_value=0, max_value=5),
+)
+def test_property_triggered_stops_never_fill_better_than_the_stop_or_the_open(
+    stop: Decimal, open_offset: Decimal, spread: Decimal, slip_ticks: int
+) -> None:
+    c = calc(spread=FixedSpread(spread), slippage=FixedTicksSlippage(slip_ticks))
+    open_mid = stop + open_offset
+    assume(open_mid - spread > 1)
+    half, slip = spread / 2, slip_ticks * GOLD.tick_size
+    sell = c.triggered_stop_fill(SELL, stop, open_mid, T0)
+    buy = c.triggered_stop_fill(BUY, stop, open_mid, T0)
+    assert sell.price <= min(stop, open_mid - half) - slip
+    assert buy.price >= max(stop, open_mid + half) + slip
+    assert sell.price % GOLD.tick_size == buy.price % GOLD.tick_size == 0
+    for fill in (sell, buy):
+        assert fill.adverse == fill.half_spread + fill.slippage + fill.rounding
+        assert fill.rounding >= 0
+
+
+@pytest.mark.parametrize(
+    ("component", "alias", "parsers"),
+    [
+        ("spread", SpreadModel, costs_module._SPREAD_PARSERS),
+        ("commission", CommissionModel, costs_module._COMMISSION_PARSERS),
+        ("slippage", SlippageModel, costs_module._SLIPPAGE_PARSERS),
+        ("funding", FundingModel, costs_module._FUNDING_PARSERS),
+        ("swap", SwapModel, costs_module._SWAP_PARSERS),
+    ],
+)
+def test_model_registries_do_not_drift_apart(component: str, alias: Any, parsers: Any) -> None:
+    # The type alias, the document parsers and the profile's runtime type check are
+    # three lists of the same models: a model added to one but not the others would
+    # parse but be rejected by CostProfile (or be accepted but never parse).
+    classes = set(typing.get_args(alias.__value__))
+    assert set(costs_module._COMPONENT_TYPES[component]) == classes
+    assert {cls.model: cls.from_dict for cls in classes} == dict(parsers)
+    assert len({cls.model for cls in classes}) == len(classes)  # unique discriminators
+
+
+def test_calculator_rejects_wrong_argument_types() -> None:
+    with pytest.raises(TypeError, match="CostProfile and a Listing"):
+        CostCalculator(GOLD, GOLD)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="window_lookup must be callable"):
+        CostCalculator(make_profile(), GOLD, frozenset({"asia"}))  # type: ignore[arg-type]
+
+
+def test_cme_micro_round_turn_costs_four_ticks_as_the_yaml_comment_says() -> None:
+    # An odd tick spread on an on-grid (trade-price) mid rounds adversely on both
+    # sides; costs.yaml documents the effective 4-tick round turn. Keep them in step.
+    c = CostCalculator(parse_cost_profiles(load_yaml())["cme_micro_equity"], MNQ)
+    buy = c.market_fill(BUY, D("20000.00"), T0)
+    sell = c.market_fill(SELL, D("20000.00"), T0)
+    assert (buy.price, sell.price) == (D("20000.50"), D("19999.50"))
+    assert (buy.price - sell.price) / MNQ.tick_size == 4
+    assert c.commission(D(1), D("20000.00")) == D("0.9500")
+
+
+def test_remaining_branches_session_default_python_values_and_accessors() -> None:
+    # A session spread with no windows needs no lookup and always uses its default.
+    c = CostCalculator(make_profile(spread=SessionSpread(D("0.30"))), GOLD)
+    assert c.spread(T0) == D("0.30")
+    assert c.listing is GOLD
+    assert c.currency == "USD"
+    # Python values (not document strings) are accepted by from_dict as-is.
+    assert FixedSpread.from_dict({"model": "fixed", "points": D("0.25")}) == FixedSpread(D("0.25"))
+    swap = PointsSwap.from_dict({**SWAP, "rollover_time": time(17, 30)})
+    assert swap.rollover_time == time(17, 30)
+    with pytest.raises(CostConfigError, match="description must be a string"):
+        CostProfile(
+            id="no_text",
+            description=None,  # type: ignore[arg-type]
+            spread=NoSpread(),
+            commission=NoCommission(),
+            slippage=NoSlippage(),
+            funding=NoFunding(),
+            swap=NoSwap(),
+        )
+
+
+def test_fill_breakdown_is_exact_whatever_the_ambient_decimal_context() -> None:
+    # FillPrice.adverse is what analytics attribute per fill: it must not be
+    # re-rounded by a strategy's (or library's) low-precision decimal context.
+    fill = calc(spread=FixedSpread(D("0.20")), slippage=FixedTicksSlippage(2)).market_fill(
+        BUY, D("2650.005"), T0
+    )
+    assert fill.adverse == D("0.125")  # 0.10 half spread + 0.02 slippage + 0.005 rounding
+    with decimal.localcontext(prec=2, rounding=decimal.ROUND_DOWN):
+        assert fill.adverse == D("0.125")
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """A safe loader that rejects duplicate mapping keys (PyYAML keeps the last one)."""
+
+
+def _no_duplicate_keys(loader: _StrictLoader, node: yaml.MappingNode, deep: bool = False) -> Any:
+    keys = [loader.construct_object(key, deep=deep) for key, _ in node.value]
+    duplicates = sorted({str(key) for key in keys if keys.count(key) > 1})
+    assert not duplicates, f"duplicate key(s) {duplicates} at {node.start_mark}"
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _no_duplicate_keys,
+)
+
+
+def test_costs_yaml_has_no_silently_overridden_keys() -> None:
+    # yaml.safe_load keeps the LAST of two equal keys, so a profile with `swap:`
+    # (or a by_window entry) written twice would silently lose one of them.
+    strict = yaml.load(COSTS_YAML.read_text(encoding="utf-8"), Loader=_StrictLoader)  # noqa: S506
+    assert strict == load_yaml()
+    with pytest.raises(AssertionError, match="duplicate key"):
+        yaml.load("a: {model: none}\na: {model: fixed}\n", Loader=_StrictLoader)  # noqa: S506
+
+
+def test_cost_event_kinds_and_money_scale_match_the_ledger_schema() -> None:
+    # Funding and swap events are written verbatim to account_ledger: their kinds
+    # must pass its CHECK constraint and their quantum must be the money scale.
+    from sqlalchemy import Numeric
+
+    from kterminal.db.models import LEDGER_KINDS, AccountLedgerRow
+
+    assert {str(kind) for kind in CostEventKind} <= set(LEDGER_KINDS)
+    amount_type = AccountLedgerRow.__table__.c.amount.type
+    assert isinstance(amount_type, Numeric)
+    assert amount_type.scale is not None
+    assert Decimal(1).scaleb(-amount_type.scale) == MONEY_QUANTUM
+
+
+def test_cme_emini_listings_have_their_own_fee_profile() -> None:
+    # The NQ listing reused the MICRO profile (0.95 USD/side) although the CME
+    # non-member exchange fee alone is ~1.38 USD/side for E-minis: an E-mini
+    # profile must exist and charge at least exchange + clearing + NFA fees.
+    profiles = parse_cost_profiles(load_yaml())
+    emini = profiles["cme_emini_equity"]
+    nq = make_listing(
+        "NQ", "0.25", "20", contract_type=ContractType.FUTURE, unit=QuantityUnit.CONTRACTS, step="1"
+    )
+    c = CostCalculator(emini, nq)
+    assert c.commission(D(1), D("25000.00")) >= D("1.38") + D("0.19") + D("0.01")
+    micro = CostCalculator(profiles["cme_micro_equity"], MNQ)
+    assert c.commission(D(1), D("25000.00")) > micro.commission(D(1), D("25000.00"))
+    assert (emini.spread, emini.slippage) == (FixedTicksSpread(1), FixedTicksSlippage(1))
+    assert (emini.funding, emini.swap) == (NoFunding(), NoSwap())
+
+
+def test_commission_per_unit_is_the_unrounded_fee_rate_for_sizing() -> None:
+    # Sizing reserves fees per 1.0 quantity. commission(1, price) rounds UP to the
+    # money quantum and applies the per-fill minimum to every single unit, so on a
+    # 0.005 USD coin it overstates a taker fee 40-fold (0.0001 vs 0.0000025).
+    fees = calc(NEAR, commission=NotionalCommission(D("0.0002"), D("0.0005"), minimum=D("1")))
+    assert fees.commission_per_unit(D("0.005")) == D("0.0000025")
+    assert fees.commission_per_unit(D("0.005"), Liquidity.MAKER) == D("0.000001")
+    assert fees.commission_per_unit(D("0.005"), "MAKER") == D("0.000001")  # type: ignore[arg-type]
+    assert fees.commission(D(1), D("0.005")) == D("1.0000")  # the per-fill minimum
+    per_lot = calc(commission=PerQuantityCommission(D("3.50"), minimum=D("5")))
+    assert per_lot.commission_per_unit(D("2650")) == D("3.50")
+    assert calc().commission_per_unit(D("2650")) == 0
+    with pytest.raises(ValueError, match="price"):
+        fees.commission_per_unit(D(0))
+    with pytest.raises(TypeError, match="Decimal"):
+        fees.commission_per_unit(0.005)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="maker"):
+        fees.commission_per_unit(D("0.005"), "maker")  # type: ignore[arg-type]
+
+
+@given(
+    qty=st.decimals(min_value=D("0.001"), max_value=D("100000"), places=3),
+    price=st.decimals(min_value=D("0.0001"), max_value=D("100000"), places=4),
+    rate=st.decimals(min_value=D(0), max_value=D("0.0049"), places=6),
+    per_side=st.decimals(min_value=D(0), max_value=D("50"), places=2),
+    minimum=st.decimals(min_value=D(0), max_value=D("5"), places=2),
+    maker=st.booleans(),
+)
+def test_property_a_fill_fee_is_the_per_unit_fee_times_qty_rounded_up_or_the_minimum(
+    qty: Decimal, price: Decimal, rate: Decimal, per_side: Decimal, minimum: Decimal, maker: bool
+) -> None:
+    liquidity = Liquidity.MAKER if maker else Liquidity.TAKER
+    for listing, model in (
+        (NEAR, NotionalCommission(rate, rate, minimum)),
+        (GOLD, PerQuantityCommission(per_side, minimum)),
+    ):
+        c = calc(listing, commission=model)
+        exact = max(c.commission_per_unit(price, liquidity) * qty, minimum)
+        fee = c.commission(qty, price, liquidity)
+        assert fee == exact.quantize(MONEY_QUANTUM, rounding=decimal.ROUND_CEILING)
+        assert exact <= fee < exact + MONEY_QUANTUM

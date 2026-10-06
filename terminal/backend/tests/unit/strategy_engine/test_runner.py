@@ -1,12 +1,33 @@
+import decimal
+import json
+from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
+
+import pytest
 
 from kterminal.core.enums import SignalAction
+from kterminal.core.registry import Registry
 from kterminal.domain.timeframes import H1, M1, M5
 from kterminal.marketdata.aggregator import aggregate_stream
+from kterminal.strategy_engine.hosts import InProcessHost
+from kterminal.strategy_engine.instances import InstanceSpec, resolve_instance
 from kterminal.strategy_engine.model import PositionEventKind
+from kterminal.strategy_engine.registry import StrategyDefinition, definition_from_class
+from kterminal.strategy_engine.runner import StrategyRunner
 from kterminal.strategy_engine.testing import run_strategy
-from tests.fixtures.instruments import XAUUSD, bars, gold_minutes
-from tests.fixtures.strategies import ContextProbe, Crasher, Misbehaving, Scripted, SmaCross
+from tests.fixtures.catalog import lab_catalog
+from tests.fixtures.instruments import INSTRUMENTS, XAUUSD, bars, gold_minutes
+from tests.fixtures.strategies import (
+    ContextProbe,
+    Crasher,
+    LevelHoarder,
+    Misbehaving,
+    OrbProbe,
+    Saboteur,
+    Scripted,
+    SmaCross,
+)
 
 FLAT = [(100.0, 101.0, 99.0, 100.0)] * 10
 
@@ -100,3 +121,121 @@ def test_sma_strategy_is_deterministic() -> None:
     second = run_strategy(SmaCross, instrument=XAUUSD, bars=five, timeframe="5m")
     assert first.signals == second.signals
     assert len(first.signals) > 2
+
+
+# ── containment: nothing a strategy returns or raises escapes the runner ─────
+def test_system_exit_is_contained_as_a_fault() -> None:
+    result = run_strategy(
+        Crasher,
+        instrument=XAUUSD,
+        bars=bars("XAUUSD", "5m", FLAT),
+        timeframe="5m",
+        params={"crash_on": 2, "mode": "sysexit"},
+    )
+    assert result.fault is not None
+    assert result.fault.error_type == "SystemExit"
+
+
+def sabotage(mode: str) -> Any:
+    return run_strategy(
+        Saboteur,
+        instrument=XAUUSD,
+        bars=bars("XAUUSD", "5m", FLAT[:1]),
+        timeframe="5m",
+        params={"mode": mode},
+    )
+
+
+def test_returned_signals_are_revalidated_from_scratch() -> None:
+    result = sabotage("float_stop")  # model_copy(update=...) let a float in
+    (signal,) = result.signals
+    assert isinstance(signal.stop_loss, Decimal)  # the routed copy is fully validated
+    assert result.fault is None
+
+
+@pytest.mark.parametrize(
+    ("mode", "code"),
+    [
+        ("nan_meta", "METADATA_NOT_JSON"),
+        ("numpy_meta", "INVALID_SIGNAL"),  # not a JSON value: fails re-validation
+        ("spoof_time", "IDENTITY_MISMATCH"),
+    ],
+)
+def test_unstorable_or_spoofed_signals_are_rejected(mode: str, code: str) -> None:
+    result = sabotage(mode)
+    assert result.signals == []
+    (rejected,) = result.rejected
+    assert rejected.code == code
+    json.dumps(rejected.payload, allow_nan=False)  # what gets recorded is always storable
+    assert result.fault is None
+
+
+def test_runaway_output_faults_the_instance() -> None:
+    result = sabotage("flood")
+    assert result.fault is not None
+    assert result.fault.stage == "output"
+    assert result.signals == []
+
+
+def test_a_strategy_cannot_change_the_callers_decimal_context() -> None:
+    before = decimal.getcontext().copy()
+    result = sabotage("decimal")
+    assert len(result.signals) == 1
+    after = decimal.getcontext()
+    assert (after.prec, after.rounding) == (before.prec, before.rounding)
+
+
+def test_runners_of_one_instance_never_share_params() -> None:
+    registry: Registry[StrategyDefinition] = Registry("strategy definition")
+    definition = definition_from_class(LevelHoarder)
+    registry.register(definition.id, definition)
+    resolved = resolve_instance(
+        InstanceSpec(
+            id="hoarder", strategy=definition.id, instruments=("XAUUSD", "XAGUSD"), timeframe="5m"
+        ),
+        instruments=INSTRUMENTS,
+        definitions=registry,
+    )
+    host = InProcessHost(resolved, INSTRUMENTS)
+    host.start()
+    for symbol, price in (("XAUUSD", 2650), ("XAGUSD", 30)):
+        host.on_bars(bars(symbol, "5m", [(price, price, price, price)]))
+    levels = {
+        runner.instrument.symbol: runner._strategy.params.levels  # type: ignore[union-attr,attr-defined]
+        for runner in host._core.runners
+    }
+    assert levels == {"XAUUSD": [Decimal(1), Decimal(2650)], "XAGUSD": [Decimal(1), Decimal(30)]}
+    assert resolved.params.levels == [Decimal(1)]  # type: ignore[attr-defined]
+
+
+def test_session_helpers_look_at_the_bars_open_like_pine() -> None:
+    sessions = lab_catalog().sessions  # ny_orb_15: 09:30-09:45 New York = 14:30-14:45 UTC
+    five = bars(
+        "XAUUSD", "5m", [(100, 101, 99, 100)] * 4, start=datetime(2026, 1, 6, 14, 25, tzinfo=UTC)
+    )
+    runner = StrategyRunner(
+        resolve_instance(
+            InstanceSpec(id="probe", strategy="orb_probe", instruments=("XAUUSD",), timeframe="5m"),
+            instruments=INSTRUMENTS,
+            sessions=sessions,
+            definitions=_registry(OrbProbe),
+        ),
+        XAUUSD,
+        sessions=sessions,
+    )
+    seen = []
+    for bar in five:
+        runner.ctx._set_bar(bar)
+        seen.append((bar.open_time.strftime("%H:%M"), runner.ctx.in_window("ny_orb_15")))
+    assert seen == [("14:25", False), ("14:30", True), ("14:35", True), ("14:40", True)]
+    assert runner.ctx.session() == "ny_session"
+    with pytest.raises(KeyError, match="not declared"):
+        runner.ctx.in_window("london_open_15")  # not in meta.sessions nor the classification
+
+
+def _registry(*classes: type) -> Registry[StrategyDefinition]:
+    registry: Registry[StrategyDefinition] = Registry("strategy definition")
+    for cls in classes:
+        definition = definition_from_class(cls)  # type: ignore[arg-type]
+        registry.register(definition.id, definition)
+    return registry
