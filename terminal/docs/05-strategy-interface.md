@@ -15,26 +15,37 @@ logic is never combined unless you explicitly build a strategy that does so.
 
 ## 5.1 The standardized output: `Signal`
 
+Implemented in `kterminal/domain/signals.py`.
+
 ```python
-class Signal(BaseModel, frozen=True):          # kterminal.core.models (Phase 2)
+class Signal(BaseModel, frozen=True, extra="forbid"):
     # ── required by the brief ────────────────────────────────────────────
-    strategy_id: str                # filled by the framework, never by strategy code
-    symbol: str                     # canonical instrument symbol, e.g. "XAUUSD"
-    timeframe: str                  # canonical: "1m" "5m" "15m" "1h" "4h" "1D" "1W"
-    timestamp: datetime             # UTC open time of the bar the decision was made on
+    strategy_id: str                # the strategy INSTANCE id (the unit every metric is keyed on)
+    symbol: str                     # canonical instrument symbol, e.g. "XAUUSD", "MNQ", "NEARUSD"
+    timeframe: str                  # canonical: "1m" "5m" "15m" "1h" "4h" "1D" (TradingView/MT5 spellings accepted)
+    timestamp: datetime             # decision time, UTC = close time of the evaluated bar
     signal: SignalAction            # LONG SHORT EXIT_LONG EXIT_SHORT MOVE_SL NO_TRADE
     entry: Decimal | None           # reference price (market) or limit/stop price
     stop_loss: Decimal | None
     take_profit: Decimal | None
-    risk: Decimal | None            # REQUESTED risk, % of equity (0.5 = 0.5 %); capped by the risk profile
+    risk: Decimal | None            # REQUESTED risk, % of equity (0.5 = 0.5 %); capped by the account
     confidence: float | None        # 0.0 – 1.0, optional
-    metadata: dict[str, JsonValue]  # free-form, stored verbatim (levels, indicator values, reasons)
+    metadata: dict[str, JsonValue]  # free-form, stored verbatim (≤ 16 KiB)
+    # ── stamped by the framework ─────────────────────────────────────────
+    strategy_version: str           # config hash of code + parameters + instruments + timeframes
+    bar_time: datetime | None       # open time of the evaluated bar
+    source: SignalSource            # INTERNAL | TRADINGVIEW | MANUAL | REPLAY
     # ── optional extensions ──────────────────────────────────────────────
     order_type: OrderType = MARKET  # MARKET | LIMIT | STOP
     expires_after_bars: int | None  # pending LIMIT/STOP entries are cancelled after N bars
-    reason: str | None              # human-readable; required for a persisted NO_TRADE
+    reason: str | None              # human-readable; recommended for NO_TRADE
     persist: bool = False           # persist a NO_TRADE (otherwise only counted)
 ```
+
+Strategy code never fills in `strategy_id`, `strategy_version`, `symbol`,
+`timeframe` or the timestamps: the `ctx.long/short/…` builders do, and the
+runner rejects any signal whose identity does not match the instance that
+produced it (`IDENTITY_MISMATCH`).
 
 ### Validation rules (enforced by the framework before anything else sees the signal)
 
@@ -52,46 +63,51 @@ instrument's tick size; `risk` must be `> 0` and `confidence` within `[0, 1]`.
 
 ### Semantics of `risk` and `confidence`
 
-* `risk` is a **request**. Final risk % =
-  `min(signal.risk or profile.default_risk_pct, profile.max_risk_pct) × allocation.risk_multiplier`.
-  Sizing itself is done by the risk engine per account, never by the strategy.
+* `risk` is a **request**. In the lab the account's `risk_per_trade_pct` is
+  both the default and the cap — a strategy may ask for *less* risk, never
+  more — so every instance in a comparison risks the same fraction of equity.
+  Sizing itself is done per account by the risk layer, never by the strategy.
 * `confidence` is recorded for analytics (does confidence ≥ 0.7 really
-  perform better?). Scaling risk by confidence is a risk-profile option,
+  perform better?). Scaling risk by confidence is a later risk-profile option,
   **off** by default.
 
 ## 5.2 The strategy SDK
 
 ```python
-# kterminal/strategy_engine/base.py (Phase 2)
+# kterminal/strategy_engine/base.py
 
-class StrategyMeta(BaseModel, frozen=True):
-    id: str                                 # ^[a-z][a-z0-9_]{2,63}$ — unique, immutable
-    name: str                               # "Breakout + Retest"
-    version: str                            # semver, bump on logic changes
+class StrategyMeta(BaseModel, frozen=True, extra="forbid"):
+    id: str                                   # ^[a-z][a-z0-9_]{2,63}$ — unique, immutable
+    name: str                                 # "Breakout + Retest"
+    version: str                              # semver; bump on logic changes (code is hashed anyway)
     description: str = ""
-    timeframes: tuple[str, ...]             # supported timeframes
-    symbols: tuple[str, ...] | None = None  # None = any instrument
-    warmup_bars: int = 200                  # history replayed before the first live bar
+    kind: StrategyKind = INTERNAL             # EXTERNAL for TradingView definitions
+    timeframes: tuple[str, ...] = ()          # supported primary timeframes; () = any
+    context_timeframes: tuple[str, ...] = ()  # always-needed context, e.g. ("15m", "1h")
+    instruments: tuple[str, ...] | None = None
+    asset_classes: tuple[AssetClass, ...] | None = None
+    sessions: tuple[str, ...] = ()            # session windows used, e.g. ("ny_orb_15",)
+    warmup_bars: int = 200
     on_opposite_signal: Literal["reverse", "ignore"] = "reverse"   # Pine-like default
     max_pyramiding: int = 1
+    tags: tuple[str, ...] = ()
 
 
-class Strategy(ABC, Generic[P]):
+class Strategy[P: StrategyParams](ABC):
     meta: ClassVar[StrategyMeta]
-    Params: ClassVar[type[BaseModel]]       # pydantic model: defaults, bounds, docs
+    Params: ClassVar[type[StrategyParams]] = NoParams   # frozen, extra="forbid"
 
-    def __init__(self, params: P, ctx: StrategyContext) -> None:
-        self.params, self.ctx = params, ctx
+    def __init__(self, params: P, ctx: StrategyContext) -> None: ...
 
     def on_start(self) -> None:
-        """Called once before warm-up. Allocate indicator state here."""
+        """Called once before warm-up. Initialise per-instance state here."""
 
     @abstractmethod
     def on_bar(self, bar: Bar) -> Signal | Sequence[Signal] | None:
-        """Called once per CLOSED bar, in order. Return zero or more signals."""
+        """Called once per CLOSED primary-timeframe bar, in order."""
 
     def on_position_event(self, event: PositionEvent) -> Signal | Sequence[Signal] | None:
-        """Theoretical position opened/closed/stopped/target-hit. Optional."""
+        """Theoretical position opened / closed / stop moved / order expired. Optional."""
 
     def on_stop(self) -> None:
         """Called on shutdown. Optional."""
@@ -101,13 +117,16 @@ class Strategy(ABC, Generic[P]):
 
 | Member | Purpose |
 |---|---|
-| `ctx.symbol`, `ctx.timeframe`, `ctx.instrument` | Identity and instrument spec (tick size for rounding) |
-| `ctx.bars` | `BarSeries` of closed bars, oldest → newest, numpy-backed: `.open .high .low .close .volume .time`; `ctx.bars.close[-1]` is the current bar |
-| `ctx.htf("1h")` | Higher-timeframe series containing **completed** HTF bars only (no look-ahead) |
-| `ctx.position` | This strategy's *theoretical* position on the symbol (see 5.3) or `None` |
-| `ctx.long(...)`, `ctx.short(...)`, `ctx.exit_long()`, `ctx.exit_short()`, `ctx.move_sl(...)`, `ctx.no_trade(reason)` | Signal builders that fill `strategy_id`, `symbol`, `timeframe`, `timestamp` |
-| `ctx.log` | Logger bound with strategy/symbol/timeframe |
-| `ctx.rng` | Seeded random generator (deterministic) |
+| `ctx.strategy_id`, `ctx.symbol`, `ctx.timeframe`, `ctx.instrument` | Identity and the canonical instrument (tick size used for rounding) |
+| `ctx.bars` | `BarSeries` of closed primary-timeframe bars, oldest → newest; `.open .high .low .close .volume` are **read-only** NumPy arrays, `ctx.bars.close[-1]` is the bar being evaluated, `ctx.bars.bar(-1)` its `Bar` (Decimal prices) |
+| `ctx.series("1h")` | A declared context timeframe. Higher timeframes contain only bars that have **closed** by now (no look-ahead); lower ones (e.g. `1m` precision) every bar up to the current close |
+| `ctx.bar`, `ctx.now` | The bar being evaluated and its close time (strategy time) |
+| `ctx.position` | This instance's *theoretical* position on the symbol (5.3) or `None` |
+| `ctx.window("ny_orb_15")`, `ctx.in_window(id)` | Configured session windows (ORB ranges, London/New York sessions, kill zones) with DST-correct `window_on(date)`, `window_at(ts)`, `contains(ts)` |
+| `ctx.trading_day()`, `ctx.session()` | Trading day per the instrument's rollover rule (e.g. 17:00 New York) and the session label (`asia_session` / `london_session` / `ny_session`) |
+| `ctx.long(...)`, `ctx.short(...)`, `ctx.exit_long()`, `ctx.exit_short()`, `ctx.move_sl(...)`, `ctx.no_trade(reason)` | Signal builders: fill identity and timestamps, default `entry` to the current close, round prices to the tick |
+| `ctx.log` | Logger bound with strategy/instrument/timeframe |
+| `ctx.rng` | Seeded NumPy generator (deterministic per instance and instrument) |
 
 ### Rules every strategy must follow
 
@@ -119,11 +138,16 @@ class Strategy(ABC, Generic[P]):
    opt-in with its own backtest fill model.)
 3. **No access to accounts, balances, brokers or orders** — enforced by the
    import-linter contract and by the context exposing nothing of the kind.
-4. **Fail closed**: an exception in `on_bar` is caught, logged to
-   `system_errors`, alerted on Telegram, and the strategy instance is marked
-   `FAULTED` for that symbol (no signals) until restarted.
-5. **Budget**: `on_bar` should finish in well under 50 ms; the runner records
-   timings.
+4. **Fail closed**: an exception in strategy code is caught by the runner,
+   recorded as a fault, and the instance stops emitting signals; every other
+   instance carries on. With `host: subprocess` the instance runs in its own
+   OS process, so even a hard crash or an infinite loop (per-batch time
+   budget) faults only that instance.
+5. **No class-level mutable state**: lists, dicts, sets or arrays assigned on
+   the class would be shared between instances of the same strategy and are
+   rejected at registration. Initialise per-instance state in `on_start`.
+6. **Budget**: `on_bar` should finish in well under 50 ms; the runner records
+   timings and warns about slow bars.
 
 ## 5.3 The theoretical position ("strategy book")
 
@@ -139,72 +163,77 @@ for that strategy and records "no matching position" otherwise.
   `max_pyramiding > 1`. `LONG` while short → reverse (`on_opposite_signal`).
 * SL/TP hits close the theoretical position and fire `on_position_event`.
 
-## 5.4 Registration and discovery
+## 5.4 Registration, discovery, instances and versions
 
 ```python
-# kterminal/strategies/breakout_retest/strategy.py
-from decimal import Decimal
-from pydantic import BaseModel, Field
-from kterminal.strategy_engine import Strategy, StrategyMeta, register_strategy
-from kterminal.indicators import atr, highest
+# kterminal/strategies/demo_sma_cross/strategy.py  (a real, runnable example)
+class SmaCrossParams(StrategyParams):          # frozen + extra="forbid" (typos are errors)
+    fast: int = Field(9, ge=2, le=500)
+    slow: int = Field(21, ge=3, le=1_000)
+    reward_risk: Decimal = Field(Decimal("2"), gt=0)
 
 @register_strategy
-class BreakoutRetest(Strategy["BreakoutRetest.Params"]):
-    meta = StrategyMeta(
-        id="breakout_retest", name="Breakout + Retest", version="1.0.0",
-        timeframes=("5m",), symbols=("XAUUSD",), warmup_bars=100,
-    )
-
-    class Params(BaseModel):
-        lookback: int = Field(20, ge=5, le=200)
-        atr_len: int = Field(14, ge=2)
-        rr: Decimal = Decimal("5")
+class DemoSmaCross(Strategy[SmaCrossParams]):
+    meta = StrategyMeta(id="demo_sma_cross", name="Demo · SMA crossover",
+                        version="1.0.0", warmup_bars=50, tags=("demo",))
+    Params = SmaCrossParams
 
     def on_bar(self, bar):
-        level = highest(self.ctx.bars.high[:-1], self.params.lookback)
+        close = self.ctx.bars.close
         ...
-        return self.ctx.long(entry=bar.close, stop_loss=sl, take_profit=tp,
-                             confidence=0.7, metadata={"level": level})
+        return self.ctx.long(stop_loss=bar.close - stop,
+                             take_profit=bar.close + stop * self.params.reward_risk)
 ```
 
-* At start-up the engine imports every sub-package of `kterminal.strategies`
-  (and any installed package exposing the `kterminal.strategies`
-  entry point); `@register_strategy` adds the class to the registry keyed by
-  `meta.id`. Duplicate IDs are a start-up error.
-* Default parameters come from `Params`; `params.yaml` in the folder can
-  override them; per-allocation overrides are stored in the database.
-* **Versioning:** each run records `meta.version`, a SHA-256 of the
-  strategy package's source files and a hash of the effective params in
-  `strategy_versions`. Changing code without bumping `version` is detected
-  (hash differs) and logged as a warning; metrics can be filtered per version.
+* **Discovery:** every sub-package of `kterminal.strategies` is imported at
+  start-up (plus installed packages exposing the `kterminal.strategies` entry
+  point); `@register_strategy` validates the class and registers its
+  definition. Duplicate ids are an error. `kterminal strategies list` shows
+  them.
+* **Instances:** `terminal/config/lab.yaml` declares instances — one
+  definition can run as many instances with different parameters,
+  instruments, timeframes or accounts. Each instance is its own lab subject.
+* **Versions:** for every instance the framework builds a canonical document
+  of the definition id and version, a **SHA-256 of the strategy's source
+  folder**, the effective parameters (defaults included), instruments with
+  their canonical tick sizes, timeframes, the session windows and trading-day
+  rules it uses, and behaviour flags. Its hash (`config_hash`) is the
+  instance's version and is stamped on every signal as `strategy_version`.
+  Editing code — even without bumping `version` — or parameters creates a new
+  version; names, descriptions and the host choice do not.
 
 ## 5.5 External (TradingView) strategies
 
-Declared, not coded — in `config/strategies.yaml` (applied to the database):
+Declared, not coded — in `terminal/config/lab.yaml`:
 
 ```yaml
-- id: breakout_retest_tv
-  name: Breakout + Retest (TradingView)
-  kind: EXTERNAL
-  allowed_symbols: [XAUUSD]
-  allowed_timeframes: [5m]
-  defaults: { risk: 0.5 }
+external_strategies:
+  - id: breakout_retest_tv
+    name: Breakout + Retest (TradingView)
+    version: 1.0.0
+    timeframes: [5m]
+    instruments: [XAUUSD]
+    pine_source: strategies/pine/breakout_retest.pine   # optional; hashed into the version
 ```
 
-The webhook receiver maps the payload to a `Signal` (see
-[06-tradingview-webhook](06-tradingview-webhook.md)); everything downstream
-is identical.
+An external definition gets instances, accounts and versions exactly like a
+Python one. Its signals arrive through the webhook (Phase 6), are mapped to
+the same `Signal`, applied to the instance's theoretical book and routed to
+its own account; everything downstream is identical.
 
 ## 5.6 Testing a strategy
 
-* `kterminal.strategy_engine.testing.run_on_bars(StrategyCls, params, bars)`
-  returns the signals and theoretical trades — the basis for **golden tests**
-  (`tests/` inside the strategy folder) that pin behaviour.
+* `kterminal.strategy_engine.testing.run_strategy(StrategyCls, instrument=…,
+  bars=…, timeframe="5m", params={…})` runs a strategy through the real runner
+  (validation, theoretical book, fault handling) outside the global registry
+  and returns its signals, rejected outputs, position events and any fault —
+  the basis for **golden tests** (`tests/` inside the strategy folder).
 * **Parity tests** compare a Python port with TradingView: export the Pine
   strategy's *List of Trades* (CSV) and the same chart's bars, then assert
-  entry/exit times match and prices match within one tick.
-* `kterminal backtest run breakout_retest --symbol XAUUSD --tf 5m --from 2024-01-01`
-  runs the full pipeline (Phase 3).
+  entry/exit times match and prices match within one tick (Phase 3).
+* `kterminal lab demo` runs the configured instances side by side on synthetic
+  data, each into its own paper account, and audits isolation from the
+  recorded rows.
 
 ## 5.7 Pine Script porting checklist
 

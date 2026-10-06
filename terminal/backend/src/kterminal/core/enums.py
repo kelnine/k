@@ -87,6 +87,12 @@ class SignalAction(StrEnum):
         return None
 
 
+class OrderType(StrEnum):
+    MARKET = "MARKET"
+    LIMIT = "LIMIT"
+    STOP = "STOP"
+
+
 class SignalSource(StrEnum):
     INTERNAL = "INTERNAL"  # a Python strategy plug-in run by the strategy engine
     TRADINGVIEW = "TRADINGVIEW"  # received through the webhook

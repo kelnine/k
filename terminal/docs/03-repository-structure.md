@@ -2,7 +2,7 @@
 
 The terminal lives in `terminal/`, self-contained, next to the existing
 KCharts charting app (which is untouched and keeps its GitHub Pages deploy).
-Files marked ✅ exist after Phase 1; the rest show where later phases land.
+Files marked ✅ exist (Phase 1–2); the rest show where later phases land.
 
 ```
 k/                                   repository root
@@ -15,11 +15,15 @@ k/                                   repository root
     ├── Makefile                 ✅  dev / test / lint / compose shortcuts
     ├── .env.example             ✅  every setting, no secrets
     ├── docs/                    ✅  this design (01–10 + appendices)
-    ├── config/                      declarative seed files, applied with `kterminal apply` (Phase 2+)
-    │   ├── instruments.yaml           tick size, contract size, sessions, broker symbol aliases
-    │   ├── risk_profiles.yaml         e.g. "prop-50k-standard"
-    │   ├── accounts.yaml              e.g. one Paper 50K account per strategy
-    │   └── strategies.yaml            external (TradingView) strategy declarations
+    ├── config/                  ✅  configuration as code (mounted read-only into containers)
+    │   ├── lab.yaml             ✅    strategy instances, account defaults (Paper 50K), external strategies
+    │   └── catalog/             ✅    `kterminal catalog validate | apply`
+    │       ├── venues.yaml      ✅    exchanges, brokers, prop-firm platforms, data/signal sources
+    │       ├── instruments.yaml ✅    canonical instruments + global aliases
+    │       ├── listings/*.yaml  ✅    per-venue contract specs (tick, size, qty step, costs, symbols)
+    │       ├── sessions.yaml    ✅    trading calendars, trading-day rules, session windows (DST-aware)
+    │       ├── costs.yaml       ✅    spread / commission / slippage / funding / swap profiles
+    │       └── venue_profiles.yaml ✅ which listing each account simulates per instrument
     ├── data/                        local Parquet market data (git-ignored)
     ├── deploy/
     │   ├── docker-compose.yml   ✅  postgres · api · engine · worker · caddy
@@ -48,18 +52,21 @@ k/                                   repository root
             │   ├── errors.py    ✅  exception hierarchy
             │   ├── events.py    ✅  DomainEvent + async in-process EventBus
             │   ├── registry.py  ✅  generic plug-in Registry with package discovery
-            │   └── models.py        Signal, Bar, Quote, InstrumentSpec, OrderIntent … (Phase 2)
+            │   └── canonical.py     ✅  canonical JSON + hashing (versions, fingerprints)
             │
             ├── config/          ✅  typed settings, LIVE-mode interlock
             ├── observability/   ✅  structlog JSON logging, correlation IDs, redaction (metrics: Phase 5)
-            ├── db/              ✅  engine/session, advisory locks; models, repositories,
-            │                        outbox, audit log (Phase 2)
+            ├── db/              ✅  session, advisory locks, models.py, migrations/ (Alembic),
+            │                        partitions.py, audit.py (hash chain), repositories/
+            ├── domain/          ✅  pure domain model: timeframes, market (Bar/Quote), signals,
+            │                        instruments (+futures roll), symbols, sessions, costs,
+            │                        catalog, accounts
             │
-            ├── marketdata/          (4)  providers/{csv,parquet,oanda,binance}.py, aggregator.py,
-            │                             symbols.py, staleness.py
+            ├── marketdata/          (4)  aggregator.py ✅, synthetic.py ✅, providers/ (Phase 3/5)
             ├── indicators/          Pine-compatible ta.* functions (Phase 3)
-            ├── strategy_engine/     (1)  base.py (Strategy), context.py, params.py, registry.py,
-            │                             runner.py, external.py (TradingView strategies)
+            ├── strategy_engine/ ✅  (1)  base.py, context.py, series.py, book.py, model.py,
+            │                             registry.py, instances.py, versioning.py, runner.py,
+            │                             hosts.py (in-process + subprocess), testing.py
             ├── strategies/          STRATEGY PLUG-INS — one folder per strategy_id
             │   └── <strategy_id>/
             │       ├── __init__.py
@@ -68,15 +75,16 @@ k/                                   repository root
             │       ├── README.md          logic, origin, porting notes
             │       ├── pine/original.pine reference Pine source
             │       └── tests/             golden + parity tests
-            ├── risk/                (6)  engine.py, rules/*.py, sizing.py, drawdown.py,
-            │                             monitor.py, killswitch.py, approved.py
-            ├── brokers/             (8)  base.py (BrokerAdapter), capabilities.py, simulated.py,
-            │                             paper.py, oanda.py, … one module per venue
+            ├── risk/                (6)  sizing.py ✅, checks.py ✅ (Phase-2 checks); engine.py,
+            │                             rules/, drawdown.py, monitor.py, killswitch.py (Phase 5)
+            ├── brokers/             (8)  base.py ✅ (BrokerAdapter + capabilities); one module per
+            │                             venue/platform: mt5_bridge, tradelocker, tradovate, … (9/10)
             ├── execution/           (7)  router.py, engine.py, orders.py (state machine),
             │                             positions.py, brackets.py, reconcile.py
-            ├── analytics/           (9)  metrics.py, breakdowns.py, leaderboard.py, reports.py
+            ├── analytics/           (9)  summary.py ✅; metrics.py, breakdowns.py, leaderboard.py (4)
             ├── backtest/            (2)  engine.py, fill_model.py, replay.py, results.py
-            ├── paper/               (3)  accounts.py, lifecycle.py, service.py
+            ├── paper/           ✅  (3)  account.py (paper account + fills + ledger), lab.py,
+            │                             config.py, records.py, store.py, pg_store.py, demo.py
             ├── webhook/             (5)  schemas.py, validation.py, normalize.py,
             │                             idempotency.py, service.py
             ├── notifications/       (11) base.py (Notifier), telegram.py, policy.py,

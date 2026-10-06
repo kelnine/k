@@ -6,8 +6,9 @@ forward-test them on simulated prop-style accounts, receive TradingView
 signals, report to Telegram — and, only after validation, execute on demo,
 prop-firm and live accounts.
 
-> **Status: Phase 1 of 11 — architecture & foundation.** No trading logic yet.
-> LIVE execution is disabled by default and guarded by multiple interlocks.
+> **Status: Phase 2 of 11 complete — database, instrument catalog and strategy lab.**
+> Strategies run side by side on paper accounts; no real orders exist yet.
+> LIVE execution is not implemented and is guarded by multiple interlocks.
 
 ## Design
 
@@ -22,7 +23,24 @@ Start with [`docs/`](docs/README.md):
 [Telegram](docs/08-telegram.md) ·
 [security](docs/09-security.md) ·
 [roadmap](docs/10-roadmap.md) ·
-[metric definitions](docs/appendix-a-metrics.md)
+[metric definitions](docs/appendix-a-metrics.md) ·
+[instruments, sessions & costs](docs/11-instruments-sessions-costs.md) ·
+[strategy lab](docs/12-strategy-lab.md)
+
+## Strategy lab in one minute
+
+```bash
+cd terminal
+make install
+make catalog        # validate config/catalog (instruments, venues, sessions, costs)
+make strategies     # registered strategy definitions + the instances in config/lab.yaml
+make demo           # run them side by side on synthetic data into separate Paper 50K accounts
+make migrate && make demo-db   # same, recording everything in PostgreSQL
+```
+
+Add a strategy by adding a folder under `backend/src/kterminal/strategies/`
+and an instance to `config/lab.yaml`; each instance gets its own paper account
+(default $50,000), version and metrics. See [docs/12](docs/12-strategy-lab.md).
 
 ## What Phase 1 delivers
 

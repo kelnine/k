@@ -2,9 +2,15 @@ import io
 import os
 
 import pytest
+from hypothesis import settings as hypothesis_settings
 
 from kterminal.config.settings import LogFormat, LoggingSettings, Settings
 from kterminal.observability.logging import configure_logging
+
+# Property tests check correctness, not machine speed: no per-example deadline (cold CI
+# runners and first-import costs would otherwise make them flaky).
+hypothesis_settings.register_profile("kterminal", deadline=None)
+hypothesis_settings.load_profile("kterminal")
 
 # Read before the environment is isolated below.
 TEST_DATABASE_URL = os.environ.get("KT_TEST_DATABASE_URL")

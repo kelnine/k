@@ -142,6 +142,21 @@ class TradingSettings(BaseModel):
         return self.live_enabled and self.live_acknowledgement == LIVE_TRADING_ACKNOWLEDGEMENT
 
 
+class PathSettings(BaseModel):
+    """Where configuration files live (``terminal/config`` in the repo, ``/app/config`` in
+    containers). Relative paths resolve against the working directory."""
+
+    config_dir: Path = Path("config")
+
+    @property
+    def catalog_dir(self) -> Path:
+        return self.config_dir / "catalog"
+
+    @property
+    def lab_config(self) -> Path:
+        return self.config_dir / "lab.yaml"
+
+
 class RuntimeSettings(BaseModel):
     """Long-running process roles (engine, worker)."""
 
@@ -166,6 +181,7 @@ class Settings(BaseSettings):
     api: ApiSettings = Field(default_factory=ApiSettings)
     trading: TradingSettings = Field(default_factory=TradingSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    paths: PathSettings = Field(default_factory=PathSettings)
 
     @model_validator(mode="after")
     def _production_safety(self) -> "Settings":

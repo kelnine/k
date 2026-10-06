@@ -10,6 +10,7 @@ from kterminal.core.clock import Clock, SimulatedClock, SystemClock, ensure_utc
 from kterminal.core.enums import (
     Direction,
     OrderSide,
+    OrderType,
     SignalAction,
     SignalSource,
     StrategyKind,
@@ -27,6 +28,7 @@ __all__ = [
     "EventBus",
     "InMemoryEventBus",
     "OrderSide",
+    "OrderType",
     "Registry",
     "SignalAction",
     "SignalSource",
