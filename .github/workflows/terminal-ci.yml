@@ -1,0 +1,85 @@
+name: Terminal CI
+
+on:
+  push:
+    paths:
+      - "terminal/**"
+      - ".github/workflows/terminal-ci.yml"
+  pull_request:
+    paths:
+      - "terminal/**"
+      - ".github/workflows/terminal-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminal-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Lint · types · architecture · tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal/backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kterminal
+          POSTGRES_PASSWORD: kterminal
+          POSTGRES_DB: kterminal_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kterminal -d kterminal_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      KT_TEST_DATABASE_URL: postgresql://kterminal:kterminal@localhost:5432/kterminal_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: terminal/backend/uv.lock
+      - name: Install
+        run: uv sync --frozen --python 3.12
+      - name: Ruff (lint)
+        run: uv run ruff check . --output-format github
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+      - name: mypy --strict
+        run: uv run mypy
+      - name: Architecture contracts (import-linter)
+        run: uv run lint-imports
+      - name: Tests (unit + integration on PostgreSQL)
+        run: uv run pytest --cov=kterminal --cov-report=term-missing:skip-covered
+
+  container:
+    name: Docker image · Compose · Caddy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t kterminal-backend:ci terminal/backend
+      - name: Smoke-test image (non-root, CLI, LIVE guard)
+        run: |
+          docker run --rm --entrypoint id kterminal-backend:ci | grep -q 'uid=10001'
+          docker run --rm kterminal-backend:ci version
+          docker run --rm kterminal-backend:ci config check
+          if docker run --rm -e KT_TRADING__DEFAULT_MODE=LIVE kterminal-backend:ci config check; then
+            echo "LIVE default was accepted — interlock broken"; exit 1
+          fi
+      - name: Validate Compose files
+        working-directory: terminal
+        run: |
+          mkdir -p deploy/secrets && echo ci-placeholder > deploy/secrets/postgres_password
+          docker compose --project-directory deploy -f deploy/docker-compose.yml config -q
+          docker compose --project-directory deploy -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml config -q
+      - name: Validate Caddyfile
+        working-directory: terminal/deploy
+        run: |
+          docker run --rm -v "$PWD/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

@@ -1,0 +1,108 @@
+# K Terminal — production-style stack.
+#
+#   make secrets     # once: generates deploy/secrets/postgres_password
+#   make up          # build + start
+#
+# Only Caddy publishes ports. PostgreSQL lives on an internal network with no
+# internet access. Each process receives only the secrets it needs (broker
+# credentials → engine only, Telegram token → worker only, from Phase 7/9).
+
+name: kterminal
+
+x-backend: &backend
+  build:
+    context: ../backend
+  image: kterminal-backend:local
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  environment:
+    KT_ENVIRONMENT: ${KT_ENVIRONMENT:-production}
+    KT_LOGGING__FORMAT: ${KT_LOGGING__FORMAT:-json}
+    KT_LOGGING__LEVEL: ${KT_LOGGING__LEVEL:-INFO}
+    KT_DATABASE__URL: postgresql+asyncpg://kterminal@postgres:5432/kterminal
+    KT_DATABASE__PASSWORD_FILE: /run/secrets/postgres_password
+    KT_API__TRUSTED_PROXIES: '["172.30.10.0/24"]'
+    KT_TRADING__DEFAULT_MODE: ${KT_TRADING__DEFAULT_MODE:-PAPER}
+    # LIVE stays off unless BOTH are set deliberately (see docs/09-security.md §9.3).
+    KT_TRADING__LIVE_ENABLED: ${KT_TRADING__LIVE_ENABLED:-false}
+    KT_TRADING__LIVE_ACKNOWLEDGEMENT: ${KT_TRADING__LIVE_ACKNOWLEDGEMENT:-}
+  secrets: [postgres_password]
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kterminal
+      POSTGRES_USER: kterminal
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kterminal -d kterminal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [data]
+
+  api:
+    <<: *backend
+    command: ["api"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks: [data, edge]
+
+  engine:
+    <<: *backend
+    command: ["engine"]
+    stop_grace_period: 30s   # let in-flight order handling finish
+    networks: [data, egress]
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    networks: [data, egress]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      KT_PUBLIC_DOMAIN: ${KT_PUBLIC_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    networks: [edge]
+
+networks:
+  data:        # PostgreSQL ↔ application processes; no route to the internet
+    internal: true
+  edge:        # Caddy ↔ api (fixed subnet so the api can trust Caddy's X-Forwarded-For)
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  egress:      # outbound access for broker APIs (engine) and Telegram (worker)
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

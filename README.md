@@ -58,3 +58,12 @@ src/
   indicators/  pure-function indicator library + registry
   ui/          React shell: toolbar, layouts, watchlist, search
 ```
+
+## K Terminal
+
+[`terminal/`](terminal/README.md) contains **K Terminal**, a separate, modular
+algorithmic trading terminal (Python backend + React dashboard) for testing,
+comparing and forward-testing strategies, receiving TradingView webhooks and
+reporting to Telegram. Its design documents are in
+[`terminal/docs/`](terminal/docs/README.md). It does not affect the KCharts
+build above.
