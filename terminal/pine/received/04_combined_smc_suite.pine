@@ -1,0 +1,1173 @@
+// Combined SMC Suite — three overlays merged into one indicator, each with its own toggle.
+//
+//   1. Order Block Detector          © LuxAlgo   (CC BY-NC-SA 4.0)
+//                                    https://creativecommons.org/licenses/by-nc-sa/4.0/
+//   2. Smart Money Breakout Channels © AlgoAlpha (MPL 2.0)
+//                                    https://mozilla.org/MPL/2.0/
+//   3. 200 EMA Filtered Parabolic SAR — reconstructed from its settings panel
+//      (inputs / style / signal shapes), since only screenshots were available.
+//
+// Original licenses above continue to apply to their respective sections.
+
+//@version=6
+indicator("Combined SMC Suite [OB + Channels + PSAR + KCharts + DepthFlow]", "SMC Suite"
+  , overlay           = true
+  , max_boxes_count   = 500
+  , max_labels_count  = 500
+  , max_lines_count   = 500)
+
+import TradingView/ta/10 as tvta
+
+//-----------------------------------------------------------------------------}
+//Module master switches
+//-----------------------------------------------------------------------------{
+G_MOD  = "═══ Modules ═══"
+G_OB   = "Order Block Detector [LuxAlgo]"
+G_BC   = "Smart Money Breakout Channels [AlgoAlpha]"
+G_PS   = "200 EMA Filtered Parabolic SAR"
+G_KEMA = "KCharts — Pullback EMA"
+G_KVW  = "KCharts — VWAP"
+G_KLVL = "KCharts — 1H / 4H Levels"
+G_DFVP = "DepthFlow — Volume Blocks"
+G_DFDM = "DepthFlow — Dominance"
+G_DFSG = "DepthFlow — Signals"
+
+obEnable = input.bool(true, "Order Block Detector"          , group = G_MOD)
+bcEnable = input.bool(true, "Smart Money Breakout Channels"  , group = G_MOD)
+psEnable = input.bool(true, "200 EMA Filtered Parabolic SAR" , group = G_MOD)
+kcEnable = input.bool(true, "KCharts Setup (EMA + VWAP + Levels)", group = G_MOD)
+dfEnable = input.bool(true, "DepthFlow (Order Flow Liquidity)"  , group = G_MOD)
+
+alertsOn = input.bool(true, "Fire alerts", group = G_MOD
+  , tooltip = "Signals fire through alert() rather than alertcondition(). Create ONE alert on this indicator with condition 'Any alert() function call' — the message names which signal fired. alertcondition() costs a plot output each, and 25 of them blew TradingView's 64-plot ceiling.")
+
+sigMax = input.int(150, "Max signal markers kept", minval = 20, maxval = 400, group = G_MOD
+  , tooltip = "Signal markers are drawn as labels, not plotshape(): a plotshape costs four plot outputs and the script was over the 64 limit. Labels cost none, but they accumulate, so the oldest are deleted past this count.")
+
+//Signal markers as labels. Positioned with yloc so they sit exactly where the
+//equivalent plotshape() would, and ring-buffered so they cannot exhaust the label cap.
+var label[] sigLabels = array.new<label>()
+
+sigMark(bool cond, string txt, color bg, color fg, string sty, string yl) =>
+    if cond
+        array.push(sigLabels, label.new(bar_index, close, txt, yloc = yl, style = sty, color = bg, textcolor = fg, size = size.tiny))
+        while array.size(sigLabels) > sigMax
+            label.delete(array.shift(sigLabels))
+
+//=============================================================================}
+// 1. ORDER BLOCK DETECTOR [LuxAlgo]
+//=============================================================================={
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+obLength = input.int(5, 'Volume Pivot Length'
+  , minval = 1
+  , group  = G_OB)
+
+obBullExtLast = input.int(3, 'Bullish OB '
+  , minval = 1
+  , inline = 'bull'
+  , group  = G_OB)
+
+obBgBullCss = input.color(color.new(#169400, 80), ''
+  , inline = 'bull'
+  , group  = G_OB)
+
+obBullCss = input.color(#169400, ''
+  , inline = 'bull'
+  , group  = G_OB)
+
+obBullAvgCss = input.color(color.new(#9598a1, 37), ''
+  , inline = 'bull'
+  , group  = G_OB)
+
+obBearExtLast = input.int(3, 'Bearish OB'
+  , minval = 1
+  , inline = 'bear'
+  , group  = G_OB)
+
+obBgBearCss = input.color(color.new(#ff1100, 80), ''
+  , inline = 'bear'
+  , group  = G_OB)
+
+obBearCss = input.color(#ff1100, ''
+  , inline = 'bear'
+  , group  = G_OB)
+
+obBearAvgCss = input.color(color.new(#9598a1, 37), ''
+  , inline = 'bear'
+  , group  = G_OB)
+
+obLineStyleIn = input.string('⎯⎯⎯', 'Average Line Style'
+  , options = ['⎯⎯⎯', '----', '····']
+  , group   = G_OB)
+
+obLineWidth = input.int(1, 'Average Line Width'
+  , minval = 1
+  , group  = G_OB)
+
+obMitigation = input.string('Wick', 'Mitigation Methods'
+  , options = ['Wick', 'Close']
+  , group   = G_OB)
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+//Line style
+obGetLineStyle(style) =>
+    switch style
+        '⎯⎯⎯'  => line.style_solid
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        =>        line.style_solid
+
+//Collect order block coordinates
+obGetCoordinates(condition, top, btm, obVal) =>
+    var obTop  = array.new_float(0)
+    var obBtm  = array.new_float(0)
+    var obAvg  = array.new_float(0)
+    var obLeft = array.new_int(0)
+
+    float ob = na
+
+    if condition
+        avg = math.avg(top, btm)
+
+        array.unshift(obTop , top)
+        array.unshift(obBtm , btm)
+        array.unshift(obAvg , avg)
+        array.unshift(obLeft, time[obLength])
+
+        ob := obVal
+
+    [obTop, obBtm, obAvg, obLeft, ob]
+
+//Drop mitigated order blocks from the coordinate arrays.
+//Iterates back-to-front so removals never shift indices that are still pending
+//(the original forward `for … in` loop mutated the array it was walking).
+obRemoveMitigated(obTop, obBtm, obLeft, obAvg, target, bull) =>
+    mitigated   = false
+    targetArray = bull ? obBtm : obTop
+
+    if array.size(targetArray) > 0
+        for i = array.size(targetArray) - 1 to 0
+            element = array.get(targetArray, i)
+
+            if (bull ? target < element : target > element)
+                mitigated := true
+
+                array.remove(obTop , i)
+                array.remove(obBtm , i)
+                array.remove(obAvg , i)
+                array.remove(obLeft, i)
+
+    mitigated
+
+//Draw the most recent order blocks
+obSetBlocks(show, obTop, obBtm, obLeft, obAvg, extLast, bgCss, borderCss, lvlCss) =>
+    var obBox = array.new_box(0)
+    var obLvl = array.new_line(0)
+
+    if barstate.islast and show
+        //Allocated on the LAST bar, not the first. TradingView evicts the OLDEST
+        //drawings once max_boxes_count / max_lines_count is reached, and the channel
+        //module creates four drawings per channel across the whole history. Built at
+        //bar 1 these would be first in line for eviction and would silently vanish —
+        //which is exactly why the order blocks stopped rendering after the merge.
+        if array.size(obBox) == 0
+            for i = 0 to extLast - 1
+                array.unshift(obBox, box.new(na, na, na, na
+                  , xloc         = xloc.bar_time
+                  , extend       = extend.right
+                  , bgcolor      = bgCss
+                  , border_color = color.new(borderCss, 70)))
+
+                array.unshift(obLvl, line.new(na, na, na, na
+                  , xloc   = xloc.bar_time
+                  , extend = extend.right
+                  , color  = lvlCss
+                  , style  = obGetLineStyle(obLineStyleIn)
+                  , width  = obLineWidth))
+
+        if array.size(obTop) > 0
+            for i = 0 to math.min(extLast - 1, array.size(obTop) - 1)
+                getBox = array.get(obBox, i)
+                getLvl = array.get(obLvl, i)
+
+                box.set_lefttop(getBox    , array.get(obLeft, i), array.get(obTop, i))
+                box.set_rightbottom(getBox, array.get(obLeft, i), array.get(obBtm, i))
+
+                line.set_xy1(getLvl, array.get(obLeft, i)    , array.get(obAvg, i))
+                line.set_xy2(getLvl, array.get(obLeft, i) + 1, array.get(obAvg, i))
+
+//-----------------------------------------------------------------------------
+//Global elements
+//-----------------------------------------------------------------------------
+var obOs         = 0
+var obTargetBull = 0.
+var obTargetBear = 0.
+
+obUpper = ta.highest(obLength)
+obLower = ta.lowest(obLength)
+
+if obMitigation == 'Close'
+    obTargetBull := ta.lowest(close, obLength)
+    obTargetBear := ta.highest(close, obLength)
+else
+    obTargetBull := obLower
+    obTargetBear := obUpper
+
+obOs := high[obLength] > obUpper ? 0 : low[obLength] < obLower ? 1 : obOs[1]
+
+//ta.pivothigh() returns a price, not a flag — v6 has no implicit float->bool
+obPhvFound = not na(ta.pivothigh(volume, obLength, obLength))
+
+//-----------------------------------------------------------------------------
+//Bullish / bearish order block coordinates
+//-----------------------------------------------------------------------------
+[obBullTop
+  , obBullBtm
+  , obBullAvg
+  , obBullLeft
+  , obBullOb] = obGetCoordinates(obEnable and obPhvFound and obOs == 1, hl2[obLength], low[obLength], low[obLength])
+
+[obBearTop
+  , obBearBtm
+  , obBearAvg
+  , obBearLeft
+  , obBearOb] = obGetCoordinates(obEnable and obPhvFound and obOs == 0, high[obLength], hl2[obLength], high[obLength])
+
+//-----------------------------------------------------------------------------
+//Remove mitigated order blocks
+//-----------------------------------------------------------------------------
+obMitigatedBull = obRemoveMitigated(obBullTop, obBullBtm, obBullLeft, obBullAvg, obTargetBull, true)
+obMitigatedBear = obRemoveMitigated(obBearTop, obBearBtm, obBearLeft, obBearAvg, obTargetBear, false)
+
+//-----------------------------------------------------------------------------
+//Display order blocks
+//-----------------------------------------------------------------------------
+obSetBlocks(obEnable, obBullTop, obBullBtm, obBullLeft, obBullAvg, obBullExtLast, obBgBullCss, obBullCss, obBullAvgCss)
+obSetBlocks(obEnable, obBearTop, obBearBtm, obBearLeft, obBearAvg, obBearExtLast, obBgBearCss, obBearCss, obBearAvgCss)
+
+//=============================================================================}
+// 2. SMART MONEY BREAKOUT CHANNELS [AlgoAlpha]
+//=============================================================================={
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+bcOverlap = input.bool(false, "Nested Channels"
+  , group   = G_BC
+  , tooltip = "When enabled, allows multiple channels to overlap. When disabled, only one channel can exist at a time.")
+
+bcStrong = input.bool(true, "Strong Closes Only"
+  , tooltip = "When enabled, breakouts only trigger when more than 50% of the candle body is outside the channel."
+  , group   = G_BC)
+
+bcNormLength = input.int(100, title = "Normalization Length"
+  , minval  = 1
+  , group   = G_BC
+  , tooltip = "Bars used to calculate the highest high / lowest low for price normalization.")
+
+bcBoxLength = input.int(14, "Box Detection Length"
+  , minval  = 1
+  , group   = G_BC
+  , tooltip = "Bars used to detect channel formation patterns.")
+
+bcShwVol = input.bool(true, "Show Volume Analysis"
+  , tooltip = "Displays volume analysis as candle-like bars within the channel."
+  , group   = G_BC)
+
+bcVolMode = input.string("Comparison", "Volume Display Mode"
+  , options = ["Volume", "Comparison", "Delta"]
+  , group   = G_BC
+  , tooltip = "Volume: total volume as symmetrical bars. Comparison: up volume above midline, down volume below. Delta: net volume delta.")
+
+bcTf = input.timeframe("1", "Volume Delta Timeframe Source"
+  , group   = G_BC
+  , tooltip = "The timeframe used to calculate volume delta data.")
+
+bcVolScale = input.float(0.5, "Volume Scale"
+  , minval = 0.1, maxval = 2.0, step = 0.1
+  , group   = G_BC
+  , tooltip = "Adjusts the height of volume bars relative to channel size.")
+
+bcTextSizeIn = input.string("Tiny", "Volume Text Size"
+  , options = ["Tiny", "Small", "Medium", "Large"]
+  , group   = G_BC
+  , tooltip = "Size of the volume text at the corner of the channels.")
+
+bcMaxHistory = input.int(50, "Max Historical Channels"
+  , minval  = 1
+  , maxval  = 200
+  , group   = G_BC
+  , tooltip = "How many broken-out channels stay drawn. Older ones are deleted outright. The original leaked every retired channel, which filled TradingView's 500-drawing budget and silently pushed the order blocks off the chart.")
+
+bcGreen = input.color(#00ffbb, title = "Bullish Colour"
+  , group   = G_BC
+  , tooltip = "Primary colour for bullish visual elements.")
+
+bcRed = input.color(#ff1100, title = "Bearish Colour"
+  , group   = G_BC
+  , tooltip = "Primary colour for bearish visual elements.")
+
+//-----------------------------------------------------------------------------
+//Variables
+//-----------------------------------------------------------------------------
+var bcBoxes   = array.new_box()
+var bcBoxesU  = array.new_box()
+var bcBoxesL  = array.new_box()
+
+//Retired channels, kept so they can be deleted instead of leaking
+var bcOldBoxes  = array.new_box()
+var bcOldBoxesU = array.new_box()
+var bcOldBoxesL = array.new_box()
+var bcOldLines  = array.new_line()
+
+var line[] bcGaugeLines  = array.new<line>()
+var label  bcGaugeLabel  = na
+var line[] bcCenterLines = array.new<line>()
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+bcTextSize(sz) =>
+    switch sz
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Medium" => size.normal
+        "Large"  => size.large
+        =>          size.tiny
+
+bcCanCreate(float tNew, float bNew) =>
+    ok = true
+    if bcBoxes.size() > 0
+        for j = 0 to bcBoxes.size() - 1
+            if (tNew > bcBoxes.get(j).get_bottom()) and (bNew < bcBoxes.get(j).get_top())
+                ok := false
+                break
+    ok
+
+//Park a broken-out channel's drawings and delete the oldest beyond the budget.
+//Without this every retired channel stays on the chart forever.
+bcRetire(box b, box u, box l, line c) =>
+    bcOldBoxes.push(b)
+    bcOldBoxesU.push(u)
+    bcOldBoxesL.push(l)
+    bcOldLines.push(c)
+
+    while bcOldBoxes.size() > bcMaxHistory
+        box.delete(bcOldBoxes.shift())
+        box.delete(bcOldBoxesU.shift())
+        box.delete(bcOldBoxesL.shift())
+        line.delete(bcOldLines.shift())
+
+bcVolTransparency(float v, float smoothedVol) =>
+    if bcVolMode == "Volume"
+        float volRatio     = v / smoothedVol
+        float transparency = math.max(20, math.min(80, 80 - (volRatio - 0.5) * 40))
+        transparency
+    else
+        0
+
+//-----------------------------------------------------------------------------
+//Calculations
+//-----------------------------------------------------------------------------
+bcLowestLow       = ta.lowest(low, bcNormLength)
+bcHighestHigh     = ta.highest(high, bcNormLength)
+bcNormalizedPrice = (close - bcLowestLow) / (bcHighestHigh - bcLowestLow)
+bcVol             = ta.stdev(bcNormalizedPrice, 14)
+
+bcUpper = (ta.highestbars(bcVol, bcBoxLength + 1) + bcBoxLength) / bcBoxLength
+bcLower = (ta.lowestbars(bcVol, bcBoxLength + 1) + bcBoxLength) / bcBoxLength
+
+bcUpbreak   = 0.0
+bcDownbreak = 0.0
+
+//Evaluated unconditionally: a ta.* call behind a short-circuiting `and` would not
+//run on every bar, which corrupts its history
+bcChannelStart = ta.crossover(bcUpper, bcLower)
+bcVolReset     = ta.crossover(bcLower, bcUpper)
+
+bcDuration = math.max(nz(ta.barssince(bcVolReset)), 1)
+bcH = ta.highest(bcDuration)
+bcL = ta.lowest(bcDuration)
+
+//request.*() must stay unconditional, so this is evaluated even when the module is off
+[bcUv, bcDv, bcVold] = tvta.requestUpAndDownVolume(bcTf)
+
+var bcHvold = bcVold
+var bcLvold = bcVold
+
+if bcVolReset
+    bcHvold := bcVold
+    bcLvold := bcVold
+
+if bcVold > bcHvold
+    bcHvold := bcVold
+
+if bcVold < bcLvold
+    bcLvold := bcVold
+
+bcSmoothedVol = ta.sma(volume, 20)
+bcVola        = ta.atr(bcBoxLength) / 2
+
+bool bcNewChannelFormed = false
+bool bcBullishBreakout  = false
+bool bcBearishBreakout  = false
+
+if bcEnable and bcChannelStart and bcDuration > 10
+    if bcOverlap or bcCanCreate(bcH, bcL)
+        bcBoxes.unshift(box.new(bar_index - bcDuration, bcH, bar_index, bcL, bgcolor = color.new(chart.fg_color, 90), border_color = na))
+        bcBoxesU.unshift(box.new(bar_index - bcDuration, bcH, bar_index, bcH - bcVola, bgcolor = color.new(bcRed, 70), border_color = na))
+        bcBoxesL.unshift(box.new(bar_index - bcDuration, bcL + bcVola, bar_index, bcL, bgcolor = color.new(bcGreen, 70), border_color = na))
+
+        float centerY = (bcH + bcL) / 2
+        bcCenterLines.unshift(line.new(bar_index - bcDuration, centerY, bar_index, centerY, color = color.new(chart.fg_color, 50), width = 1, style = line.style_dashed))
+        bcNewChannelFormed := true
+
+//Walked back-to-front so a removal never invalidates an index the loop still has to
+//visit (the original forward loop could run past the end of the shrinking array).
+if bcBoxes.size() > 0
+    for i = bcBoxes.size() - 1 to 0
+        if ((bcStrong ? math.avg(close, open) : close) > bcBoxes.get(i).get_top())
+            bcUpbreak := bcBoxes.get(i).get_bottom()
+            bcRetire(bcBoxes.get(i), bcBoxesU.get(i), bcBoxesL.get(i), bcCenterLines.get(i))
+            bcBoxes.remove(i)
+            bcBoxesU.remove(i)
+            bcBoxesL.remove(i)
+            bcCenterLines.remove(i)
+            bcBullishBreakout := true
+
+        else if ((bcStrong ? math.avg(close, open) : close) < bcBoxes.get(i).get_bottom())
+            bcDownbreak := bcBoxes.get(i).get_top()
+            bcRetire(bcBoxes.get(i), bcBoxesU.get(i), bcBoxesL.get(i), bcCenterLines.get(i))
+            bcBoxes.remove(i)
+            bcBoxesU.remove(i)
+            bcBoxesL.remove(i)
+            bcCenterLines.remove(i)
+            bcBearishBreakout := true
+
+        else
+            bcBoxes.get(i).set_right(bar_index)
+            bcBoxesU.get(i).set_right(bar_index)
+            bcBoxesL.get(i).set_right(bar_index)
+            bcCenterLines.get(i).set_x2(bar_index)
+
+            //Volume text goes on whichever side price is not currently sitting in
+            float boxMidline   = (bcBoxes.get(i).get_top() + bcBoxes.get(i).get_bottom()) / 2
+            float currentPrice = bcStrong ? math.avg(close, open) : close
+
+            string volText = ""
+            if bcVolMode == "Volume"
+                volText := str.tostring(math.round(volume / 1000, 1)) + "K"
+            else if bcVolMode == "Comparison"
+                volText := str.tostring(math.round(bcUv / 1000, 1)) + "K/" + str.tostring(math.round(bcDv / 1000, 1)) + "K"
+            else if bcVolMode == "Delta"
+                volText := str.tostring(math.round(bcVold / 1000, 1)) + "K"
+
+            if currentPrice > boxMidline
+                bcBoxesL.get(i).set_text(volText)
+                bcBoxesL.get(i).set_text_halign(text.align_right)
+                bcBoxesL.get(i).set_text_color(color.new(chart.fg_color, 30))
+                bcBoxesL.get(i).set_text_size(bcTextSize(bcTextSizeIn))
+                bcBoxesU.get(i).set_text("")
+            else
+                bcBoxesU.get(i).set_text(volText)
+                bcBoxesU.get(i).set_text_halign(text.align_right)
+                bcBoxesU.get(i).set_text_color(color.new(chart.fg_color, 30))
+                bcBoxesU.get(i).set_text_size(bcTextSize(bcTextSizeIn))
+                bcBoxesL.get(i).set_text("")
+
+float bcCurrentMidline = na
+float bcChannelHeight  = na
+
+if bcBoxes.size() > 0
+    float topBound    = bcBoxes.get(0).get_top()
+    float bottomBound = bcBoxes.get(0).get_bottom()
+    bcCurrentMidline := (topBound + bottomBound) / 2
+    bcChannelHeight  := (topBound - bottomBound) * bcVolScale
+
+float bcVolUpperOpen  = na
+float bcVolUpperHigh  = na
+float bcVolUpperLow   = na
+float bcVolUpperClose = na
+
+float bcVolLowerOpen  = na
+float bcVolLowerHigh  = na
+float bcVolLowerLow   = na
+float bcVolLowerClose = na
+
+if bcEnable and not na(bcCurrentMidline) and not na(bcChannelHeight) and bcShwVol
+    if bcVolMode == "Volume"
+        float volHeight = (volume / bcSmoothedVol) * (bcChannelHeight / 4)
+        bcVolUpperOpen  := bcCurrentMidline
+        bcVolUpperClose := bcCurrentMidline + volHeight
+        bcVolUpperHigh  := bcCurrentMidline + volHeight
+        bcVolUpperLow   := bcCurrentMidline
+
+        bcVolLowerOpen  := bcCurrentMidline
+        bcVolLowerClose := bcCurrentMidline - volHeight
+        bcVolLowerHigh  := bcCurrentMidline
+        bcVolLowerLow   := bcCurrentMidline - volHeight
+
+    else if bcVolMode == "Comparison"
+        float uvHeight = na(bcUv) ? 0 : (bcUv / bcSmoothedVol) * (bcChannelHeight / 4)
+        float dvHeight = na(bcDv) ? 0 : (bcDv / bcSmoothedVol) * (bcChannelHeight / 4)
+
+        bcVolUpperOpen  := bcCurrentMidline
+        bcVolUpperClose := bcCurrentMidline + uvHeight
+        bcVolUpperHigh  := bcCurrentMidline + uvHeight
+        bcVolUpperLow   := bcCurrentMidline
+
+        bcVolLowerOpen  := bcCurrentMidline
+        bcVolLowerClose := bcCurrentMidline + dvHeight
+        bcVolLowerHigh  := bcCurrentMidline
+        bcVolLowerLow   := bcCurrentMidline + dvHeight
+
+    else if bcVolMode == "Delta"
+        float deltaHeight = na(bcVold) ? 0 : math.abs(bcVold / bcSmoothedVol) * (bcChannelHeight / 4)
+
+        if bcVold >= 0
+            bcVolUpperOpen  := bcCurrentMidline
+            bcVolUpperClose := bcCurrentMidline + deltaHeight
+            bcVolUpperHigh  := bcCurrentMidline + deltaHeight
+            bcVolUpperLow   := bcCurrentMidline
+
+            bcVolLowerOpen  := bcCurrentMidline
+            bcVolLowerClose := bcCurrentMidline
+            bcVolLowerHigh  := bcCurrentMidline
+            bcVolLowerLow   := bcCurrentMidline
+        else
+            bcVolUpperOpen  := bcCurrentMidline
+            bcVolUpperClose := bcCurrentMidline
+            bcVolUpperHigh  := bcCurrentMidline
+            bcVolUpperLow   := bcCurrentMidline
+
+            bcVolLowerOpen  := bcCurrentMidline
+            bcVolLowerClose := bcCurrentMidline - deltaHeight
+            bcVolLowerHigh  := bcCurrentMidline
+            bcVolLowerLow   := bcCurrentMidline - deltaHeight
+
+color bcUpperColor = na
+color bcLowerColor = na
+
+if bcVolMode == "Volume"
+    float transparency = bcVolTransparency(volume, bcSmoothedVol)
+    bcUpperColor := color.new(chart.fg_color, transparency)
+    bcLowerColor := color.new(chart.fg_color, transparency)
+else
+    bcUpperColor := bcGreen
+    bcLowerColor := bcRed
+
+//=============================================================================}
+// 3. 200 EMA FILTERED PARABOLIC SAR
+//=============================================================================={
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+psShow21 = input.bool(false, "Show the 21 EMA?"
+  , group = G_PS)
+
+psMaFastLength = input.int(7  , "MaFastLength", minval = 1, group = G_PS)
+psMaMedLength  = input.int(21 , "MaMedLength" , minval = 1, group = G_PS)
+psMaSlowLength = input.int(200, "MaSlowLength", minval = 1, group = G_PS)
+
+psStart     = input.float(0.02, "PSARstart", step = 0.01 , group = G_PS)
+psIncrement = input.float(0.02, "Increment", step = 0.01 , group = G_PS)
+psMaximum   = input.float(0.2 , "Maximum"  , step = 0.05 , group = G_PS)
+
+psAdxSmoothing = input.int(14, "ADX Smoothing", minval = 1, group = G_PS)
+psDiLength     = input.int(14, "DI Length"    , minval = 1, group = G_PS)
+psThreshold    = input.int(20, "Threshold"    , minval = 0, group = G_PS
+  , tooltip = "Minimum ADX required for a signal. Set to 0 to disable the trend-strength filter.")
+
+psShowBg = input.bool(true, "Plots Background"
+  , group   = G_PS
+  , tooltip = "Fills the band between the fast and medium MA, green while the fast MA leads.")
+
+psBullBg = input.color(color.new(#169400, 80), "Color 0", inline = 'psbg', group = G_PS)
+psBearBg = input.color(color.new(#ff1100, 80), "Color 1", inline = 'psbg', group = G_PS)
+
+psSarCss = input.color(#b2b5be, "Parabolic SAR Dots", group = G_PS)
+
+psLongCss  = input.color(#169400, "Long / Short"     , inline = 'pssig', group = G_PS)
+psShortCss = input.color(#ff1100, ""                 , inline = 'pssig', group = G_PS)
+psExitCss  = input.color(color.white, "Exit"         , inline = 'pssig', group = G_PS)
+
+//-----------------------------------------------------------------------------
+//Calculations
+//-----------------------------------------------------------------------------
+psFast = ta.ema(close, psMaFastLength)
+psMed  = ta.ema(close, psMaMedLength)
+psSlow = ta.ema(close, psMaSlowLength)
+psSar  = ta.sar(psStart, psIncrement, psMaximum)
+
+[psDiPlus, psDiMinus, psAdx] = ta.dmi(psDiLength, psAdxSmoothing)
+
+psSarBull = psSar < close
+psSarBear = psSar > close
+
+psFlipUp = psSarBull and not psSarBull[1]
+psFlipDn = psSarBear and not psSarBear[1]
+
+psTrendUp = close > psSlow
+psTrendDn = close < psSlow
+psStrongT = psAdx > psThreshold
+
+var bool psInLong  = false
+var bool psInShort = false
+
+//Exits are read from the state carried in from the previous bar, before it is updated
+psExitLong  = psInLong  and psFlipDn
+psExitShort = psInShort and psFlipUp
+
+if psExitLong
+    psInLong := false
+if psExitShort
+    psInShort := false
+
+//200 EMA trend filter + ADX strength filter on the SAR flip
+psLong  = psFlipUp and psTrendUp and psStrongT and not psInLong
+psShort = psFlipDn and psTrendDn and psStrongT and not psInShort
+
+if psLong
+    psInLong  := true
+    psInShort := false
+if psShort
+    psInShort := true
+    psInLong  := false
+
+
+//=============================================================================}
+// 4. KCHARTS SETUP — PULLBACK EMA + VWAP + 1H/4H LEVELS
+//=============================================================================={
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+kcEmaShow  = input.bool(true,    "Show EMA band", group = G_KEMA)
+kcEmaSrc   = input.source(close, "Source"       , group = G_KEMA)
+kcEmaFastL = input.int(9 , "Fast length", minval = 1, group = G_KEMA, inline = "kclen")
+kcEmaSlowL = input.int(21, "Slow length", minval = 1, group = G_KEMA, inline = "kclen")
+kcEmaFill  = input.bool(true, "Shade the band"   , group = G_KEMA)
+kcPbSignal = input.bool(true, "Mark pullback taps", group = G_KEMA
+  , tooltip = "Triangle when price dips into the band with the trend and closes back out of it.")
+kcEmaUpCol = input.color(color.new(#26a69a, 0), "Up"  , group = G_KEMA, inline = "kcc")
+kcEmaDnCol = input.color(color.new(#ef5350, 0), "Down", group = G_KEMA, inline = "kcc")
+
+kcVwapShow  = input.bool(true, "Show VWAP", group = G_KVW)
+kcVwapAnch  = input.string("Session", "Anchor", options = ["Session", "Week", "Month", "Quarter", "Year"], group = G_KVW)
+kcVwapSrc   = input.source(hlc3, "Source", group = G_KVW)
+kcVwapBands = input.bool(false, "Show ±σ bands", group = G_KVW)
+kcVwapMult1 = input.float(1.0, "σ ×" , minval = 0.1, step = 0.1, group = G_KVW, inline = "kcb")
+kcVwapMult2 = input.float(2.0, "and" , minval = 0.1, step = 0.1, group = G_KVW, inline = "kcb")
+kcVwapCol   = input.color(color.new(#2962ff, 0), "Color", group = G_KVW)
+
+kcTf1      = input.timeframe("60" , "Timeframe A", group = G_KLVL, inline = "kctf")
+kcTf2      = input.timeframe("240", "Timeframe B", group = G_KLVL, inline = "kctf")
+kcShowTf1  = input.bool(true, "A levels", group = G_KLVL, inline = "kcon")
+kcShowTf2  = input.bool(true, "B levels", group = G_KLVL, inline = "kcon")
+kcShowPrev = input.bool(true, "Previous period high / low", group = G_KLVL)
+kcShowCurr = input.bool(true, "Current period high / low" , group = G_KLVL
+  , tooltip = "The developing high and low of the period in progress. Updates live, so it moves within the bar by design.")
+kcShowMid  = input.bool(false, "Previous period midpoint", group = G_KLVL)
+kcLvlKeep  = input.int(1, "Periods kept", minval = 1, maxval = 20, group = G_KLVL
+  , tooltip = "How many past periods stay drawn per level. 1 shows only the live level. Capped at 20 because there are ten level series and every drawing here shares one 500-line budget with the order blocks and channels.")
+kcLvlExt    = input.int(12, "Extend right (bars)", minval = 0, maxval = 500, group = G_KLVL)
+kcLvlLabels = input.bool(true, "Labels", group = G_KLVL)
+kcLvlWidth  = input.int(1, "Width", minval = 1, maxval = 4, group = G_KLVL)
+kcPrevStyle = input.string("Solid" , "Previous style", options = ["Solid", "Dashed", "Dotted"], group = G_KLVL)
+kcCurrStyle = input.string("Dotted", "Current style" , options = ["Solid", "Dashed", "Dotted"], group = G_KLVL)
+kcTf1Col    = input.color(color.new(#ff9800, 0), "A color", group = G_KLVL, inline = "kclc")
+kcTf2Col    = input.color(color.new(#ab47bc, 0), "B color", group = G_KLVL, inline = "kclc")
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+kcLineStyle(string sty) =>
+    switch sty
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        =>          line.style_solid
+
+//"60" -> "1H", "240" -> "4H", "15" -> "15m"
+kcTfName(simple string tf) =>
+    int secs = timeframe.in_seconds(tf)
+    string name = secs % 86400 == 0 ? str.tostring(secs / 86400) + "D" :
+                  secs % 3600  == 0 ? str.tostring(secs / 3600)  + "H" :
+                  secs % 60    == 0 ? str.tostring(secs / 60)    + "m" : str.tostring(secs) + "s"
+    name
+
+//Draws one horizontal level that restarts at the top of every higher-timeframe
+//period. Each call site keeps its own line history via `var`, and turning the
+//level off deletes its drawings rather than leaving them on the chart.
+kcLevel(bool show, bool fresh, float price, color col, string txt, string sty) =>
+    var array<line> lns = array.new<line>()
+    var label lbl = na
+
+    if not show or na(price)
+        if array.size(lns) > 0
+            for i = 0 to array.size(lns) - 1
+                line.delete(array.get(lns, i))
+            array.clear(lns)
+        label.delete(lbl)
+        lbl := na
+    else
+        if fresh or array.size(lns) == 0
+            if array.size(lns) > 0
+                line.set_x2(array.get(lns, array.size(lns) - 1), bar_index)
+            array.push(lns, line.new(bar_index, price, bar_index + kcLvlExt, price, xloc = xloc.bar_index, color = col, width = kcLvlWidth, style = sty))
+            while array.size(lns) > kcLvlKeep
+                line.delete(array.shift(lns))
+
+        line cur = array.get(lns, array.size(lns) - 1)
+        line.set_xy1(cur, line.get_x1(cur), price)
+        line.set_xy2(cur, bar_index + kcLvlExt, price)
+        label.delete(lbl)
+        lbl := barstate.islast and kcLvlLabels ? label.new(bar_index + kcLvlExt, price, txt + "  " + str.tostring(price, format.mintick), xloc = xloc.bar_index, style = label.style_label_left, color = color.new(col, 88), textcolor = col, size = size.small) : na
+    price
+
+//-----------------------------------------------------------------------------
+//Calculations
+//-----------------------------------------------------------------------------
+kcEmaFast = ta.ema(kcEmaSrc, kcEmaFastL)
+kcEmaSlow = ta.ema(kcEmaSrc, kcEmaSlowL)
+
+kcTrendUp = kcEmaFast > kcEmaSlow and close > kcEmaSlow
+kcTrendDn = kcEmaFast < kcEmaSlow and close < kcEmaSlow
+kcBandCol = kcTrendUp ? kcEmaUpCol : kcTrendDn ? kcEmaDnCol : color.gray
+
+//A tap is a wick into the band that closes back on the trend side of it
+kcPbUp = kcTrendUp and low  <= kcEmaFast and close > kcEmaFast
+kcPbDn = kcTrendDn and high >= kcEmaFast and close < kcEmaFast
+
+//Each timeframe.change() is evaluated unconditionally — inside the switch arms they
+//would sit behind a branch and not run on every bar
+kcChgD = timeframe.change("D")
+kcChgW = timeframe.change("W")
+kcChgM = timeframe.change("M")
+kcChgQ = timeframe.change("3M")
+kcChgY = timeframe.change("12M")
+
+kcVwapReset = switch kcVwapAnch
+    "Week"    => kcChgW
+    "Month"   => kcChgM
+    "Quarter" => kcChgQ
+    "Year"    => kcChgY
+    =>           kcChgD
+
+[kcVw, kcVwUp1, kcVwDn1]   = ta.vwap(kcVwapSrc, kcVwapReset, kcVwapMult1)
+[kcVw2, kcVwUp2, kcVwDn2]  = ta.vwap(kcVwapSrc, kcVwapReset, kcVwapMult2)
+
+//lookahead_on with the [1] offset is the non-repainting way to read the COMPLETED
+//higher-timeframe bar. The developing values are read without lookahead — they move
+//inside the period on purpose. request.*() must stay unconditional, so these run
+//even with the module off.
+[kcPrevH1, kcPrevL1] = request.security(syminfo.tickerid, kcTf1, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[kcPrevH2, kcPrevL2] = request.security(syminfo.tickerid, kcTf2, [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[kcCurrH1, kcCurrL1] = request.security(syminfo.tickerid, kcTf1, [high, low])
+[kcCurrH2, kcCurrL2] = request.security(syminfo.tickerid, kcTf2, [high, low])
+
+//First chart bar of each higher-timeframe period
+kcNew1 = na(time(kcTf1)[1]) or time(kcTf1) != time(kcTf1)[1]
+kcNew2 = na(time(kcTf2)[1]) or time(kcTf2) != time(kcTf2)[1]
+
+//Nothing sensible to draw once the chart timeframe is at or above the level's
+kcFits1 = timeframe.in_seconds() <= timeframe.in_seconds(kcTf1)
+kcFits2 = timeframe.in_seconds() <= timeframe.in_seconds(kcTf2)
+
+kcN1 = kcTfName(kcTf1)
+kcN2 = kcTfName(kcTf2)
+
+kcPrevSty = kcLineStyle(kcPrevStyle)
+kcCurrSty = kcLineStyle(kcCurrStyle)
+
+//Hoisted out of the alert expressions: behind a short-circuiting `and` these would
+//not run on every bar
+kcVwapCrossUp = ta.crossover(close, kcVw)
+kcVwapCrossDn = ta.crossunder(close, kcVw)
+
+
+//=============================================================================}
+// 5. DEPTHFLOW — ORDER-FLOW LIQUIDITY & VOLUME BLOCKS
+//=============================================================================={
+// Everything is derived from raw OHLCV — no external data.
+//   Volume blocks  — volume-by-price over a trailing window; high-volume nodes are
+//                    drawn as liquidity bands (red supply above, green demand below)
+//                    labelled with traded volume and the buy/sell split.
+//   Dominance      — buy vs. sell volume (close-location method), top-right.
+//   Sweeps         — a wick pierces a recent swing and the candle closes back inside.
+//   Displacement   — impulsive candles whose body dwarfs recent ATR.
+//-----------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------
+dfLookback  = input.int(300, "Profile lookback (bars)", minval = 20, group = G_DFVP)
+dfBins      = input.int(120, "Resolution (bins)", minval = 10, maxval = 500, group = G_DFVP)
+dfMaxBlocks = input.int(8, "Max liquidity blocks", minval = 1, maxval = 30, group = G_DFVP)
+dfNodeRatio = input.float(0.55, "Node threshold (× peak bin)", minval = 0.1, maxval = 1.0, step = 0.05, group = G_DFVP)
+dfShowSplit = input.bool(true, "Show B/S split on blocks", group = G_DFVP)
+
+dfShowDom   = input.bool(true, "Show dominance read-out", group = G_DFDM)
+dfDomWindow = input.int(60, "Dominance window (bars)", minval = 5, group = G_DFDM)
+
+dfShowSweeps = input.bool(true, "Sweeps (liquidity grabs)", group = G_DFSG)
+dfSwingLen   = input.int(5, "Swing strength", minval = 1, group = G_DFSG)
+dfShowDisp   = input.bool(true, "Displacement", group = G_DFSG)
+dfAtrLen     = input.int(14, "ATR length", minval = 1, group = G_DFSG)
+dfDispMult   = input.float(1.6, "Displacement (× ATR body)", minval = 0.5, step = 0.1, group = G_DFSG)
+
+dfSupply = input.color(color.rgb(239, 83, 80) , "Supply", inline = 'dfc', group = G_DFVP)
+dfDemand = input.color(color.rgb(38, 166, 154), "Demand", inline = 'dfc', group = G_DFVP)
+
+//-----------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------
+dfFmtVol(float v) =>
+    v >= 1000000 ? str.tostring(v / 1000000, "#.##") + "M" : v >= 1000 ? str.tostring(v / 1000, "#.###") + "K" : str.tostring(v, "#")
+
+//Close-location buy fraction of a candle's volume
+dfBuyFrac(float h, float l, float c, float o) =>
+    float rng = h - l
+    rng > 0 ? (c - l) / rng : (c > o ? 1.0 : c < o ? 0.0 : 0.5)
+
+//-----------------------------------------------------------------------------
+//Volume-by-price liquidity blocks (rebuilt on the last bar)
+//-----------------------------------------------------------------------------
+var box[]   dfBoxes  = array.new<box>()
+var label[] dfLabels = array.new<label>()
+
+if dfEnable and barstate.islast
+    //Clear the previous render — these are rebuilt each tick rather than accumulated
+    for b in dfBoxes
+        box.delete(b)
+    array.clear(dfBoxes)
+    for lb in dfLabels
+        label.delete(lb)
+    array.clear(dfLabels)
+
+    int n = math.min(dfLookback, bar_index + 1)
+
+    float pHi = high
+    float pLo = low
+    for i = 0 to n - 1
+        pHi := math.max(pHi, high[i])
+        pLo := math.min(pLo, low[i])
+    float span = pHi - pLo
+
+    if span > 0
+        float binSize = span / dfBins
+        float[] volBin  = array.new_float(dfBins, 0.0)
+        float[] buyBin  = array.new_float(dfBins, 0.0)
+        float[] sellBin = array.new_float(dfBins, 0.0)
+
+        //Bin the window's volume, split into buy / sell per candle
+        for i = 0 to n - 1
+            float bf    = dfBuyFrac(high[i], low[i], close[i], open[i])
+            float vBuy  = volume[i] * bf
+            float vSell = volume[i] * (1 - bf)
+            int b0 = int(math.max(0, math.floor((low[i] - pLo) / binSize)))
+            int b1 = int(math.min(dfBins - 1, math.floor((high[i] - pLo) / binSize)))
+            int k  = b1 - b0 + 1
+            for b = b0 to b1
+                array.set(volBin , b, array.get(volBin , b) + volume[i] / k)
+                array.set(buyBin , b, array.get(buyBin , b) + vBuy / k)
+                array.set(sellBin, b, array.get(sellBin, b) + vSell / k)
+
+        float peak = array.max(volBin)
+        float thr  = peak * dfNodeRatio
+
+        //Merge contiguous high-volume bins into blocks
+        float[] bTop  = array.new_float()
+        float[] bBot  = array.new_float()
+        float[] bVol  = array.new_float()
+        float[] bBuy  = array.new_float()
+        float[] bSell = array.new_float()
+        bool  inRun = false
+        float rTop  = 0.0
+        float rBot  = 0.0
+        float rVol  = 0.0
+        float rBuy  = 0.0
+        float rSell = 0.0
+
+        for b = 0 to dfBins - 1
+            float vb = array.get(volBin, b)
+            if vb >= thr
+                float top = pLo + (b + 1) * binSize
+                float bot = pLo + b * binSize
+                if not inRun
+                    inRun := true
+                    rTop  := top
+                    rBot  := bot
+                    rVol  := vb
+                    rBuy  := array.get(buyBin, b)
+                    rSell := array.get(sellBin, b)
+                else
+                    rTop  := top
+                    rVol  += vb
+                    rBuy  += array.get(buyBin, b)
+                    rSell += array.get(sellBin, b)
+            else if inRun
+                array.push(bTop, rTop)
+                array.push(bBot, rBot)
+                array.push(bVol, rVol)
+                array.push(bBuy, rBuy)
+                array.push(bSell, rSell)
+                inRun := false
+
+        if inRun
+            array.push(bTop, rTop)
+            array.push(bBot, rBot)
+            array.push(bVol, rVol)
+            array.push(bBuy, rBuy)
+            array.push(bSell, rSell)
+
+        //Draw the heaviest blocks (left edge = window start, extend right)
+        int leftBar = bar_index - (n - 1)
+        int drawn = 0
+        while drawn < dfMaxBlocks and array.size(bVol) > 0
+            int   mi     = array.indexof(bVol, array.max(bVol))
+            float top    = array.get(bTop, mi)
+            float bot    = array.get(bBot, mi)
+            float vol    = array.get(bVol, mi)
+            float bvy    = array.get(bBuy, mi)
+            float svy    = array.get(bSell, mi)
+            float center = (top + bot) / 2
+            bool  above  = center >= close
+            color col    = above ? dfSupply : dfDemand
+            int   dom    = bvy + svy > 0 ? int(math.round(bvy / (bvy + svy) * 100)) : 50
+
+            box bx = box.new(leftBar, top, bar_index, bot, border_color = color.new(col, 45), border_width = 1, bgcolor = color.new(col, 84), extend = extend.right)
+            array.push(dfBoxes, bx)
+
+            string txt = dfFmtVol(vol) + (dfShowSplit ? "   B" + str.tostring(dom) + "/S" + str.tostring(100 - dom) : "")
+            label lbX = label.new(bar_index, center, txt, xloc = xloc.bar_index, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = size.small)
+            array.push(dfLabels, lbX)
+
+            array.remove(bTop , mi)
+            array.remove(bBot , mi)
+            array.remove(bVol , mi)
+            array.remove(bBuy , mi)
+            array.remove(bSell, mi)
+            drawn += 1
+
+//-----------------------------------------------------------------------------
+//Spot buy / sell dominance read-out
+//-----------------------------------------------------------------------------
+var table dfDomTable = table.new(position.bottom_right, 1, 1, border_width = 1)
+if dfEnable and dfShowDom and barstate.islast
+    float db = 0.0
+    float ds = 0.0
+    int   m  = math.min(dfDomWindow, bar_index + 1)
+    for i = 0 to m - 1
+        float bf = dfBuyFrac(high[i], low[i], close[i], open[i])
+        db += volume[i] * bf
+        ds += volume[i] * (1 - bf)
+    float tot = db + ds
+    int   bp  = tot > 0 ? int(math.round(db / tot * 100)) : 50
+    color dc  = bp >= 50 ? dfDemand : dfSupply
+    table.cell(dfDomTable, 0, 0, "B " + str.tostring(bp) + "%   S " + str.tostring(100 - bp) + "%", text_color = dc, text_size = size.normal, bgcolor = color.new(color.black, 70))
+
+//-----------------------------------------------------------------------------
+//Sweeps and displacement
+//-----------------------------------------------------------------------------
+dfPh = ta.pivothigh(dfSwingLen, dfSwingLen)
+dfPl = ta.pivotlow(dfSwingLen, dfSwingLen)
+
+var float dfLastPH = na
+var float dfLastPL = na
+if not na(dfPh)
+    dfLastPH := dfPh
+if not na(dfPl)
+    dfLastPL := dfPl
+
+//Buy-side sweep: poke above a swing high, close back below it
+dfSweepHigh = dfShowSweeps and not na(dfLastPH) and high > dfLastPH and close < dfLastPH and not (high[1] > dfLastPH and close[1] < dfLastPH)
+//Sell-side sweep: dip under a swing low, close back above it
+dfSweepLow  = dfShowSweeps and not na(dfLastPL) and low < dfLastPL and close > dfLastPL and not (low[1] < dfLastPL and close[1] > dfLastPL)
+
+dfAtrv = ta.atr(dfAtrLen)
+dfBody = math.abs(close - open)
+dfDispUp = dfShowDisp and dfBody > dfAtrv * dfDispMult and close >= open
+dfDispDn = dfShowDisp and dfBody > dfAtrv * dfDispMult and close <  open
+
+//=============================================================================}
+// VISUALS
+//=============================================================================={
+//The two hidden display.none order-block plots were removed: they rendered nothing
+//and only fed alertcondition(), which is gone, but still cost a plot output each.
+
+//--- Breakout channels
+plotshape(bcEnable and bcUpbreak   != 0 ? bcUpbreak   : na, "Bullish Breakout Signal", shape.labelup  , location.absolute, bcGreen, text = "▲", textcolor = chart.fg_color)
+plotshape(bcEnable and bcDownbreak != 0 ? bcDownbreak : na, "Bearish Breakout Signal", shape.labeldown, location.absolute, bcRed  , text = "▼", textcolor = chart.fg_color)
+
+plotcandle(bcVolUpperOpen, bcVolUpperHigh, bcVolUpperLow, bcVolUpperClose, "Volume Up"  , color = bcUpperColor, wickcolor = bcUpperColor, bordercolor = bcUpperColor)
+plotcandle(bcVolLowerOpen, bcVolLowerHigh, bcVolLowerLow, bcVolLowerClose, "Volume Down", color = bcLowerColor, wickcolor = bcLowerColor, bordercolor = bcLowerColor)
+
+bcVolumeAvailable = not na(volume)
+
+if bcEnable and barstate.islast
+    bool channelActive = bcBoxes.size() > 0 and bcUpbreak == 0 and bcDownbreak == 0
+
+    if array.size(bcGaugeLines) > 0
+        for ln in bcGaugeLines
+            ln.delete()
+        bcGaugeLines.clear()
+
+    if not na(bcGaugeLabel)
+        bcGaugeLabel.delete()
+        bcGaugeLabel := na
+
+    if channelActive
+        float topBound    = bcBoxes.get(0).get_top()
+        float bottomBound = bcBoxes.get(0).get_bottom()
+
+        if not na(topBound) and not na(bottomBound) and topBound != bottomBound
+            int   segments = 21
+            float segLen   = (topBound - bottomBound) / segments
+
+            for i = 0 to segments - 1
+                float y1 = topBound - i * segLen
+                float y2 = topBound - (i + 1) * segLen
+                color segCol = color.from_gradient(y1, bottomBound, topBound, bcRed, bcGreen)
+                line ln = line.new(x1 = bar_index + 2, y1 = y1, x2 = bar_index + 2, y2 = y2, color = segCol, width = 4)
+                bcGaugeLines.unshift(ln)
+
+            float delvol = -100 * 2 * ((bcVold - bcLvold) / (bcHvold - bcLvold) - 0.5)
+            delvol := math.max(math.min(delvol, 100), -100)
+            float pointerPos = topBound - ((delvol + 100) / 200) * (topBound - bottomBound)
+            bcGaugeLabel := label.new(x = bar_index + 3, y = pointerPos, text = "◀", color = na, textcolor = chart.fg_color, size = size.small, style = label.style_label_left)
+
+if bcEnable and not bcVolumeAvailable
+    var bcGaugeWarnTable = table.new(position = position.top_right, columns = 1, rows = 1, bgcolor = bcRed, border_width = 1, border_color = chart.fg_color, frame_color = chart.fg_color, frame_width = 1)
+    table.cell(bcGaugeWarnTable, 0, 0, "Volume not available\nGauge may not work as expected", text_color = chart.fg_color, text_halign = text.align_center, text_size = size.small)
+
+//--- 200 EMA filtered Parabolic SAR
+plotshape(psEnable and psLong      ? low  : na, "Parabolic SAR long" , shape.labelup  , location.belowbar, psLongCss , text = "Long" , textcolor = color.white, size = size.tiny)
+plotshape(psEnable and psShort     ? high : na, "Parabolic SAR short", shape.labeldown, location.abovebar, psShortCss, text = "Short", textcolor = color.white, size = size.tiny)
+plotshape(psEnable and psExitLong  ? high : na, "Exit long"          , shape.triangledown, location.abovebar, psExitCss, text = "EL", textcolor = chart.fg_color, size = size.tiny)
+plotshape(psEnable and psExitShort ? low  : na, "Exit short"         , shape.triangleup  , location.belowbar, psExitCss, text = "ES", textcolor = chart.fg_color, size = size.tiny)
+
+psFastPlot = plot(psEnable ? psFast : na, "Fast MA"     , color.new(color.gray, 40), 1)
+psMedPlot  = plot(psEnable ? psMed  : na, "Med MA (21)"  , psShow21 ? color.olive : na, 1)
+plot(psEnable ? psSlow : na, "Slow MA (200)" , psShortCss, 2)
+plot(psEnable ? psSar  : na, "Parabolic SAR" , psSarCss  , 1, plot.style_cross)
+
+//"Plots Background" with Color 0 / Color 1 in the Style tab is a fill() between two
+//plots — a band tracking price, not a bgcolor() washing the whole chart. The 21 EMA
+//keeps its plot when hidden so the band survives the "Show the 21 EMA?" toggle.
+fill(psFastPlot, psMedPlot, psEnable and psShowBg ? (psFast > psMed ? psBullBg : psBearBg) : na, title = "Plots Background")
+
+
+//--- KCharts Setup
+kcFastPlot = plot(kcEnable and kcEmaShow ? kcEmaFast : na, "KC EMA fast", color = color.new(kcBandCol, 20), linewidth = 1)
+kcSlowPlot = plot(kcEnable and kcEmaShow ? kcEmaSlow : na, "KC EMA slow", color = color.new(kcBandCol, 20), linewidth = 2)
+fill(kcFastPlot, kcSlowPlot, color = kcEnable and kcEmaShow and kcEmaFill ? color.new(kcBandCol, 88) : na, title = "KC EMA band")
+
+sigMark(kcEnable and kcPbSignal and kcPbUp, "", kcEmaUpCol, kcEmaUpCol, label.style_triangleup  , yloc.belowbar)
+sigMark(kcEnable and kcPbSignal and kcPbDn, "", kcEmaDnCol, kcEmaDnCol, label.style_triangledown, yloc.abovebar)
+
+plot(kcEnable and kcVwapShow ? kcVw : na, "VWAP", color = kcVwapCol, linewidth = 2)
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwUp1 : na, "VWAP +σ1", color = color.new(kcVwapCol, 55))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwDn1 : na, "VWAP -σ1", color = color.new(kcVwapCol, 55))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwUp2 : na, "VWAP +σ2", color = color.new(kcVwapCol, 75))
+plot(kcEnable and kcVwapShow and kcVwapBands ? kcVwDn2 : na, "VWAP -σ2", color = color.new(kcVwapCol, 75))
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowPrev, kcNew1, kcPrevH1, kcTf1Col, kcN1 + " PH", kcPrevSty)
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowPrev, kcNew1, kcPrevL1, kcTf1Col, kcN1 + " PL", kcPrevSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowPrev, kcNew2, kcPrevH2, kcTf2Col, kcN2 + " PH", kcPrevSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowPrev, kcNew2, kcPrevL2, kcTf2Col, kcN2 + " PL", kcPrevSty)
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowCurr, kcNew1, kcCurrH1, kcTf1Col, kcN1 + " H", kcCurrSty)
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowCurr, kcNew1, kcCurrL1, kcTf1Col, kcN1 + " L", kcCurrSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowCurr, kcNew2, kcCurrH2, kcTf2Col, kcN2 + " H", kcCurrSty)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowCurr, kcNew2, kcCurrL2, kcTf2Col, kcN2 + " L", kcCurrSty)
+
+kcLevel(kcEnable and kcShowTf1 and kcFits1 and kcShowMid, kcNew1, math.avg(kcPrevH1, kcPrevL1), color.new(kcTf1Col, 40), kcN1 + " EQ", line.style_dashed)
+kcLevel(kcEnable and kcShowTf2 and kcFits2 and kcShowMid, kcNew2, math.avg(kcPrevH2, kcPrevL2), color.new(kcTf2Col, 40), kcN2 + " EQ", line.style_dashed)
+
+
+//--- DepthFlow
+sigMark(dfEnable and dfSweepHigh, "sweep", color.new(dfSupply, 100), dfSupply, label.style_label_down, yloc.abovebar)
+sigMark(dfEnable and dfSweepLow , "sweep", color.new(dfDemand, 100), dfDemand, label.style_label_up  , yloc.belowbar)
+sigMark(dfEnable and dfDispUp, "DISP", color.new(dfDemand, 100), dfDemand, label.style_label_up  , yloc.belowbar)
+sigMark(dfEnable and dfDispDn, "DISP", color.new(dfSupply, 100), dfSupply, label.style_label_down, yloc.abovebar)
+
+//=============================================================================}
+// ALERTS
+//=============================================================================={
+//alertcondition() costs one plot output each; 25 of them put the script over
+//TradingView's 64-plot ceiling. Every signal fires through alert() instead, which
+//costs nothing. Create ONE alert on this indicator with the condition
+//"Any alert() function call" — each message names the signal that fired.
+obBullFormed = not na(obBullOb)
+obBearFormed = not na(obBearOb)
+
+//Hoisted: behind a short-circuiting `and` these would not run on every bar
+kcA1Up = ta.crossover(close, kcPrevH1)
+kcA1Dn = ta.crossunder(close, kcPrevL1)
+kcA2Up = ta.crossover(close, kcPrevH2)
+kcA2Dn = ta.crossunder(close, kcPrevL2)
+
+if alertsOn
+    //Order blocks
+    if obBullFormed
+        alert("Bullish order block detected", alert.freq_once_per_bar_close)
+    if obBearFormed
+        alert("Bearish order block detected", alert.freq_once_per_bar_close)
+    if obMitigatedBull
+        alert("Bullish order block mitigated", alert.freq_once_per_bar_close)
+    if obMitigatedBear
+        alert("Bearish order block mitigated", alert.freq_once_per_bar_close)
+
+    //Breakout channels
+    if bcNewChannelFormed
+        alert("New breakout channel formed", alert.freq_once_per_bar_close)
+    if bcBullishBreakout
+        alert("Bullish breakout — price broke above the channel", alert.freq_once_per_bar_close)
+    if bcBearishBreakout
+        alert("Bearish breakout — price broke below the channel", alert.freq_once_per_bar_close)
+
+    //Parabolic SAR
+    if psLong
+        alert("PSAR long — 200 EMA filtered", alert.freq_once_per_bar_close)
+    if psShort
+        alert("PSAR short — 200 EMA filtered", alert.freq_once_per_bar_close)
+    if psExitLong
+        alert("PSAR exit long", alert.freq_once_per_bar_close)
+    if psExitShort
+        alert("PSAR exit short", alert.freq_once_per_bar_close)
+
+    //KCharts Setup
+    if kcPbUp
+        alert("Pullback tap up — tapped the EMA band in an uptrend and closed back above", alert.freq_once_per_bar_close)
+    if kcPbDn
+        alert("Pullback tap down — tapped the EMA band in a downtrend and closed back below", alert.freq_once_per_bar_close)
+    if kcA1Up
+        alert("Close above previous " + kcN1 + " high", alert.freq_once_per_bar_close)
+    if kcA1Dn
+        alert("Close below previous " + kcN1 + " low", alert.freq_once_per_bar_close)
+    if kcA2Up
+        alert("Close above previous " + kcN2 + " high", alert.freq_once_per_bar_close)
+    if kcA2Dn
+        alert("Close below previous " + kcN2 + " low", alert.freq_once_per_bar_close)
+    if kcVwapShow and kcVwapCrossUp
+        alert("Close above VWAP", alert.freq_once_per_bar_close)
+    if kcVwapShow and kcVwapCrossDn
+        alert("Close below VWAP", alert.freq_once_per_bar_close)
+
+    //DepthFlow
+    if dfSweepHigh
+        alert("Liquidity swept above a swing high, closed back below", alert.freq_once_per_bar_close)
+    if dfSweepLow
+        alert("Liquidity swept below a swing low, closed back above", alert.freq_once_per_bar_close)
+    if dfDispUp
+        alert("Displacement up — impulsive bullish candle vs ATR", alert.freq_once_per_bar_close)
+    if dfDispDn
+        alert("Displacement down — impulsive bearish candle vs ATR", alert.freq_once_per_bar_close)
+
+    //Confluence
+    if psLong and bcBullishBreakout
+        alert("Confluence long — PSAR long with a bullish channel breakout", alert.freq_once_per_bar_close)
+    if psShort and bcBearishBreakout
+        alert("Confluence short — PSAR short with a bearish channel breakout", alert.freq_once_per_bar_close)
+
+//=============================================================================}
