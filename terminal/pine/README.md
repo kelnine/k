@@ -15,6 +15,11 @@ combined unless explicitly asked for.
 | 4 | `04_combined_smc_suite.pine` | Combined SMC Suite | 200 EMA filtered Parabolic SAR (entry and exit). Signals without exits: order blocks, breakout channels, EMA pullback taps, previous 1H/4H high/low and VWAP crosses, sweeps, displacement |
 | 5 | `05_smart_money_suite_v4.pine` | Smart Money Suite v4 [AlgoAlpha] | Sniper long/short (BOS entry, swing stop, 2R target). Signals without exits: channel breakouts, BOS/CHoCH, liquidity sweeps, high-confluence score |
 | 6 | `06_wyckoff_theultimator5.pine` | Wyckoff [theUltimator5] | Wyckoff entry (Phase C test or LPS/LPSY, by strictness); entries only, no stop or target. Phase events (SC/BC, Spring/UTAD, SOS/SOW, Phase E) as signals |
+| 7 | `07_order_flow_desk.pine` | Order Flow Desk [v6] | None yet: levels and events only (session volume profile, VWAP bands, delta/CVD, absorption, equal-high/low pools and sweeps, user-entered gamma levels), no entry or exit rules |
+
+The same idea often appears in several scripts with different details (fair
+value gaps in 1, 2, 3 and 5; sweeps in 1, 2, 4, 5 and 7). Each port uses the
+definition from its own script, so a strategy matches the chart it came from.
 
 Licences travel with the code. Script 4 contains LuxAlgo's Order Block
 Detector (CC BY-NC-SA 4.0: attribution, non-commercial, same licence) and
