@@ -14,9 +14,10 @@ combined unless explicitly asked for.
 | 3 | `03_nq_price_action_toolkit.pine` | NQ Price Action Toolkit | None yet: levels and zones only (FVG/iFVG, session highs/lows, PDH/PDL, 00:00 and 09:30 opens, NDOG/NWOG, fib dealing range, equal highs/lows, EMA 9/21 cloud), no entry or exit rules |
 | 4 | `04_combined_smc_suite.pine` | Combined SMC Suite | 200 EMA filtered Parabolic SAR (entry and exit). Signals without exits: order blocks, breakout channels, EMA pullback taps, previous 1H/4H high/low and VWAP crosses, sweeps, displacement |
 | 5 | `05_smart_money_suite_v4.pine` | Smart Money Suite v4 [AlgoAlpha] | Sniper long/short (BOS entry, swing stop, 2R target). Signals without exits: channel breakouts, BOS/CHoCH, liquidity sweeps, high-confluence score |
+| 6 | `06_wyckoff_theultimator5.pine` | Wyckoff [theUltimator5] | Wyckoff entry (Phase C test or LPS/LPSY, by strictness); entries only, no stop or target. Phase events (SC/BC, Spring/UTAD, SOS/SOW, Phase E) as signals |
 
 Licences travel with the code. Script 4 contains LuxAlgo's Order Block
 Detector (CC BY-NC-SA 4.0: attribution, non-commercial, same licence) and
 AlgoAlpha's Smart Money Breakout Channels (MPL 2.0); a port of either keeps
-its own file, the original notice and the same licence. Script 5 names
-AlgoAlpha but states no licence, so it is treated as private use only.
+its own file, the original notice and the same licence. Scripts 5 and 6
+state no licence, so they are treated as private use only.
