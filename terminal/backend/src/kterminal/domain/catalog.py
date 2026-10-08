@@ -500,6 +500,11 @@ class InstrumentCatalog:
                 if window_id not in windows:
                     problems.append(f"cost profile {profile.id}: unknown window {window_id!r}")
         for vp in self.venue_profiles.values():
+            for symbol in sorted(set(vp.data) - set(vp.execution)):
+                problems.append(
+                    f"venue profile {vp.id}: data listing for {symbol} without an execution "
+                    "listing (data only selects where an executed instrument's bars come from)"
+                )
             for kind, mapping in (("execution", vp.execution), ("data", vp.data)):
                 for symbol, key in mapping.items():
                     if symbol not in self.instruments:

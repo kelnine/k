@@ -44,6 +44,7 @@ async def test_explain_trade_reconstructs_the_whole_chain(session: AsyncSession)
             id=decision_id,
             signal_id=signal_id,
             account_id=account.account_id,
+            strategy_instance_id="demo_sma_fast",
             account_config_version_id=account.config_version_id,
             decided_at=T0,
             approved=True,

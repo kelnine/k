@@ -44,6 +44,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     Dialect,
@@ -66,7 +67,7 @@ from sqlalchemy import (
     text,
     true,
 )
-from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID, ExcludeConstraint
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -392,7 +393,18 @@ class InstrumentListingRow(Base):
 
     __tablename__ = "instrument_listings"
     __table_args__ = (
-        UniqueConstraint("venue", "venue_symbol"),
+        # A venue symbol names one *enabled* listing. A retired listing that history still
+        # references keeps its symbol without reserving it, and the check runs at commit so
+        # symbols can move between listings within one catalog update.
+        ExcludeConstraint(
+            ("venue", "="),
+            ("venue_symbol", "="),
+            where=text("enabled"),
+            using="btree",
+            deferrable=True,
+            initially="DEFERRED",
+            name="ex_instrument_listings_venue_venue_symbol",
+        ),
         one_of("contract_type", enum_values(ContractType)),
         one_of("quantity_unit", enum_values(QuantityUnit)),
         one_of("pnl_model", enum_values(PnlModel)),
@@ -813,6 +825,10 @@ class SignalRow(Base):
             ["strategy_instance_id", "definition_id"],
             ["strategy_instances.id", "strategy_instances.definition_id"],
         ),
+        UniqueConstraint("id", "strategy_instance_id"),  # target of composite FKs
+        CheckConstraint(
+            "expires_after_bars IS NULL OR expires_after_bars >= 1", name="expires_after_bars"
+        ),
         Index(None, "strategy_instance_id", "signal_time"),
         Index(None, "strategy_version_id"),
         Index(None, "run_id", postgresql_where=text("run_id IS NOT NULL")),
@@ -837,6 +853,8 @@ class SignalRow(Base):
     take_profit: Mapped[Price | None]
     risk_pct: Mapped[Pct | None]  # requested risk; capped by the account configuration
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    reason: Mapped[str | None]  # the strategy's own explanation (e.g. why NO_TRADE)
+    expires_after_bars: Mapped[int | None]  # resting entries: lifetime in primary bars
     meta: Mapped[Json] = mapped_column("metadata", server_default=EMPTY_JSON)
     market_snapshot: Mapped[Json] = mapped_column(server_default=EMPTY_JSON)
     raw_payload: Mapped[Json] = mapped_column(server_default=EMPTY_JSON)  # INVALID: as received
@@ -857,10 +875,20 @@ class RiskDecisionRow(Base):
     __tablename__ = "risk_decisions"
     __table_args__ = (
         UniqueConstraint("signal_id", "account_id"),
+        UniqueConstraint("id", "account_id", "approved"),  # target: orders' approval check
         CheckConstraint("approved OR primary_reason IS NOT NULL", name="rejection_has_reason"),
         ForeignKeyConstraint(
             ["account_id", "account_config_version_id"],
             ["account_config_versions.account_id", "account_config_versions.id"],
+        ),
+        # A decision is about one instance's signal, on an account allocated to that instance.
+        ForeignKeyConstraint(
+            ["signal_id", "strategy_instance_id"],
+            ["signals.id", "signals.strategy_instance_id"],
+        ),
+        ForeignKeyConstraint(
+            ["account_id", "strategy_instance_id"],
+            ["account_allocations.account_id", "account_allocations.instance_id"],
         ),
         Index(None, "account_id", "decided_at"),
         Index(None, "run_id", postgresql_where=text("run_id IS NOT NULL")),
@@ -869,6 +897,7 @@ class RiskDecisionRow(Base):
     id: Mapped[UuidPK]
     signal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("signals.id"))
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id"))
+    strategy_instance_id: Mapped[str] = mapped_column(ForeignKey("strategy_instances.id"))
     account_config_version_id: Mapped[uuid.UUID]
     decided_at: Mapped[datetime]
     approved: Mapped[bool]
@@ -953,6 +982,20 @@ class TradeRow(Base):
             ["account_id", "account_config_version_id"],
             ["account_config_versions.account_id", "account_config_versions.id"],
         ),
+        # Isolation in the schema: a trade sits on an account allocated to its instance and
+        # is opened/closed only by that instance's own signals.
+        ForeignKeyConstraint(
+            ["account_id", "strategy_instance_id"],
+            ["account_allocations.account_id", "account_allocations.instance_id"],
+        ),
+        ForeignKeyConstraint(
+            ["entry_signal_id", "strategy_instance_id"],
+            ["signals.id", "signals.strategy_instance_id"],
+        ),
+        ForeignKeyConstraint(
+            ["exit_signal_id", "strategy_instance_id"],
+            ["signals.id", "signals.strategy_instance_id"],
+        ),
         ForeignKeyConstraint(
             ["venue", "instrument"],
             ["instrument_listings.venue", "instrument_listings.instrument"],
@@ -1025,6 +1068,16 @@ class OrderRow(Base):
         CheckConstraint(
             "purpose <> 'ENTRY' OR risk_decision_id IS NOT NULL", name="entry_has_risk_decision"
         ),
+        # ...and that decision approved it, for this account: entry_approved is TRUE for
+        # ENTRY orders and NULL otherwise (MATCH SIMPLE then skips the check).
+        ForeignKeyConstraint(
+            ["risk_decision_id", "account_id", "entry_approved"],
+            ["risk_decisions.id", "risk_decisions.account_id", "risk_decisions.approved"],
+        ),
+        ForeignKeyConstraint(
+            ["account_id", "strategy_instance_id"],
+            ["account_allocations.account_id", "account_allocations.instance_id"],
+        ),
         ForeignKeyConstraint(
             ["venue", "instrument"],
             ["instrument_listings.venue", "instrument_listings.instrument"],
@@ -1046,6 +1099,9 @@ class OrderRow(Base):
     parent_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"))
     run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id"))
     purpose: Mapped[str]
+    entry_approved: Mapped[bool | None] = mapped_column(
+        Computed("CASE WHEN purpose = 'ENTRY' THEN true END", persisted=True)
+    )
     mode: Mapped[str]
     venue: Mapped[str]
     instrument: Mapped[str]

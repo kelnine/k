@@ -12,6 +12,7 @@ from decimal import Decimal
 import numpy as np
 from pydantic import Field
 
+from kterminal.core.enums import OrderType
 from kterminal.domain.market import Bar
 from kterminal.strategy_engine import SignalOutput, Strategy, StrategyMeta, StrategyParams
 from kterminal.strategy_engine.base import NoParams
@@ -152,6 +153,22 @@ class Saboteur(Strategy[SabotageParams]):
             return good.model_copy(update={"timestamp": bar.close_time.replace(year=2030)})
         if mode == "flood":
             return [good] * 1_000
+        if mode == "nul_meta":  # PostgreSQL text/jsonb cannot hold NUL
+            return good.model_copy(update={"metadata": {"note": "a\x00b"}})
+        if mode == "tiny_risk":  # rounds to 0 at the 4 decimals risk is stored with
+            return self.ctx.long(stop_loss=bar.close - 5, risk=Decimal("0.00004"))
+        if mode == "huge_target":  # beyond numeric(24,10)
+            return self.ctx.long(stop_loss=bar.close - 5, take_profit=Decimal("1e14"))
+        if mode == "reasoned":
+            if self.ctx.bars.close.size % 2:
+                return self.ctx.no_trade("filtered by news window", persist=True)
+            return self.ctx.long(
+                stop_loss=bar.close - 5,
+                entry=bar.close - 1,
+                order_type=OrderType.LIMIT,
+                expires_after_bars=3,
+                reason="pullback entry",
+            )
         if mode == "decimal":
             decimal.getcontext().prec = 4  # would break everyone's money maths if it leaked
             decimal.getcontext().rounding = decimal.ROUND_DOWN

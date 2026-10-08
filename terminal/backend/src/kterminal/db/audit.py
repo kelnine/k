@@ -17,7 +17,15 @@ so modifying, deleting or re-ordering any row breaks every hash after it, and
 2. appends are serialised with a transaction-level advisory lock, so the chain
    stays linear even with several writers (the price: audit writers queue
    behind each other until their transactions commit);
-3. the hash chain makes any tampering by someone who bypasses (1) visible.
+3. the hash chain makes a modified, deleted or re-ordered entry visible to
+   :func:`verify`, even to someone who got past (1).
+
+The chain is not keyed: an attacker with table-owner rights can rewrite and
+re-hash the whole log, or drop its newest entries, without :func:`verify`
+noticing. Protection against the owner comes from deployment — the
+application role gets only ``INSERT, SELECT`` on ``audit_log`` (no DDL), and
+off-site backups (docs/09) — and, later, from anchoring the chain head outside
+the database.
 
 ``data`` is hashed exactly as PostgreSQL's ``jsonb`` will return it (it is
 normalised by a round trip through ``jsonb`` first), so verification never

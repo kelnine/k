@@ -206,7 +206,7 @@ class PostgresLabStore:
         synthetic or historical results can never contaminate forward-test history.
         """
         account_id, version_id = uuid7(), uuid7()
-        run_name = f"{name} · run {run_id.hex[-8:]}"
+        run_name = f"{name} · run {run_id}"  # the full id: accounts.name is unique
         document = settings.document()
         async with self.db.session() as session:
             session.add(
@@ -284,6 +284,7 @@ class PostgresLabStore:
                         "id": r.id,
                         "signal_id": r.signal_id,
                         "account_id": r.account_id,
+                        "strategy_instance_id": r.instance_id,
                         "account_config_version_id": r.account_config_version_id,
                         "decided_at": r.decided_at,
                         "approved": r.approved,
@@ -309,7 +310,11 @@ class PostgresLabStore:
                 await session.execute(
                     stmt.on_conflict_do_update(
                         index_elements=[m.TradeRow.id],
-                        set_={k: v for k, v in values.items() if k != "id"},
+                        # ON CONFLICT does not apply the column's onupdate: set it explicitly
+                        set_={
+                            **{k: v for k, v in values.items() if k != "id"},
+                            "updated_at": func.now(),
+                        },
                     )
                 )
         elif kind is OrderRecord:
@@ -379,8 +384,27 @@ class PostgresLabStore:
                 ],
             )
         elif kind is EquityRecord:
+            # One snapshot per (account, instant): a later record for the same instant
+            # replaces the earlier one, in this batch and across batches.
+            latest = {(r.account_id, r.ts): r for r in records}
+            stmt = insert(m.EquitySnapshotRow)
             await session.execute(
-                insert(m.EquitySnapshotRow),
+                stmt.on_conflict_do_update(
+                    index_elements=[m.EquitySnapshotRow.account_id, m.EquitySnapshotRow.ts],
+                    set_={
+                        column: stmt.excluded[column]
+                        for column in (
+                            "balance",
+                            "equity",
+                            "open_pnl",
+                            "open_risk",
+                            "daily_pnl",
+                            "drawdown",
+                            "high_water_mark",
+                            "run_id",
+                        )
+                    },
+                ),
                 [
                     {
                         "account_id": r.account_id,
@@ -394,7 +418,7 @@ class PostgresLabStore:
                         "high_water_mark": r.high_water_mark,
                         "run_id": run_id,
                     }
-                    for r in records
+                    for r in latest.values()
                 ],
             )
         elif kind is FaultRecord:
@@ -441,9 +465,10 @@ class PostgresLabStore:
             "signal_time": r.received_at,
             "status": r.status,
             "reject_code": r.reject_code,
-            "reject_detail": r.reject_detail,
+            # strategy-supplied text: PostgreSQL text/jsonb cannot hold NUL characters
+            "reject_detail": _no_nul(r.reject_detail),
             "market_snapshot": r.market_snapshot,
-            "raw_payload": r.raw_payload,
+            "raw_payload": _no_nul(r.raw_payload),
             "catalog_snapshot_id": snapshot_id,
             "correlation_id": r.id,
             "idempotency_key": f"{run_id}:{r.id}",
@@ -463,6 +488,8 @@ class PostgresLabStore:
                 if signal.confidence is not None
                 else None,
                 meta=signal.metadata,
+                reason=signal.reason,
+                expires_after_bars=signal.expires_after_bars,
                 idempotency_key=(
                     f"{run_id}:{r.instance_id}:{signal.symbol}:{signal.timeframe}:"
                     f"{signal.timestamp.isoformat()}:{signal.signal.value}:{r.id}"
@@ -664,6 +691,17 @@ class PostgresLabStore:
                     )
                 )
         return checks
+
+
+def _no_nul(value: Any) -> Any:
+    """``value`` with NUL characters replaced (text and jsonb columns reject them)."""
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, dict):
+        return {_no_nul(k): _no_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_no_nul(v) for v in value]
+    return value
 
 
 async def _count(session: AsyncSession, stmt: Any) -> int:

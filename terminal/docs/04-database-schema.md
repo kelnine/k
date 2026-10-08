@@ -43,8 +43,13 @@ Conventions:
   `strategy_instance_id`, a version must belong to its instance's definition,
   and a risk decision's or trade's `account_config_version_id` must belong to
   *its* `account_id` — composite foreign keys onto `UNIQUE (owner_id, id)`.
-  Each instance has at most one dedicated account
-  (`accounts.strategy_instance_id` is unique).
+  Every trade, order and risk decision sits on an account **allocated to its
+  instance** (`(account_id, strategy_instance_id)` → `account_allocations`),
+  trades are opened/closed and decisions taken only on **that instance's own
+  signals** (`(signal_id, strategy_instance_id)` → `UNIQUE (signals.id,
+  strategy_instance_id)`), and an ENTRY order must cite an **approved**
+  decision of **the same account**. Each instance has at most one dedicated
+  account (`accounts.strategy_instance_id` is unique).
 * Nothing is deleted implicitly: there is no `ON DELETE CASCADE`. Reference
   rows that history points at are disabled, never deleted (see §4.2).
 * High-volume tables (`webhook_events`, `order_events`, `equity_snapshots`,
@@ -238,7 +243,11 @@ CREATE TABLE instrument_listings (
     CHECK (max_qty IS NULL OR max_qty >= min_qty),
     CHECK (tick_size > 0 AND contract_size > 0 AND min_qty > 0 AND qty_step > 0),
     CHECK (min_notional IS NULL OR min_notional >= 0),
-    UNIQUE (venue, venue_symbol)
+    -- a venue symbol names one *enabled* listing; checked at commit, so symbols can move
+    -- between listings in one catalog update and a retired listing never reserves one
+    CONSTRAINT ex_instrument_listings_venue_venue_symbol
+        EXCLUDE USING btree (venue WITH =, venue_symbol WITH =) WHERE (enabled)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE symbol_aliases (
@@ -566,6 +575,8 @@ CREATE TABLE signals (
     take_profit       numeric(24,10),
     risk_pct          numeric(8,4),                      -- requested risk; capped by the account configuration
     confidence        numeric(5,4),
+    reason            text,                              -- the strategy's explanation (e.g. why NO_TRADE)
+    expires_after_bars integer CHECK (expires_after_bars IS NULL OR expires_after_bars >= 1),
     metadata          jsonb NOT NULL DEFAULT '{}'::jsonb,
     market_snapshot   jsonb NOT NULL DEFAULT '{}'::jsonb,
     raw_payload       jsonb NOT NULL DEFAULT '{}'::jsonb,  -- INVALID: as received
@@ -582,7 +593,8 @@ CREATE TABLE signals (
     CHECK (confidence >= 0 AND confidence <= 1),
     CHECK (action IN ('LONG', 'SHORT', 'EXIT_LONG', 'EXIT_SHORT', 'MOVE_SL', 'NO_TRADE')),
     FOREIGN KEY (strategy_instance_id, definition_id) REFERENCES strategy_instances (id, definition_id),
-    FOREIGN KEY (strategy_instance_id, strategy_version_id) REFERENCES strategy_versions (instance_id, id)
+    FOREIGN KEY (strategy_instance_id, strategy_version_id) REFERENCES strategy_versions (instance_id, id),
+    UNIQUE (id, strategy_instance_id)                    -- target of composite FKs
 );
 CREATE INDEX ix_signals_run_id ON signals (run_id) WHERE run_id IS NOT NULL;
 CREATE INDEX ix_signals_strategy_instance_id_signal_time ON signals (strategy_instance_id, signal_time);
@@ -591,7 +603,11 @@ CREATE INDEX ix_signals_strategy_version_id ON signals (strategy_version_id);
 
 `NO_TRADE` signals are not persisted by default (one per bar would swamp the
 table); a strategy can mark one as `persist=True` when the *reason* is worth
-analysing (e.g. "filtered by news window").
+analysing (e.g. "filtered by news window"); the reason is kept in `reason`.
+The framework refuses, for that instance only, any signal these columns could
+not hold exactly (prices ≥ 10¹⁴ or with more than 10 decimals, risk with more
+than 4 decimals, NUL characters), so one strategy's output can never fail a
+lab write for the others.
 
 ## 4.6 Risk
 
@@ -604,6 +620,7 @@ CREATE TABLE risk_decisions (
     id                uuid PRIMARY KEY,
     signal_id         uuid NOT NULL REFERENCES signals(id),
     account_id        uuid NOT NULL REFERENCES accounts(id),
+    strategy_instance_id text NOT NULL REFERENCES strategy_instances(id),  -- the signal's instance
     account_config_version_id uuid NOT NULL,
     decided_at        timestamptz NOT NULL,
     approved          boolean NOT NULL,
@@ -622,7 +639,10 @@ CREATE TABLE risk_decisions (
     correlation_id    uuid NOT NULL,
     CHECK (approved OR primary_reason IS NOT NULL),
     UNIQUE (signal_id, account_id),
-    FOREIGN KEY (account_id, account_config_version_id) REFERENCES account_config_versions (account_id, id)
+    UNIQUE (id, account_id, approved),                   -- target: orders' approval check
+    FOREIGN KEY (account_id, account_config_version_id) REFERENCES account_config_versions (account_id, id),
+    FOREIGN KEY (signal_id, strategy_instance_id) REFERENCES signals (id, strategy_instance_id),
+    FOREIGN KEY (account_id, strategy_instance_id) REFERENCES account_allocations (account_id, instance_id)
 );
 CREATE INDEX ix_risk_decisions_account_id_decided_at ON risk_decisions (account_id, decided_at);
 CREATE INDEX ix_risk_decisions_run_id ON risk_decisions (run_id) WHERE run_id IS NOT NULL;
@@ -718,6 +738,9 @@ CREATE TABLE trades (
           AND exit_reason IS NOT NULL AND net_pnl IS NOT NULL)),
     FOREIGN KEY (account_id, account_config_version_id) REFERENCES account_config_versions (account_id, id),
     FOREIGN KEY (strategy_instance_id, strategy_version_id) REFERENCES strategy_versions (instance_id, id),
+    FOREIGN KEY (account_id, strategy_instance_id) REFERENCES account_allocations (account_id, instance_id),
+    FOREIGN KEY (entry_signal_id, strategy_instance_id) REFERENCES signals (id, strategy_instance_id),
+    FOREIGN KEY (exit_signal_id, strategy_instance_id) REFERENCES signals (id, strategy_instance_id),
     FOREIGN KEY (venue, instrument) REFERENCES instrument_listings (venue, instrument)
 );
 CREATE INDEX ix_trades_account_id_status ON trades (account_id, status);
@@ -738,6 +761,7 @@ CREATE TABLE orders (
     run_id            uuid REFERENCES runs(id),
     purpose           text NOT NULL CHECK (purpose IN ('ENTRY', 'STOP_LOSS', 'TAKE_PROFIT',
               'EXIT', 'FLATTEN')),
+    entry_approved    boolean GENERATED ALWAYS AS (CASE WHEN purpose = 'ENTRY' THEN true END) STORED,
     mode              text NOT NULL CHECK (mode IN ('BACKTEST', 'PAPER', 'DEMO', 'LIVE')),
     venue             text NOT NULL,
     instrument        text NOT NULL,
@@ -764,6 +788,10 @@ CREATE TABLE orders (
     CHECK (qty > 0),
     CHECK (status IN ('PENDING_SUBMIT', 'SUBMITTED', 'ACCEPTED', 'PARTIALLY_FILLED', 'FILLED',
               'CANCELLED', 'REJECTED', 'EXPIRED', 'FAILED')),
+    -- an ENTRY must cite an *approved* decision of *this* account (NULL skips non-entries)
+    FOREIGN KEY (risk_decision_id, account_id, entry_approved)
+        REFERENCES risk_decisions (id, account_id, approved),
+    FOREIGN KEY (account_id, strategy_instance_id) REFERENCES account_allocations (account_id, instance_id),
     FOREIGN KEY (venue, instrument) REFERENCES instrument_listings (venue, instrument)
 );
 CREATE INDEX ix_orders_account_id_status ON orders (account_id, status);
@@ -1015,8 +1043,10 @@ Partitioned tables are created with a `DEFAULT` partition.
 `kterminal.db.partitions.ensure_monthly_partitions(engine | connection |
 session, today=…, months_back=1, months_ahead=3)` creates the missing monthly
 partitions `<table>_pYYYYMM` (UTC months) for every table in
-`PARTITIONED_TABLES`; it is idempotent, serialised by an advisory lock and run
-by the worker at start-up and daily. Rows that already sit in the `DEFAULT`
+`PARTITIONED_TABLES`; it is idempotent and runs at `kterminal db upgrade` and
+in the worker at start-up and once per UTC day (`maintain_partitions`: one
+replica at a time under an advisory lock; a failure is logged and retried
+hourly, never stopping the worker). Rows that already sit in the `DEFAULT`
 partition for a month being created are moved into the new partition in the
 same transaction — except audit-log rows, which are never moved
 automatically. New audit-log partitions get their `TRUNCATE` guard.

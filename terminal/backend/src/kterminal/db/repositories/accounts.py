@@ -190,6 +190,11 @@ async def provision_dedicated_account(
     starting_balance = Decimal(starting_balance)
     if not starting_balance.is_finite() or starting_balance <= 0:
         raise AccountProvisioningError(f"starting balance must be positive, got {starting_balance}")
+    if starting_balance != starting_balance.quantize(Decimal("0.0001")):
+        # numeric(20,4) would round it, and every later call would see a "changed" balance
+        raise AccountProvisioningError(
+            f"starting balance {starting_balance} has more than 4 decimal places"
+        )
     entry_ts: Any = func.now() if ts is None else ensure_utc(ts)
     document = json_safe(dict(config))
     config_hash = hash_document(document)

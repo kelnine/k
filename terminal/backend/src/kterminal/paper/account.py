@@ -540,6 +540,7 @@ class PaperAccount:
             id=uuid7(),
             signal_id=signal_id,
             account_id=self.account_id,
+            instance_id=self.instance_id,
             account_config_version_id=self.config_version_id,
             decided_at=at,
             approved=approved,

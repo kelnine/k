@@ -107,6 +107,7 @@ class InMemoryLabStore:
     trades: dict[UUID, TradeRecord] = field(default_factory=dict)
     starting_balances: dict[UUID, Decimal] = field(default_factory=dict)
     catalogs: set[str] = field(default_factory=set)
+    _equity_at: dict[tuple[UUID, datetime], int] = field(default_factory=dict, repr=False)
 
     async def apply_catalog(
         self, *, document: dict[str, Any], fingerprint: str, applied_by: str
@@ -176,6 +177,17 @@ class InMemoryLabStore:
 
     async def write(self, records: Sequence[Record], *, run_id: UUID) -> None:
         for record in records:
+            if isinstance(record, EquityRecord):
+                # one snapshot per (account, instant), as in PostgreSQL: the latest wins
+                key = (record.account_id, record.ts)
+                equity = self.records[EquityRecord]
+                at = self._equity_at.get(key)
+                if at is not None:
+                    equity[at] = record
+                else:
+                    self._equity_at[key] = len(equity)
+                    equity.append(record)
+                continue
             self.records[type(record)].append(record)
             if isinstance(record, TradeRecord):
                 self.trades[record.id] = record

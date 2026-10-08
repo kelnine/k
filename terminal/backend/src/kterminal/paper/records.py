@@ -40,6 +40,7 @@ class DecisionRecord:
     id: UUID
     signal_id: UUID
     account_id: UUID
+    instance_id: str  # whose signal it decides on (the account's own instance)
     account_config_version_id: UUID
     decided_at: datetime
     approved: bool

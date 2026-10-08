@@ -34,6 +34,12 @@ from kterminal.core.enums import OrderType, SignalAction, SignalSource
 from kterminal.domain.timeframes import Timeframe
 
 MAX_METADATA_BYTES = 16_384
+# What the system of record can hold exactly (PostgreSQL numeric(24,10) prices and
+# numeric(8,4) risk). A signal outside these limits is refused for its own instance
+# instead of failing a whole lab write for everyone.
+MAX_PRICE = Decimal("1e14")
+PRICE_DECIMALS = 10
+RISK_DECIMALS = 4
 
 
 class InvalidSignalError(ValueError):
@@ -140,11 +146,24 @@ def validate_signal(signal: Signal) -> Signal:
 
     if not action.is_entry and signal.order_type is not OrderType.MARKET:
         raise InvalidSignalError("ORDER_TYPE_NOT_APPLICABLE", f"{action} is always a market action")
+    for name, price in (("entry", entry), ("stop_loss", stop), ("take_profit", target)):
+        if price is None:
+            continue
+        if not (isinstance(price, Decimal) and price.is_finite() and 0 < price < MAX_PRICE):
+            raise InvalidSignalError("INVALID_PRICE", f"{name} must be in (0, {MAX_PRICE:,f})")
+        if _decimals(price) > PRICE_DECIMALS:
+            raise InvalidSignalError(
+                "INVALID_PRICE", f"{name} has more than {PRICE_DECIMALS} decimal places"
+            )
     risk = signal.risk
     if risk is not None and not (
         isinstance(risk, Decimal) and risk.is_finite() and Decimal(0) < risk <= Decimal(100)
     ):
         raise InvalidSignalError("INVALID_RISK", "risk must be a percentage in (0, 100]")
+    if risk is not None and _decimals(risk) > RISK_DECIMALS:
+        raise InvalidSignalError(
+            "INVALID_RISK", f"risk has more than {RISK_DECIMALS} decimal places (e.g. 0.25)"
+        )
     confidence = signal.confidence
     if confidence is not None and not (
         isinstance(confidence, (int, float))
@@ -161,7 +180,26 @@ def validate_signal(signal: Signal) -> Signal:
         ) from None
     if size > MAX_METADATA_BYTES:
         raise InvalidSignalError("METADATA_TOO_LARGE", f"metadata is {size} bytes (max 16 KiB)")
+    if _has_nul(signal.metadata) or _has_nul(signal.reason):
+        raise InvalidSignalError(
+            "NUL_CHARACTER", "metadata and reason must not contain NUL (\\x00) characters"
+        )
     return signal
+
+
+def _decimals(value: Decimal) -> int:
+    exponent = value.normalize().as_tuple().exponent
+    return -exponent if isinstance(exponent, int) and exponent < 0 else 0
+
+
+def _has_nul(value: Any) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_has_nul(v) for v in value)
+    return False
 
 
 def signal_from_payload(payload: dict[str, Any]) -> Signal:

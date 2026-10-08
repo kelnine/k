@@ -23,7 +23,7 @@ import re
 from datetime import UTC, date, datetime
 from typing import Final
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 from kterminal.core.errors import KTerminalError
@@ -182,3 +182,21 @@ async def _create_partition(
         # Row-level guards are cloned from the parent; TRUNCATE guards are per table.
         for statement in audit_guard_triggers_ddl(name):
             await conn.execute(text(statement))
+
+
+PARTITION_MAINTENANCE_LOCK = "kterminal.db.partitions"
+
+
+async def maintain_partitions(engine: AsyncEngine, *, today: date) -> list[str] | None:
+    """Run :func:`ensure_monthly_partitions` unless another process is already doing it.
+
+    Serialised with a transaction-scoped advisory lock, so several worker replicas can
+    call this safely. Returns the partitions created, or None if another holder ran it.
+    """
+    async with engine.begin() as conn:
+        acquired = await conn.scalar(
+            select(func.pg_try_advisory_xact_lock(lock_key(PARTITION_MAINTENANCE_LOCK)))
+        )
+        if not acquired:
+            return None
+        return await ensure_monthly_partitions(conn, today=today)

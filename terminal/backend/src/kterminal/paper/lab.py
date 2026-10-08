@@ -318,7 +318,7 @@ class Lab:
             for account in self.accounts:
                 if close_at_end:
                     account.close_all(last)
-                account.mark(last)
+                account.mark(last)  # replaces a snapshot the last batch took at the same instant
         for member in self.members:
             member.host.stop()
         await self._flush(run_id)

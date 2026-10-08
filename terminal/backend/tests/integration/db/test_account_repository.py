@@ -211,3 +211,17 @@ async def test_invalid_provisioning_requests(lab: AsyncSession) -> None:
 def test_dedicated_account_names() -> None:
     assert dedicated_account_name("orb_ny_15_mnq", Decimal(50_000)) == "Paper 50K · orb_ny_15_mnq"
     assert dedicated_account_name("x", Decimal("25000.50")) == "Paper 25,000.50 · x"
+
+
+async def test_a_balance_the_ledger_cannot_store_exactly_is_refused(session: AsyncSession) -> None:
+    await seed_catalog(session)
+    await seed_instance(session, "demo_sma_fast")
+    with pytest.raises(AccountProvisioningError, match="more than 4 decimal places"):
+        await provision_dedicated_account(
+            session,
+            instance_id="demo_sma_fast",
+            name="Paper 50K · demo_sma_fast",
+            venue_profile_id="lab_default",
+            starting_balance=Decimal("50000.12345"),
+            config={"starting_balance": "50000.12345"},
+        )

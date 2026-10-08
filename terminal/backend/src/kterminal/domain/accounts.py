@@ -14,6 +14,7 @@ from kterminal.core.canonical import canonical_data, canonical_json
 from kterminal.core.enums import TradingMode
 
 DEFAULT_STARTING_BALANCE = Decimal("50000")
+MONEY_QUANTUM = Decimal("0.0001")  # account money is stored with 4 decimal places
 
 
 class AccountSettings(BaseModel):
@@ -39,6 +40,15 @@ class AccountSettings(BaseModel):
             raise ValueError(
                 f"{value} accounts are not available yet: only PAPER and BACKTEST are supported"
             )
+        return value
+
+    @field_validator("starting_balance")
+    @classmethod
+    def _storable_balance(cls, value: Decimal) -> Decimal:
+        # The ledger stores money with 4 decimals: a balance with more would be rounded on
+        # the way in, so the simulation and the stored deposit would disagree.
+        if value != value.quantize(MONEY_QUANTUM):
+            raise ValueError("starting_balance can have at most 4 decimal places")
         return value
 
     @field_validator("currency")

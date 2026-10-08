@@ -66,6 +66,13 @@ def test_fingerprint_changes_with_any_spec() -> None:
             "duplicate venue profile",
         ),
         (lambda d: d["listings"][0].update(pnl_modle="INVERSE"), "unknown key(s) pnl_modle"),
+        (
+            lambda d: (
+                d["venue_profiles"][0]["data"].update(XAGUSD="generic_mt5_cfd:XAGUSD")
+                or d["venue_profiles"][0]["execution"].pop("XAGUSD", None)
+            ),
+            "data listing for XAGUSD without an execution listing",
+        ),
         (lambda d: d["venues"][0].update(tz="UTC"), "unknown key(s) tz"),
         (lambda d: d["instruments"][0].update(tick="0.01"), "unknown key(s) tick"),
         (lambda d: d["listings"][0].update(tradable="false"), "expected true or false"),

@@ -2,9 +2,10 @@
 
 import pytest
 from sqlalchemy import pool, text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from kterminal.brokers.base import OrderStatus, TimeInForce
+from kterminal.core.ids import uuid7
 from kterminal.db import migrate
 from kterminal.db.models import (
     ORDER_STATUSES,
@@ -13,7 +14,8 @@ from kterminal.db.models import (
     Base,
 )
 from kterminal.db.partitions import PARTITIONED_TABLES, is_partition_name
-from tests.integration.db.conftest import async_dsn
+from tests.integration.db.conftest import async_dsn, reset_schema
+from tests.integration.db.helpers import insert_signal, seed_catalog, seed_lab_subject
 
 pytestmark = pytest.mark.integration
 
@@ -34,7 +36,7 @@ async def _tables(engine: AsyncEngine) -> dict[str, str]:
 
 async def test_upgrade_downgrade_upgrade_round_trip(migrated_url: str, engine: AsyncEngine) -> None:
     head = migrate.head_revision()
-    assert head == "0001"
+    assert head == "0002"
     assert await migrate.current(migrated_url) == head
 
     tables = await _tables(engine)
@@ -81,12 +83,50 @@ async def test_check_reports_drift(migrated_url: str, engine: AsyncEngine) -> No
 async def test_check_reports_a_revision_mismatch(migrated_url: str, engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.execute(text("UPDATE alembic_version SET version_num = '0000'"))
+    head = migrate.head_revision()
     try:
         differences = await migrate.check(migrated_url)
     finally:
         async with engine.begin() as conn:
-            await conn.execute(text("UPDATE alembic_version SET version_num = '0001'"))
-    assert differences == ["revision: database is at '0000', code expects '0001'"]
+            await conn.execute(
+                text("UPDATE alembic_version SET version_num = :head"), {"head": head}
+            )
+    assert differences == [f"revision: database is at '0000', code expects '{head}'"]
+
+
+async def test_0002_backfills_the_strategy_instance_of_existing_decisions(
+    migrated_url: str, engine: AsyncEngine
+) -> None:
+    await migrate.downgrade(migrated_url, "0001")
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+            await seed_catalog(session, "fp-migration")
+            version_id, account = await seed_lab_subject(session, "migration_probe")
+            signal_id = await insert_signal(
+                session, instance_id="migration_probe", version_id=version_id
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO risk_decisions (id, signal_id, account_id,"
+                    " account_config_version_id, decided_at, approved, rule_results,"
+                    " account_state, correlation_id)"
+                    " VALUES (:id, :signal, :account, :config, now(), true, '[]', '{}', :id)"
+                ),
+                {
+                    "id": uuid7(),
+                    "signal": signal_id,
+                    "account": account.account_id,
+                    "config": account.config_version_id,
+                },
+            )
+        await migrate.upgrade(migrated_url)
+        async with engine.connect() as conn:
+            owner = await conn.scalar(text("SELECT strategy_instance_id FROM risk_decisions"))
+        assert owner == "migration_probe"
+        assert await migrate.check(migrated_url) == []
+    finally:  # leave a clean schema at head for the other tests
+        await reset_schema(migrated_url)
+        await migrate.upgrade(migrated_url)
 
 
 async def test_metadata_create_all_builds_the_same_partitions_and_guards(

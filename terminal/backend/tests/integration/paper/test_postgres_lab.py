@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from typer.testing import CliRunner
 
 from kterminal.cli import app
+from kterminal.core.registry import Registry
 from kterminal.db import models as m
 from kterminal.db.session import Database
 from kterminal.domain.market import Bar
@@ -24,9 +25,15 @@ from kterminal.paper.config import LabConfig
 from kterminal.paper.lab import Lab, LabResult
 from kterminal.paper.pg_store import PostgresLabStore
 from kterminal.paper.store import InMemoryLabStore, LabStore
-from kterminal.strategy_engine.registry import discover_strategies
+from kterminal.strategy_engine.registry import (
+    DEFINITIONS,
+    StrategyDefinition,
+    definition_from_class,
+    discover_strategies,
+)
 from tests.fixtures.catalog import lab_catalog, write_catalog_dir
 from tests.fixtures.instruments import T0
+from tests.fixtures.strategies import Saboteur
 
 discover_strategies(entry_points=False)
 
@@ -183,3 +190,128 @@ def test_cli_lab_demo_with_postgres_store(
     assert "Isolation audit (from recorded rows):" in result.output
     assert "FAIL" not in result.output
     assert result.output.count("Paper 50K") >= 2
+
+
+# ── review fixes: runs that must never fail, rows that must be complete ──────
+def lab_registry() -> Registry[StrategyDefinition]:
+    registry: Registry[StrategyDefinition] = Registry("strategy definition")
+    for definition_id, definition in DEFINITIONS.items():
+        registry.register(definition_id, definition)
+    saboteur = definition_from_class(Saboteur)
+    registry.register(saboteur.id, saboteur)
+    return registry
+
+
+async def run_status(database: Database, run_id: Any) -> str:
+    async with database.session() as session:
+        status: str = await session.scalar(select(m.RunRow.status).where(m.RunRow.id == run_id))
+        return status
+
+
+@pytest.mark.parametrize("count", [1, 16])  # 16 one-minute bars end on a 15-minute snapshot
+async def test_a_run_ending_on_an_equity_snapshot_completes(database: Database, count: int) -> None:
+    result = await run(PostgresLabStore(database), gold(count))
+    assert await run_status(database, result.run_id) == "COMPLETED"
+    async with database.session() as session:
+        rows = (
+            await session.execute(
+                select(m.EquitySnapshotRow.account_id, m.EquitySnapshotRow.ts).where(
+                    m.EquitySnapshotRow.run_id == result.run_id
+                )
+            )
+        ).all()
+    assert rows and len(rows) == len(set(rows))  # one snapshot per account and instant
+
+
+@pytest.mark.parametrize(
+    ("mode", "code"),
+    [
+        ("nul_meta", "NUL_CHARACTER"),
+        ("tiny_risk", "INVALID_RISK"),
+        ("huge_target", "INVALID_PRICE"),
+    ],
+)
+async def test_an_unstorable_signal_never_fails_the_run_for_others(
+    database: Database, mode: str, code: str
+) -> None:
+    saboteur = {
+        "id": "saboteur_xau",
+        "strategy": "saboteur",
+        "params": {"mode": mode},
+        "instruments": ["XAUUSD"],
+        "timeframe": "5m",
+    }
+    config = LabConfig.model_validate({"instances": [SMA, saboteur]})
+    bars = gold(600)
+    registry = lab_registry()
+    together = await Lab(
+        config, lab_catalog(), PostgresLabStore(database), definitions=registry, discover=False
+    ).run(bars)
+    alone = await Lab(
+        LabConfig.model_validate({"instances": [SMA]}),
+        lab_catalog(),
+        InMemoryLabStore(),
+        definitions=registry,
+        discover=False,
+    ).run(bars)
+    assert await run_status(database, together.run_id) == "COMPLETED"
+    assert by_instance(together)["demo_sma_fast"].summary == alone.accounts[0].summary
+    async with database.session() as session:
+        codes = set(
+            (
+                await session.scalars(
+                    select(m.SignalRow.reject_code).where(
+                        m.SignalRow.run_id == together.run_id,
+                        m.SignalRow.strategy_instance_id == "saboteur_xau",
+                    )
+                )
+            ).all()
+        )
+    assert codes == {code}
+
+
+async def test_signals_keep_their_reason_expiry_and_trades_their_update_time(
+    database: Database,
+) -> None:
+    reasoned = {
+        "id": "reasoned_xau",
+        "strategy": "saboteur",
+        "params": {"mode": "reasoned"},
+        "instruments": ["XAUUSD"],
+        "timeframe": "5m",
+    }
+    config = LabConfig.model_validate({"instances": [SMA, reasoned]})
+    store = PostgresLabStore(database)
+    result = await Lab(
+        config, lab_catalog(), store, definitions=lab_registry(), discover=False
+    ).run(gold(600))
+    async with database.session() as session:
+        signals = (
+            await session.execute(
+                select(m.SignalRow.action, m.SignalRow.reason, m.SignalRow.expires_after_bars)
+                .where(m.SignalRow.strategy_instance_id == "reasoned_xau")
+                .distinct()
+            )
+        ).all()
+        assert set(signals) == {
+            ("NO_TRADE", "filtered by news window", None),
+            ("LONG", "pullback entry", 3),
+        }
+        closed_later = await session.scalar(
+            select(func.count())
+            .select_from(m.TradeRow)
+            .where(
+                m.TradeRow.run_id == result.run_id,
+                m.TradeRow.status == "CLOSED",
+                m.TradeRow.updated_at > m.TradeRow.created_at,
+            )
+        )
+        assert closed_later  # closes are stamped, not left at the opening time
+        names = (
+            await session.scalars(
+                select(m.AccountRow.name)
+                .join(m.AccountAllocationRow)
+                .where(m.AccountAllocationRow.instance_id == "demo_sma_fast")
+            )
+        ).all()
+        assert any(name.endswith(str(result.run_id)) for name in names)  # the full run id

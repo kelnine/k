@@ -207,3 +207,74 @@ async def test_inconsistent_documents_are_rejected(
 
 async def test_latest_snapshot_of_an_empty_catalog(session: AsyncSession) -> None:
     assert await latest_catalog_snapshot(session) is None
+
+
+async def test_a_renamed_instrument_frees_its_venue_symbol_while_history_keeps_the_old_listing(
+    session: AsyncSession,
+) -> None:
+    await apply_catalog(session, catalog_document(), "fp-rename-1", applied_by="test")
+    _, account = await seed_lab_subject(session, "demo_sma_fast")
+    await session.execute(  # history on the old listing: it can only be retired, not deleted
+        insert(OrderRow).values(
+            id=uuid7(),
+            client_order_id="kt-exit-rename",
+            account_id=account.account_id,
+            purpose="EXIT",
+            mode="PAPER",
+            venue="generic_mt5_cfd",
+            instrument="XAUUSD",
+            venue_symbol="XAUUSD",
+            side="SELL",
+            order_type="MARKET",
+            qty=Decimal("0.1"),
+            status="FILLED",
+            created_at=T0,
+            correlation_id=new_correlation_id(),
+        )
+    )
+    renamed = catalog_document()
+    renamed["instruments"][0]["symbol"] = "XAUSPOT"
+    renamed["listings"][0]["instrument"] = "XAUSPOT"  # the broker symbol stays "XAUUSD"
+    for alias in renamed["aliases"]:
+        if alias["instrument"] == "XAUUSD":
+            alias["instrument"] = "XAUSPOT"
+    execution = renamed["venue_profiles"][0]["execution"]
+    execution["XAUSPOT"] = execution.pop("XAUUSD").replace("XAUUSD", "XAUSPOT")
+    await apply_catalog(session, renamed, "fp-rename-2", applied_by="test")
+    await session.flush()
+    rows = (
+        await session.execute(
+            select(
+                InstrumentListingRow.instrument,
+                InstrumentListingRow.venue_symbol,
+                InstrumentListingRow.enabled,
+            ).where(InstrumentListingRow.venue == "generic_mt5_cfd")
+        )
+    ).all()
+    assert sorted(rows) == [("XAUSPOT", "XAUUSD", True), ("XAUUSD", "XAUUSD", False)]
+
+
+async def test_venue_symbols_can_move_between_listings_in_one_update(
+    session: AsyncSession,
+) -> None:
+    first = catalog_document()
+    second_listing = dict(first["listings"][0], instrument="MNQ", venue_symbol="US100")
+    second_listing["aliases"] = []
+    first["listings"].append(second_listing)
+    await apply_catalog(session, first, "fp-swap-1", applied_by="test")
+    swapped = catalog_document()
+    swapped["listings"].append(dict(second_listing, venue_symbol="XAUUSD"))
+    swapped["listings"][0]["venue_symbol"] = "US100"
+    await apply_catalog(session, swapped, "fp-swap-2", applied_by="test")
+    await session.flush()
+    await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))  # what commit will check
+    rows = dict(
+        (
+            await session.execute(
+                select(InstrumentListingRow.instrument, InstrumentListingRow.venue_symbol).where(
+                    InstrumentListingRow.venue == "generic_mt5_cfd"
+                )
+            )
+        ).all()
+    )
+    assert rows == {"XAUUSD": "US100", "MNQ": "XAUUSD"}

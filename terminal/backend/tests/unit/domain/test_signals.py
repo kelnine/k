@@ -137,3 +137,34 @@ def test_non_finite_numbers_are_rejected(update: dict[str, Any], code: str) -> N
     with pytest.raises(InvalidSignalError) as excinfo:
         validate_signal(base.model_copy(update=update))
     assert excinfo.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("update", "code"),
+    [
+        ({"risk": Decimal("0.00004")}, "INVALID_RISK"),  # stored with 4 decimals: would be 0
+        ({"risk": Decimal("0.12345")}, "INVALID_RISK"),
+        ({"take_profit": Decimal("1e14")}, "INVALID_PRICE"),  # beyond numeric(24,10)
+        ({"entry": Decimal("100.00000000001")}, "INVALID_PRICE"),  # 11 decimals
+        ({"metadata": {"note": "a\x00b"}}, "NUL_CHARACTER"),
+        ({"metadata": {"k\x00": 1}}, "NUL_CHARACTER"),
+        ({"reason": "why\x00"}, "NUL_CHARACTER"),
+    ],
+)
+def test_values_the_system_of_record_cannot_hold_are_rejected(
+    update: dict[str, Any], code: str
+) -> None:
+    base = Signal(
+        strategy_id="a",
+        strategy_version="v",
+        symbol="XAUUSD",
+        timeframe="5m",
+        timestamp=T0,
+        signal=SignalAction.LONG,
+        entry=Decimal(100),
+        stop_loss=Decimal(99),
+    )
+    validate_signal(base.model_copy(update={"risk": Decimal("0.25")}))  # fine
+    with pytest.raises(InvalidSignalError) as excinfo:
+        validate_signal(base.model_copy(update=update))
+    assert excinfo.value.code == code

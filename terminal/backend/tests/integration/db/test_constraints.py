@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kterminal.core.ids import new_correlation_id, uuid7
-from kterminal.db.models import AccountRow, InstrumentRow, OrderRow, TradeRow
+from kterminal.db.models import AccountRow, InstrumentRow, OrderRow, RiskDecisionRow, TradeRow
 from tests.integration.db.helpers import (
     insert_closed_trade,
     insert_signal,
@@ -267,3 +267,139 @@ async def test_trades_must_reference_a_known_listing(session: AsyncSession) -> N
     )
     rows = (await session.execute(TradeRow.__table__.select())).all()
     assert rows == []
+
+
+# ── isolation is enforced by the database for every row that touches money ──
+async def _decision(
+    session: AsyncSession, *, signal_id: Any, account: Any, instance_id: str, approved: bool
+) -> Any:
+    decision_id = uuid7()
+    await session.execute(
+        insert(RiskDecisionRow).values(
+            id=decision_id,
+            signal_id=signal_id,
+            account_id=account.account_id,
+            strategy_instance_id=instance_id,
+            account_config_version_id=account.config_version_id,
+            decided_at=T0,
+            approved=approved,
+            primary_reason=None if approved else "MAX_POSITIONS",
+            rule_results=[],
+            account_state={},
+            correlation_id=new_correlation_id(),
+        )
+    )
+    return decision_id
+
+
+async def test_a_trade_cannot_sit_on_another_instances_account(session: AsyncSession) -> None:
+    await seed_catalog(session)
+    fast_version, _ = await seed_lab_subject(session, "demo_sma_fast", fast=9, slow=21)
+    _, slow = await seed_lab_subject(session, "demo_sma_slow", fast=20, slow=50)
+    await _rejected(  # fast's trade, on slow's account with slow's own configuration
+        session,
+        lambda: insert_closed_trade(
+            session,
+            instance_id="demo_sma_fast",
+            version_id=fast_version,
+            account=slow,
+            net_pnl=Decimal(-250),
+        ),
+        "fk_trades_account_id_strategy_instance_id",
+    )
+
+
+async def test_a_trade_is_opened_only_by_its_own_instances_signal(
+    session: AsyncSession,
+) -> None:
+    await seed_catalog(session)
+    fast_version, fast = await seed_lab_subject(session, "demo_sma_fast", fast=9, slow=21)
+    slow_version, _ = await seed_lab_subject(session, "demo_sma_slow", fast=20, slow=50)
+    foreign = await insert_signal(session, instance_id="demo_sma_slow", version_id=slow_version)
+    await _rejected(
+        session,
+        lambda: insert_closed_trade(
+            session,
+            instance_id="demo_sma_fast",
+            version_id=fast_version,
+            account=fast,
+            net_pnl=Decimal(100),
+            entry_signal_id=foreign,
+        ),
+        "fk_trades_entry_signal_id_strategy_instance_id",
+    )
+
+
+async def test_a_decision_is_about_its_own_instances_signal_on_its_own_account(
+    session: AsyncSession,
+) -> None:
+    await seed_catalog(session)
+    _, fast = await seed_lab_subject(session, "demo_sma_fast", fast=9, slow=21)
+    slow_version, slow = await seed_lab_subject(session, "demo_sma_slow", fast=20, slow=50)
+    slow_signal = await insert_signal(session, instance_id="demo_sma_slow", version_id=slow_version)
+    await _rejected(  # slow's signal decided on fast's account
+        session,
+        lambda: _decision(
+            session, signal_id=slow_signal, account=fast, instance_id="demo_sma_slow", approved=True
+        ),
+        "fk_risk_decisions_account_id_strategy_instance_id",
+    )
+    await _rejected(  # …or passed off as fast's own
+        session,
+        lambda: _decision(
+            session, signal_id=slow_signal, account=fast, instance_id="demo_sma_fast", approved=True
+        ),
+        "fk_risk_decisions_signal_id_strategy_instance_id",
+    )
+    await _decision(  # the legitimate one
+        session, signal_id=slow_signal, account=slow, instance_id="demo_sma_slow", approved=True
+    )
+
+
+async def test_an_entry_order_needs_an_approved_decision_of_its_own_account(
+    session: AsyncSession,
+) -> None:
+    await seed_catalog(session)
+    fast_version, fast = await seed_lab_subject(session, "demo_sma_fast", fast=9, slow=21)
+    _, slow = await seed_lab_subject(session, "demo_sma_slow", fast=20, slow=50)
+    signal = await insert_signal(session, instance_id="demo_sma_fast", version_id=fast_version)
+    refused = await _decision(
+        session, signal_id=signal, account=fast, instance_id="demo_sma_fast", approved=False
+    )
+    approved = await _decision(
+        session,
+        signal_id=await insert_signal(
+            session, instance_id="demo_sma_fast", version_id=fast_version
+        ),
+        account=fast,
+        instance_id="demo_sma_fast",
+        approved=True,
+    )
+
+    def entry(account: Any, decision: Any, instance: str) -> Any:
+        return session.execute(
+            insert(OrderRow).values(
+                **_order(
+                    account.account_id, risk_decision_id=decision, strategy_instance_id=instance
+                )
+            )
+        )
+
+    await _rejected(  # a decision that refused the trade
+        session,
+        lambda: entry(fast, refused, "demo_sma_fast"),
+        "fk_orders_risk_decision_id_account_id_entry_approved",
+    )
+    await _rejected(  # fast's approval used on slow's account (for slow)
+        session,
+        lambda: entry(slow, approved, "demo_sma_slow"),
+        "fk_orders_risk_decision_id_account_id_entry_approved",
+    )
+    await _rejected(  # fast's order on slow's account
+        session,
+        lambda: entry(slow, approved, "demo_sma_fast"),
+        "fk_orders_account_id_strategy_instance_id|fk_orders_risk_decision_id",
+    )
+    await entry(fast, approved, "demo_sma_fast")  # the legitimate one
+    exit_order = _order(fast.account_id, purpose="EXIT", strategy_instance_id="demo_sma_fast")
+    await session.execute(insert(OrderRow).values(**exit_order))  # exits need no approval

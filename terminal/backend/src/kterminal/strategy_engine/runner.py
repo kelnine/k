@@ -318,7 +318,7 @@ class StrategyRunner:
             instrument=self.instrument.symbol,
             time=at,
             code=code,
-            message=message[:2_000],
+            message=message[:2_000].replace("\x00", "\ufffd"),
             payload=_safe_payload(signal) if signal is not None else {},
         )
 
@@ -344,12 +344,15 @@ def _first_line(exc: BaseException) -> str:
 
 
 def _safe_payload(signal: Signal) -> dict[str, Any]:
-    """The rejected signal as storable JSON: never raises, no NaN/Infinity, bounded size."""
+    """The rejected signal as storable JSON: never raises, no NaN/Infinity, no NUL
+    characters (PostgreSQL text/jsonb cannot hold them), bounded size."""
     try:
         payload = signal.model_dump(mode="json", fallback=repr, warnings=False)
         text = json.dumps(payload, allow_nan=False)
+        if "\\u0000" in text:
+            payload = json.loads(text.replace("\\u0000", "\\ufffd"))
     except (TypeError, ValueError, ArithmeticError):
-        return {"unserializable": repr(signal)[:MAX_REJECTED_PAYLOAD_BYTES]}
+        return {"unserializable": repr(signal)[:MAX_REJECTED_PAYLOAD_BYTES].replace("\x00", "")}
     if len(text) > MAX_REJECTED_PAYLOAD_BYTES:
         payload["metadata"] = {"truncated_bytes": len(text)}
         payload = {k: v for k, v in payload.items() if k != "reason"} | {

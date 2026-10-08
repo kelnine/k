@@ -64,8 +64,12 @@ is ever routed; one that fails is rejected as `INVALID_SIGNAL`.
 Every entry must carry a stop-loss: position size is derived from the stop
 distance, so "no stop" means "no trade". Prices are rounded to the
 instrument's tick size; `risk` must be `> 0` and `confidence` within `[0, 1]`
-(finite numbers only); `metadata` must be plain JSON — no NaN/Infinity, no
-NumPy scalars (`METADATA_NOT_JSON`) — and at most 16 KiB. A strategy may return
+(finite numbers only, at most 4 decimals); prices must be below 10¹⁴ with at
+most 10 decimals (`INVALID_PRICE`); `metadata` must be plain JSON — no
+NaN/Infinity, no NumPy scalars (`METADATA_NOT_JSON`) — and at most 16 KiB;
+neither `metadata` nor `reason` may contain NUL characters (`NUL_CHARACTER`).
+These are exactly what the database stores, so a signal is either recorded
+faithfully or refused for its own instance only. A strategy may return
 at most 64 objects per bar; more faults the instance as a runaway.
 
 ### Semantics of `risk` and `confidence`
