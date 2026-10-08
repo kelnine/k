@@ -16,13 +16,15 @@ combined unless explicitly asked for.
 | 5 | `05_smart_money_suite_v4.pine` | Smart Money Suite v4 [AlgoAlpha] | Sniper long/short (BOS entry, swing stop, 2R target). Signals without exits: channel breakouts, BOS/CHoCH, liquidity sweeps, high-confluence score |
 | 6 | `06_wyckoff_theultimator5.pine` | Wyckoff [theUltimator5] | Wyckoff entry (Phase C test or LPS/LPSY, by strictness); entries only, no stop or target. Phase events (SC/BC, Spring/UTAD, SOS/SOW, Phase E) as signals |
 | 7 | `07_order_flow_desk.pine` | Order Flow Desk [v6] | None yet: levels and events only (session volume profile, VWAP bands, delta/CVD, absorption, equal-high/low pools and sweeps, user-entered gamma levels), no entry or exit rules |
+| 8 | `08_frvp_orb_ema.pine` | FRVP + ORB + 9/20 EMA | Opening range breakout (first close outside the 09:30–09:45 range, EMA 9/20 filter); entries only, no stop or target. Volume profile and EMA crosses as levels/signals |
 
 The same idea often appears in several scripts with different details (fair
 value gaps in 1, 2, 3 and 5; sweeps in 1, 2, 4, 5 and 7). Each port uses the
 definition from its own script, so a strategy matches the chart it came from.
 
-Licences travel with the code. Script 4 contains LuxAlgo's Order Block
-Detector (CC BY-NC-SA 4.0: attribution, non-commercial, same licence) and
-AlgoAlpha's Smart Money Breakout Channels (MPL 2.0); a port of either keeps
-its own file, the original notice and the same licence. Scripts 5 and 6
-state no licence, so they are treated as private use only.
+Licences travel with the code. Scripts 3 and 7 are MPL 2.0. Script 4
+contains LuxAlgo's Order Block Detector (CC BY-NC-SA 4.0: attribution,
+non-commercial, same licence) and AlgoAlpha's Smart Money Breakout Channels
+(MPL 2.0); a port of either keeps its own file, the original notice and the
+same licence. Scripts 5 and 6 name third-party authors but state no licence,
+so they are treated as private use only. Scripts 1, 2 and 8 carry no notice.
