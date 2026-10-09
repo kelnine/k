@@ -1,0 +1,59 @@
+# CME Globex — the exchange-defined contract specs (high confidence: CME
+# contract specs, QuantConnect Lean symbol properties, verify pass).
+#
+# venue_symbol is the product/Globex root; symbol_format renders the dated
+# contract for a date: "{root}{code}{y1}" -> MNQZ6 (Dec 2026). A 1-digit year
+# repeats every decade, so an adapter must take the decade from the listed
+# contract window and never parse MNQZ6 alone.
+#
+# Contract cycle (instruments.yaml): quarterly H/M/U/Z, last trade 09:30 New
+# York (08:30 Chicago) on the 3rd Friday, cash-settled to the Special Opening
+# Quotation; roll = last-trade date minus 8 calendar days (2026-12-10 for
+# Z26 -> H27, then 2027-03-11, 2027-06-10). Hours: cme_globex_equity.
+#
+# Fees (ASSUMPTIONS until the account's own statement is read): CME non-member
+# exchange fee ~$0.35/side (micro equity) and ~$1.38/side (E-mini) from IBKR's
+# pass-through table; NFA $0.01/side 2026-07-01..2027-06-30 then $0.02 (both
+# unverified against primary pages); plus broker/FCM commission.
+
+venue: cme
+
+listings:
+  - instrument: MNQ
+    venue_symbol: MNQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "2"          # $2 x Nasdaq-100: tick 0.25 = $0.50, 1 point = $2
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_micro_equity
+    symbol_format: "{root}{code}{y1}"
+    verified_on: "2026-10-06"
+    source: https://cmegroup.com/trading/equity-index/us-index/micro-e-mini-nasdaq-100_contractSpecs_futures.html
+    notes: >-
+      Micro E-mini Nasdaq-100, cash-settled; 10 MNQ = 1 NQ in exposure. Daily
+      settlement: the NQ complex uses a 15:14:30-15:15:00 CT VWAP (MNQ may
+      settle to the NQ price — unverified). Margins are set by CME and the
+      broker and are not stored here. Z26 expires 2026-12-18; H27 2027-03-19.
+
+  - instrument: NQ
+    venue_symbol: NQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "20"         # $20 x Nasdaq-100: tick 0.25 = $5.00
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    # E-mini profile (2.50 USD per side all-in assumption); the micro profile's
+    # 0.95 would understate E-mini fees (CME non-member exchange fee ~1.38).
+    cost_profile: cme_emini_equity
+    symbol_format: "{root}{code}{y1}"
+    verified_on: "2026-10-06"
+    source: https://www.cmegroup.com/education/courses/introduction-to-equity-index-products/understanding-equity-index-daily-and-final-settlement.html
+    notes: >-
+      E-mini Nasdaq-100, $20 x index; same months, expiry, SOQ settlement and
+      hours as MNQ. COSTS: cme_emini_equity (exchange ~1.38 + NFA + clearing +
+      broker, ~2.50/side all-in assumption).

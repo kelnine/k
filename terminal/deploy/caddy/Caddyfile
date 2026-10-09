@@ -1,0 +1,43 @@
+# K Terminal edge proxy: automatic HTTPS, security headers, TradingView allow-list.
+# KT_PUBLIC_DOMAIN=localhost uses Caddy's internal CA (local testing only).
+
+{$KT_PUBLIC_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	request_body {
+		max_size 16KB
+	}
+
+	# TradingView webhooks (Phase 6): only TradingView's published source IPs.
+	# Verify the list against TradingView's documentation when deploying.
+	@tradingview path /api/v1/webhooks/tradingview
+	handle @tradingview {
+		@not_tradingview not remote_ip 52.89.214.238 34.212.75.30 54.218.53.128 52.32.178.7
+		respond @not_tradingview 403
+		reverse_proxy api:8000
+	}
+
+	# Dashboard + authenticated API (Phase 8). Until authentication exists nothing
+	# else is published; operators reach the API over a VPN or SSH tunnel.
+	#
+	# handle /api/* {
+	# 	reverse_proxy api:8000
+	# }
+	# handle {
+	# 	root * /srv/dashboard
+	# 	try_files {path} /index.html
+	# 	file_server
+	# }
+
+	handle {
+		respond 404
+	}
+}

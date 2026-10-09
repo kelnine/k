@@ -1,0 +1,222 @@
+# Bybit v5 category=linear (USDT perpetuals): quantity in base units
+# (contract_size 1). Specs from GET /v5/market/instruments-info?category=linear
+# (priceFilter.tickSize, lotSizeFilter.minOrderQty / qtyStep / maxOrderQty /
+# minNotionalValue, fundingInterval in MINUTES).
+#
+# Verified rows: BTCUSDT from the ccxt fixture and Bybit's own docs example;
+# XAUUSDT, XAGUSDT, EURUSDUSDT and GBPUSDUSDT from a verbatim instruments-info
+# capture dated 2026-10-01 (verify pass). SOLUSDT comes from a single
+# third-party spec page (research medium; the verify pass could not confirm it
+# but did not dispute it) — re-sync it first.
+#
+# Funding: per symbol and dynamic since late 2025 (8 h -> 4/2/1 h while the
+# rate is capped); read fundingInterval and tickers.fundingIntervalHour. The
+# crypto_perp_bybit profile assumes 8 h at 00/08/16 UTC and non-VIP fees of
+# 0.02 % maker / 0.055 % taker (ASSUMPTIONS).
+#
+# Rows marked "spec unverified" carry PLACEHOLDER numbers (tick = canonical
+# tick, min/step = 1) and are tradable: false.
+# Not aliased: XAUTUSDT (a Tether Gold TOKEN perp — different underlying);
+# PUMPUSDT (Bybit names the pump.fun token PUMPFUN; PUMP may be PumpBTC).
+
+venue: bybit_linear
+
+listings:
+  # ── crypto ─────────────────────────────────────────────────────────────────
+  - instrument: BTCUSD
+    venue_symbol: BTCUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/bybit-exchange/docs/master/docs/v5/market/instrument.mdx
+    notes: >-
+      LinearPerpetual, settleCoin USDT, tick 0.10, qty 0.001, minNotionalValue
+      5 USDT; maxOrderQty ~1,190-1,500 and maxMktOrderQty ~150-500 depending on
+      snapshot; max leverage 100; fundingInterval 480 min; funding cap
+      +/-0.375 % to +/-0.5 % by snapshot. Bybit SPOT BTCUSDT is a different
+      product (tick 0.1).
+
+  - instrument: SOLUSD
+    venue_symbol: SOLUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://www.tv-hub.org/tradingview-to-bybit/solusdt
+    notes: >-
+      tick 0.01, minOrderQty 0.1 SOL, qtyStep 0.1, max leverage 100 per a
+      third-party spec page (single source; not confirmed against Bybit by the
+      verify pass) — re-sync from instruments-info before relying on it.
+      minNotionalValue is likely 5 USDT as for other linear contracts but
+      unconfirmed, so it is not set.
+
+  - instrument: NEARUSD
+    venue_symbol: NEARUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.00001"       # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      spec unverified — enable after syncing from the venue API
+      (instruments-info?category=linear&symbol=NEARUSDT). Long-standing
+      contract (existence high confidence).
+
+  - instrument: ZECUSD
+    venue_symbol: ZECUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0001"        # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Existence of
+      the perp is itself unverified (research low confidence).
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPEUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.001"         # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Existence
+      from training knowledge only (listed soon after the late-2024 TGE). Not
+      HYPERUSDT (Hyperlane).
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMPFUNUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0000001"     # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    source: https://in.tradingview.com/symbols/PUMPFUNUSDT.P/minds
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Bybit's
+      ticker for pump.fun is PUMPFUN (TradingView pages exist for
+      PUMPFUNUSDT.P and PUMPFUNUSDC.P, so a USDC perp also exists).
+
+  # ── TradFi perpetuals: metals ──────────────────────────────────────────────
+  # One-time /v5/user/agreement required. Trading hours (24/7 vs 24/5) are
+  # unverified, so the instrument's metals_otc calendar applies. Bybit's
+  # commodity perps reportedly have lower fees (maker 0 % / taker 0.0275 %,
+  # June 2026 announcement, secondary) than the profile assumes, and fund every
+  # 4 h (fundingInterval 240) rather than the profile's 8 h.
+  - instrument: XAUUSD
+    venue_symbol: XAUUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.01"
+    contract_size: "1"          # baseCoin XAU: 1 troy oz per 1.0 qty
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    max_qty: "500"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://announcements.bybit.com/en/article/new-listing-xauusdt-perpetual-contract-with-up-to-75x-leverage-blt7475343901d47b34/
+    notes: >-
+      instruments-info 2026-10-01: tick 0.01, qtyStep/minOrderQty 0.001,
+      maxOrderQty 500, maxMktOrderQty 250, minNotionalValue 5, maxLeverage
+      150, fundingInterval 240 min (4 h — profile assumes 8 h), launched
+      2026-03-09 (the announcement's 75x is out of date). Not the older
+      XAUTUSDT token perp. Evidence: verbatim instruments-info row in
+      github.com/tejashendre/AI-paper-trading-agent
+      docs/BYBIT_ALL_ASSETS_MARKET_EVIDENCE_2026-10-01.json (assets[6]).
+
+  - instrument: XAGUSD
+    venue_symbol: XAGUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.01"
+    contract_size: "1"          # baseCoin XAG
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    max_qty: "62000"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://announcements.bybit.com/en/article/new-listing-xagusdt-perpetual-contract-with-up-to-75x-leverage-blt6788072ef56958a7/
+    notes: >-
+      instruments-info 2026-10-01: tick 0.01, qtyStep/minOrderQty 0.001,
+      maxOrderQty 62,000, minNotionalValue 5, maxLeverage 150,
+      fundingInterval 240 min (4 h — profile assumes 8 h), launched
+      2026-03-09. Evidence: same instruments-info capture (assets[8]).
+
+  # ── forex perpetuals ───────────────────────────────────────────────────────
+  # symbolType forex, baseCoin EURUSD / GBPUSD, quote and settle USDT, launched
+  # 2026-09-08. They carry USDT basis and funding, so they are listings of the
+  # FX instruments (USD-normalised), never aliases of the spot/CFD symbols.
+  # Trading hours unverified: the instrument's fx_otc calendar applies.
+  - instrument: EURUSD
+    venue_symbol: EURUSDUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.00001"
+    contract_size: "1"          # 1 EUR notional per 1.0 qty
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/bybit-exchange/docs/master/docs/v5/market/instrument.mdx
+    notes: >-
+      instruments-info 2026-10-01: tick 0.00001, qtyStep/minOrderQty 0.1,
+      minNotionalValue 5, maxLeverage 100, fundingInterval 480 min (8 h),
+      launched 2026-09-08. Fee schedule and funding baseline for forex perps
+      not researched (profile = crypto default). Evidence: verbatim
+      instruments-info row in github.com/tejashendre/AI-paper-trading-agent
+      docs/BYBIT_ALL_ASSETS_MARKET_EVIDENCE_2026-10-01.json (assets[3]).
+
+  - instrument: GBPUSD
+    venue_symbol: GBPUSDUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.00001"
+    contract_size: "1"          # 1 GBP notional per 1.0 qty
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_bybit
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/bybit-exchange/docs/master/docs/v5/market/instrument.mdx
+    notes: >-
+      instruments-info 2026-10-01: tick 0.00001, qtyStep/minOrderQty 0.1,
+      minNotionalValue 5, maxLeverage 100, fundingInterval 480 min (8 h),
+      launched 2026-09-08. Fee schedule and funding baseline for forex perps
+      not researched (profile = crypto default). Evidence: same
+      instruments-info capture (assets[4]).

@@ -1,0 +1,104 @@
+# Coinbase Advanced Trade spot, quoted in true USD. Specs from
+# GET /api/v3/brokerage/market/products/{product_id} (quote_increment,
+# base_increment, base_min_size, quote_min_size). The BTC-USD row comes from a
+# ccxt Advanced Trade snapshot (May 2025, BTC ~103.4k), confirmed by the
+# verify pass — re-sync before use.
+#
+# COSTS: no cost profile in costs.yaml fits Coinbase. The only spot profile,
+# crypto_spot_taker (0.10 % maker and taker, Binance base tier), understates
+# Coinbase Advanced's entry tier (0.60 % maker / 1.20 % taker below ~$1K of
+# 30-day volume per the ccxt fixture; the verify pass says to cost Coinbase at
+# that conservative entry tier until the account's own rate is read from
+# /api/v3/brokerage/transaction_summary) by 6-12x. So EVERY row here is
+# tradable: false with no cost_profile — even BTC-USD, whose spec is verified —
+# until a coinbase_spot profile exists (requested in costs.yaml). Enable rows
+# only after adding it.
+#
+# Rows marked "spec unverified" carry PLACEHOLDER numbers. PUMP is not listed:
+# Coinbase pages say PUMP trades only through its DEX experience, not the
+# central order book.
+
+venue: coinbase
+
+listings:
+  - instrument: BTCUSD
+    venue_symbol: BTC-USD
+    aliases: [BTC-USDC]         # Coinbase's BTC-USDC product is an alias of the BTC-USD book
+    contract_type: SPOT
+    tick_size: "0.01"           # price_increment / quote_increment
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.00000001"       # base_min_size
+    qty_step: "0.00000001"      # base_increment
+    min_notional: "1"           # quote_min_size 1 USD
+    quote_currency: USD
+    tradable: false             # spec verified; held back for COSTS (see header)
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/coinbase.json
+    notes: >-
+      Spec verified (ccxt Advanced Trade snapshot, May 2025): price/quote
+      increment 0.01, base increment and min 0.00000001, quote_min_size 1 USD,
+      base_max_size ~3,400. BTC-USDT is a separate book. Not tradable yet: no
+      cost profile fits Coinbase's entry-tier fees (~0.60 % maker / 1.20 %
+      taker; crypto_spot_taker's 0.10 % would understate them 6-12x) — add a
+      coinbase_spot profile to costs.yaml, then enable.
+
+  - instrument: SOLUSD
+    venue_symbol: SOL-USD
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.01"           # research (low): quote increment, not from a SOL snapshot
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USD
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/coinbase.json
+    notes: >-
+      spec unverified — enable after syncing from the venue API
+      (products/SOL-USD: base_increment, quote_min_size). SOL-USDC is likely an
+      alias of the same book (check alias_to).
+
+  - instrument: NEARUSD
+    venue_symbol: NEAR-USD
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.00001"        # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USD
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Listing from
+      training knowledge (added 2022), low confidence.
+
+  - instrument: ZECUSD
+    venue_symbol: ZEC-USD
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.0001"         # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USD
+    source: https://www.fxstreet.com/cryptocurrencies/news/coinbase-pro-adds-zec-usd-bat-usd-and-dai-usd-202005010346
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Listed since
+      2020; may be unavailable in some jurisdictions (privacy coin).
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPE-USD
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.001"          # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USD
+    source: https://bitcoinworld.co.in/coinbase-hyperliquid-hype-listing/
+    notes: >-
+      spec unverified — enable after syncing from the venue API. HYPE-USD went
+      live 2026-02-05, subject to liquidity conditions.

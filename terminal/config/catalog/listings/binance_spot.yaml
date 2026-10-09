@@ -1,0 +1,122 @@
+# Binance Spot. Filters from GET /api/v3/exchangeInfo?symbol=…:
+# PRICE_FILTER.tickSize, LOT_SIZE.minQty/stepSize/maxQty, NOTIONAL.minNotional
+# (applyMinToMarket: true). Verified values come from a raw exchangeInfo
+# capture in ccxt's static test fixture (taken after April 2026), confirmed by
+# the verify pass. Filters change without notice — re-sync at start-up.
+#
+# Fees (assumption, crypto_spot_taker): regular user 0.10 % maker and taker,
+# 25 % less when paid in BNB.
+#
+# Rows marked "spec unverified" are listed (the pairs exist) but every number
+# on them except contract_size is a PLACEHOLDER (the loader requires positive
+# values): tick = the instrument's canonical tick, min/step = 1. They are
+# tradable: false and never used to size or cost a trade.
+# Not listed here: gold/silver (PAXGUSDT, XAUTUSDT are gold TOKENS — a
+# different underlying), EURUSDT (EUR vs USDT, not EUR/USD).
+
+venue: binance_spot
+
+listings:
+  - instrument: BTCUSD
+    venue_symbol: BTCUSDT
+    contract_type: SPOT
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.00001"
+    qty_step: "0.00001"
+    max_qty: "9000"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/binance.json
+    notes: >-
+      PRICE_FILTER 0.01 (max price 1,000,000); LOT_SIZE 0.00001; NOTIONAL min 5
+      USDT (also on market orders), max 9,000,000; MARKET_LOT_SIZE max ~162 BTC
+      (dynamic); PERCENT_PRICE_BY_SIDE 0.5x-2x of the 5-minute average. Max 200
+      open orders, 5 algo orders.
+
+  - instrument: SOLUSD
+    venue_symbol: SOLUSDT
+    contract_type: SPOT
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    max_qty: "90000"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/binance.json
+    notes: >-
+      PRICE_FILTER 0.01 (max 10,000); LOT_SIZE 0.001; NOTIONAL min 5 USDT,
+      max 9,000,000; MARKET_LOT_SIZE max ~74k (dynamic).
+
+  - instrument: NEARUSD
+    venue_symbol: NEARUSDT
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.00001"       # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    notes: >-
+      spec unverified — enable after syncing from the venue API
+      (GET /api/v3/exchangeInfo?symbol=NEARUSDT). Long-standing listing (since
+      2020); api.binance.com was blocked during research.
+
+  - instrument: ZECUSD
+    venue_symbol: ZECUSDT
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.0001"        # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Binance has
+      put a Monitoring Tag on ZEC before: check the symbol status before use
+      (privacy coin; listing status is time-varying).
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPEUSDT
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.001"         # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    source: https://crypto.news/binance-to-list-hype-with-3-spot-pairs-on-sept-24/
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Listed
+      2025-09-24 11:00 UTC (HYPE/USDT, HYPE/USDC, HYPE/TRY) under the Seed Tag.
+      Binance.US is a different venue.
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMPUSDT
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.0000001"     # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_spot_taker
+    source: https://en.coin-turk.com/binance-lists-pump-coin-with-exciting-trade-opportunities/
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Listed
+      2025-09-11 (PUMP/USDT, PUMP/TRY) under the Seed Tag; confirm the
+      underlying is pump.fun (not PumpBTC).
