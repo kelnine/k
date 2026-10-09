@@ -279,7 +279,7 @@ its own account; everything downstream is identical.
 | Pine concept | Port note |
 |---|---|
 | `process_orders_on_close`, `calc_on_every_tick` | Default terminal behaviour = Pine default: signal on close, fill next bar open |
-| `request.security(...)` | Use `ctx.htf(tf)`; never use `lookahead_on` semantics |
+| `request.security(...)` | Use `ctx.series(tf)` for a timeframe declared in `context_timeframes`; it holds closed bars only, so it never repaints. A context bar becomes visible on the primary bar that closes with it, one primary bar earlier than Pine's `lookahead_on` + `[1]` idiom — ports that need TradingView parity lag it by one bar (doc 13, P5) |
 | `ta.rma`, `ta.ema`, `ta.atr`, `ta.rsi` | Use `kterminal.indicators` (Pine-compatible seeding), not TA-Lib |
 | `na`, `nz()` | `math.nan`/`numpy.nan`; explicit `nz()` helper |
 | `var` / `varip` | Instance attributes set in `on_start` |

@@ -7,12 +7,17 @@ edited; a port that needs a different behaviour says so in its own module.
 Each tradable setup in a script becomes its own strategy. Setups are never
 combined unless explicitly asked for.
 
+`specs/` holds a detailed spec of each script from the Phase 3 intake review:
+exact rules with line numbers, data needs, parity risks and the behaviour
+found in the code. The porting plan and the open decisions are in
+[docs/13](../docs/13-phase3-pine-ports.md).
+
 | # | File | Script | Setups to port |
 |---|------|--------|----------------|
-| 1 | `01_breakout_targets_ict_cisd.pine` | Breakout Targets + ICT Levels + CISD | CISD after a liquidity sweep; range breakout |
+| 1 | `01_breakout_targets_ict_cisd.pine` | Breakout Targets + ICT Levels + CISD | Main-chart CISD after a liquidity sweep; scanner CISD (a second model with its own alerts). Range breakout and trendline break as signals |
 | 2 | `02_ict_sweep_order_flow_models.pine` | ICT Sweep + Order Flow Models [NY] | A · 8 PM range sweep; B · 8 AM candle sweep; C · PD-array bias + IFVG/CISD; D · order-flow absorption |
 | 3 | `03_nq_price_action_toolkit.pine` | NQ Price Action Toolkit | None yet: levels and zones only (FVG/iFVG, session highs/lows, PDH/PDL, 00:00 and 09:30 opens, NDOG/NWOG, fib dealing range, equal highs/lows, EMA 9/21 cloud), no entry or exit rules |
-| 4 | `04_combined_smc_suite.pine` | Combined SMC Suite | 200 EMA filtered Parabolic SAR (entry and exit). Signals without exits: order blocks, breakout channels, EMA pullback taps, previous 1H/4H high/low and VWAP crosses, sweeps, displacement |
+| 4 | `04_combined_smc_suite.pine` | Combined SMC Suite | 200 EMA filtered Parabolic SAR (entry and flip exit, no stop). Signals without exits: order blocks, breakout channels, EMA pullback taps, previous 1H/4H high/low and VWAP crosses, sweeps, displacement |
 | 5 | `05_smart_money_suite_v4.pine` | Smart Money Suite v4 [AlgoAlpha] | Sniper long/short (BOS entry, swing stop, 2R target). Signals without exits: channel breakouts, BOS/CHoCH, liquidity sweeps, high-confluence score |
 | 6 | `06_wyckoff_theultimator5.pine` | Wyckoff [theUltimator5] | Wyckoff entry (Phase C test or LPS/LPSY, by strictness); entries only, no stop or target. Phase events (SC/BC, Spring/UTAD, SOS/SOW, Phase E) as signals |
 | 7 | `07_order_flow_desk.pine` | Order Flow Desk [v6] | None yet: levels and events only (session volume profile, VWAP bands, delta/CVD, absorption, equal-high/low pools and sweeps, user-entered gamma levels), no entry or exit rules |

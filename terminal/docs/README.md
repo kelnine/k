@@ -18,4 +18,7 @@ accounts.
 | 8 | [Telegram](08-telegram.md) | Outbox-based delivery, events, templates, scheduled reports |
 | 9 | [Security](09-security.md) | Threat model, controls, LIVE interlocks |
 | 10 | [Roadmap](10-roadmap.md) | Phases 1–11, exit criteria, live promotion gates |
+| 11 | [Instruments, sessions & costs](11-instruments-sessions-costs.md) | Instrument catalog, symbol mapping, sessions and time zones, transaction costs |
+| 12 | [Strategy lab](12-strategy-lab.md) | Running N strategies side by side on separate paper accounts, isolation audit |
+| 13 | [Phase 3 Pine ports](13-phase3-pine-ports.md) | Received scripts, strategies to port, engine prerequisites, order of work, open decisions |
 | A | [Metric definitions](appendix-a-metrics.md) | Exact formulas used by analytics and the leaderboard |
