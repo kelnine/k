@@ -19,7 +19,12 @@ from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.strategy_engine.base import Strategy
 from kterminal.strategy_engine.instances import InstanceSpec, resolve_instance
-from kterminal.strategy_engine.model import Fault, PositionEvent, RejectedSignal
+from kterminal.strategy_engine.model import (
+    Fault,
+    OppositeSignalPolicy,
+    PositionEvent,
+    RejectedSignal,
+)
 from kterminal.strategy_engine.registry import StrategyDefinition, definition_from_class
 from kterminal.strategy_engine.runner import StrategyRunner
 
@@ -52,6 +57,8 @@ def run_strategy(
     sessions: Any | None = None,
     warmup_bars: Sequence[Bar] = (),
     instance_id: str = "test_instance",
+    on_opposite_signal: OppositeSignalPolicy | None = None,
+    skip_entry_beyond_levels: bool | None = None,
 ) -> StrategyTestResult:
     registry: Registry[StrategyDefinition] = Registry("strategy definition")
     definition = definition_from_class(strategy_cls)
@@ -63,6 +70,8 @@ def run_strategy(
         instruments=(instrument.symbol,),
         timeframe=timeframe,
         context_timeframes=tuple(context_timeframes),
+        on_opposite_signal=on_opposite_signal,
+        skip_entry_beyond_levels=skip_entry_beyond_levels,
     )
     resolved = resolve_instance(
         spec, instruments={instrument.symbol: instrument}, sessions=sessions, definitions=registry

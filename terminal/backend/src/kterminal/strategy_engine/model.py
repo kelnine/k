@@ -4,9 +4,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from kterminal.core.enums import Direction
 from kterminal.domain.signals import Signal
+
+OppositeSignalPolicy = Literal["reverse", "ignore"]
+
+OPEN_BEYOND_STOP = "OPEN_BEYOND_STOP"
+OPEN_BEYOND_TARGET = "OPEN_BEYOND_TARGET"
+"""Codes of a market entry skipped because the bar it would fill at opened at or beyond
+its stop / target (:attr:`PositionRules.skip_entry_beyond_levels`)."""
 
 
 class PositionEventKind(StrEnum):
@@ -15,6 +23,7 @@ class PositionEventKind(StrEnum):
     STOP_MOVED = "STOP_MOVED"
     TARGET_MOVED = "TARGET_MOVED"
     ORDER_EXPIRED = "ORDER_EXPIRED"
+    ORDER_CANCELLED = "ORDER_CANCELLED"  # e.g. a market entry skipped by the level guard
 
 
 class CloseReason(StrEnum):
@@ -22,6 +31,55 @@ class CloseReason(StrEnum):
     STOP_LOSS = "STOP_LOSS"
     SIGNAL_EXIT = "SIGNAL_EXIT"
     REVERSAL = "REVERSAL"
+    SESSION_CLOSE = "SESSION_CLOSE"  # a time-based exit (EXIT signal with reason SESSION_CLOSE)
+
+
+def exit_reason(signal: Signal) -> CloseReason:
+    """The close reason an ``EXIT_*`` signal records: ``SESSION_CLOSE`` when its ``reason``
+    is exactly that code (``ctx.exit_long(session_close=True)``), else ``SIGNAL_EXIT``.
+    The theoretical book and every paper account use this one rule."""
+    if signal.reason == CloseReason.SESSION_CLOSE:
+        return CloseReason.SESSION_CLOSE
+    return CloseReason.SIGNAL_EXIT
+
+
+@dataclass(frozen=True, slots=True)
+class PositionRules:
+    """How an instance's signals become positions. The theoretical book and the
+    instance's paper accounts apply the same rules, so they cannot drift apart.
+
+    ``on_opposite_signal``
+        ``reverse`` (default): an opposite entry closes the open position and enters;
+        ``ignore``: it is refused while a position is open.
+    ``skip_entry_beyond_levels``
+        Skip a MARKET entry when the bar it would fill on *opens* at or beyond its stop
+        or its target (``OPEN_BEYOND_STOP`` / ``OPEN_BEYOND_TARGET``): a signal priced
+        at the signal bar's close keeps its levels, but is not filled once the market has
+        already passed them (doc 13, D3).
+    """
+
+    on_opposite_signal: OppositeSignalPolicy = "reverse"
+    skip_entry_beyond_levels: bool = False
+
+
+def open_beyond_levels(
+    direction: Direction, open_price: Decimal, stop: Decimal, target: Decimal | None
+) -> str | None:
+    """Why a market entry filling at ``open_price`` must be skipped, or None.
+
+    At or beyond counts: a long whose bar opens at or below its stop, or at or above its
+    target, is skipped (a short mirrors this)."""
+    if direction is Direction.LONG:
+        if open_price <= stop:
+            return OPEN_BEYOND_STOP
+        if target is not None and open_price >= target:
+            return OPEN_BEYOND_TARGET
+        return None
+    if open_price >= stop:
+        return OPEN_BEYOND_STOP
+    if target is not None and open_price <= target:
+        return OPEN_BEYOND_TARGET
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +120,7 @@ class PositionEvent:
     price: Decimal | None = None
     reason: CloseReason | None = None
     signal: Signal | None = None  # the signal that caused it, if any
+    detail: str | None = None  # machine-readable code, e.g. OPEN_BEYOND_STOP for ORDER_CANCELLED
 
 
 @dataclass(frozen=True, slots=True)

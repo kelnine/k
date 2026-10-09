@@ -5,9 +5,10 @@ For every batch of bars that closed at the same instant the runner:
 1. appends the bars of its instrument and timeframes to its own series
    (context timeframes first, so higher timeframes are visible exactly when
    they have closed and never before);
-2. if a primary-timeframe bar closed: advances the theoretical book (fills at
-   the bar's open, SL/TP), lets the strategy react to position events, then
-   calls ``on_bar``;
+2. if a primary-timeframe bar closed: counts it (``ctx.bar_index``) and updates
+   the trading day / week / month levels (``ctx.periods``) — during warm-up too —
+   advances the theoretical book (fills at the bar's open, SL/TP), lets the
+   strategy react to position events, then calls ``on_bar``;
 3. checks every returned object is a ``Signal`` carrying *this* instance's
    identity, validates it against the standard, and applies valid ones to the
    book.
@@ -84,7 +85,12 @@ class StrategyRunner:
             tf: BarSeries(instrument.symbol, tf, max(max_bars, meta.warmup_bars + 1))
             for tf in resolved.timeframes
         }
-        self.book = TheoreticalBook(instrument.symbol, on_opposite_signal=meta.on_opposite_signal)
+        rules = resolved.position_rules  # the instance's accounts apply the same rules
+        self.book = TheoreticalBook(
+            instrument.symbol,
+            on_opposite_signal=rules.on_opposite_signal,
+            skip_entry_beyond_levels=rules.skip_entry_beyond_levels,
+        )
         self.source = (
             SignalSource.INTERNAL
             if resolved.definition.strategy_cls is not None
@@ -185,6 +191,7 @@ class StrategyRunner:
                 primary = bar
         if primary is None:
             return None
+        self.ctx._advance(primary)
         if self.fault is not None or not self._started:
             return None
         if self.is_external:

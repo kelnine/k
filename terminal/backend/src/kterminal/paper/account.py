@@ -20,6 +20,14 @@ comparisons fair):
 * on the bar a resting entry fills *inside* the bar, only the part after the
   fill is known to have traded: the stop is checked (conservatively, on the
   whole bar), the target only if the bar closes beyond it;
+* the instance's :class:`~kterminal.strategy_engine.model.PositionRules` apply
+  exactly as in its theoretical book: opposite entries reverse or are refused;
+  an exit followed on the same bar by a new entry closes and re-enters at the
+  same next open (replace); with ``skip_entry_beyond_levels`` a market entry
+  whose fill bar opens at/beyond its stop or target is cancelled
+  (``OPEN_BEYOND_STOP`` / ``OPEN_BEYOND_TARGET``, on the bar's mid open like the
+  book); an exit with reason ``SESSION_CLOSE`` is recorded as one; a ``MOVE_SL``
+  that leaves the stop where it is writes no ``STOP_MOVED`` row;
 * signal levels are put on the listing's tick grid, rounded against the
   account (the price an order gets is never better than requested);
 * commissions are charged per fill; funding (perpetuals) and swap (CFD/FX)
@@ -69,6 +77,7 @@ from kterminal.risk.checks import (
     passed,
 )
 from kterminal.risk.sizing import size_position
+from kterminal.strategy_engine.model import PositionRules, exit_reason, open_beyond_levels
 
 MONEY = Decimal("0.0001")
 ZERO = Decimal(0)
@@ -135,6 +144,7 @@ class AccountStats:
     trades_opened: int = 0
     trades_closed: int = 0
     reject_codes: dict[str, int] = field(default_factory=dict)
+    cancel_codes: dict[str, int] = field(default_factory=dict)  # approved, then not filled
 
 
 class PaperAccount:
@@ -152,7 +162,10 @@ class PaperAccount:
         classify: Callable[[datetime], str] | None = None,
         on_opposite_signal: str = "reverse",
         status: str = "ACTIVE",
+        rules: PositionRules | None = None,
     ) -> None:
+        """``rules`` (the instance's ``ResolvedInstance.position_rules``) take precedence
+        over the older ``on_opposite_signal`` argument."""
         self.account_id = account_id
         self.name = name
         self.instance_id = instance_id
@@ -163,7 +176,10 @@ class PaperAccount:
         self._tf = Timeframe.parse(timeframe)
         self.trading_day_rule = trading_day_rule
         self.classify = classify or (lambda _ts: "unknown")
-        self.on_opposite_signal = on_opposite_signal
+        self.rules = rules or PositionRules(
+            on_opposite_signal="ignore" if on_opposite_signal == "ignore" else "reverse"
+        )
+        self.on_opposite_signal = self.rules.on_opposite_signal
         self.status = status
         self.rates = CurrencyRates(
             rates=(
@@ -296,7 +312,10 @@ class PaperAccount:
 
         reversing = False
         existing = self.positions.get(symbol)
-        if existing is not None and existing.trade.direction is direction:
+        # replace: a position that already exits at the next open counts as flat
+        exiting = existing is not None and symbol in self.pending_exits
+        holding = existing if not exiting else None
+        if holding is not None and holding.trade.direction is direction:
             results.append(
                 failed(
                     "one_position_per_instrument",
@@ -304,20 +323,25 @@ class PaperAccount:
                     f"already {direction} {symbol}",
                 )
             )
-        elif existing is not None and self.on_opposite_signal == "ignore":
+        elif holding is not None and self.on_opposite_signal == "ignore":
             results.append(
                 failed(
                     "one_position_per_instrument",
                     "OPPOSITE_POSITION_OPEN",
-                    f"{existing.trade.direction} {symbol} is open",
+                    f"{holding.trade.direction} {symbol} is open",
                 )
             )
         else:
-            reversing = existing is not None
-            results.append(passed("one_position_per_instrument", reversing=reversing))
+            reversing = holding is not None
+            results.append(
+                passed("one_position_per_instrument", reversing=reversing, replacing=True)
+                if exiting
+                else passed("one_position_per_instrument", reversing=reversing)
+            )
 
         replaced = 1 if symbol in self.pending_entries else 0
-        occupied = len(self.positions) + len(self.pending_entries) - replaced - int(reversing)
+        freed = int(reversing or exiting)  # the open position's slot is freed at the next open
+        occupied = len(self.positions) + len(self.pending_entries) - replaced - freed
         results.append(check_max_open_positions(occupied, self.settings.max_open_positions))
 
         requested_pct = signal.risk if signal.risk is not None else self.settings.risk_per_trade_pct
@@ -443,7 +467,9 @@ class PaperAccount:
         direction = signal.signal.direction
         if position is not None and position.trade.direction is direction:
             decision = self._decide(signal, signal_id, at, [passed("matching_position")])
-            self.pending_exits[symbol] = _PendingExit(signal, signal_id, "SIGNAL_EXIT", decision.id)
+            self.pending_exits[symbol] = _PendingExit(
+                signal, signal_id, exit_reason(signal).value, decision.id
+            )
             return decision
         pending = self.pending_entries.get(symbol)
         if pending is not None and pending.signal.signal.direction is direction:
@@ -489,18 +515,18 @@ class PaperAccount:
             if signal.take_profit is not None
             else trade.current_target
         )
-        at_entry = _at_breakeven(trade, new_stop)
-        self._outbox.append(
-            TradeEventRecord(
-                id=uuid7(),
-                trade_id=trade.id,
-                ts=at,
-                kind="BREAKEVEN" if at_entry else "STOP_MOVED",
-                old_value=trade.current_stop,
-                new_value=new_stop,
-                signal_id=signal_id,
+        if new_stop != trade.current_stop:  # a MOVE_SL that keeps the stop writes no row
+            self._outbox.append(
+                TradeEventRecord(
+                    id=uuid7(),
+                    trade_id=trade.id,
+                    ts=at,
+                    kind="BREAKEVEN" if _at_breakeven(trade, new_stop) else "STOP_MOVED",
+                    old_value=trade.current_stop,
+                    new_value=new_stop,
+                    signal_id=signal_id,
+                )
             )
-        )
         if new_target != trade.current_target:
             self._outbox.append(
                 TradeEventRecord(
@@ -635,6 +661,15 @@ class PaperAccount:
         at = bar.open_time
         intrabar = False
         if signal.order_type is OrderType.MARKET:
+            skip = (
+                open_beyond_levels(direction, bar.open, signal.stop_loss, signal.take_profit)
+                if self.rules.skip_entry_beyond_levels
+                else None
+            )
+            if skip is not None:  # the open already passed a level: cancel, as the book does
+                self._cancel_pending(signal.symbol, at, skip)
+                self.stats.cancel_codes[skip] = self.stats.cancel_codes.get(skip, 0) + 1
+                return False
             fill = costs.market_fill(side, bar.open, at)
             price, half_spread, slip = fill.price, fill.half_spread, fill.slippage
             liquidity = Liquidity.TAKER

@@ -22,7 +22,16 @@ unknown — the paper accounts apply the same rules):
   after the fill, so the target counts only if the bar closes beyond it;
 * a bar that gaps through a stop fills at the open;
 * ``MOVE_SL`` never widens risk (accounts refuse it too) and reports
-  ``STOP_MOVED`` / ``TARGET_MOVED`` events on the next bar.
+  ``STOP_MOVED`` / ``TARGET_MOVED`` events on the next bar — only for a level
+  that actually changes;
+* **replace**: an ``EXIT_*`` followed, on the same bar, by a new entry (in either
+  direction) closes the position at the next open and enters at that same open —
+  a position with a pending exit counts as flat for the entry;
+* an exit whose ``reason`` is ``SESSION_CLOSE`` closes with that reason
+  (:func:`~kterminal.strategy_engine.model.exit_reason`);
+* with ``skip_entry_beyond_levels`` a MARKET entry is skipped (``ORDER_CANCELLED``,
+  ``OPEN_BEYOND_STOP`` / ``OPEN_BEYOND_TARGET``) when the bar it would fill on opens
+  at or beyond its stop or target.
 """
 
 from dataclasses import dataclass, replace
@@ -34,9 +43,12 @@ from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.strategy_engine.model import (
     CloseReason,
+    OppositeSignalPolicy,
     PositionEvent,
     PositionEventKind,
     PositionView,
+    exit_reason,
+    open_beyond_levels,
 )
 
 
@@ -47,9 +59,16 @@ class _Pending:
 
 
 class TheoreticalBook:
-    def __init__(self, instrument: str, *, on_opposite_signal: str = "reverse") -> None:
+    def __init__(
+        self,
+        instrument: str,
+        *,
+        on_opposite_signal: OppositeSignalPolicy = "reverse",
+        skip_entry_beyond_levels: bool = False,
+    ) -> None:
         self.instrument = instrument
         self.on_opposite_signal = on_opposite_signal
+        self.skip_entry_beyond_levels = skip_entry_beyond_levels
         self._position: PositionView | None = None
         self._pending_entry: _Pending | None = None
         self._pending_exit: Signal | None = None
@@ -70,11 +89,13 @@ class TheoreticalBook:
         position = self._position
         if action.is_entry:
             direction = _direction(signal)
-            if position is not None and position.direction is direction:
+            # replace: a position already exiting at the next open counts as flat
+            holding = position is not None and self._pending_exit is None
+            if holding and position is not None and position.direction is direction:
                 return "POSITION_EXISTS"
-            if position is not None and self.on_opposite_signal == "ignore":
+            if holding and self.on_opposite_signal == "ignore":
                 return "OPPOSITE_POSITION_OPEN"
-            if position is not None and signal.order_type is OrderType.MARKET:
+            if holding and signal.order_type is OrderType.MARKET:
                 self._pending_exit = signal  # reverse: close at the next open, then enter
             # a resting (LIMIT/STOP) reversal closes the position only when it fills
             self._pending_entry = _Pending(signal)
@@ -136,7 +157,7 @@ class TheoreticalBook:
         exit_signal, position = self._pending_exit, self._position
         if exit_signal is not None and position is not None:
             reason = (
-                CloseReason.REVERSAL if exit_signal.signal.is_entry else CloseReason.SIGNAL_EXIT
+                CloseReason.REVERSAL if exit_signal.signal.is_entry else exit_reason(exit_signal)
             )
             events.append(self._close(position, bar.open, bar.open_time, reason, exit_signal))
         self._pending_exit = None
@@ -170,6 +191,24 @@ class TheoreticalBook:
         fill: Decimal | None
         if signal.order_type is OrderType.MARKET:
             fill = bar.open
+            skip = (
+                open_beyond_levels(direction, fill, _stop(signal), signal.take_profit)
+                if self.skip_entry_beyond_levels
+                else None
+            )
+            if skip is not None:
+                self._pending_entry = None
+                return [
+                    PositionEvent(
+                        PositionEventKind.ORDER_CANCELLED,
+                        self.instrument,
+                        direction,
+                        bar.open_time,
+                        fill,
+                        signal=signal,
+                        detail=skip,
+                    )
+                ], False
         else:
             fill = _resting_fill(signal, direction, bar)
         if fill is None:
