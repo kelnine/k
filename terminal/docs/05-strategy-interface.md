@@ -280,8 +280,11 @@ its own account; everything downstream is identical.
 |---|---|
 | `process_orders_on_close`, `calc_on_every_tick` | Default terminal behaviour = Pine default: signal on close, fill next bar open |
 | `request.security(...)` | Use `ctx.series(tf)` for a timeframe declared in `context_timeframes`; it holds closed bars only, so it never repaints. A context bar becomes visible on the primary bar that closes with it, one primary bar earlier than Pine's `lookahead_on` + `[1]` idiom — ports that need TradingView parity lag it by one bar (doc 13, P5) |
-| `ta.rma`, `ta.ema`, `ta.atr`, `ta.rsi` | Use `kterminal.indicators` (Pine-compatible seeding), not TA-Lib |
-| `na`, `nz()` | `math.nan`/`numpy.nan`; explicit `nz()` helper |
+| `ta.*` built-ins (`ta.ema`, `ta.rma`, `ta.atr`, `ta.rsi`, `ta.dmi`, `ta.sar`, `ta.supertrend`, `ta.pivothigh` …) | Use `kterminal.indicators` ([doc 14](14-indicators.md)), not TA-Lib or pandas: one streaming object per Pine call site, created in `on_start` and updated on every bar where the script calls the function (every bar, unless the call sits inside an `if`) |
+| `na`, `nz()`, `fixnan()`, division by zero | `math.nan`; `na()`, `nz()`, `FixNan`, `div()` from `kterminal.indicators` |
+| `>`, `>=`, `==`, `!=` … on floats | Pine compares with a 1e-10 tolerance and any comparison with na is false: `gt()`, `ge()`, `eq()`, `ne()` … where parity depends on it |
+| `x[i]`, `bar_index` | `History(maxlen)[i]`, `BarIndex` (or the `ctx.bars` arrays for OHLCV) |
+| `math.round`, `math.round_to_mintick` | `pine_round()` (ties away from zero — not Python's `round()`), `round_to_mintick(x, ctx.instrument.tick_size)` |
 | `var` / `varip` | Instance attributes set in `on_start` |
 | `strategy.exit(loss=, profit=)` in ticks | Convert with `ctx.instrument.tick_size` |
 | `strategy.risk.*`, qty settings | Not ported — the risk profile owns sizing and limits |
