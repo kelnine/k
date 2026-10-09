@@ -11,8 +11,8 @@ const string TZ = "America/New_York"
 // ─────────────────────────────── Inputs ───────────────────────────────
 const string G_FVG = "Fair Value Gaps"
 showFVG     = input.bool(true, "Show FVG / iFVG", group = G_FVG)
-fvgMinSize  = input.float(0.0, "Min gap size (points)", minval = 0, group = G_FVG)
-fvgMax      = input.int(30, "Max zones tracked", minval = 1, maxval = 200, group = G_FVG)
+fvgMinAtr   = input.float(0.3, "Min gap size (× ATR)", minval = 0, step = 0.05, tooltip = "Ignores gaps smaller than this fraction of the 14-bar ATR, so the filter works on any symbol and timeframe.", group = G_FVG)
+fvgMax      = input.int(10, "Max zones tracked", minval = 1, maxval = 200, group = G_FVG)
 keepDead    = input.bool(false, "Keep invalidated iFVGs on chart", group = G_FVG)
 tagSession  = input.bool(true, "Prefix zones with session (AM iFVG, LON iFVG…)", group = G_FVG)
 fvgUpCol    = input.color(color.new(#089981, 80), "Bullish FVG", inline = "f1", group = G_FVG)
@@ -58,7 +58,8 @@ fibCol    = input.color(#ff9800, "Color", group = G_FIB)
 const string G_EQ = "Equal highs / lows"
 showEQ    = input.bool(true, "Show EH / EL", group = G_EQ)
 eqLen     = input.int(5, "Pivot length", minval = 1, group = G_EQ)
-eqTol     = input.float(2.0, "Tolerance (points)", minval = 0, group = G_EQ)
+eqTolAtr  = input.float(0.1, "Tolerance (× ATR)", minval = 0, step = 0.05, tooltip = "Two swing highs/lows count as equal when they are within this fraction of the 14-bar ATR.", group = G_EQ)
+eqMax     = input.int(4, "Max EH / EL shown", minval = 1, maxval = 50, group = G_EQ)
 eqCol     = input.color(#ff9800, "Color", group = G_EQ)
 
 const string G_MA = "EMA cloud"
@@ -153,8 +154,9 @@ string sessTag = inAsia ? "ASIA " : inLon ? "LON " : inAM ? "AM " : inLunch ? "L
 // ─────────────────────────────── FVG / iFVG ───────────────────────────────
 var array<Gap> gaps = array.new<Gap>()
 
-bool bullFVG = low > high[2] and (low - high[2]) >= fvgMinSize
-bool bearFVG = high < low[2] and (low[2] - high) >= fvgMinSize
+float atr = ta.atr(14)
+bool bullFVG = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
+bool bearFVG = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
 
 if showFVG and (bullFVG or bearFVG)
     float top = bullFVG ? low : low[2]
@@ -249,16 +251,24 @@ var float lastEPH = na
 var float lastEPL = na
 var int   lastEPHt = na
 var int   lastEPLt = na
+var array<line>  eqLines  = array.new<line>()
+var array<label> eqLabels = array.new<label>()
+float eqTol = eqTolAtr * atr
+
+addEQ(int x1, float y1, int x2, float y2, string txt, string lblStyle) =>
+    eqLines.push(line.new(x1, y1, x2, y2, xloc.bar_time, color = eqCol, style = line.style_dashed))
+    eqLabels.push(label.new(x2, y2, txt, xloc.bar_time, color = color.new(color.black, 100), style = lblStyle, textcolor = eqCol, size = size.small))
+    if eqLines.size() > eqMax
+        line.delete(eqLines.shift())
+        label.delete(eqLabels.shift())
 if not na(eph)
     if showEQ and not na(lastEPH) and math.abs(eph - lastEPH) <= eqTol
-        line.new(lastEPHt, lastEPH, time[eqLen], eph, xloc.bar_time, color = eqCol, style = line.style_dashed)
-        label.new(time[eqLen], eph, "EH", xloc.bar_time, color = color.new(color.black, 100), style = label.style_label_down, textcolor = eqCol, size = size.small)
+        addEQ(lastEPHt, lastEPH, time[eqLen], eph, "EH", label.style_label_down)
     lastEPH  := eph
     lastEPHt := time[eqLen]
 if not na(epl)
     if showEQ and not na(lastEPL) and math.abs(epl - lastEPL) <= eqTol
-        line.new(lastEPLt, lastEPL, time[eqLen], epl, xloc.bar_time, color = eqCol, style = line.style_dashed)
-        label.new(time[eqLen], epl, "EL", xloc.bar_time, color = color.new(color.black, 100), style = label.style_label_up, textcolor = eqCol, size = size.small)
+        addEQ(lastEPLt, lastEPL, time[eqLen], epl, "EL", label.style_label_up)
     lastEPL  := epl
     lastEPLt := time[eqLen]
 
