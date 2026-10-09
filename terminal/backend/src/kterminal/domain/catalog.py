@@ -11,6 +11,9 @@ session window, cost profile and venue profile, loaded from configuration.
     costs.yaml           cost_profiles: [...]
     venue_profiles.yaml  venue_profiles: [...]
 
+``data_sources.yaml`` in the same directory is not part of the catalog: the market-data
+layer loads and validates it against the catalog (``kterminal.marketdata.sources``).
+
 Everything is normalised into one *catalog document* (plain JSON-safe data)
 that is validated as a whole — every cross-reference must resolve — and
 hashed into a fingerprint. The document is what ``kterminal catalog apply``
@@ -66,6 +69,8 @@ DOCUMENT_KEYS = (
     "cost_profiles",
     "venue_profiles",
 )
+# Files in the catalog directory that belong to other modules (see the module docstring).
+NOT_CATALOG_FILES = frozenset({"data_sources.yaml"})
 
 
 class CatalogError(ValueError):
@@ -620,7 +625,8 @@ def read_catalog_document(directory: str | Path) -> dict[str, Any]:
             return {}
         return data
 
-    files = sorted(root.glob("*.yaml")) + sorted((root / "listings").glob("*.yaml"))
+    files = sorted(p for p in root.glob("*.yaml") if p.name not in NOT_CATALOG_FILES)
+    files += sorted((root / "listings").glob("*.yaml"))
     for path in files:
         data = load(path)
         default_venue = data.pop("venue", None)

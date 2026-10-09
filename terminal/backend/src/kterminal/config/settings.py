@@ -19,13 +19,14 @@ An enabled-but-unacknowledged configuration is rejected at start-up rather
 than silently treated as disabled, so a half-configured LIVE setup is noticed.
 """
 
+import json
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -156,6 +157,58 @@ class PathSettings(BaseModel):
     def lab_config(self) -> Path:
         return self.config_dir / "lab.yaml"
 
+    @property
+    def data_sources(self) -> Path:
+        return self.catalog_dir / "data_sources.yaml"
+
+
+class OandaEnvironment(StrEnum):
+    """Which OANDA REST host serves candles: tokens are issued per environment."""
+
+    PRACTICE = "practice"
+    LIVE = "live"
+
+
+class MarketDataSettings(BaseModel):
+    """Market-data providers (docs/15-market-data.md).
+
+    Read-only: providers only download candles, so nothing here can place an order.
+    ``oanda_environment = live`` merely selects the host that accepts a token issued for
+    an OANDA live account; it has nothing to do with LIVE trading.
+    """
+
+    # The data source map; default <config>/catalog/data_sources.yaml.
+    sources_file: Path | None = None
+    # Providers this host must not use (e.g. geo-blocked venues). Instruments fall back to
+    # the alternatives listed in the map. Comma-separated or a JSON list.
+    disabled_providers: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Per-provider base URL overrides (JSON object), e.g. a market-data-only mirror.
+    base_urls: dict[str, str] = Field(default_factory=dict)
+    oanda_token: SecretStr | None = None
+    oanda_environment: OandaEnvironment = OandaEnvironment.PRACTICE
+    # Directory of imported 1m files (<INSTRUMENT>.csv) served by the ``csv`` provider.
+    csv_dir: Path | None = None
+    request_timeout_s: float = Field(default=10.0, gt=0, le=120)
+    max_retries: int = Field(default=5, ge=0, le=10)
+    backoff_initial_s: float = Field(default=0.5, gt=0, le=60)
+    backoff_max_s: float = Field(default=30.0, gt=0, le=600)
+    # A bar counts as closed only this long after its minute ends (clock skew, late prints).
+    close_delay_s: float = Field(default=2.0, ge=0, le=60)
+
+    @field_validator("disabled_providers", mode="before")
+    @classmethod
+    def _split_names(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [part.strip() for part in text.split(",") if part.strip()]
+        return value
+
+    @property
+    def oanda_configured(self) -> bool:
+        return self.oanda_token is not None and bool(self.oanda_token.get_secret_value().strip())
+
 
 class RuntimeSettings(BaseModel):
     """Long-running process roles (engine, worker)."""
@@ -182,6 +235,7 @@ class Settings(BaseSettings):
     trading: TradingSettings = Field(default_factory=TradingSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     paths: PathSettings = Field(default_factory=PathSettings)
+    marketdata: MarketDataSettings = Field(default_factory=MarketDataSettings)
 
     @model_validator(mode="after")
     def _production_safety(self) -> "Settings":
