@@ -372,3 +372,28 @@ async def test_ending_the_open_session_closes_its_positions_and_the_next_start_i
             await end_open_sessions(database)
     finally:
         await lock.release()
+
+
+async def test_a_failure_is_published_only_while_no_runtime_holds_the_lock(
+    database: Database,
+) -> None:
+    from kterminal.db.locks import AdvisoryLock
+    from kterminal.paper.runtime import PAPER_RUNTIME_LOCK, publish_failure
+
+    store = PostgresForwardStore(database)
+    lock = AdvisoryLock(database.engine, PAPER_RUNTIME_LOCK)
+    assert await lock.try_acquire()
+    try:
+        await publish_failure(database, "DataSourceError: broken map", now=START)
+        assert await store.read_status() is None  # the running runtime's status stands
+    finally:
+        await lock.release()
+    await publish_failure(database, "DataSourceError: broken map", now=START)
+    status = await store.read_status()
+    assert status is not None
+    assert (status["status"], status["error"], status["updated_at"]) == (
+        "error",
+        "DataSourceError: broken map",
+        START.isoformat(),
+    )
+    assert status["kill_switch"] == {"global": False, "accounts": [], "strategies": []}

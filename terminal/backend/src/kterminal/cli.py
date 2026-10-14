@@ -797,9 +797,11 @@ def _format_runtime_status(status: dict[str, Any] | None) -> list[str]:
         f"strategies {', '.join(kill.get('strategies') or []) or '—'}"
     )
     for symbol, info in sorted((status.get("instruments") or {}).items()):
+        lag = info.get("lag_seconds")
         lines.append(
-            f"  {symbol:<10} {info.get('provider') or '—':<14} {info.get('state'):<12} "
-            f"last bar {info.get('last_bar_open') or '—'}  lag {info.get('lag_seconds')} s"
+            f"  {symbol:<10} {info.get('provider') or '—':<14} {info.get('state') or '—':<12} "
+            f"last bar {info.get('last_bar_open') or '—'}  "
+            f"lag {'—' if lag is None else f'{lag} s'}"
             + (f"  ({info['last_error']})" if info.get("last_error") else "")
         )
     for instance, info in sorted((status.get("instances") or {}).items()):
@@ -885,6 +887,43 @@ def data_import_csv(
         f"({bars[0].open_time.isoformat()} → {bars[-1].open_time.isoformat()}), "
         f"{inserted} inserted, {len(bars) - inserted} already stored"
     )
+
+
+@data_app.command("candles")
+def data_candles(
+    instrument: Annotated[str | None, typer.Option(help="Only this instrument (any alias)")] = None,
+) -> None:
+    """Bars stored in the candles table, per instrument, timeframe and source."""
+    from kterminal.db.repositories.candles import candle_coverage
+    from kterminal.db.session import Database
+
+    settings = _load_settings_or_exit()
+    symbol = None
+    if instrument is not None:
+        try:
+            symbol = _load_catalog(settings, None).resolve_symbol(instrument).symbol
+        except LookupError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from None
+
+    async def _run() -> list[Any]:
+        database = Database(settings.database, application_name="kterminal-data-candles")
+        try:
+            async with database.session() as session:
+                return await candle_coverage(session, symbol)
+        finally:
+            await database.dispose()
+
+    rows = asyncio.run(_run())
+    if not rows:
+        typer.echo("no candles stored")
+        return
+    typer.echo(f"{'INSTRUMENT':<11}{'TF':<5}{'SOURCE':<16}{'BARS':>9}  FIRST → LAST (UTC)")
+    for row in rows:
+        typer.echo(
+            f"{row.instrument:<11}{row.timeframe:<5}{row.source:<16}{row.bars:>9}  "
+            f"{row.first_open:%Y-%m-%d %H:%M} → {row.last_open:%Y-%m-%d %H:%M}"
+        )
 
 
 ScopeOption = Annotated[str, typer.Option("--scope", help="global | account | strategy")]
@@ -983,3 +1022,6 @@ def killswitch_status() -> None:
             f"{'close positions ' if switch.close_positions else ''}"
             f"by {switch.changed_by} at {switch.changed_at.isoformat()}: {switch.reason}"
         )
+
+
+# ════════════════════════ end of the forward paper trading block ════════════════════════

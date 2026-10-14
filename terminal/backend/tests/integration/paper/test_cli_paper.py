@@ -100,6 +100,12 @@ async def test_import_csv_loads_bars_into_the_candles_table(
         ("XAUUSD", "tv-export", "2026-01-05T14:31:00+00:00"),
         ("XAUUSD", "tv-export", "2026-01-05T14:32:00+00:00"),
     ]
+    code, output = await invoke("data", "candles", "--instrument", "GOLD")
+    assert code == 0, output
+    row = "XAUUSD     1m   tv-export               3  2026-01-05 14:30 → 2026-01-05 14:32"
+    assert row in output
+    code, output = await invoke("data", "candles", "--instrument", "NEARUSD")
+    assert code == 0 and "no candles stored" in output
     bad = config_dir / "bad.csv"
     bad.write_text("time,open,high,low,close\n2026-01-05T14:30:30Z,1,1,1,1\n", encoding="utf-8")
     code, output = await invoke(

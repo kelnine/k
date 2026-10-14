@@ -28,7 +28,7 @@ from kterminal.domain.market import Bar
 from kterminal.domain.timeframes import Timeframe
 
 _candles = table_of(CandleRow)
-_BATCH = 5_000  # rows per INSERT statement (asyncpg caps bind parameters at 32767)
+_BATCH = 3_000  # rows per INSERT: 9 columns each, asyncpg caps bind parameters at 32,767
 _PRICE_COLUMNS = ("open", "high", "low", "close", "volume")
 
 

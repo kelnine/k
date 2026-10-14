@@ -15,7 +15,7 @@ created.
 | Schema up to date | `kterminal db upgrade` (Docker: the `migrate` service does it) |
 | Instances to trade | `config/lab.yaml` and the files in `config/instances.d/` ([12.7](12-strategy-lab.md#which-instances-trade)); `kterminal strategies list` shows lab.yaml's |
 | Market data | `kterminal data sources` shows each instrument's provider and whether it is usable on this host ([15](15-market-data.md)). An instrument without a usable provider (no OANDA token, a disabled venue, not in the data source map) is reported `no_provider` with the reason and never trades |
-| History (optional) | `kterminal data import-csv FILE --instrument XAUUSD --source <provider>` loads bars (a generic OHLCV file or a TradingView export) into `candles`. Warm-up uses stored candles of the instrument's live source, so import under the provider's name (`oanda`, `binance_usdm` …) to save downloads |
+| History (optional) | `kterminal data import-csv FILE --instrument XAUUSD --source <provider>` loads bars (a generic OHLCV file or a TradingView export) into `candles`. Warm-up uses stored candles of the instrument's live source, so import under the provider's name (`oanda`, `binance_usdm` …) to save downloads. `kterminal data candles` lists what is stored |
 | Tuning (optional) | `forward:` in `lab.yaml` — `warmup_days` (10), `poll_delay_s` (2), `batch_timeout_s` (20) |
 
 `kterminal lab provision` is optional: it creates the dedicated accounts of
