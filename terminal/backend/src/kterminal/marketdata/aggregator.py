@@ -167,3 +167,65 @@ def aggregate_stream(
 
 def total_volume(bars: Iterable[Bar]) -> Decimal:
     return sum((b.volume for b in bars), Decimal(0))
+
+
+class StreamAggregator:
+    """The incremental form of :func:`aggregate_stream`, for feeds that arrive bar by bar.
+
+    ``push(bar)`` adds one base bar and returns the batches that are complete at that
+    point of the stream — exactly the batches ``aggregate_stream`` yields when it reaches
+    the same bar. ``advance(t)`` declares that no base bar opening before ``t`` will be
+    pushed any more (a live minute has been processed) and returns every batch that
+    closes at or before ``t`` without waiting for the next bar; ``finish()`` ends the
+    stream. Advancing only makes a batch available earlier: as long as a later bar does
+    arrive, pushing the same bars yields the same batches, in the same order, with or
+    without it. (After the last bar, only advancing can close a period whose final
+    minutes never came — on a live feed the passing of time proves it is over.)
+    """
+
+    def __init__(self, base: Timeframe, targets: Sequence[Timeframe]) -> None:
+        self._aggregator = BarAggregator(base, targets)
+        self._pending: dict[datetime, list[Bar]] = {}
+        self._floor: datetime | None = None  # no base bar may open before this any more
+
+    @property
+    def advanced_to(self) -> datetime | None:
+        return self._floor
+
+    def push(self, bar: Bar) -> list[list[Bar]]:
+        if self._floor is not None and bar.open_time < self._floor:
+            raise ValueError(
+                f"{bar.instrument}: bar opening {bar.open_time.isoformat()} arrived after the "
+                f"stream advanced to {self._floor.isoformat()}"
+            )
+        ready = self._complete(bar.open_time)
+        for closed in self._aggregator.add(bar):
+            self._pending.setdefault(closed.close_time, []).append(closed)
+        return ready
+
+    def advance(self, t: datetime) -> list[list[Bar]]:
+        ready = self._complete(t)
+        if self._floor is None or t > self._floor:
+            self._floor = t
+        return ready
+
+    def complete_through(self, t: datetime) -> list[list[Bar]]:
+        """The batches that close at or before ``t`` (as :meth:`advance`, without
+        forbidding later pushes of earlier bars)."""
+        return self._complete(t)
+
+    def finish(self) -> list[list[Bar]]:
+        return self._flush(None)
+
+    def _complete(self, t: datetime) -> list[list[Bar]]:
+        # A base bar opening at t proves every period ending at or before t is complete
+        # for all instruments (bars of the same instant share a batch).
+        for closed in self._aggregator.close_through(t):
+            self._pending.setdefault(closed.close_time, []).append(closed)
+        return self._flush(t)
+
+    def _flush(self, up_to: datetime | None) -> list[list[Bar]]:
+        return [
+            sorted(self._pending.pop(close_time), key=lambda b: (b.instrument, b.timeframe))
+            for close_time in sorted(t for t in self._pending if up_to is None or t <= up_to)
+        ]

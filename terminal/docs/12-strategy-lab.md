@@ -153,3 +153,96 @@ changes:
   `account_config_versions`; ledger kinds include `FUNDING`.
 * **Trades and fills:** instance/version/account-config references, venue and
   venue symbol, funding, spread cost and slippage columns.
+
+## 12.7 Forward sessions: the lab on live data
+
+A **forward session** runs the lab on live, closed 1-minute bars. Each
+instance trades its **dedicated** account (`Paper 50K · <instance>`) — never a
+run-scoped one — so forward-test history accumulates in one place per
+instance. The session is a `runs` row of kind `FORWARD` that stays `RUNNING`
+across restarts until a new session replaces it. Everything below is paper:
+fills are simulated, no broker adapter is constructed, and LIVE accounts cannot
+be created.
+
+| Step | What happens |
+|---|---|
+| Start | The lab is set up and the dedicated accounts provisioned (a changed account configuration becomes a new configuration version). Each account continues from its ledger balance; a session refuses to start while one of them still has an open trade. |
+| Warm-up | Per instrument, enough base bars for every instance's `warmup_bars` at its largest timeframe (+1 period), capped at `--warmup-days` (default 10): stored candles of the instrument's live source first, the rest from the provider's history (and stored). Warm-up primes indicators; nothing trades. |
+| Live loop | Shortly after each minute boundary every instrument's provider is polled for bars since its newest one. The minute is processed when every instrument the session waits for has delivered it (or a later bar, which proves a gap), or 20 s after the close. It waits only for instruments whose market is open (catalog trading calendars) and whose provider is not backing off after an error (marked `stale`). A bar that arrives after its minute was processed is dropped and logged, never processed out of order. Periods of higher timeframes close when their time is over, also when their last minutes never came. |
+| Commit | Each minute is one transaction: its bars into `candles`, every record the lab produced, the session's progress (`runs.data_fingerprint`) and an audit entry for each kill-switch state that took effect. |
+| Restart | The open session is resumed by replaying its logged candles through a fresh lab with every write suppressed, then checked against the database before it continues live (catching up on the minutes it missed). |
+| New session | `kterminal paper start --new-session` ends the open session — its open positions are closed at their instrument's last processed price, recorded as `RUN_END` exits, and the run becomes `COMPLETED` — then starts a new one. |
+
+### The input log and exact replay
+
+`candles` (keyed by instrument, timeframe, source and open time) is the
+session's input log: every bar it warmed up on or processed is there, under
+the source recorded in the session's input segments. The session's progress
+holds a hash chain over the bars of every processed minute and the number of
+lab batches.
+
+Replay reproduces the original run exactly because nothing it depends on is
+random or wall-clock based:
+
+* **Ids** come from `SessionIds`: UUIDv7-shaped, made of the batch's close
+  time, a sequence within the batch and the session's namespace (from its run
+  id). They sort chronologically and are the same in a replay.
+* **Bars** are processed in canonical form (`4000.0100000000` and `4000.01` are
+  the same bar), so a bar read back from `candles` is the bar the live run saw.
+* **Kill-switch changes** are recorded with the batch they took effect at and
+  re-applied at that batch.
+* **Host failures** a replay cannot cause (a subprocess time-out or crash) are
+  read back from `system_errors` and re-applied at their batch; strategy
+  exceptions recur by themselves.
+
+After the replay the session compares its rebuilt state with the database: row
+counts of every table it writes, every ledger entry of the session (ids,
+amounts, balances), every trade (status, net P&L, exit time), each account's
+ledger balance and open trades, and each account's latest equity snapshot. Any
+difference, or a changed input log (warm-up or live candles), stops it with
+`SessionVerificationError`.
+
+A session is never resumed under different conditions: if the lab
+configuration, the catalog fingerprint or any instance's strategy version
+changed since it began, resuming fails with `SessionMismatchError`, naming
+each change and the command to start a new session. Its recorded trades stay
+as they are.
+
+### Kill switches
+
+`kill_switches` holds one row per scope: `GLOBAL`, `ACCOUNT <account id>` or
+`STRATEGY <instance id>`. The runtime reads the table before every minute; a
+changed state takes effect in the next batch, after its fills and before its
+signals:
+
+| While a switch covers an account | |
+|---|---|
+| New entries | Refused: a recorded risk decision with `KILL_SWITCH_ACTIVE` (rule `kill_switch`) |
+| Resting entry orders | Cancelled when the switch activates (`cancel_orders`, on by default) |
+| Open positions | Kept, unless `close_positions`: then closed at the next base bar's open by `FLATTEN` orders, exit reason `KILL_SWITCH` |
+| Exits, stop moves, brackets | Work as usual (a refused market reversal still closes the open position) |
+
+Every change is written to the audit log twice: when it is made
+(`killswitch.activate` / `killswitch.deactivate`, entity `kill_switch`) and
+when a session applies it (`killswitch.applied`, entity `run`, with the batch
+time it took effect from — what a replay re-applies).
+
+### Runtime status (`system_state['paper.runtime']`)
+
+Upserted after every minute and on every state change:
+
+| Key | Meaning |
+|---|---|
+| `session_id` | This runtime process's attachment to the session (new on every start or restart) |
+| `run_id` | The forward session (`runs.id`, kind `FORWARD`) |
+| `status` | `starting`, `warming_up` (warm-up or replay), `running`, `stopped`, `error` |
+| `started_at` | The session's first live minute |
+| `updated_at` | When this document was written |
+| `last_batch_close` | Close time of the newest processed minute (`null` before the first) |
+| `instruments.<SYMBOL>` | `provider`, `last_bar_open` (newest processed bar), `lag_seconds` (now − that bar's close), `state` (`ok`, `stale`, `closed`, `no_provider`), `last_error` |
+| `instances.<ID>` | `state` (strategy host: `RUNNING`, `FAULTED`, `STOPPED`), `fault`, `account_id` |
+| `kill_switch` | `global` (bool), `accounts` and `strategies` with an active switch |
+| `error` | The reason, when `status` is `error` |
+
+Operating it — starting, restarting, replacing a session, using the kill
+switch — is described in [16-running-paper-trading](16-running-paper-trading.md).

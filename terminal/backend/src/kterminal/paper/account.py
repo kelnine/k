@@ -125,6 +125,7 @@ class _PendingExit:
     signal_id: UUID | None
     reason: str
     decision_id: UUID | None = None
+    purpose: str = "EXIT"  # FLATTEN when a kill switch closes the position
 
 
 @dataclass
@@ -152,6 +153,7 @@ class PaperAccount:
         classify: Callable[[datetime], str] | None = None,
         on_opposite_signal: str = "reverse",
         status: str = "ACTIVE",
+        new_id: Callable[[], UUID] = uuid7,
     ) -> None:
         self.account_id = account_id
         self.name = name
@@ -165,6 +167,11 @@ class PaperAccount:
         self.classify = classify or (lambda _ts: "unknown")
         self.on_opposite_signal = on_opposite_signal
         self.status = status
+        # Ids of every record this account emits (forward sessions inject deterministic ones).
+        self._new_id = new_id
+        # Set while a kill switch covers this account: new entries are refused with this
+        # reason; exits, stop moves and flattening still work.
+        self.entry_halt: str | None = None
         self.rates = CurrencyRates(
             rates=(
                 ("USDT", "USD", settings.stablecoin_usd_rate),
@@ -274,6 +281,8 @@ class PaperAccount:
             raise ValueError("validated entry signal expected")
         symbol = signal.symbol
         results: list[RuleResult] = []
+        if self.entry_halt is not None:
+            results.append(failed("kill_switch", "KILL_SWITCH_ACTIVE", self.entry_halt))
         results.append(
             passed("account_active")
             if self.status == "ACTIVE"
@@ -382,7 +391,7 @@ class PaperAccount:
             # the position only when it fills — one order, as in Pine
             self.pending_exits[symbol] = _PendingExit(signal, signal_id, "REVERSAL", decision.id)
         order = OrderRecord(
-            id=uuid7(),
+            id=self._new_id(),
             client_order_id=f"{self.instance_id}-{signal_id.hex[:20]}",
             account_id=self.account_id,
             instance_id=self.instance_id,
@@ -492,7 +501,7 @@ class PaperAccount:
         at_entry = _at_breakeven(trade, new_stop)
         self._outbox.append(
             TradeEventRecord(
-                id=uuid7(),
+                id=self._new_id(),
                 trade_id=trade.id,
                 ts=at,
                 kind="BREAKEVEN" if at_entry else "STOP_MOVED",
@@ -504,7 +513,7 @@ class PaperAccount:
         if new_target != trade.current_target:
             self._outbox.append(
                 TradeEventRecord(
-                    id=uuid7(),
+                    id=self._new_id(),
                     trade_id=trade.id,
                     ts=at,
                     kind="TARGET_MOVED",
@@ -537,7 +546,7 @@ class PaperAccount:
             code = failure.code or "REJECTED"
             self.stats.reject_codes[code] = self.stats.reject_codes.get(code, 0) + 1
         decision = DecisionRecord(
-            id=uuid7(),
+            id=self._new_id(),
             signal_id=signal_id,
             account_id=self.account_id,
             instance_id=self.instance_id,
@@ -697,9 +706,9 @@ class PaperAccount:
         qty = pending.qty
         commission = _fee(setup.costs.commission(qty, price, liquidity) * fx)
         initial_risk = abs(price - stop) * qty * listing.point_value * fx
-        trade_id = uuid7()
+        trade_id = self._new_id()
         fill = FillRecord(
-            id=uuid7(),
+            id=self._new_id(),
             order_id=pending.order.id,
             account_id=self.account_id,
             ts=at,
@@ -846,7 +855,7 @@ class PaperAccount:
             fill.price,
             at,
             pending.reason,
-            "EXIT",
+            pending.purpose,
             fill.half_spread,
             fill.slippage,
             Liquidity.TAKER,
@@ -870,8 +879,8 @@ class PaperAccount:
         fx = self._fx(listing)
         commission = _fee(position.setup.costs.commission(trade.qty, price, liquidity) * fx)
         order = OrderRecord(
-            id=uuid7(),
-            client_order_id=f"{self.instance_id}-{uuid7().hex[:20]}",
+            id=self._new_id(),
+            client_order_id=f"{self.instance_id}-{self._new_id().hex[:20]}",
             account_id=self.account_id,
             instance_id=self.instance_id,
             purpose=purpose,
@@ -898,7 +907,7 @@ class PaperAccount:
             else (trade.current_target if purpose == "TAKE_PROFIT" else None),
         )
         fill = FillRecord(
-            id=uuid7(),
+            id=self._new_id(),
             order_id=order.id,
             account_id=self.account_id,
             ts=at,
@@ -994,7 +1003,7 @@ class PaperAccount:
         self.balance += amount
         self._outbox.append(
             LedgerRecord(
-                id=uuid7(),
+                id=self._new_id(),
                 account_id=self.account_id,
                 ts=at,
                 kind=kind,
@@ -1033,6 +1042,54 @@ class PaperAccount:
         )
         self._outbox.append(record)
         return record
+
+    # ── forward sessions ────────────────────────────────────────────────────
+    def open_with(self, balance: Decimal, high_water_mark: Decimal) -> None:
+        """Continue a persistent account: its balance (from the ledger) and high-water mark."""
+        self.balance = balance
+        self.high_water_mark = max(high_water_mark, balance)
+        self._day_start_equity = balance
+
+    def cancel_entries(self, at: datetime, reason: str) -> None:
+        """Cancel every resting entry order (e.g. when a kill switch activates)."""
+        for symbol in list(self.pending_entries):
+            self._cancel_pending(symbol, at, reason)
+
+    def flatten(self, at: datetime, reason: str = "KILL_SWITCH") -> None:
+        """Close every open position at the next base bar's open (market, ``FLATTEN``
+        orders) and cancel resting entries. Risk-reducing, so always permitted."""
+        self.cancel_entries(at, reason)
+        for symbol in self.positions:
+            self.pending_exits[symbol] = _PendingExit(None, None, reason, purpose="FLATTEN")
+
+    def restore_position(
+        self,
+        trade: TradeRecord,
+        *,
+        accrued_until: datetime,
+        commission: Decimal,
+        swap: Decimal,
+        funding: Decimal,
+        spread_cost: Decimal,
+        worst: Decimal,
+        best: Decimal,
+        mark: Decimal,
+    ) -> None:
+        """Re-create an open position from its recorded rows (to close a forward session
+        whose in-memory state cannot be rebuilt by replay)."""
+        setup = self.markets[trade.instrument]
+        self.positions[trade.instrument] = _Position(
+            trade=trade,
+            setup=setup,
+            accrued_until=accrued_until,
+            commission=commission,
+            swap=swap,
+            funding=funding,
+            spread_cost=spread_cost,
+            worst=worst,
+            best=best,
+        )
+        self.marks[trade.instrument] = mark
 
     @exact
     def close_all(self, at: datetime, reason: str = "RUN_END") -> None:

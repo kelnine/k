@@ -21,4 +21,5 @@ accounts.
 | 11 | [Instruments, sessions & costs](11-instruments-sessions-costs.md) | Instrument catalog, symbol mapping, sessions and time zones, transaction costs |
 | 12 | [Strategy lab](12-strategy-lab.md) | Running N strategies side by side on separate paper accounts, isolation audit |
 | 13 | [Phase 3 Pine ports](13-phase3-pine-ports.md) | Received scripts, strategies to port, engine prerequisites, order of work, open decisions |
+| 16 | [Running paper trading](16-running-paper-trading.md) | Runbook: starting, watching, restarting and replacing forward paper sessions; the kill switch; troubleshooting |
 | A | [Metric definitions](appendix-a-metrics.md) | Exact formulas used by analytics and the leaderboard |

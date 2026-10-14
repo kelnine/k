@@ -444,3 +444,376 @@ def catalog_apply(directory: CatalogDir = None) -> None:
     snapshot = asyncio.run(_run())
     state = "new snapshot" if snapshot.created else "unchanged"
     typer.echo(f"catalog applied ({state}) fingerprint {snapshot.fingerprint}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Forward paper trading, candle import and kill switches (docs/12 §12.7, runbook)
+# ════════════════════════════════════════════════════════════════════════════
+paper_app = typer.Typer(help="Forward paper trading on live data.", no_args_is_help=True)
+app.add_typer(paper_app, name="paper")
+data_app = typer.Typer(help="Market data in the candles table.", no_args_is_help=True)
+app.add_typer(data_app, name="data")
+killswitch_app = typer.Typer(
+    help="Kill switches: stop new entries globally, per account or per strategy.",
+    no_args_is_help=True,
+)
+app.add_typer(killswitch_app, name="killswitch")
+
+EXIT_PAPER_ERROR = 1
+
+if TYPE_CHECKING:
+    from kterminal.domain.market import Bar
+
+
+@paper_app.command("start")
+def paper_start(
+    new_session: Annotated[
+        bool,
+        typer.Option(
+            "--new-session",
+            help="End the open session (closing its positions at the last price) and start anew",
+        ),
+    ] = False,
+    warmup_days: Annotated[
+        float, typer.Option("--warmup-days", help="How far back warm-up history may reach")
+    ] = 10.0,
+    lab_config: Annotated[Path | None, typer.Option("--config", help="lab.yaml")] = None,
+) -> None:
+    """Paper-trade the lab's instances on live bars until Ctrl-C / SIGTERM.
+
+    Resumes the open forward session (replaying its logged bars and checking the result
+    against the database) or starts a new one. Every instance trades only its own
+    dedicated Paper account; nothing here can place a real order.
+    """
+    from kterminal.db.session import Database
+    from kterminal.paper.config import LabConfig
+    from kterminal.paper.forward import ForwardSessionError
+    from kterminal.paper.runtime import PaperRuntime, RuntimeLockedError, RuntimeOptions
+    from kterminal.runtime.engine import close_providers, configured_providers
+
+    settings = _bootstrap("paper")
+    catalog = _load_catalog(settings, None)
+    config = LabConfig.load(lab_config or settings.paths.lab_config)
+    instruments = sorted({s for i in config.enabled_instances for s in i.instruments})
+
+    async def main(stop: asyncio.Event) -> None:
+        database = Database(settings.database, application_name=f"{settings.service_name}-paper")
+        providers = configured_providers(settings, catalog, instruments)
+        try:
+            await PaperRuntime(
+                config=config,
+                catalog=catalog,
+                database=database,
+                providers=providers,
+                options=RuntimeOptions(new_session=new_session, warmup_days=warmup_days),
+                config_dir=settings.paths.config_dir,
+            ).run(stop)
+        finally:
+            await close_providers(providers)
+            await database.dispose()
+
+    try:
+        asyncio.run(run_until_signalled("paper", main))
+    except (ForwardSessionError, RuntimeLockedError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(EXIT_PAPER_ERROR) from None
+
+
+@paper_app.command("status")
+def paper_status() -> None:
+    """The paper runtime's last published status and the open session's accounts."""
+    from uuid import UUID
+
+    from kterminal.db.repositories.accounts import get_account_state
+    from kterminal.db.session import Database
+    from kterminal.paper.pg_forward import PostgresForwardStore
+
+    settings = _load_settings_or_exit()
+
+    async def _run() -> list[str]:
+        database = Database(settings.database, application_name="kterminal-paper-status")
+        store = PostgresForwardStore(database)
+        try:
+            status = await store.read_status()
+            lines = _format_runtime_status(status)
+            for stored in await store.open_sessions():
+                plan = stored.config.get("plan", {})
+                lines.append(
+                    f"Open session {stored.run_id} since {plan.get('live_start', '?')}, "
+                    f"processed through {stored.progress.get('processed_through', '?')} "
+                    f"({stored.progress.get('minutes', 0)} minutes with bars)"
+                )
+                for instance, account in sorted(plan.get("accounts", {}).items()):
+                    async with database.session() as session:
+                        state = await get_account_state(session, UUID(account["account_id"]))
+                    lines.append(
+                        f"  {instance:<24} {state.name:<36} balance {state.balance:>14,.2f}  "
+                        f"open {state.open_trades}  closed {state.closed_trades}"
+                    )
+            return lines
+        finally:
+            await database.dispose()
+
+    for line in asyncio.run(_run()):
+        typer.echo(line)
+
+
+def _format_runtime_status(status: dict[str, Any] | None) -> list[str]:
+    if status is None:
+        return ["Paper runtime: never started"]
+    lines = [
+        f"Paper runtime: {status.get('status')} (updated {status.get('updated_at')}, "
+        f"run {status.get('run_id')}, last minute {status.get('last_batch_close') or '—'})"
+    ]
+    if status.get("error"):
+        lines.append(f"  error: {status['error']}")
+    kill = status.get("kill_switch") or {}
+    lines.append(
+        f"  kill switch: global {'ON' if kill.get('global') else 'off'}; "
+        f"accounts {', '.join(kill.get('accounts') or []) or '—'}; "
+        f"strategies {', '.join(kill.get('strategies') or []) or '—'}"
+    )
+    for symbol, info in sorted((status.get("instruments") or {}).items()):
+        lines.append(
+            f"  {symbol:<10} {info.get('provider') or '—':<14} {info.get('state'):<12} "
+            f"last bar {info.get('last_bar_open') or '—'}  lag {info.get('lag_seconds')} s"
+            + (f"  ({info['last_error']})" if info.get("last_error") else "")
+        )
+    for instance, info in sorted((status.get("instances") or {}).items()):
+        lines.append(
+            f"  {instance:<24} {info.get('state'):<9} account {info.get('account_id')}"
+            + (f"  FAULT {info['fault']}" if info.get("fault") else "")
+        )
+    return lines
+
+
+@paper_app.command("sessions")
+def paper_sessions(
+    limit: Annotated[int, typer.Option(help="How many sessions to list")] = 20,
+) -> None:
+    """Forward sessions, newest first."""
+    from kterminal.db.session import Database
+    from kterminal.paper.pg_forward import PostgresForwardStore
+
+    settings = _load_settings_or_exit()
+
+    async def _run() -> list[Any]:
+        database = Database(settings.database, application_name="kterminal-paper-sessions")
+        try:
+            return await PostgresForwardStore(database).sessions(limit)
+        finally:
+            await database.dispose()
+
+    sessions = asyncio.run(_run())
+    if not sessions:
+        typer.echo("no forward sessions yet")
+        return
+    typer.echo(
+        f"{'RUN ID':<38}{'STATUS':<11}{'STARTED':<27}{'PROCESSED THROUGH':<27}"
+        f"{'MINUTES':>8}  INSTANCES"
+    )
+    for stored in sessions:
+        plan = stored.config.get("plan", {})
+        typer.echo(
+            f"{stored.run_id!s:<38}{stored.status:<11}{plan.get('live_start', '?'):<27}"
+            f"{stored.progress.get('processed_through', '?'):<27}"
+            f"{stored.progress.get('minutes', 0):>8}  "
+            f"{', '.join(sorted(plan.get('versions', {})))}"
+        )
+
+
+@data_app.command("import-csv")
+def data_import_csv(
+    file: Annotated[Path, typer.Argument(help="CSV with time, open, high, low, close[, volume]")],
+    instrument: Annotated[str, typer.Option(help="Instrument (any alias, e.g. OANDA:XAUUSD)")],
+    source: Annotated[str, typer.Option(help="Source label stored with the bars")],
+    timeframe: Annotated[str, typer.Option(help="Bar timeframe")] = "1m",
+    tz: Annotated[str, typer.Option(help="Time zone of times without an offset")] = "UTC",
+) -> None:
+    """Load bars from a CSV file into the candles table (existing bars are kept)."""
+    from kterminal.db.repositories.candles import insert_candles
+    from kterminal.db.session import Database
+
+    settings = _bootstrap("data")
+    catalog = _load_catalog(settings, None)
+    try:
+        symbol = catalog.resolve_symbol(instrument).symbol
+        bars = _read_bars_csv(file, symbol, source=source, timeframe=timeframe, tz=tz)
+    except (LookupError, OSError, ValueError) as exc:
+        typer.echo(f"cannot import {file}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if not bars:
+        typer.echo(f"{file}: no bars")
+        return
+
+    async def _run() -> int:
+        database = Database(settings.database, application_name="kterminal-data-import")
+        try:
+            async with database.session() as session:
+                return await insert_candles(session, bars)
+        finally:
+            await database.dispose()
+
+    inserted = asyncio.run(_run())
+    typer.echo(
+        f"{symbol} {timeframe} from {source}: {len(bars)} bars "
+        f"({bars[0].open_time.isoformat()} → {bars[-1].open_time.isoformat()}), "
+        f"{inserted} inserted, {len(bars) - inserted} already stored"
+    )
+
+
+_CSV_TIME_COLUMNS = ("time", "timestamp", "datetime", "date", "open_time")
+
+
+def _read_bars_csv(
+    path: Path, instrument: str, *, source: str, timeframe: str = "1m", tz: str = "UTC"
+) -> "list[Bar]":
+    """Minimal CSV reader: a time column (ISO 8601 or Unix seconds/milliseconds) and
+    open, high, low, close[, volume]. To be replaced by
+    ``kterminal.marketdata.csv_import.read_bars_csv`` (same signature) when it lands."""
+    import csv
+    from decimal import Decimal, InvalidOperation
+    from zoneinfo import ZoneInfo
+
+    from kterminal.domain.market import Bar
+    from kterminal.domain.timeframes import Timeframe
+
+    tf = Timeframe.parse(timeframe)
+    zone = ZoneInfo(tz)
+    bars: dict[datetime, Bar] = {}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        columns = {name.strip().lower(): name for name in reader.fieldnames or ()}
+        time_column = next((columns[c] for c in _CSV_TIME_COLUMNS if c in columns), None)
+        missing = [c for c in ("open", "high", "low", "close") if c not in columns]
+        if time_column is None or missing:
+            raise ValueError(
+                f"needs a time column ({'/'.join(_CSV_TIME_COLUMNS)}) and open, high, low, "
+                f"close (missing: {', '.join(missing) or 'time'})"
+            )
+        for line, row in enumerate(reader, start=2):
+            raw = (row.get(time_column) or "").strip()
+            try:
+                if raw.replace(".", "", 1).isdigit():
+                    number = float(raw)
+                    opened = datetime.fromtimestamp(
+                        number / 1000 if number > 1e11 else number, tz=UTC
+                    )
+                else:
+                    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    opened = (
+                        parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed
+                    ).astimezone(UTC)
+                volume = (row.get(columns.get("volume", ""), "") or "0").strip() or "0"
+                o, h, low, c = (
+                    Decimal(row[columns[name]].strip()) for name in ("open", "high", "low", "close")
+                )
+                bar = Bar.of(
+                    instrument, tf, opened, o, h, low, c, volume=Decimal(volume), source=source
+                )
+            except (ValueError, InvalidOperation, KeyError, AttributeError) as exc:
+                raise ValueError(f"line {line}: {exc}") from None
+            if not tf.is_aligned(bar.open_time):
+                raise ValueError(f"line {line}: {raw} is not on a {tf} boundary")
+            if bar.open_time in bars:
+                raise ValueError(f"line {line}: duplicate bar at {bar.open_time.isoformat()}")
+            bars[bar.open_time] = bar
+    return [bars[t] for t in sorted(bars)]
+
+
+ScopeOption = Annotated[str, typer.Option("--scope", help="global | account | strategy")]
+IdOption = Annotated[
+    str | None, typer.Option("--id", help="Account id (ACCOUNT) or strategy instance id")
+]
+
+
+def _set_kill_switch(
+    scope: str, scope_id: str | None, *, active: bool, reason: str, close_positions: bool
+) -> str:
+    from kterminal.db.repositories.kill_switches import KillSwitchError, set_kill_switch
+    from kterminal.db.session import Database
+
+    settings = _bootstrap("killswitch")
+
+    async def _run() -> str:
+        database = Database(settings.database, application_name="kterminal-killswitch")
+        try:
+            async with database.session() as session:
+                record = await set_kill_switch(
+                    session,
+                    scope=scope,
+                    scope_id=scope_id,
+                    active=active,
+                    reason=reason,
+                    changed_by="cli",
+                    ts=datetime.now(UTC),
+                    close_positions=close_positions,
+                )
+        finally:
+            await database.dispose()
+        target = "GLOBAL" if record.scope == "GLOBAL" else f"{record.scope} {record.scope_id}"
+        extra = " — open positions will be closed at the next bar" if record.close_positions else ""
+        return f"kill switch {target}: {'ON' if record.active else 'off'}{extra}"
+
+    try:
+        return asyncio.run(_run())
+    except KillSwitchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+
+@killswitch_app.command("on")
+def killswitch_on(
+    reason: Annotated[str, typer.Option(help="Why (recorded in the audit log)")],
+    scope: ScopeOption = "global",
+    scope_id: IdOption = None,
+    close_positions: Annotated[
+        bool, typer.Option("--close-positions", help="Also flatten open positions at the next bar")
+    ] = False,
+) -> None:
+    """Stop new entries (exits and stop moves still work). Takes effect at the next bar."""
+    typer.echo(
+        _set_kill_switch(
+            scope, scope_id, active=True, reason=reason, close_positions=close_positions
+        )
+    )
+
+
+@killswitch_app.command("off")
+def killswitch_off(
+    scope: ScopeOption = "global",
+    scope_id: IdOption = None,
+    reason: Annotated[str, typer.Option(help="Why (recorded in the audit log)")] = "released",
+) -> None:
+    """Allow new entries again for the scope."""
+    typer.echo(
+        _set_kill_switch(scope, scope_id, active=False, reason=reason, close_positions=False)
+    )
+
+
+@killswitch_app.command("status")
+def killswitch_status() -> None:
+    """Every kill switch and its state."""
+    from kterminal.db.repositories.kill_switches import list_kill_switches
+    from kterminal.db.session import Database
+
+    settings = _load_settings_or_exit()
+
+    async def _run() -> list[Any]:
+        database = Database(settings.database, application_name="kterminal-killswitch")
+        try:
+            async with database.session() as session:
+                return await list_kill_switches(session)
+        finally:
+            await database.dispose()
+
+    switches = asyncio.run(_run())
+    if not any(s.active for s in switches):
+        typer.echo("no kill switch is active")
+    for switch in switches:
+        target = "GLOBAL" if switch.scope == "GLOBAL" else f"{switch.scope} {switch.scope_id}"
+        typer.echo(
+            f"{target:<50} {'ON ' if switch.active else 'off'} "
+            f"{'close positions ' if switch.close_positions else ''}"
+            f"by {switch.changed_by} at {switch.changed_at.isoformat()}: {switch.reason}"
+        )
