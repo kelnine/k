@@ -21,7 +21,8 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kterminal.api.metrics import ClosedTrade, Drawdown, EquityMark, account_metrics
@@ -109,7 +110,7 @@ async def list_accounts(
         await session.execute(
             select(m.AccountLedgerRow.account_id, m.AccountLedgerRow.run_id)
             .where(m.AccountLedgerRow.account_id.in_(ids))
-            .distinct(m.AccountLedgerRow.account_id)
+            .ext(distinct_on(m.AccountLedgerRow.account_id))
             .order_by(m.AccountLedgerRow.account_id, m.AccountLedgerRow.seq)
         )
     ).all()
@@ -132,7 +133,7 @@ async def list_accounts(
             await session.execute(
                 select(m.TradeRow.account_id, m.TradeRow.strategy_version_id)
                 .where(m.TradeRow.account_id.in_(run_account_ids))
-                .distinct(m.TradeRow.account_id)
+                .ext(distinct_on(m.TradeRow.account_id))
                 .order_by(m.TradeRow.account_id, m.TradeRow.entry_time.desc())
             )
         ).all()
@@ -229,7 +230,7 @@ async def _base_accounts(session: AsyncSession, filters: AccountFilter) -> list[
             a.strategy_instance_id,
             a.created_at,
         )
-        .where(and_(*conditions))
+        .where(*conditions)
         .order_by(a.name)
     )
     return list(rows.all())
@@ -274,7 +275,7 @@ async def account_metrics_for(
             await session.execute(
                 select(ledger.account_id, ledger.balance_after, ledger.ts)
                 .where(ledger.account_id.in_(ids))
-                .distinct(ledger.account_id)
+                .ext(distinct_on(ledger.account_id))
                 .order_by(ledger.account_id, ledger.seq.desc())
             )
         ).all()
@@ -297,7 +298,7 @@ async def account_metrics_for(
         .where(m.TradeRow.account_id.in_(ids), m.TradeRow.status == "OPEN")
         .group_by(m.TradeRow.account_id)
     )
-    for account_id, count, newest in opened.tuples():
+    for account_id, count, newest in opened:
         open_counts[account_id] = int(count)
         last_entry[account_id] = newest
     snapshots = m.EquitySnapshotRow
@@ -307,7 +308,7 @@ async def account_metrics_for(
             await session.execute(
                 select(snapshots.account_id, snapshots.ts, snapshots.equity, snapshots.open_pnl)
                 .where(snapshots.account_id.in_(ids))
-                .distinct(snapshots.account_id)
+                .ext(distinct_on(snapshots.account_id))
                 .order_by(snapshots.account_id, snapshots.ts.desc())
             )
         ).all()

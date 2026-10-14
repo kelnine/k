@@ -50,7 +50,7 @@ async def list_runs(
         result = await session.execute(
             select(column, func.count()).where(column.in_(ids)).group_by(column)
         )
-        counts[name] = {run: int(n) for run, n in result.tuples() if run is not None}
+        counts[name] = {run: int(n) for run, n in result if run is not None}
     # Accounts: run accounts opened in the run, plus forward accounts that traded in it.
     opened = select(m.AccountLedgerRow.run_id, m.AccountLedgerRow.account_id).where(
         m.AccountLedgerRow.run_id.in_(ids), m.AccountLedgerRow.kind == "DEPOSIT"
@@ -60,7 +60,7 @@ async def list_runs(
     grouped = await session.execute(
         select(both.c.run_id, func.count(func.distinct(both.c.account_id))).group_by(both.c.run_id)
     )
-    accounts: dict[UUID, int] = {run: int(n) for run, n in grouped.tuples()}
+    accounts: dict[UUID, int] = {run: int(n) for run, n in grouped}
     return [
         RunOut(
             id=run.id,

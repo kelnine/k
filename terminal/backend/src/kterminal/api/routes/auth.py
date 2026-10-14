@@ -110,7 +110,7 @@ async def login(
         ts=now,
     )
     await session.commit()
-    auth.set_session_cookie(response, token, claims.expires_at)
+    auth.set_session_cookie(response, token, claims)
     _log.info("auth.login", username=user.username, client=address)
     return _session_out(auth, Principal(user=user, claims=claims))
 

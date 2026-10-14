@@ -26,7 +26,7 @@ async def list_instruments(
         )
         .where(m.StrategyInstanceRow.enabled)
     )
-    for instance_id, version_row in rows.tuples():
+    for instance_id, version_row in rows:
         version = version_out(version_row)
         for instrument in version.instruments:
             instances[instrument].add(instance_id)

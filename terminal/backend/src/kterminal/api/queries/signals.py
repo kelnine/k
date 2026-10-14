@@ -94,7 +94,7 @@ async def list_signals(
         base.order_by(s.signal_time.desc(), s.id.desc()).limit(limit).offset(offset)
     )
     items = []
-    for signal, decision in rows.tuples():
+    for signal, decision in rows:
         outcome, code = _outcome(signal, decision)
         items.append(
             SignalLogItem(

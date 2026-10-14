@@ -2,7 +2,7 @@
 
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import Response
 
@@ -46,11 +46,13 @@ class AuthService:
             window=timedelta(minutes=settings.lockout_minutes),
         )
 
-    def set_session_cookie(self, response: Response, token: str, expires_at: datetime) -> None:
+    def set_session_cookie(self, response: Response, token: str, claims: SessionClaims) -> None:
+        # Max-Age, not Expires: relative to the browser's clock, so clock skew cannot
+        # make the cookie expire early (or live longer than the session).
         response.set_cookie(
             SESSION_COOKIE,
             token,
-            expires=expires_at,
+            max_age=int((claims.expires_at - claims.issued_at).total_seconds()),
             path="/",
             secure=self.settings.cookie_secure,
             httponly=True,
