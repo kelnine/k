@@ -239,3 +239,30 @@ async def test_each_instrument_warms_up_for_the_largest_need_of_its_instances() 
     levels = period_warmup_bars("D", "5m") * 5  # 601 five-minute bars of 1m bars
     assert warmup_need(lab) == {"XAUUSD": max(51 * 60, levels), "NEARUSD": levels}
     assert levels == 3_005 < 51 * 60
+
+
+async def test_the_runtime_takes_its_timing_from_the_forward_section() -> None:
+    from kterminal.config.settings import DatabaseSettings
+    from kterminal.db.session import Database
+    from kterminal.paper.runtime import PaperRuntime, RuntimeOptions
+
+    config = LabConfig.model_validate(
+        {**LAB, "forward": {"warmup_days": 3, "poll_delay_s": 5, "batch_timeout_s": 30}}
+    )
+    database = Database(DatabaseSettings(), application_name="kt-tests")  # never connects
+    try:
+        runtime = PaperRuntime(
+            config=config, catalog=lab_catalog(), database=database, providers={}
+        )
+        assert runtime.warmup_days == 3
+        assert (runtime.feed_config.poll_delay_s, runtime.feed_config.batch_timeout_s) == (5, 30)
+        overridden = PaperRuntime(
+            config=config,
+            catalog=lab_catalog(),
+            database=database,
+            providers={},
+            options=RuntimeOptions(warmup_days=1),  # kterminal paper start --warmup-days 1
+        )
+        assert overridden.warmup_days == 1
+    finally:
+        await database.dispose()

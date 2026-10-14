@@ -4,7 +4,8 @@ A forward session is the lab run incrementally on closed live 1-minute bars.
 Every instance trades in its **dedicated** account (``Paper 50K · <id>``,
 created by ``Lab.provision_dedicated``), continuing from that account's ledger
 balance; simulations never touch these accounts. The session is a ``runs``
-row of kind ``FORWARD`` that stays ``RUNNING`` until a new session replaces it.
+row of kind ``FORWARD`` that stays ``RUNNING`` across restarts until it is
+ended (``kterminal paper end-session``, or a new session replacing it).
 
 Starting
     The lab is set up, the dedicated accounts are provisioned (a changed
@@ -28,8 +29,8 @@ Restarting
     state is then checked against the database (row counts, ledger balances,
     open trades, latest equity) and the session refuses to continue on any
     difference. A changed lab configuration, catalog or strategy version means
-    the old session can no longer be reproduced: the operator starts a new one,
-    which closes the old session's positions at their last price.
+    the old session can no longer be reproduced: the operator ends it, which
+    closes its positions at their last price, and starts a new one.
 """
 
 import inspect

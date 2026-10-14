@@ -160,7 +160,8 @@ A **forward session** runs the lab on live, closed 1-minute bars. Each
 instance trades its **dedicated** account (`Paper 50K · <instance>`) — never a
 run-scoped one — so forward-test history accumulates in one place per
 instance. The session is a `runs` row of kind `FORWARD` that stays `RUNNING`
-across restarts until a new session replaces it. Everything below is paper:
+across restarts until it is ended (`kterminal paper end-session`, or a new
+session replacing it). Everything below is paper:
 fills are simulated, no broker adapter is constructed, and LIVE accounts cannot
 be created.
 
