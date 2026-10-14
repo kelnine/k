@@ -6,8 +6,13 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from kterminal.api.app import create_app
+from kterminal.api.auth.deps import current_principal
+from kterminal.api.auth.service import Principal
+from kterminal.api.auth.tokens import SessionClaims
+from kterminal.api.auth.users import Role, User
 from kterminal.config.settings import Settings
 from kterminal.core.clock import SimulatedClock
+from kterminal.core.ids import uuid7
 
 T0 = datetime(2026, 10, 5, 14, 30, tzinfo=UTC)
 
@@ -65,7 +70,18 @@ def test_readiness_reports_database_outage_with_503(
     assert response.json() == {"status": "not_ready", "checks": {"database": "unavailable"}}
 
 
+def test_system_info_requires_a_session(client: TestClient) -> None:
+    response = client.get("/api/v1/system/info")
+    assert response.status_code == 401
+    assert response.json()["code"] == "NOT_AUTHENTICATED"
+
+
 def test_system_info_reports_safe_defaults(client: TestClient) -> None:
+    signed_in = Principal(
+        user=User(uuid7(), "viewer", Role.VIEWER, False, "unused", T0),
+        claims=SessionClaims(uuid7(), "sid", T0, T0, "tag"),
+    )
+    client.app.dependency_overrides[current_principal] = lambda: signed_in  # type: ignore[attr-defined]
     body = client.get("/api/v1/system/info").json()
     assert body["default_mode"] == "PAPER"
     assert body["live_trading_permitted"] is False
