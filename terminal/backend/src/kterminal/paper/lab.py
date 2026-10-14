@@ -209,7 +209,7 @@ class Lab:
                     timeframe=member.resolved.timeframe.code,
                     trading_day_rule=self.catalog.sessions.trading_day_rule(settings.trading_day),
                     classify=self.catalog.sessions.classify,
-                    on_opposite_signal=member.resolved.definition.meta.on_opposite_signal,
+                    rules=member.resolved.position_rules,
                 )
             ]
 
