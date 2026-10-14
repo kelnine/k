@@ -16,9 +16,14 @@
         timeframe: 5m
         context_timeframes: [15m, 1h]
         account: {starting_balance: 100000}     # optional per-instance override
+        on_opposite_signal: ignore               # optional; default: the strategy's meta
+        skip_entry_beyond_levels: true           # optional; default: the strategy's meta
 
 Every instance gets its own account built from ``defaults.account`` merged
-with its own ``account`` overrides.
+with its own ``account`` overrides. ``on_opposite_signal`` and
+``skip_entry_beyond_levels`` override the definition's position rules for this
+instance (its theoretical book and its account alike); they are part of the
+instance's version.
 """
 
 from pathlib import Path
@@ -31,6 +36,7 @@ from kterminal.domain.accounts import AccountSettings
 from kterminal.domain.timeframes import Timeframe
 from kterminal.strategy_engine.base import StrategyMeta
 from kterminal.strategy_engine.instances import InstanceSpec
+from kterminal.strategy_engine.model import OppositeSignalPolicy
 
 
 class LabDefaults(BaseModel):
@@ -61,6 +67,8 @@ class LabInstance(BaseModel):
     enabled: bool = True
     tags: tuple[str, ...] = ()
     account: dict[str, Any] = Field(default_factory=dict)
+    on_opposite_signal: OppositeSignalPolicy | None = None  # None = the definition's meta
+    skip_entry_beyond_levels: bool | None = None  # None = the definition's meta
 
 
 class ExperimentMember(BaseModel):
@@ -141,6 +149,8 @@ class LabConfig(BaseModel):
             host=instance.host or self.defaults.host,
             enabled=instance.enabled,
             tags=instance.tags,
+            on_opposite_signal=instance.on_opposite_signal,
+            skip_entry_beyond_levels=instance.skip_entry_beyond_levels,
         )
 
     @property

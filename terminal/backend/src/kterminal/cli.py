@@ -446,13 +446,176 @@ def catalog_apply(directory: CatalogDir = None) -> None:
     typer.echo(f"catalog applied ({state}) fingerprint {snapshot.fingerprint}")
 
 
+# ── market data (docs/15-market-data.md) ─────────────────────────────────────
+# Read-only: these commands download candles; nothing here can place an order.
+data_app = typer.Typer(
+    help="Market data: data sources and history downloads.", no_args_is_help=True
+)
+app.add_typer(data_app, name="data")
+
+
+def _data_sources_or_exit(settings: Settings, catalog: "InstrumentCatalog") -> Any:
+    from kterminal.marketdata.factory import load_data_sources
+    from kterminal.marketdata.sources import DataSourceError
+
+    try:
+        return load_data_sources(settings, catalog)
+    except DataSourceError as exc:
+        typer.echo("Data source map is invalid:", err=True)
+        for problem in exc.problems:
+            typer.echo(f"  - {problem}", err=True)
+        raise typer.Exit(EXIT_CONFIG_ERROR) from None
+
+
+def _source_choices_or_exit(sources: Any, settings: Settings) -> Any:
+    from kterminal.marketdata.factory import select_sources
+    from kterminal.marketdata.sources import DataSourceError
+
+    try:
+        return select_sources(sources, settings.marketdata)
+    except DataSourceError as exc:
+        typer.echo("Market-data settings are invalid:", err=True)
+        for problem in exc.problems:
+            typer.echo(f"  - {problem}", err=True)
+        raise typer.Exit(EXIT_CONFIG_ERROR) from None
+
+
+def _utc_option(value: str, option: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise typer.BadParameter(
+            f"{value!r} is not an ISO date or time (e.g. 2026-10-01 or 2026-10-01T13:30Z)",
+            param_hint=option,
+        ) from None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+@data_app.command("sources")
+def data_sources(
+    notes: Annotated[bool, typer.Option("--notes", help="Show each source's note")] = False,
+) -> None:
+    """Each instrument's data source and whether its provider is usable on this host.
+
+    Disabled (KT_MARKETDATA__DISABLED_PROVIDERS) or unconfigured providers fall back to the
+    instrument's alternatives. "configured" does not mean the venue was reached.
+    """
+    from kterminal.marketdata.factory import unavailable_reason
+    from kterminal.marketdata.sources import PROVIDERS
+
+    settings = _load_settings_or_exit()
+    catalog = _load_catalog(settings, None)
+    sources = _data_sources_or_exit(settings, catalog)
+    choices = _source_choices_or_exit(sources, settings)
+    path = settings.marketdata.sources_file or settings.paths.data_sources
+    typer.echo(f"Data sources ({path}):")
+    typer.echo(f"  {'INSTRUMENT':<10} {'PROVIDER':<13} {'SYMBOL':<16} {'VOLUME':<9} STATUS")
+    for instrument, choice in choices.items():
+        source = choice.source or choice.chain[0]
+        if choice.source is None:
+            status = f"skipped: {choice.reason}"
+        elif choice.is_fallback:
+            status = f"configured (alternative: {choice.reason})"
+        else:
+            status = "configured"
+        typer.echo(
+            f"  {instrument:<10} {source.provider:<13} {source.symbol:<16} "
+            f"{source.volume.value:<9} {status}"
+        )
+        if notes and source.note:
+            typer.echo(f"  {'':<10} {source.note}")
+    uncovered = sorted(set(catalog.instruments) - set(sources.instruments))
+    if uncovered:
+        typer.echo(f"No data source: {', '.join(uncovered)}")
+    typer.echo("Providers:")
+    for name, info in PROVIDERS.items():
+        reason = unavailable_reason(name, settings.marketdata)
+        typer.echo(f"  {name:<13} {reason or 'configured'} — {info.description}")
+
+
+@data_app.command("fetch")
+def data_fetch(
+    instrument: Annotated[str, typer.Argument(help="Canonical symbol or any alias")],
+    start: Annotated[str, typer.Option(help="First minute, ISO (UTC unless an offset is given)")],
+    end: Annotated[str, typer.Option(help="End, exclusive, ISO (UTC unless an offset is given)")],
+    out: Annotated[Path, typer.Option(help="CSV file to write (time,open,high,low,close,volume)")],
+    provider: Annotated[
+        str | None, typer.Option(help="Use this provider's source of the instrument")
+    ] = None,
+) -> None:
+    """Download closed 1m bars with start <= time < end from the instrument's data source
+    into a CSV file (re-readable with read_bars_csv). Missing minutes stay missing."""
+    import logging
+
+    from kterminal.marketdata.base import MarketDataError
+    from kterminal.marketdata.csv_import import write_bars_csv
+    from kterminal.marketdata.factory import build_provider, unavailable_reason
+    from kterminal.marketdata.sources import DataSourceError
+
+    first, stop = _utc_option(start, "--start"), _utc_option(end, "--end")
+    if stop <= first:
+        raise typer.BadParameter("must be after --start", param_hint="--end")
+    settings = _bootstrap("data")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per request otherwise
+    catalog = _load_catalog(settings, None)
+    try:
+        symbol = catalog.resolve_symbol(instrument).symbol
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    sources = _data_sources_or_exit(settings, catalog)
+    if symbol not in sources.instruments:
+        typer.echo(f"{symbol} has no data source", err=True)
+        raise typer.Exit(1)
+    if provider is not None:
+        try:
+            source = sources.source(symbol, provider)
+        except KeyError as exc:
+            typer.echo(str(exc.args[0]), err=True)
+            raise typer.Exit(1) from None
+        reason = unavailable_reason(provider, settings.marketdata)
+        if reason is not None:
+            typer.echo(f"{symbol}: {reason}", err=True)
+            raise typer.Exit(EXIT_CONFIG_ERROR)
+    else:
+        choice = _source_choices_or_exit(sources, settings)[symbol]
+        if choice.source is None:
+            typer.echo(f"{symbol}: no usable data source: {choice.reason}", err=True)
+            raise typer.Exit(EXIT_CONFIG_ERROR)
+        source = choice.source
+
+    async def _run() -> list[Any]:
+        try:
+            feed = build_provider(source.provider, {symbol: source.symbol}, settings.marketdata)
+        except DataSourceError as exc:
+            raise MarketDataError("; ".join(exc.problems)) from None
+        try:
+            return await feed.history(symbol, first, stop)
+        finally:
+            await feed.aclose()
+
+    try:
+        bars = asyncio.run(_run())
+    except MarketDataError as exc:
+        typer.echo(f"fetch failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+    count = write_bars_csv(out, bars)
+    span = (
+        f"{bars[0].open_time:%Y-%m-%d %H:%M} → {bars[-1].open_time:%Y-%m-%d %H:%M} UTC"
+        if bars
+        else "no bars in the range"
+    )
+    typer.echo(
+        f"{count} bars of {symbol} from {source.provider} {source.symbol} "
+        f"({source.volume.value} volume), {span}, written to {out}"
+    )
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Forward paper trading, candle import and kill switches (docs/12 §12.7, runbook)
 # ════════════════════════════════════════════════════════════════════════════
 paper_app = typer.Typer(help="Forward paper trading on live data.", no_args_is_help=True)
 app.add_typer(paper_app, name="paper")
-data_app = typer.Typer(help="Market data in the candles table.", no_args_is_help=True)
-app.add_typer(data_app, name="data")
 killswitch_app = typer.Typer(
     help="Kill switches: stop new entries globally, per account or per strategy.",
     no_args_is_help=True,
@@ -460,10 +623,6 @@ killswitch_app = typer.Typer(
 app.add_typer(killswitch_app, name="killswitch")
 
 EXIT_PAPER_ERROR = 1
-
-if TYPE_CHECKING:
-    from kterminal.domain.market import Bar
-
 
 @paper_app.command("start")
 def paper_start(
@@ -630,15 +789,17 @@ def data_import_csv(
     timeframe: Annotated[str, typer.Option(help="Bar timeframe")] = "1m",
     tz: Annotated[str, typer.Option(help="Time zone of times without an offset")] = "UTC",
 ) -> None:
-    """Load bars from a CSV file into the candles table (existing bars are kept)."""
+    """Load bars from a CSV file (generic OHLCV or a TradingView export, docs/15) into the
+    candles table; bars already stored for the same minute are kept."""
     from kterminal.db.repositories.candles import insert_candles
     from kterminal.db.session import Database
+    from kterminal.marketdata.csv_import import read_bars_csv
 
     settings = _bootstrap("data")
     catalog = _load_catalog(settings, None)
     try:
         symbol = catalog.resolve_symbol(instrument).symbol
-        bars = _read_bars_csv(file, symbol, source=source, timeframe=timeframe, tz=tz)
+        bars = read_bars_csv(file, symbol, source=source, timeframe=timeframe, tz=tz)
     except (LookupError, OSError, ValueError) as exc:
         typer.echo(f"cannot import {file}: {exc}", err=True)
         raise typer.Exit(1) from None
@@ -660,65 +821,6 @@ def data_import_csv(
         f"({bars[0].open_time.isoformat()} → {bars[-1].open_time.isoformat()}), "
         f"{inserted} inserted, {len(bars) - inserted} already stored"
     )
-
-
-_CSV_TIME_COLUMNS = ("time", "timestamp", "datetime", "date", "open_time")
-
-
-def _read_bars_csv(
-    path: Path, instrument: str, *, source: str, timeframe: str = "1m", tz: str = "UTC"
-) -> "list[Bar]":
-    """Minimal CSV reader: a time column (ISO 8601 or Unix seconds/milliseconds) and
-    open, high, low, close[, volume]. To be replaced by
-    ``kterminal.marketdata.csv_import.read_bars_csv`` (same signature) when it lands."""
-    import csv
-    from decimal import Decimal, InvalidOperation
-    from zoneinfo import ZoneInfo
-
-    from kterminal.domain.market import Bar
-    from kterminal.domain.timeframes import Timeframe
-
-    tf = Timeframe.parse(timeframe)
-    zone = ZoneInfo(tz)
-    bars: dict[datetime, Bar] = {}
-    with path.open(newline="", encoding="utf-8-sig") as handle:
-        reader = csv.DictReader(handle)
-        columns = {name.strip().lower(): name for name in reader.fieldnames or ()}
-        time_column = next((columns[c] for c in _CSV_TIME_COLUMNS if c in columns), None)
-        missing = [c for c in ("open", "high", "low", "close") if c not in columns]
-        if time_column is None or missing:
-            raise ValueError(
-                f"needs a time column ({'/'.join(_CSV_TIME_COLUMNS)}) and open, high, low, "
-                f"close (missing: {', '.join(missing) or 'time'})"
-            )
-        for line, row in enumerate(reader, start=2):
-            raw = (row.get(time_column) or "").strip()
-            try:
-                if raw.replace(".", "", 1).isdigit():
-                    number = float(raw)
-                    opened = datetime.fromtimestamp(
-                        number / 1000 if number > 1e11 else number, tz=UTC
-                    )
-                else:
-                    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                    opened = (
-                        parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed
-                    ).astimezone(UTC)
-                volume = (row.get(columns.get("volume", ""), "") or "0").strip() or "0"
-                o, h, low, c = (
-                    Decimal(row[columns[name]].strip()) for name in ("open", "high", "low", "close")
-                )
-                bar = Bar.of(
-                    instrument, tf, opened, o, h, low, c, volume=Decimal(volume), source=source
-                )
-            except (ValueError, InvalidOperation, KeyError, AttributeError) as exc:
-                raise ValueError(f"line {line}: {exc}") from None
-            if not tf.is_aligned(bar.open_time):
-                raise ValueError(f"line {line}: {raw} is not on a {tf} boundary")
-            if bar.open_time in bars:
-                raise ValueError(f"line {line}: duplicate bar at {bar.open_time.isoformat()}")
-            bars[bar.open_time] = bar
-    return [bars[t] for t in sorted(bars)]
 
 
 ScopeOption = Annotated[str, typer.Option("--scope", help="global | account | strategy")]

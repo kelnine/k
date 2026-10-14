@@ -29,7 +29,7 @@ mutable state (rejected at registration), exceptions fault only this instance.
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -38,7 +38,7 @@ from kterminal.domain.instruments import AssetClass
 from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.domain.timeframes import Timeframe
-from kterminal.strategy_engine.model import PositionEvent
+from kterminal.strategy_engine.model import OppositeSignalPolicy, PositionEvent
 
 if TYPE_CHECKING:
     from kterminal.strategy_engine.context import StrategyContext
@@ -82,7 +82,11 @@ class StrategyMeta(BaseModel):
         description="Session-window ids the strategy uses (validated against the catalog)",
     )
     warmup_bars: int = Field(default=200, ge=0, le=100_000)
-    on_opposite_signal: Literal["reverse", "ignore"] = "reverse"
+    on_opposite_signal: OppositeSignalPolicy = "reverse"
+    skip_entry_beyond_levels: bool = Field(
+        default=False,
+        description="Skip a market entry whose fill bar opens at/beyond its stop or target",
+    )
     max_pyramiding: int = Field(default=1, ge=1, le=1)  # pyramiding arrives with the risk engine
     tags: tuple[str, ...] = ()
 

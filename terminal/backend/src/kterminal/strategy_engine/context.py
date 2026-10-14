@@ -1,17 +1,20 @@
 """``StrategyContext`` — the only window a strategy has on the world.
 
 Everything here is read-only: the instrument, closed bar series for the
-primary and context timeframes, the theoretical position, session/time-zone
-helpers, a seeded random generator and a logger. The signal builders fill
-in the strategy id, version, symbol, timeframe and timestamps and round
-prices to the instrument's tick, so strategy code only expresses intent.
+primary and context timeframes (also as TradingView's ``request.security``
+sees them), the primary bar index, previous/current trading day, week and
+month levels, the theoretical position, session/time-zone helpers (catalog
+windows and Pine session strings), a seeded random generator and a logger.
+The signal builders fill in the strategy id, version, symbol, timeframe and
+timestamps and round prices to the instrument's tick, so strategy code only
+expresses intent.
 """
 
 import hashlib
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, overload
 
 import numpy as np
 import structlog
@@ -23,8 +26,10 @@ from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.domain.timeframes import Timeframe
 from kterminal.strategy_engine.book import TheoreticalBook
-from kterminal.strategy_engine.model import PositionView
-from kterminal.strategy_engine.series import BarSeries
+from kterminal.strategy_engine.model import CloseReason, PositionView
+from kterminal.strategy_engine.periods import PeriodLevels
+from kterminal.strategy_engine.series import BarSeries, SeriesView
+from kterminal.strategy_engine.sessions import SessionSpec, parse_session
 
 Price = Decimal | float | int | str
 
@@ -87,6 +92,15 @@ class StrategyContext:
         self._windows = frozenset(windows) if windows is not None else None
         self._source = source
         self._bar: Bar | None = None
+        self._primary_bars = 0  # every primary bar seen, warm-up included (bar_index)
+        self._last_open: datetime | None = None  # open time of the latest primary bar
+        self._previous_open: datetime | None = None  # … and of the one before it
+        self._periods: PeriodLevels | None = None
+        self._periods_error = ""
+        try:
+            self._periods = PeriodLevels(self._sessions.trading_day_rule(instrument.trading_day))
+        except KeyError as exc:
+            self._periods_error = str(exc)
         self.rng = np.random.default_rng(stable_seed(instance_id, instrument.symbol))
         self.log = structlog.stdlib.get_logger("kterminal.strategy").bind(
             strategy_id=instance_id, instrument=instrument.symbol, timeframe=timeframe.code
@@ -102,14 +116,43 @@ class StrategyContext:
         """Closed bars of the primary timeframe; ``bars.close[-1]`` is the bar being evaluated."""
         return self._series[self.timeframe]
 
-    def series(self, timeframe: Timeframe | str) -> BarSeries:
-        """Closed bars of a declared context timeframe (higher TFs: only bars closed by now)."""
+    @overload
+    def series(
+        self, timeframe: Timeframe | str, *, tradingview_lag: Literal[False] = False
+    ) -> BarSeries: ...
+
+    @overload
+    def series(
+        self, timeframe: Timeframe | str, *, tradingview_lag: Literal[True]
+    ) -> SeriesView: ...
+
+    def series(
+        self, timeframe: Timeframe | str, *, tradingview_lag: bool = False
+    ) -> BarSeries | SeriesView:
+        """Closed bars of a declared timeframe.
+
+        By default a higher-timeframe bar is visible from the primary bar that closes
+        at the same instant (it has closed by ``ctx.now``). With ``tradingview_lag=True``
+        only bars that closed at or before the evaluated bar *opened* are visible —
+        what Pine's ``request.security(sym, tf, expr[1], lookahead=barmerge.lookahead_on)``
+        returns, one primary bar later on the last bar of each period. Only for the
+        primary timeframe or higher ones (on the primary series it hides the bar being
+        evaluated, like ``expr[1]``).
+        """
         tf = Timeframe.parse(timeframe)
         try:
-            return self._series[tf]
+            series = self._series[tf]
         except KeyError:
             declared = ", ".join(sorted(t.code for t in self._series))
             raise KeyError(f"timeframe {tf} not declared for this instance ({declared})") from None
+        if not tradingview_lag:
+            return series
+        if tf < self.timeframe:
+            raise ValueError(
+                f"tradingview_lag applies to the primary timeframe {self.timeframe} or higher "
+                f"ones, not {tf}"
+            )
+        return series.closed_by(self.bar.open_time)
 
     @property
     def timeframes(self) -> tuple[Timeframe, ...]:
@@ -125,6 +168,27 @@ class StrategyContext:
     def now(self) -> datetime:
         """Strategy time: the close time of the bar being evaluated."""
         return self.bar.close_time
+
+    @property
+    def bar_index(self) -> int:
+        """Index of the evaluated bar among every primary bar this instance has seen,
+        warm-up included — 0 on the first, like Pine's ``bar_index``. Not capped by
+        the length of ``bars``."""
+        if self._primary_bars == 0:
+            raise RuntimeError("no bar is being evaluated yet")
+        return self._primary_bars - 1
+
+    @property
+    def periods(self) -> PeriodLevels:
+        """Previous and current trading day / week / month (OHLC) of the instrument,
+        built from the primary bars on its trading-day rule: ``ctx.periods.previous("D")``
+        is the previous day (PDH = ``.high``), ``ctx.periods.current("W")`` this week."""
+        if self._periods is None:
+            raise KeyError(
+                f"no trading-day rule for {self.instrument.symbol} "
+                f"({self.instrument.trading_day}): {self._periods_error}"
+            )
+        return self._periods
 
     @property
     def position(self) -> PositionView | None:
@@ -163,6 +227,26 @@ class StrategyContext:
         """Session label of the evaluated bar (or ``ts``), e.g. ``asia_session`` /
         ``london_session`` / ``ny_session``."""
         return self._sessions.classify(ts or self.bar.open_time)
+
+    # Pine session strings (kept as Params, so they are part of the version):
+    # ``"2000-0200:1234567"`` in an IANA zone — see kterminal.strategy_engine.sessions.
+    def in_session(
+        self, session: str | SessionSpec, timezone: str, ts: datetime | None = None
+    ) -> bool:
+        """Whether the evaluated bar (or ``ts``) opens inside a Pine session string, like
+        ``not na(time(timeframe.period, session, timezone))``."""
+        return _spec(session, timezone).contains(ts or self.bar.open_time)
+
+    def session_started(self, session: str | SessionSpec, timezone: str) -> bool:
+        """Whether the evaluated bar starts the window: it is inside and the previous
+        primary bar was not (or there is none) — Pine's ``inSess and not inSess[1]``."""
+        return _spec(session, timezone).started(self.bar.open_time, self._previous_open)
+
+    def session_ends(self, session: str | SessionSpec, timezone: str) -> bool:
+        """Whether the evaluated bar is the last one of the window (inside, and the window
+        ends by its close): an exit decided now fills at the window's end."""
+        bar = self.bar
+        return _spec(session, timezone).ends_by(bar.open_time, bar.close_time)
 
     # ── signal builders ─────────────────────────────────────────────────────
     def long(
@@ -218,22 +302,34 @@ class StrategyContext:
         )
 
     def exit_long(
-        self, *, reason: str | None = None, metadata: Mapping[str, JsonValue] | None = None
+        self,
+        *,
+        reason: str | None = None,
+        session_close: bool = False,
+        metadata: Mapping[str, JsonValue] | None = None,
     ) -> Signal:
+        """Close the long position at the next open (or cancel a resting long entry).
+        ``session_close=True`` records the exit as ``SESSION_CLOSE`` (a time exit)."""
         return self._make(
             SignalAction.EXIT_LONG,
             entry=self._price(self.bar.close),
-            reason=reason,
+            reason=_exit_reason(reason, session_close),
             metadata=metadata,
         )
 
     def exit_short(
-        self, *, reason: str | None = None, metadata: Mapping[str, JsonValue] | None = None
+        self,
+        *,
+        reason: str | None = None,
+        session_close: bool = False,
+        metadata: Mapping[str, JsonValue] | None = None,
     ) -> Signal:
+        """Close the short position at the next open (or cancel a resting short entry).
+        ``session_close=True`` records the exit as ``SESSION_CLOSE`` (a time exit)."""
         return self._make(
             SignalAction.EXIT_SHORT,
             entry=self._price(self.bar.close),
-            reason=reason,
+            reason=_exit_reason(reason, session_close),
             metadata=metadata,
         )
 
@@ -314,6 +410,29 @@ class StrategyContext:
 
     def _set_bar(self, bar: Bar) -> None:
         self._bar = bar
+
+    def _advance(self, bar: Bar) -> None:
+        """A primary bar closed (warm-up included): count it and update period levels."""
+        self._primary_bars += 1
+        self._previous_open, self._last_open = self._last_open, bar.open_time
+        if self._periods is not None:
+            self._periods.update(bar)
+
+
+def _spec(session: str | SessionSpec, timezone: str) -> SessionSpec:
+    if isinstance(session, SessionSpec):
+        if session.timezone != timezone:
+            raise ValueError(f"session {session.text!r} is in {session.timezone}, not {timezone}")
+        return session
+    return parse_session(session, timezone)
+
+
+def _exit_reason(reason: str | None, session_close: bool) -> str | None:
+    if not session_close:
+        return reason
+    if reason not in (None, CloseReason.SESSION_CLOSE):
+        raise ValueError("a session-close exit records the reason SESSION_CLOSE; drop reason")
+    return CloseReason.SESSION_CLOSE.value
 
 
 def _to_decimal(value: Price) -> Decimal:

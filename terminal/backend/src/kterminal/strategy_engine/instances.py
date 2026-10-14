@@ -25,6 +25,7 @@ from kterminal.core.registry import Registry
 from kterminal.domain.instruments import Instrument
 from kterminal.domain.timeframes import Timeframe
 from kterminal.strategy_engine.base import StrategyParams
+from kterminal.strategy_engine.model import OppositeSignalPolicy, PositionRules
 from kterminal.strategy_engine.registry import DEFINITIONS, StrategyDefinition
 from kterminal.strategy_engine.versioning import hash_data
 
@@ -49,6 +50,9 @@ class InstanceSpec(BaseModel):
     host: Literal["in_process", "subprocess"] = "in_process"
     enabled: bool = True
     tags: tuple[str, ...] = ()
+    # Position rules; None = the definition's meta value. Part of the version.
+    on_opposite_signal: OppositeSignalPolicy | None = None
+    skip_entry_beyond_levels: bool | None = None
 
     @field_validator("id")
     @classmethod
@@ -106,6 +110,12 @@ class ResolvedInstance:
     @property
     def params_document(self) -> dict[str, Any]:
         return self.params.model_dump(mode="json")
+
+    @property
+    def position_rules(self) -> PositionRules:
+        """The rules the theoretical book and the instance's accounts apply: the
+        instance's overrides, falling back to the definition's meta."""
+        return _position_rules(self.spec, self.definition)
 
 
 def resolve_instance(
@@ -192,6 +202,14 @@ def resolve_instance(
                     sessions.trading_day_rule(instrument.trading_day)
                 )
 
+    rules = _position_rules(spec, definition)
+    behaviour: dict[str, Any] = {
+        "on_opposite_signal": rules.on_opposite_signal,
+        "max_pyramiding": meta.max_pyramiding,
+        "warmup_bars": meta.warmup_bars,
+    }
+    if rules.skip_entry_beyond_levels:  # absent = off, so existing versions keep their hash
+        behaviour["skip_entry_beyond_levels"] = True
     config: dict[str, Any] = {
         "definition": {
             "id": definition.id,
@@ -213,11 +231,7 @@ def resolve_instance(
         "sessions": session_docs,
         "session_classification": classification,
         "trading_day_rules": trading_days,
-        "behaviour": {
-            "on_opposite_signal": meta.on_opposite_signal,
-            "max_pyramiding": meta.max_pyramiding,
-            "warmup_bars": meta.warmup_bars,
-        },
+        "behaviour": behaviour,
     }
     return ResolvedInstance(
         spec=spec,
@@ -227,6 +241,18 @@ def resolve_instance(
         context_timeframes=context,
         config=config,
         config_hash=hash_data(config),
+    )
+
+
+def _position_rules(spec: InstanceSpec, definition: StrategyDefinition) -> PositionRules:
+    meta = definition.meta
+    return PositionRules(
+        on_opposite_signal=spec.on_opposite_signal or meta.on_opposite_signal,
+        skip_entry_beyond_levels=(
+            meta.skip_entry_beyond_levels
+            if spec.skip_entry_beyond_levels is None
+            else spec.skip_entry_beyond_levels
+        ),
     )
 
 
