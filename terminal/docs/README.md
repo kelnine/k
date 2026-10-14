@@ -22,4 +22,5 @@ accounts.
 | 12 | [Strategy lab](12-strategy-lab.md) | Running N strategies side by side on separate paper accounts, isolation audit |
 | 13 | [Phase 3 Pine ports](13-phase3-pine-ports.md) | Received scripts, strategies to port, engine prerequisites, order of work, open decisions |
 | 14 | [Indicators](14-indicators.md) | Pine-parity `ta.*` library: streaming classes, seeding, na and tie rules, SAR/SuperTrend/VWAP details, what is still unverified |
+| 15 | [Market data](15-market-data.md) | Data source map, venue providers (Binance, Bybit, Coinbase, Hyperliquid, OANDA, CSV), limits, geo-restrictions, CSV/TradingView import, `kterminal data` |
 | A | [Metric definitions](appendix-a-metrics.md) | Exact formulas used by analytics and the leaderboard |
