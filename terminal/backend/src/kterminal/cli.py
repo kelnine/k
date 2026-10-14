@@ -624,6 +624,7 @@ app.add_typer(killswitch_app, name="killswitch")
 
 EXIT_PAPER_ERROR = 1
 
+
 @paper_app.command("start")
 def paper_start(
     new_session: Annotated[
@@ -634,9 +635,15 @@ def paper_start(
         ),
     ] = False,
     warmup_days: Annotated[
-        float, typer.Option("--warmup-days", help="How far back warm-up history may reach")
-    ] = 10.0,
-    lab_config: Annotated[Path | None, typer.Option("--config", help="lab.yaml")] = None,
+        float | None,
+        typer.Option(
+            "--warmup-days",
+            help="How far back warm-up history may reach (default: lab.yaml forward.warmup_days)",
+        ),
+    ] = None,
+    lab_config: Annotated[
+        Path | None, typer.Option("--config", help="lab.yaml (instances.d/ beside it is read too)")
+    ] = None,
 ) -> None:
     """Paper-trade the lab's instances on live bars until Ctrl-C / SIGTERM.
 
@@ -645,19 +652,22 @@ def paper_start(
     dedicated Paper account; nothing here can place a real order.
     """
     from kterminal.db.session import Database
-    from kterminal.paper.config import LabConfig
     from kterminal.paper.forward import ForwardSessionError
     from kterminal.paper.runtime import PaperRuntime, RuntimeLockedError, RuntimeOptions
-    from kterminal.runtime.engine import close_providers, configured_providers
+    from kterminal.runtime.engine import close_providers, unavailable_reasons
 
+    if warmup_days is not None and warmup_days < 0:
+        raise typer.BadParameter("cannot be negative", param_hint="--warmup-days")
     settings = _bootstrap("paper")
     catalog = _load_catalog(settings, None)
-    config = LabConfig.load(lab_config or settings.paths.lab_config)
+    config = _forward_config_or_exit(lab_config or settings.paths.lab_config)
     instruments = sorted({s for i in config.enabled_instances for s in i.instruments})
+    providers = _paper_providers_or_exit(settings, catalog, instruments)
+    for symbol, reason in sorted(unavailable_reasons(providers).items()):
+        typer.echo(f"{symbol}: no market data ({reason}) — its instances will not trade", err=True)
 
     async def main(stop: asyncio.Event) -> None:
         database = Database(settings.database, application_name=f"{settings.service_name}-paper")
-        providers = configured_providers(settings, catalog, instruments)
         try:
             await PaperRuntime(
                 config=config,
@@ -666,6 +676,7 @@ def paper_start(
                 providers=providers,
                 options=RuntimeOptions(new_session=new_session, warmup_days=warmup_days),
                 config_dir=settings.paths.config_dir,
+                unavailable=unavailable_reasons(providers),
             ).run(stop)
         finally:
             await close_providers(providers)
@@ -676,6 +687,59 @@ def paper_start(
     except (ForwardSessionError, RuntimeLockedError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_PAPER_ERROR) from None
+
+
+def _forward_config_or_exit(path: Path) -> Any:
+    from kterminal.paper.config import load_forward_config
+
+    try:
+        return load_forward_config(path)
+    except (OSError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+        typer.echo(f"Lab configuration is invalid: {exc}", err=True)
+        raise typer.Exit(EXIT_CONFIG_ERROR) from None
+
+
+def _paper_providers_or_exit(
+    settings: Settings, catalog: "InstrumentCatalog", instruments: list[str]
+) -> Any:
+    from kterminal.marketdata.sources import DataSourceError
+    from kterminal.runtime.engine import configured_providers
+
+    try:
+        return configured_providers(settings, catalog, instruments)
+    except DataSourceError as exc:
+        typer.echo("Market data is not usable:", err=True)
+        for problem in exc.problems:
+            typer.echo(f"  - {problem}", err=True)
+        raise typer.Exit(EXIT_CONFIG_ERROR) from None
+
+
+@paper_app.command("end-session")
+def paper_end_session() -> None:
+    """End the open forward session without starting a new one: its open positions are
+    closed at their last processed price and recorded. The next start begins a fresh
+    session (e.g. after changing the configuration). Refused while a runtime runs."""
+    from kterminal.db.session import Database
+    from kterminal.paper.runtime import RuntimeLockedError, end_open_sessions
+
+    settings = _bootstrap("paper")
+
+    async def _run() -> list[tuple[Any, int]]:
+        database = Database(settings.database, application_name="kterminal-paper-end")
+        try:
+            return await end_open_sessions(database)
+        finally:
+            await database.dispose()
+
+    try:
+        ended = asyncio.run(_run())
+    except RuntimeLockedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(EXIT_PAPER_ERROR) from None
+    if not ended:
+        typer.echo("no forward session is open")
+    for run_id, closed in ended:
+        typer.echo(f"ended forward session {run_id} ({closed} open position(s) closed)")
 
 
 @paper_app.command("status")

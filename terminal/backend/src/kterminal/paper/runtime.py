@@ -35,7 +35,7 @@ Status document (``system_state['paper.runtime']``)::
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -53,11 +53,7 @@ from kterminal.marketdata.base import MarketDataProvider
 from kterminal.observability.logging import get_logger
 from kterminal.paper.config import LabConfig
 from kterminal.paper.feed import FeedConfig, LiveFeed, Wait
-from kterminal.paper.forward import (
-    DEFAULT_WARMUP_DAYS,
-    ForwardSession,
-    close_session,
-)
+from kterminal.paper.forward import ForwardSession, close_session
 from kterminal.paper.kill_switch import NO_KILL_SWITCHES, KillSwitchState
 from kterminal.paper.pg_forward import PostgresForwardStore
 from kterminal.strategy_engine.registry import DEFINITIONS, StrategyDefinition
@@ -73,11 +69,51 @@ class RuntimeLockedError(KTerminalError):
 
 @dataclass(frozen=True, slots=True)
 class RuntimeOptions:
+    """``None`` takes the value from the lab configuration's ``forward`` section."""
+
     new_session: bool = False  # end the open session (closing its positions) and start anew
-    warmup_days: float = DEFAULT_WARMUP_DAYS  # cap on how far back warm-up history reaches
-    feed: FeedConfig = field(default_factory=FeedConfig)
+    warmup_days: float | None = None  # cap on how far back warm-up history reaches
+    feed: FeedConfig | None = None
     commit_attempts: int = 3
     session_name: str = "paper-forward"
+
+
+async def end_open_sessions(
+    database: Database, *, reason: str = "ended by the operator"
+) -> list[tuple[UUID, int]]:
+    """End every open forward session (positions closed at their last processed price)
+    while no runtime runs: (run id, positions closed) per session."""
+    lock = AdvisoryLock(database.engine, PAPER_RUNTIME_LOCK)
+    if not await lock.try_acquire():
+        raise RuntimeLockedError(
+            "a paper runtime is running against this database (kterminal paper start, or "
+            "the engine service) — stop it first, or use kterminal paper start --new-session"
+        )
+    try:
+        store = PostgresForwardStore(database)
+        return [
+            (stored.run_id, await close_session(store, stored, reason=reason))
+            for stored in await store.open_sessions()
+        ]
+    finally:
+        await lock.release()
+
+
+async def publish_failure(database: Database, error: str, *, now: datetime) -> None:
+    """Publish an ``error`` status for a runtime that could not be built (e.g. an invalid
+    data source map) — unless another runtime holds the lock: its status stands."""
+    lock = AdvisoryLock(database.engine, PAPER_RUNTIME_LOCK)
+    try:
+        if not await lock.try_acquire():
+            return
+        try:
+            await PostgresForwardStore(database).write_status(
+                PaperRuntime.failure_document(error, now), now=now
+            )
+        finally:
+            await lock.release()
+    except Exception as exc:  # informational only
+        _log.warning("paper.status_not_written", error=f"{type(exc).__name__}: {exc}"[:300])
 
 
 async def wait_or_stop(stop: asyncio.Event, seconds: float) -> bool:
@@ -103,13 +139,26 @@ class PaperRuntime:
         discover: bool = True,
         config_dir: Path | None = None,
         wait: Wait | None = None,
+        unavailable: Mapping[str, str] | None = None,
     ) -> None:
+        """``providers``: canonical instrument → its market-data provider; instruments
+        without one deliver no bars (``unavailable`` says why, for the status)."""
         self.config = config
         self.catalog = catalog
         self.database = database
         self.providers = dict(providers)
+        self.unavailable = dict(unavailable or {})
         self.clock = clock or SystemClock()
         self.options = options or RuntimeOptions()
+        forward = config.forward
+        self.warmup_days = (
+            self.options.warmup_days
+            if self.options.warmup_days is not None
+            else forward.warmup_days
+        )
+        self.feed_config = self.options.feed or FeedConfig(
+            poll_delay_s=forward.poll_delay_s, batch_timeout_s=forward.batch_timeout_s
+        )
         self.definitions = definitions
         self.discover = discover
         self.config_dir = config_dir
@@ -154,8 +203,9 @@ class PaperRuntime:
                 start=session.processed_through,
                 clock=self.clock,
                 wait=wait,
-                config=self.options.feed,
+                config=self.feed_config,
                 last_bars=session.last_bars,
+                unavailable=self.unavailable,
             )
             await self._publish("running")
             while not stop.is_set():
@@ -212,7 +262,7 @@ class PaperRuntime:
             self.store,
             self.providers,
             now=self.clock.now(),
-            warmup_days=self.options.warmup_days,
+            warmup_days=self.warmup_days,
             name=self.options.session_name,
             definitions=self.definitions,
             discover=self.discover,
@@ -244,6 +294,23 @@ class PaperRuntime:
             "error": self.error if self.status == "error" else None,
         }
 
+    @staticmethod
+    def failure_document(error: str, now: datetime) -> dict[str, Any]:
+        """The status of a runtime that could not even be built (e.g. an invalid data
+        source map): ``error`` with nothing running."""
+        return {
+            "session_id": None,
+            "run_id": None,
+            "status": "error",
+            "started_at": None,
+            "updated_at": now.isoformat(),
+            "last_batch_close": None,
+            "instruments": {},
+            "instances": {},
+            "kill_switch": NO_KILL_SWITCHES.summary(),
+            "error": error[:2_000],
+        }
+
     async def _publish(self, status: str) -> None:
         self.status = status
         now = self.clock.now()
@@ -258,5 +325,7 @@ __all__ = [
     "PaperRuntime",
     "RuntimeLockedError",
     "RuntimeOptions",
+    "end_open_sessions",
+    "publish_failure",
     "wait_or_stop",
 ]

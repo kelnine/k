@@ -47,6 +47,8 @@ type Wait = Callable[[float], Awaitable[bool]]
 
 @dataclass(frozen=True, slots=True)
 class FeedConfig:
+    """Timing of the live loop (``forward:`` in lab.yaml sets the first three)."""
+
     poll_delay_s: float = 2.0  # first poll this long after the minute closed
     poll_interval_s: float = 1.0  # between polls while instruments are missing
     batch_timeout_s: float = 20.0  # after the close: process without the missing ones
@@ -101,7 +103,10 @@ class LiveFeed:
         wait: Wait,
         config: FeedConfig | None = None,
         last_bars: Mapping[str, datetime] | None = None,
+        unavailable: Mapping[str, str] | None = None,
     ) -> None:
+        """``unavailable``: why an instrument has no provider (e.g. no OANDA token),
+        reported as its ``last_error``."""
         if not M1.is_aligned(start):
             raise ValueError(f"the feed must start on a minute: {start.isoformat()}")
         self.cursor = start  # the next minute to hand out
@@ -111,12 +116,17 @@ class LiveFeed:
         self._wait = wait
         self._late: list[Bar] = []
         last = last_bars or {}
+        reasons = unavailable or {}
         self.instruments: dict[str, InstrumentFeed] = {}
         for symbol in instruments:
             provider = providers.get(symbol)
+            reason = None
             if provider is not None and not provider.supports(symbol):
                 _log.warning("paper.feed.unsupported", instrument=symbol, provider=provider.name)
+                reason = f"{provider.name} does not support {symbol}"
                 provider = None
+            elif provider is None:
+                reason = reasons.get(symbol, "no market-data provider configured")
             feed = InstrumentFeed(
                 symbol,
                 provider,
@@ -124,6 +134,7 @@ class LiveFeed:
                 newest_open=last.get(symbol),
                 last_bar_open=last.get(symbol),
                 state="ok" if provider is not None else "no_provider",
+                last_error=reason,
             )
             self.instruments[symbol] = feed
 
@@ -206,9 +217,12 @@ class LiveFeed:
         provider = feed.provider
         if provider is None:  # pragma: no cover - only expected instruments are polled
             return
+        # Since its newest bar, but never before the feed's start (warm-up bars and minutes
+        # processed before a restart are not asked for again) nor further back than the
+        # late window (an instrument that was closed for days).
         floor = self.cursor - timedelta(minutes=self.config.late_window_minutes)
         newest = feed.newest_open
-        since = max(self._start if newest is None else newest + MINUTE, floor)
+        since = max(self._start, floor, self._start if newest is None else newest + MINUTE)
         try:
             bars = await provider.latest(feed.symbol, since)
         except Exception as exc:  # a provider failure must never stop the others

@@ -32,7 +32,9 @@ Restarting
     which closes the old session's positions at their last price.
 """
 
+import inspect
 import itertools
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
@@ -53,7 +55,7 @@ from kterminal.domain.timeframes import M1
 from kterminal.marketdata.base import MarketDataProvider
 from kterminal.observability.logging import get_logger
 from kterminal.paper.account import InstrumentSetup, PaperAccount
-from kterminal.paper.config import LabConfig
+from kterminal.paper.config import LabConfig, LabInstance
 from kterminal.paper.feed import MinuteBatch
 from kterminal.paper.ids import SessionIds
 from kterminal.paper.kill_switch import KillSwitchState
@@ -72,6 +74,7 @@ from kterminal.paper.records import (
 )
 from kterminal.paper.store import ProvisionedAccount
 from kterminal.strategy_engine.model import Fault
+from kterminal.strategy_engine.periods import Period, period_warmup_bars
 from kterminal.strategy_engine.registry import DEFINITIONS, StrategyDefinition
 
 _log = get_logger(__name__)
@@ -120,9 +123,10 @@ class AccountPlan(_Frozen):
 class SessionPlan(_Frozen):
     """What a session was started with (``runs.config["plan"]``); never changes."""
 
-    lab_config_hash: str
+    lab_config_hash: str  # the lab-wide settings replay depends on (lab_config_hash)
     catalog_fingerprint: str
     versions: dict[str, str]  # instance → config hash (strategy version)
+    instance_settings: dict[str, str]  # instance → instance_settings_hash
     accounts: dict[str, AccountPlan]
     instruments: tuple[str, ...]
     live_start: datetime
@@ -147,7 +151,25 @@ class SessionProgress(_Frozen):
 
 
 def lab_config_hash(config: LabConfig) -> str:
-    return hash_data(config.model_dump(mode="json"))
+    """The lab-wide settings a session's results depend on: the base timeframe, the
+    equity-snapshot cadence and the declared external strategies. (Instances are
+    compared one by one; ``forward``, ``experiments`` and disabled instances do not
+    matter.)"""
+    return hash_data(
+        {
+            "base_timeframe": config.base_timeframe,
+            "equity_snapshot_minutes": config.equity_snapshot_minutes,
+            "external_strategies": [e.model_dump(mode="json") for e in config.external_strategies],
+        }
+    )
+
+
+def instance_settings_hash(config: LabConfig, instance: LabInstance) -> str:
+    """An instance's lab settings beyond its strategy version: its instruments and
+    timeframes, position rules and merged account settings. The host (in-process or
+    subprocess) is left out: it does not change what the instance does."""
+    spec = config.instance_spec(instance).model_dump(mode="json", exclude={"host"})
+    return hash_data({"spec": spec, "account": config.account_settings(instance).document()})
 
 
 def bars_text(bars: Iterable[Bar]) -> str:
@@ -195,17 +217,51 @@ def as_input(bar: Bar, source: str) -> Bar:
 
 
 def warmup_need(lab: Lab) -> dict[str, int]:
-    """Base bars each instrument needs: every instance's ``warmup_bars`` (plus the
-    aggregator's dropped first period) of its largest timeframe."""
+    """Base bars each instrument needs: the largest need of the instances trading it.
+
+    An instance needs ``meta.warmup_bars`` (plus the aggregator's dropped first period)
+    of its largest timeframe, and — if its code uses ``ctx.periods`` — enough primary
+    bars for every period level it asks for (``period_warmup_bars``, docs/05 §5.2.2).
+    """
     need: dict[str, int] = {}
     base = lab.base_timeframe.seconds
     for member in lab.members:
         resolved = member.resolved
         largest = max(resolved.timeframes)
         bars = (resolved.definition.meta.warmup_bars + 1) * (largest.seconds // base)
+        primary = resolved.timeframe
+        for period in period_levels_used(resolved.definition):
+            levels = period_warmup_bars(period, primary) * (primary.seconds // base)
+            bars = max(bars, levels)
         for symbol in resolved.spec.instruments:
             need[symbol] = max(need.get(symbol, 0), bars)
     return need
+
+
+_PERIODS_USED = re.compile(r"\.periods\b")
+_PERIOD_LITERAL = re.compile(
+    r"\.periods\s*\.\s*(?:previous|current)\(\s*(?:[\"']([DWMdw]|day|week|month)[\"']"
+    r"|Period\.(DAY|WEEK|MONTH))"
+)
+
+
+def period_levels_used(definition: StrategyDefinition) -> tuple[Period, ...]:
+    """The period levels a strategy's code asks ``ctx.periods`` for, read from the source
+    of its module: the literal periods passed to ``previous`` / ``current``, or the
+    trading day when it uses ``ctx.periods`` in another way. Nothing for external
+    strategies or when the source is not available."""
+    if definition.strategy_cls is None:
+        return ()
+    try:
+        source = inspect.getsource(inspect.getmodule(definition.strategy_cls) or object)
+    except (OSError, TypeError):
+        return ()
+    if not _PERIODS_USED.search(source):
+        return ()
+    found = {
+        Period.parse(literal or word.lower()) for literal, word in _PERIOD_LITERAL.findall(source)
+    }
+    return tuple(sorted(found or {Period.DAY}, key=list(Period).index))
 
 
 class _Recorder:
@@ -328,6 +384,7 @@ class ForwardSession:
             lab_config_hash=lab_config_hash(config),
             catalog_fingerprint=catalog.fingerprint,
             versions={m.resolved.id: m.resolved.config_hash for m in lab.members},
+            instance_settings=_instance_settings(config),
             accounts={
                 instance: AccountPlan(
                     account_id=o.account_id,
@@ -684,18 +741,26 @@ async def _open_dedicated(lab: Lab, store: PostgresForwardStore) -> dict[str, Ac
     return openings
 
 
+def _instance_settings(config: LabConfig) -> dict[str, str]:
+    return {i.id: instance_settings_hash(config, i) for i in config.enabled_instances}
+
+
 def _mismatches(
     plan: SessionPlan, config: LabConfig, catalog: InstrumentCatalog, lab: Lab
 ) -> list[str]:
     problems = []
     if lab_config_hash(config) != plan.lab_config_hash:
-        problems.append("the lab configuration (lab.yaml) changed")
+        problems.append(
+            "the lab configuration changed (base timeframe, equity snapshot cadence or "
+            "external strategies)"
+        )
     if catalog.fingerprint != plan.catalog_fingerprint:
         problems.append(
             f"the instrument catalog changed (fingerprint {plan.catalog_fingerprint[:12]} → "
             f"{catalog.fingerprint[:12]})"
         )
     versions = {m.resolved.id: m.resolved.config_hash for m in lab.members}
+    settings = _instance_settings(config)
     for instance in sorted(set(versions) | set(plan.versions)):
         old, new = plan.versions.get(instance), versions.get(instance)
         if old is None:
@@ -705,6 +770,10 @@ def _mismatches(
         elif old != new:
             problems.append(
                 f"instance {instance} has a new strategy version ({old[:12]} → {new[:12]})"
+            )
+        elif plan.instance_settings.get(instance) != settings.get(instance):
+            problems.append(
+                f"instance {instance} changed its lab settings (account, instruments or timeframes)"
             )
     return problems
 
@@ -736,6 +805,16 @@ async def _assemble_warmup(
         inputs[symbol] = segments
         bars.extend(warm)
         _log.info("paper.warmup", instrument=symbol, bars=len(warm), needed=need)
+        if len(warm) < need:
+            # The cap (warmup_days) or the provider's history was too short: indicators
+            # of the instances on this instrument start less primed than they asked for.
+            _log.warning(
+                "paper.warmup_short",
+                instrument=symbol,
+                bars=len(warm),
+                needed=need,
+                reaches_back_to=cap_start.isoformat(),
+            )
     bars.sort(key=lambda b: (b.open_time, b.instrument))
     return bars, inputs
 
@@ -1003,6 +1082,8 @@ __all__ = [
     "bars_text",
     "chain_hash",
     "close_session",
+    "instance_settings_hash",
     "lab_config_hash",
+    "period_levels_used",
     "warmup_need",
 ]

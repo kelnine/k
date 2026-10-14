@@ -96,3 +96,41 @@ async def test_the_engine_runs_the_paper_runtime(fresh_url: str, tmp_path: Path)
         if not engine.done():
             engine.cancel()
         await container.aclose()
+
+
+async def test_the_engine_publishes_why_the_paper_runtime_cannot_start(
+    fresh_url: str, tmp_path: Path
+) -> None:
+    """With the real provider factory and no data source map, nothing can trade: the
+    error is published for the dashboard (and retried later), the engine keeps running."""
+    write_catalog_dir(tmp_path)  # no catalog/data_sources.yaml
+    (tmp_path / "lab.yaml").write_text(yaml.safe_dump(LAB))
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        database={"url": fresh_url},
+        runtime={"heartbeat_interval_s": 0.05, "leader_retry_interval_s": 0.05},
+        paths={"config_dir": str(tmp_path)},
+    )
+    container = Container.build(settings, role="engine-paper")
+    stop = asyncio.Event()
+    engine = asyncio.create_task(run_engine(container, stop))
+    store = PostgresForwardStore(container.db)
+    try:
+        status: dict[str, Any] | None = None
+        async with asyncio.timeout(30):
+            while status is None:
+                await asyncio.sleep(0.1)
+                status = await store.read_status()
+        assert status["status"] == "error"
+        assert "DataSourceError" in status["error"] and "data_sources.yaml" in status["error"]
+        assert status["run_id"] is None and status["instruments"] == {}
+        assert not engine.done()
+        assert await store.open_sessions() == []
+        stop.set()
+        await asyncio.wait_for(engine, timeout=15)
+    finally:
+        stop.set()
+        if not engine.done():
+            engine.cancel()
+        await container.aclose()

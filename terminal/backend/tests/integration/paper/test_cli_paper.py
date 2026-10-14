@@ -45,9 +45,19 @@ DEMO = LabConfig.model_validate(
 )
 
 
+# The real data source map's shape; nothing is downloaded by these tests (OANDA has no
+# token here, so XAUUSD is skipped; the runtime refuses before NEARUSD is polled).
+SOURCES = """\
+data_sources:
+  NEARUSD: {provider: binance_usdm, symbol: NEARUSDT, volume: exchange}
+  XAUUSD: {provider: oanda, symbol: XAU_USD, volume: tick}
+"""
+
+
 @pytest.fixture
 def config_dir(tmp_path: Path, fresh_url: str, monkeypatch: pytest.MonkeyPatch) -> Path:
     write_catalog_dir(tmp_path)
+    (tmp_path / "catalog" / "data_sources.yaml").write_text(SOURCES)
     (tmp_path / "lab.yaml").write_text(yaml.safe_dump(DEMO.model_dump(mode="json")))
     monkeypatch.setenv("KT_PATHS__CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("KT_DATABASE__URL", fresh_url)
@@ -65,10 +75,10 @@ async def test_import_csv_loads_bars_into_the_candles_table(
 ) -> None:
     csv = config_dir / "gold.csv"
     csv.write_text(
-        "time,open,high,low,close,volume\n"
-        "2026-01-05T14:30:00Z,4000.10,4001.00,3999.50,4000.80,12\n"
-        "1767623460,4000.80,4002.00,4000.00,4001.50,7\n"  # 14:31 UTC as Unix seconds
-        "2026-01-05 09:32:00,4001.50,4001.60,4000.90,4001.00,\n",  # New York time (--tz)
+        "time,open,high,low,close,volume\n"  # New York time (--tz): 14:30 UTC
+        "2026-01-05 09:30:00,4000.10,4001.00,3999.50,4000.80,12\n"
+        "2026-01-05 09:31:00,4000.80,4002.00,4000.00,4001.50,7\n"
+        "2026-01-05 09:32:00,4001.50,4001.60,4000.90,4001.00,\n",
         encoding="utf-8",
     )
     code, output = await invoke(
@@ -95,7 +105,7 @@ async def test_import_csv_loads_bars_into_the_candles_table(
     code, output = await invoke(
         "data", "import-csv", str(bad), "--instrument", "XAUUSD", "--source", "x"
     )
-    assert code == 1 and "not on a 1m boundary" in output
+    assert code == 1 and "is not on a whole minute" in output
 
 
 async def test_kill_switch_commands_record_and_audit_every_change(
@@ -178,6 +188,14 @@ async def test_paper_start_refuses_a_changed_configuration_and_a_second_runtime(
     assert code == 1
     assert "sma_gold has a new strategy version" in output
     assert "kterminal paper start --new-session" in output
+    assert "XAUUSD: no market data (" in output and "oanda" in output
+
+    (config_dir / "catalog" / "data_sources.yaml").write_text(
+        "data_sources:\n  NEARUSD: {provider: kraken, symbol: X, volume: exchange}\n"
+    )
+    code, output = await invoke("paper", "start")
+    assert code == 2 and "Market data is not usable" in output
+    (config_dir / "catalog" / "data_sources.yaml").write_text(SOURCES)
 
     lock = AdvisoryLock(database.engine, PAPER_RUNTIME_LOCK)
     assert await lock.try_acquire()
@@ -186,3 +204,43 @@ async def test_paper_start_refuses_a_changed_configuration_and_a_second_runtime(
         assert code == 1 and "already running" in output
     finally:
         await lock.release()
+
+
+async def test_paper_start_reads_instances_d_and_end_session_ends_the_session(
+    config_dir: Path, database: Database
+) -> None:
+    clock = FakeTime(START + timedelta(seconds=5))
+    runtime = await run_runtime(database, clock, DEMO, until=START + 5 * MIN)
+    assert runtime.session is not None
+    # a strategy-port file appears: the open session no longer has every instance
+    (config_dir / "instances.d").mkdir()
+    (config_dir / "instances.d" / "10-ports.yaml").write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "id": "breakout_near_slow",
+                    "strategy": "demo_breakout",
+                    "params": {"channel_bars": 10, "trend_filter": False},
+                    "instruments": ["NEARUSD"],
+                    "timeframe": "15m",
+                }
+            ]
+        )
+    )
+    code, output = await invoke("paper", "start")
+    assert code == 1 and "instance breakout_near_slow was added" in output
+
+    (config_dir / "instances.d" / "20-dup.yaml").write_text(
+        yaml.safe_dump([{**DEMO.instances[0].model_dump(mode="json")}])
+    )
+    code, output = await invoke("paper", "start")
+    assert code == 2
+    assert "'sma_gold' is defined in both lab.yaml and instances.d/20-dup.yaml" in output
+
+    code, output = await invoke("paper", "end-session")
+    assert code == 0, output
+    assert f"ended forward session {runtime.session.run_id}" in output
+    code, output = await invoke("paper", "end-session")
+    assert code == 0 and "no forward session is open" in output
+    code, output = await invoke("paper", "sessions")
+    assert "COMPLETED" in output and "RUNNING" not in output

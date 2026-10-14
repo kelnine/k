@@ -7,35 +7,38 @@ trading**: once this process is the leader it runs the
 the configured market-data providers into the strategy lab, every instance on
 its own dedicated Paper account, results committed to PostgreSQL every minute.
 
-The paper runtime runs only when ``<config>/lab.yaml`` exists. If it stops with
-an error (for example the open session was started under a different
-configuration and must be replaced with ``kterminal paper start
---new-session``), the error is logged and published in the runtime status, the
-runtime's lock is released so the operator can act, and it is retried after
-:data:`PAPER_RETRY_S`. LIVE (real-money) execution is not implemented: no
-broker adapter is constructed here.
+The paper runtime runs only when ``<config>/lab.yaml`` exists; its instances are
+lab.yaml's plus those in ``<config>/instances.d/``. The configuration, the
+catalog and the providers are loaded afresh on every (re)start. If the runtime
+stops with an error (for example the open session was started under a
+different configuration and must be ended with ``kterminal paper end-session``
+or replaced with ``kterminal paper start --new-session``), the error is logged
+and published in the runtime status, the runtime's lock is released so the
+operator can act, and it is retried after :data:`PAPER_RETRY_S`. LIVE
+(real-money) execution is not implemented: no broker adapter is constructed
+here.
 """
 
 import asyncio
 import contextlib
-import importlib
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
 
 from kterminal.config.settings import Settings
 from kterminal.core.errors import LeadershipLostError
 from kterminal.db.locks import ENGINE_LEADER_LOCK, AdvisoryLock
 from kterminal.domain.catalog import InstrumentCatalog
 from kterminal.marketdata.base import MarketDataProvider
+from kterminal.marketdata.factory import ProviderMap, build_providers, load_data_sources
 from kterminal.observability.logging import get_logger
-from kterminal.paper.config import LabConfig
-from kterminal.paper.runtime import PaperRuntime
+from kterminal.paper.config import load_forward_config
+from kterminal.paper.runtime import PaperRuntime, publish_failure
 from kterminal.runtime.container import Container
 from kterminal.runtime.service import sleep_or_stop
 
 _log = get_logger("kterminal.engine")
 
 PAPER_RETRY_S = 60.0
+NO_DATA_SOURCE = "no data source in the data source map"
 
 type ProviderFactory = Callable[
     [Settings, InstrumentCatalog, Sequence[str]], Mapping[str, MarketDataProvider]
@@ -45,26 +48,25 @@ type ProviderFactory = Callable[
 
 def configured_providers(
     settings: Settings, catalog: InstrumentCatalog, instruments: Sequence[str]
-) -> Mapping[str, MarketDataProvider]:
-    """The providers named by the data-source map, from ``kterminal.marketdata.factory``.
+) -> ProviderMap:
+    """The providers of ``instruments`` named by the data source map
+    (:func:`~kterminal.marketdata.factory.build_providers`). Instruments the map does not
+    list, or whose providers are all unusable here (disabled, no OANDA token …), are
+    left out and explained in ``skipped``. Raises
+    :class:`~kterminal.marketdata.sources.DataSourceError` when the map or the
+    market-data settings are invalid."""
+    sources = load_data_sources(settings, catalog)
+    listed = [i for i in instruments if i in sources.instruments]
+    providers = build_providers(settings, sources, catalog, instruments=listed)
+    for instrument in instruments:
+        if instrument not in sources.instruments:
+            providers.skipped[instrument] = NO_DATA_SOURCE
+    return providers
 
-    That module arrives with the market-data providers; until it is installed (or if
-    the map cannot be built) there are no providers, the runtime reports every
-    instrument as ``no_provider`` and nothing trades.
-    """
-    try:
-        factory: Any = importlib.import_module("kterminal.marketdata.factory")
-    except ImportError:
-        _log.warning("engine.market_data_unavailable", reason="no provider factory installed")
-        return {}
-    try:
-        sources = factory.load_data_sources(settings, catalog)
-        built = factory.build_providers(settings, sources, catalog)
-    except Exception as exc:
-        _log.error("engine.market_data_failed", error=f"{type(exc).__name__}: {exc}"[:500])
-        return {}
-    wanted = set(instruments)
-    return {symbol: provider for symbol, provider in built.items() if symbol in wanted}
+
+def unavailable_reasons(providers: Mapping[str, MarketDataProvider]) -> dict[str, str]:
+    """Why instruments have no provider (``ProviderMap.skipped``; empty for a plain map)."""
+    return dict(providers.skipped) if isinstance(providers, ProviderMap) else {}
 
 
 async def close_providers(providers: Mapping[str, MarketDataProvider]) -> None:
@@ -118,16 +120,8 @@ async def run_engine(
 class _PaperSupervisor:
     """Keeps the paper runtime running inside the engine; retries it after errors."""
 
-    def __init__(
-        self,
-        container: Container,
-        config: LabConfig,
-        catalog: InstrumentCatalog,
-        providers: ProviderFactory,
-    ) -> None:
+    def __init__(self, container: Container, providers: ProviderFactory) -> None:
         self.container = container
-        self.config = config
-        self.catalog = catalog
         self.providers = providers
         self.stop = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
@@ -139,13 +133,7 @@ class _PaperSupervisor:
         if not paths.lab_config.exists():
             _log.info("engine.paper_disabled", reason=f"no lab configuration at {paths.lab_config}")
             return None
-        try:
-            config = LabConfig.load(paths.lab_config)
-            catalog = InstrumentCatalog.load(paths.catalog_dir)
-        except Exception as exc:
-            _log.error("engine.paper_config_invalid", error=f"{type(exc).__name__}: {exc}"[:1_000])
-            return None
-        supervisor = cls(container, config, catalog, providers)
+        supervisor = cls(container, providers)
         supervisor.supervise()
         return supervisor
 
@@ -167,16 +155,28 @@ class _PaperSupervisor:
 
     async def _run(self) -> None:
         settings = self.container.settings
-        instruments = sorted({s for i in self.config.enabled_instances for s in i.instruments})
-        providers = self.providers(settings, self.catalog, instruments)
+        try:
+            config = load_forward_config(settings.paths.lab_config)
+            catalog = InstrumentCatalog.load(settings.paths.catalog_dir)
+            instruments = sorted({s for i in config.enabled_instances for s in i.instruments})
+            providers = self.providers(settings, catalog, instruments)
+        except Exception as exc:
+            # Nothing runs: say so where the dashboard looks, then let supervise() retry.
+            await publish_failure(
+                self.container.db,
+                f"{type(exc).__name__}: {exc}",
+                now=self.container.clock.now(),
+            )
+            raise
         try:
             await PaperRuntime(
-                config=self.config,
-                catalog=self.catalog,
+                config=config,
+                catalog=catalog,
                 database=self.container.db,
                 providers=providers,
                 clock=self.container.clock,
                 config_dir=settings.paths.config_dir,
+                unavailable=unavailable_reasons(providers),
             ).run(self.stop)
         finally:
             await close_providers(providers)

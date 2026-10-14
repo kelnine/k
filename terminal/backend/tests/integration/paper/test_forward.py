@@ -12,9 +12,10 @@ from sqlalchemy import func, select, text, update
 from kterminal.config.settings import DatabaseSettings
 from kterminal.db import models as m
 from kterminal.db.session import Database
+from kterminal.paper.config import LabConfig
 from kterminal.paper.forward import SessionMismatchError, SessionVerificationError
 from kterminal.paper.pg_forward import PostgresForwardStore
-from kterminal.paper.runtime import RuntimeLockedError
+from kterminal.paper.runtime import RuntimeLockedError, end_open_sessions
 from tests.fixtures.forward import FakeTime
 from tests.integration.paper.conftest import _admin
 from tests.integration.paper.forward_helpers import (
@@ -309,3 +310,65 @@ async def test_a_subprocess_hosted_instance_survives_a_restart(database: Databas
     assert trades > 0
     status = await PostgresForwardStore(database).read_status()
     assert status is not None and status["instances"]["sma_gold"]["fault"] is None
+
+
+async def test_tuning_that_does_not_change_results_keeps_the_session_but_account_changes_do_not(
+    database: Database,
+) -> None:
+    clock = FakeTime(START + timedelta(seconds=5))
+    await run_runtime(database, clock, lab_config(), until=START + 10 * MIN)
+    (stored,) = await PostgresForwardStore(database).open_sessions()
+
+    tuned = lab_config().model_dump(mode="json")
+    tuned["forward"] = {"warmup_days": 1, "batch_timeout_s": 30}
+    tuned["instances"].append(
+        {**tuned["instances"][1], "id": "parked_near", "enabled": False}  # disabled
+    )
+    tuned["instances"][0]["host"] = "subprocess"  # where it runs does not matter
+    clock.current = START + 12 * MIN
+    runtime = await run_runtime(
+        database, clock, LabConfig.model_validate(tuned), until=START + 15 * MIN
+    )
+    assert runtime.session is not None and runtime.session.resumed
+    assert runtime.session.run_id == stored.run_id
+
+    richer = lab_config().model_dump(mode="json")
+    richer["instances"][2]["account"] = {"risk_per_trade_pct": 1}
+    with pytest.raises(SessionMismatchError, match="scripted_both changed its lab settings"):
+        await run_runtime(database, clock, LabConfig.model_validate(richer), until=START + 20 * MIN)
+    snapshots = {**lab_config().model_dump(mode="json"), "equity_snapshot_minutes": 15}
+    with pytest.raises(SessionMismatchError, match="equity snapshot cadence"):
+        await run_runtime(
+            database, clock, LabConfig.model_validate(snapshots), until=START + 20 * MIN
+        )
+
+
+async def test_ending_the_open_session_closes_its_positions_and_the_next_start_is_fresh(
+    database: Database,
+) -> None:
+    clock = FakeTime(START + timedelta(seconds=5))
+    await run_runtime(database, clock, lab_config(), until=START + 88 * MIN)
+    (old,) = await PostgresForwardStore(database).open_sessions()
+
+    (ended,) = await end_open_sessions(database)
+    assert ended[0] == old.run_id and ended[1] >= 1  # the scripted short was open
+    assert await end_open_sessions(database) == []
+    open_trades = await scalar(database, "SELECT count(*) FROM trades WHERE status = 'OPEN'")
+    assert open_trades == 0
+
+    clock.current = START + 95 * MIN
+    runtime = await run_runtime(database, clock, lab_config(), until=START + 97 * MIN)
+    assert runtime.session is not None and not runtime.session.resumed
+    sessions = {s.run_id: s.status for s in await PostgresForwardStore(database).sessions()}
+    assert sessions == {old.run_id: "COMPLETED", runtime.session.run_id: "RUNNING"}
+
+    from kterminal.db.locks import AdvisoryLock
+    from kterminal.paper.runtime import PAPER_RUNTIME_LOCK
+
+    lock = AdvisoryLock(database.engine, PAPER_RUNTIME_LOCK)
+    assert await lock.try_acquire()
+    try:
+        with pytest.raises(RuntimeLockedError, match="stop it first"):
+            await end_open_sessions(database)
+    finally:
+        await lock.release()
