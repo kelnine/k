@@ -236,11 +236,7 @@ def test_limit_left_resting_by_a_missing_last_bar_is_cancelled_after_the_window(
     the window; the script drops the setup on the first bar outside it, so the strategy
     cancels the order there — before the book can fill it on a later bar."""
     tape = tape_for(window=(*SETUP, (100.5, 100.6, 100.0, 100.2)), until="12:10")
-    bars = [
-        bar
-        for bar in tape.bars()
-        if bar.open_time not in (ny(DAY, "11:58"), ny(DAY, "11:59"))
-    ]
+    bars = [bar for bar in tape.bars() if bar.open_time not in (ny(DAY, "11:58"), ny(DAY, "11:59"))]
     result = run_1m(IctModelB, bars)
     entry, cancel = result.signals
     assert cancel.signal is EXIT_LONG and cancel.bar_time == ny(DAY, "12:00")
@@ -260,9 +256,7 @@ def test_late_fill_after_a_missing_last_bar_is_closed_at_the_next_open() -> None
     (opened,) = of_kind(result, PositionEventKind.OPENED)
     assert opened.time == ny(DAY, "12:00")  # the book still had the order
     exits = [s for s in result.signals if s.signal is EXIT_LONG]
-    assert [(s.bar_time, s.metadata["trigger"]) for s in exits] == [
-        (ny(DAY, "12:00"), "late fill")
-    ]
+    assert [(s.bar_time, s.metadata["trigger"]) for s in exits] == [(ny(DAY, "12:00"), "late fill")]
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
     assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(DAY, "12:01"))
 
