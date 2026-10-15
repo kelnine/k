@@ -5,7 +5,7 @@ and determinism."""
 
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -46,6 +46,11 @@ def scanner(bars: list[Bar], params: dict[str, Any] | None = None) -> StrategyTe
     result = run(CisdScanner, bars, params=params, context_timeframes=HIGHER_SLOTS)
     assert result.fault is None and result.rejected == []
     return result
+
+
+def slots_of(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The ``slots`` rows of a scanner signal's metadata."""
+    return cast(dict[str, dict[str, Any]], metadata["slots"])
 
 
 def shifted(row: Row, by: float) -> Row:
@@ -114,9 +119,11 @@ def test_a_short_that_agrees_with_every_higher_bias_is_a_plus() -> None:
         "level": "swing high",
         "price": 91.0,
     }
-    slots = meta["slots"]
-    assert isinstance(slots, dict)
-    assert {tf: row["bias"] for tf, row in slots.items()} == {"15m": -1, "1h": -1, "4h": -1}  # type: ignore[index]
+    assert {tf: row["bias"] for tf, row in slots_of(meta).items()} == {
+        "15m": -1,
+        "1h": -1,
+        "4h": -1,
+    }
     assert meta["alert_text"] == (
         "A+ XAUUSD 5m: SHORT CISD  Entry 90.00  SL 90.80  TP1 89.20  TP2 88.40"
     )
@@ -138,8 +145,7 @@ def test_a_long_against_the_higher_biases_is_not_a_plus() -> None:
 def test_a_disabled_slot_does_not_count_and_no_slot_means_no_a_plus() -> None:
     meta = scanner(aplus_tape(), {"on4": False}).signals[0].metadata
     assert meta["aplus"] is True
-    slots = meta["slots"]
-    assert isinstance(slots, dict) and slots["4h"]["on"] is False  # type: ignore[index]
+    assert slots_of(meta)["4h"]["on"] is False
     off = {"on2": False, "on3": False, "on4": False}
     assert scanner(aplus_tape(), off).signals[0].metadata["aplus"] is False
 
@@ -152,8 +158,7 @@ def test_before_the_4h_break_closes_the_short_is_not_a_plus() -> None:
     result = scanner(with_slots(make_bars(rows, start=T0)))
     entries = [s for s in result.signals if s.signal.is_entry]
     assert entries and entries[-1].metadata["aplus"] is False
-    slots = entries[-1].metadata["slots"]
-    assert isinstance(slots, dict) and slots["4h"]["bias"] == 0  # type: ignore[index]
+    assert slots_of(entries[-1].metadata)["4h"]["bias"] == 0
 
 
 # ── the scanner's own model differs from the main one ──────────────────────────────────
@@ -178,7 +183,7 @@ def test_a_3_3_swing_sweep_counts_for_the_scanner_but_not_for_the_5_5_main_model
     (signal, *_) = scanner(with_slots(five)).signals
     assert signal.bar_time == anchor + 8 * M5.duration
     assert signal.metadata["sweep"] == {
-        "bar_index": signal.metadata["bar_index"] - 4,  # type: ignore[operator]
+        "bar_index": cast(int, signal.metadata["bar_index"]) - 4,
         "bars_ago": 4,
         "level": "swing high",
         "price": 101.0,
@@ -196,7 +201,8 @@ def test_session_and_previous_day_levels_are_not_sweeps_for_the_scanner() -> Non
     tape = Tape(ny(DAY - timedelta(days=1), "18:00")).at(ny(DAY, "01:00"), *rows)
     tape.quiet(20, level=99.6)
     main = [s for s in run_tape(CisdSweep, tape).signals if s.signal.is_entry]
-    assert len(main) == 1 and main[0].metadata["sweep"]["levels"] == [  # type: ignore[index, call-overload]
+    assert len(main) == 1
+    assert cast(dict[str, Any], main[0].metadata["sweep"])["levels"] == [
         {"level": "Asia high", "price": 100.15}
     ]
     assert scanner(with_slots(tape.bars())).signals == []

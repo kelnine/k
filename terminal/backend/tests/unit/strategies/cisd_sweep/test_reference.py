@@ -19,7 +19,7 @@ import math
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -316,8 +316,9 @@ def test_other_timeframes_and_no_session_levels_above_60_minutes(timeframe: str)
     expected = transcribe(bars, window="NY AM")
     assert expected and port_setups(result) == expected
     if timeframe == "4h":  # showSess off: no session levels, the window is ignored
-        levels = [s.metadata["levels"] for s in result.signals if "levels" in s.metadata]
-        assert all(lv["Asia high"] is None and lv["NY AM low"] is None for lv in levels)  # type: ignore[index, call-overload]
+        setups = [s for s in result.signals if "levels" in s.metadata]
+        levels = [cast(dict[str, Any], s.metadata["levels"]) for s in setups]
+        assert levels and all(lv["Asia high"] is None and lv["NY AM low"] is None for lv in levels)
 
 
 def test_previous_month_levels_are_swept_like_the_script() -> None:
