@@ -1,0 +1,56 @@
+# S3 · Smart Money Suite v4 (script 5) — sniper: BOS through the latest 40/40 swing with a
+# score of trend, structure, OB/FVG zone and momentum; stop beyond the opposite swing
+# ± 0.5 ATR(14), target 2R.
+# Strategy: backend/src/kterminal/strategies/smc_sniper (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  fill at the next open with the script's levels from the signal close; skip the
+#       entry when that open is already past the stop or target (the strategy's meta);
+#       a signal whose stop is not beyond the signal close is not traded (NO_TRADE)
+#   D4  script 5: ignore new signals while in a trade (meta)
+#   D6  hold as the script does: no time exit, through sessions and weekends
+#   D10 15m, plus a 5m variant, all 14 instruments, one Paper 50K account per variant
+#       and timeframe, one position per instrument (max_open_positions: 14)
+#   D11 Min Score 3 (the script's default) and Min Score 4
+#   D13 script defaults otherwise (swings 40/40, OB 10/10 max 3, FVG max 4, ATR 14)
+# Sizing: 40/40-swing stops can be wide; an entry that cannot be sized within the
+# account's 0.5 % risk is rejected and recorded (doc 13 §13.8).
+- id: smc_sniper_min3_15m
+  strategy: smc_sniper
+  name: SMC sniper · Min Score 3 · 15m
+  description: Script 5 defaults (Min Score 3); stop beyond the opposite 40/40 swing ± 0.5 ATR, 2R; new signals ignored while in a trade (D4).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { sniper_min: 3 }
+  tags: [pine-port, script-5, s3, main]
+  account: { max_open_positions: 14 }
+
+- id: smc_sniper_min4_15m
+  strategy: smc_sniper
+  name: SMC sniper · Min Score 4 · 15m
+  description: Script 5 with Min Score 4 (trend, zone and momentum all required with the BOS) (D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { sniper_min: 4 }
+  tags: [pine-port, script-5, s3, variant]
+  account: { max_open_positions: 14 }
+
+- id: smc_sniper_min3_5m
+  strategy: smc_sniper
+  name: SMC sniper · Min Score 3 · 5m
+  description: Script 5 defaults on 5m (D10 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sniper_min: 3 }
+  tags: [pine-port, script-5, s3, variant]
+  account: { max_open_positions: 14 }
+
+- id: smc_sniper_min4_5m
+  strategy: smc_sniper
+  name: SMC sniper · Min Score 4 · 5m
+  description: Script 5 with Min Score 4 on 5m (D10/D11 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sniper_min: 4 }
+  tags: [pine-port, script-5, s3, variant]
+  account: { max_open_positions: 14 }
