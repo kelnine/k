@@ -1,0 +1,58 @@
+# S10 · Breakout Targets + ICT Levels + CISD (script 1), MTF scanner model — on 5m a
+# CISD (close through the open of the latest opposing run, body >= 0.3 ATR) within 12
+# bars of a sweep of the latest 3/3 swing (no session or previous-period levels); A+ when
+# the 15m, 1h and 4h swing-break biases (read like lookahead_on + [1]) agree.
+# Strategy: backend/src/kterminal/strategies/cisd_scanner (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D4  replace: a new signal cancels the resting limit or exits the open trade at the
+#       next open and enters
+#   D7  limit at the CISD level, expiring after 12 bars, cancelled when TP1 trades after
+#       the signal bar before the fill; TP1-only and TP2-only instances (no partial exits)
+#   D10 5m signals with the 15m/1h/4h slots as context, all 14 instruments, one Paper 50K
+#       account per variant, one position per instrument
+#   D11 plain (every slot-1 signal) and A+ only, each with TP1 and TP2
+#   D13 script defaults (slots 5/15/60/240 all on)
+- id: cisd_scanner_plain_tp1_5m
+  strategy: cisd_scanner
+  name: Scanner CISD · every 5m signal · limit, TP1 · 5m
+  description: Script 1 scanner, every 5m slot signal; limit at the CISD level, target TP1 = 1R (D7).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  context_timeframes: [15m, 1h, 4h]
+  params: { aplus_only: false, entry: limit, target: tp1 }
+  tags: [pine-port, script-1, s10, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_scanner_plain_tp2_5m
+  strategy: cisd_scanner
+  name: Scanner CISD · every 5m signal · limit, TP2 · 5m
+  description: Script 1 scanner, every 5m slot signal; limit at the CISD level, target TP2 = 2R, the scanner's trade end (D7).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  context_timeframes: [15m, 1h, 4h]
+  params: { aplus_only: false, entry: limit, target: tp2 }
+  tags: [pine-port, script-1, s10, main]
+  account: { max_open_positions: 14 }
+
+- id: cisd_scanner_aplus_tp1_5m
+  strategy: cisd_scanner
+  name: Scanner CISD · A+ only · limit, TP1 · 5m
+  description: Script 1 scanner, only 5m signals that agree with the 15m, 1h and 4h bias (A+); limit at the CISD level, target TP1 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  context_timeframes: [15m, 1h, 4h]
+  params: { aplus_only: true, entry: limit, target: tp1 }
+  tags: [pine-port, script-1, s10, variant, aplus]
+  account: { max_open_positions: 14 }
+
+- id: cisd_scanner_aplus_tp2_5m
+  strategy: cisd_scanner
+  name: Scanner CISD · A+ only · limit, TP2 · 5m
+  description: Script 1 scanner, only 5m signals that agree with the 15m, 1h and 4h bias (A+); limit at the CISD level, target TP2 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  context_timeframes: [15m, 1h, 4h]
+  params: { aplus_only: true, entry: limit, target: tp2 }
+  tags: [pine-port, script-1, s10, variant, aplus]
+  account: { max_open_positions: 14 }
