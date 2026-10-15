@@ -55,8 +55,15 @@ async def test_every_instance_runs_in_the_lab_without_faults() -> None:
     assert_clean_lab_run(result, store, IDS)
     signals = [r for r in store.of(SignalRecord) if r.signal is not None]
     triggers = {str(r.signal.metadata.get("trigger")) for r in signals if r.signal}
-    # every cancel of a resting limit and every time exit found its order or position
+    # every cancel of a resting limit found its order (it is sent only while the book
+    # holds one, ctx.pending_entry), and every time exit (ctx.flatten) that reached an
+    # account closed something there
     exits = {r.id for r in signals if r.signal and r.signal.signal.is_exit}
     decided = [d for d in store.of(DecisionRecord) if d.signal_id in exits]
     assert decided and all(d.approved for d in decided)
+    flattens = {r.id for r in signals if r.signal and r.signal.signal.is_flatten}
+    flattened = [d for d in store.of(DecisionRecord) if d.signal_id in flattens]
+    assert flattens and all(d.approved for d in flattened)
+    # the books resolve like the accounts: any divergence is an account's refusal
+    assert result.consistency["unexplained_episodes"] == 0, result.consistency["examples"]
     assert {"B long setup", "B short setup"} <= triggers

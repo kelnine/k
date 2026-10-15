@@ -73,6 +73,32 @@ def test_strategies_list(config_dir: Path) -> None:
     assert "Paper 50K" in result.output
 
 
+def test_strategies_list_includes_the_instances_d_files(config_dir: Path) -> None:
+    extra = [
+        {
+            "id": "sma_slow_xau",
+            "strategy": "demo_sma_cross",
+            "params": {"fast": 20, "slow": 50},
+            "instruments": ["XAUUSD"],
+            "timeframe": "15m",
+            "enabled": False,
+        }
+    ]
+    (config_dir / "instances.d").mkdir()
+    (config_dir / "instances.d" / "sma.yaml").write_text(yaml.safe_dump(extra))
+    result = runner.invoke(app, ["strategies", "list"])
+    assert result.exit_code == 0, result.output
+    lines = {line.split()[0]: line for line in result.output.splitlines() if line.startswith("  ")}
+    assert lines["demo_sma_fast"].endswith("lab.yaml")
+    assert "disabled" in lines["sma_slow_xau"]
+    assert lines["sma_slow_xau"].endswith("instances.d/sma.yaml")
+    # the same loader as paper start: a duplicate id is an error naming both places
+    (config_dir / "instances.d" / "dup.yaml").write_text(yaml.safe_dump(extra))
+    broken = runner.invoke(app, ["strategies", "list"])
+    assert broken.exit_code == EXIT_CONFIG_ERROR
+    assert "instances.d/dup.yaml" in broken.output and "instances.d/sma.yaml" in broken.output
+
+
 def test_lab_demo_in_memory(config_dir: Path) -> None:
     result = runner.invoke(app, ["lab", "demo", "--days", "3"])
     assert result.exit_code == 0, result.output

@@ -131,6 +131,21 @@ base bars (1m) ─▶ aggregator ─▶ closed bars 1m/5m/15m/1h (identical, imm
           └───────────── recorder: signals, decisions, orders, fills, trades, ledger, equity ─────────────▶ PostgreSQL
 ```
 
+Each instance's theoretical book is given its account's execution model, so
+it resolves the batch's base bars with the account's own prices and rules
+(doc 05 §5.3): the position a strategy sees is the one its account holds.
+Every signal reaches the instance's accounts, whose decisions are recorded as
+before (a `FLATTEN` with nothing to close writes none). A signal the book
+ignored carries the book's reason in `reject_code` (`POSITION_EXISTS`,
+`OPPOSITE_POSITION_OPEN`, `NO_MATCHING_POSITION`, `NOTHING_TO_FLATTEN`,
+`NO_POSITION`, `STOP_WIDENING_NOT_ALLOWED`, a venue refusal such as
+`MARKET_CLOSED`) and its meaning in `reject_detail` ("ignored by the
+theoretical book: …"). Its status is `IGNORED` when no account decided on it
+either — it had no effect and has no decision row — and `ROUTED` otherwise,
+where the account's decision (a refusal, or an exit of a position only the
+account held) is its outcome. After the routing the lab compares every book
+with its account (§12.8).
+
 `kterminal lab demo` runs this end to end with two dummy strategies and
 prints each account's state, recomputed from the recorded trades.
 
@@ -169,7 +184,7 @@ be created.
 |---|---|
 | Start | The lab is set up from `lab.yaml` and `instances.d/` (below) and the dedicated accounts are provisioned (a changed account configuration becomes a new configuration version). Each account continues from its ledger balance; a session refuses to start while one of them still has an open trade. |
 | Market data | Every instrument an enabled instance trades gets its provider from the market-data layer: `load_data_sources` reads the data source map and `build_providers` builds one provider per venue ([15](15-market-data.md)). An instrument the map does not list, or whose sources are all unusable on this host (a disabled provider, OANDA without a token, `csv` without a directory), has no provider: it gets no warm-up, delivers no bars and is reported `no_provider` with the reason; its instances run but never see a bar of it. |
-| Warm-up | Per instrument, the largest need of the instances trading it: `warmup_bars` of the instance's largest timeframe (+1 period, which the aggregator drops as partial), and — for a strategy whose code uses `ctx.periods` — `period_warmup_bars` of its primary timeframe for each period level it asks for ([05 §5.2.2](05-strategy-interface.md#522-previous-period-levels-pdhpdl-pwhpwl-pmhpml)). History reaches back at most `forward.warmup_days` (default 10; `kterminal paper start --warmup-days N` overrides it): stored candles of the instrument's live source first, the rest from the provider's history (stored as it arrives). A warm-up the cap or the provider cut short is logged as `paper.warmup_short`. Warm-up primes indicators; nothing trades. |
+| Warm-up | Per instrument, the largest need of the instances trading it: `warmup_bars` of the instance's largest timeframe (+1 period, which the aggregator drops as partial), and — for a strategy whose code uses `ctx.periods` — `period_warmup_bars` of its primary timeframe for each period level it asks for ([05 §5.2.2](05-strategy-interface.md#522-previous-period-levels-pdhpdl-pwhpwl-pmhpml)). History reaches back at most `forward.warmup_days` (default 10, `config/lab.yaml` sets 16; `kterminal paper start --warmup-days N` overrides it): stored candles of the instrument's live source first, the rest from the provider's history (stored as it arrives). A warm-up the cap or the provider cut short is logged as `paper.warmup_short`. Warm-up primes indicators; nothing trades. |
 | Live loop | `forward.poll_delay_s` (default 2 s) after each minute boundary every instrument's provider is polled for bars since its newest one. The minute is processed when every instrument the session waits for has delivered it (or a later bar, which proves a gap), or `forward.batch_timeout_s` (default 20 s) after the close. It waits only for instruments whose market is open (catalog trading calendars) and whose provider is not backing off after an error (marked `stale`). A bar that arrives after its minute was processed is dropped and logged, never processed out of order. Periods of higher timeframes close when their time is over, also when their last minutes never came. |
 | Commit | Each minute is one transaction: its bars into `candles`, every record the lab produced, the session's progress (`runs.data_fingerprint`) and an audit entry for each kill-switch state that took effect. |
 | Restart | The open session is resumed by replaying its logged candles through a fresh lab with every write suppressed, then checked against the database before it continues live (catching up on the minutes it missed). |
@@ -192,7 +207,7 @@ session's identity:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `warmup_days` | 10 | How far back warm-up history may reach |
+| `warmup_days` | 10 | How far back warm-up history may reach, in calendar days. `config/lab.yaml` sets 16: the 15m instances with 1,000 warm-up bars need 250 trading hours, about 15 calendar days on markets closed at weekends |
 | `poll_delay_s` | 2 | First poll this long after a minute closed |
 | `batch_timeout_s` | 20 | Process the minute without the instruments still missing this long after its close |
 
@@ -275,6 +290,7 @@ Upserted after every minute and on every state change:
 | `instruments.<SYMBOL>` | `provider` (its name, `null` without one), `last_bar_open` (newest processed bar), `lag_seconds` (now − that bar's close), `state` (`ok`, `stale`, `closed`, `no_provider`), `last_error` (the provider's last error; for `no_provider` why there is none) |
 | `instances.<ID>` | `state` (strategy host: `RUNNING`, `FAULTED`, `STOPPED`), `fault`, `account_id` |
 | `kill_switch` | `global` (bool), `accounts` and `strategies` with an active switch |
+| `book_consistency` | The book/account consistency report of this runtime process (§12.8) — the session's replay included — with its first five divergences; `null` without a session |
 | `error` | The reason, when `status` is `error` |
 
 When the engine cannot even build the runtime (an invalid data source map, say)
@@ -283,3 +299,62 @@ rest — unless another runtime holds the lock, whose status then stands.
 
 Operating it — starting, restarting, replacing a session, using the kill
 switch — is described in [16-running-paper-trading](16-running-paper-trading.md).
+
+## 12.8 Book/account consistency
+
+Every instance's theoretical book resolves orders with its account's rules
+(doc 05 §5.3; doc 13 P8), so the two hold the same thing unless the account
+refused something. The lab checks that instead of assuming it
+(`kterminal.paper.consistency.ConsistencyReport`): after each batch, for every
+instance that is not faulted, every instrument it trades and every account
+allocated to it, it compares
+
+| | Theoretical book | Account | Divergence kind |
+|---|---|---|---|
+| Position | held or not, direction | the open trade | `POSITION` |
+| | entry price, stop, target | entry price, current stop and target | `ENTRY_PRICE`, `STOP`, `TARGET` |
+| | closes at the next open (an exit or flatten is pending) | an exit is pending | `EXITING` |
+| Resting entry | present or not, direction, order type, LIMIT/STOP price | the pending entry order; one that has used up its `expires_after_bars` counts as gone (the book reports it expired at this close, the account drops it at the next base bar) | `PENDING_ENTRY` |
+
+A comparison that differs is a *divergent check*; consecutive divergent checks
+of one instance, instrument and account form an *episode*. An episode is
+*explained* when the account refused that instance's latest entry on the
+symbol (`explained_by` is the decision code, e.g. `SIZE_TOO_SMALL`,
+`MAX_POSITIONS`, `KILL_SWITCH_ACTIVE`) or a kill switch halts the account's
+entries (`KILL_SWITCH`); an unexplained episode is an engine bug to report.
+
+* **Logged:** `lab.book_divergence` when an episode starts — a warning when it
+  is unexplained, info otherwise — with both sides; `lab.book_divergence_resolved`
+  when it ends, with its length in batches.
+* **Recorded:** in the run summary of every lab run
+  (`runs.summary["consistency"]`, also `LabResult.consistency`) and, for a
+  forward session, in the runtime status (`book_consistency`, §12.7, with the
+  first five examples), covering the replay and the live minutes of the current
+  runtime process — a restart rebuilds it from the replay. `examples` keeps the
+  first 20 episodes (their first batch):
+
+```json
+{"checks": 4320, "divergent": 3, "episodes": 1, "unexplained_episodes": 0,
+ "open_episodes": 0,
+ "by_instance": {"orb_breakout_ny_5m": {"divergent_batches": 3, "episodes": 1}},
+ "examples": [{"instance_id": "orb_breakout_ny_5m", "instrument": "MNQ",
+               "account_id": "…", "at": "2026-10-14T13:50:00+00:00",
+               "kinds": ["POSITION"], "book": {"position": {…}, "pending_entry": null},
+               "account": {"position": null, "pending_entry": null},
+               "explained_by": "SIZE_TOO_SMALL"}]}
+```
+
+What still diverges by design:
+
+* an entry the account refuses for risk reasons (sizing, limits, an inactive
+  account) or under a kill switch: the book holds the position or order until
+  its own bracket, an exit or a flatten ends it;
+* a kill switch with `close_positions`: the account closes the position, the
+  book keeps it until its next exit — a strategy's `FLATTEN` then changes
+  nothing in the account;
+* a faulted instance: its book stops while its account keeps its brackets (it
+  is not compared).
+
+An exit, `MOVE_SL` or `FLATTEN` is applied by the book and the account each to
+what *they* hold, so a time exit (`ctx.flatten()`) also ends an episode in
+which only the account holds a position.

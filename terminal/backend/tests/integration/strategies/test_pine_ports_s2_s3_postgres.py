@@ -89,10 +89,19 @@ async def test_s2_s3_record_their_signals_and_audit_clean(database: Database) ->
         assert row.take_profit == signal.take_profit
     actions = {(r.strategy_instance_id.split("_")[0], r.action) for r in rows}
     assert {("orb", "LONG"), ("orb", "SHORT"), ("smc", "LONG"), ("smc", "SHORT")} <= actions
-    # the ORB's no-target variant closes at 16:00 New York only (or at its stop)
-    exits = [r for r in rows if r.action.startswith("EXIT_")]
-    assert exits and all(r.reason == "SESSION_CLOSE" for r in exits)
-    assert all(r.strategy_instance_id == "orb_breakout_ny_mideod_5m" for r in exits)
+    # every ORB instance flattens daily at its flatten time (ctx.flatten, SESSION_CLOSE);
+    # only the no-target variant still holds a trade then (or it was stopped out): the
+    # other flattens change nothing in the book nor the account (IGNORED, no decision)
+    assert not [r for r in rows if r.action.startswith("EXIT_")]
+    flattens = [r for r in rows if r.action == "FLATTEN"]
+    assert flattens and all(r.reason == "SESSION_CLOSE" for r in flattens)
+    assert all(r.strategy_instance_id.startswith("orb_breakout_") for r in flattens)
+    acted = [r for r in flattens if r.reject_code is None]
+    assert acted and all(r.strategy_instance_id == "orb_breakout_ny_mideod_5m" for r in acted)
+    idle = [r for r in flattens if r.reject_code is not None]
+    assert idle
+    assert all((r.status, r.reject_code) == ("IGNORED", "NOTHING_TO_FLATTEN") for r in idle)
+    assert result.consistency["unexplained_episodes"] == 0
 
     closed = [t for t in memory.of(TradeRecord) if t.status == "CLOSED"]
     eod = [t for t in closed if t.instance_id == "orb_breakout_ny_mideod_5m"]

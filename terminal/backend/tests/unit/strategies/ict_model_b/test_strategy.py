@@ -18,7 +18,7 @@ import pytest
 from kterminal.core.enums import OrderType, SignalAction
 from kterminal.domain.signals import Signal
 from kterminal.strategies.ict_sweep_models import ARMED, IDLE, IN_TRADE, WAIT_MSS, IctModelB
-from kterminal.strategy_engine import CloseReason, PositionEventKind
+from kterminal.strategy_engine import NOTHING_TO_FLATTEN, CloseReason, PositionEventKind
 from kterminal.strategy_engine.testing import StrategyTestResult
 from tests.unit.strategies.ict_sweep_models.scenario import (
     ARMED_AT,
@@ -38,6 +38,7 @@ from tests.unit.strategies.pine_port_support import dumps, of_kind, real_catalog
 
 LONG, SHORT = SignalAction.LONG, SignalAction.SHORT
 EXIT_LONG, EXIT_SHORT = SignalAction.EXIT_LONG, SignalAction.EXIT_SHORT
+FLATTEN = SignalAction.FLATTEN
 NO_TRADE = SignalAction.NO_TRADE
 
 DAY = date(2026, 1, 6)  # a Tuesday in winter (New York = UTC-5)
@@ -238,7 +239,7 @@ def test_late_fill_after_a_missing_last_bar_is_closed_at_the_next_open() -> None
     assert result.fault is None
     (opened,) = of_kind(result, PositionEventKind.OPENED)
     assert opened.time == ny(DAY, "12:00")  # the book still had the order
-    exits = [s for s in result.signals if s.signal is EXIT_LONG]
+    exits = [s for s in result.signals if s.signal is FLATTEN]
     assert [(s.bar_time, s.metadata["trigger"]) for s in exits] == [(ny(DAY, "12:00"), "late fill")]
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
     assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(DAY, "12:01"))
@@ -300,7 +301,7 @@ def test_hold_closes_the_trade_at_the_next_window_start() -> None:
     result = b(tape)
     entry, exit_ = result.signals
     assert entry.signal is LONG
-    assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(next_day, "09:00"))
+    assert (exit_.signal, exit_.bar_time) == (FLATTEN, ny(next_day, "09:00"))
     assert exit_.reason == CloseReason.SESSION_CLOSE
     assert (exit_.metadata["trigger"], exit_.metadata["pine_signal"]) == (
         "closed",
@@ -316,7 +317,7 @@ def test_flat_variant_closes_the_trade_at_the_window_end() -> None:
     tape = tape_for(window=(*SETUP, *HOLD), until="13:00")
     result = b(tape, {"after_window": "flat"})
     _, exit_ = result.signals
-    assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(DAY, "11:59"))
+    assert (exit_.signal, exit_.bar_time) == (FLATTEN, ny(DAY, "11:59"))
     assert exit_.reason == CloseReason.SESSION_CLOSE and exit_.metadata["trigger"] == "window end"
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
     assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(DAY, "12:00"))
@@ -447,7 +448,7 @@ def test_a_rounded_fill_on_the_bar_the_script_misses_is_closed() -> None:
     result = b(tape_for(window=ce_window(99.31, both)), CE)
     _, exit_ = result.signals
     assert (exit_.signal, exit_.bar_time, exit_.metadata["trigger"]) == (
-        EXIT_LONG,
+        FLATTEN,
         ny(DAY, "09:09"),
         "late fill",
     )
@@ -465,3 +466,45 @@ def test_a_script_fill_the_book_cannot_match_cancels_the_order() -> None:
     assert (cancel.signal, cancel.metadata["trigger"]) == (EXIT_LONG, "fill not matched")
     assert of_kind(result, PositionEventKind.OPENED) == []
     assert strategy_object(result)._model.state == IN_TRADE
+
+
+def test_a_traded_window_is_flattened_at_the_next_start_even_after_its_target() -> None:
+    """The time exit does not ask ``ctx.position``: after a fill the next window start
+    always flattens, so an account still holding the trade (the book closed it on a price
+    the account did not trade) is closed too. Here the book took profit already: the
+    flatten changes nothing there (``NOTHING_TO_FLATTEN``)."""
+    tape = tape_for()
+    next_day = DAY + timedelta(days=1)
+    tape.quiet_until(ny(next_day, "09:30"))
+    result = b(tape)
+    entry, flatten = result.signals
+    assert entry.signal is LONG
+    assert (flatten.signal, flatten.bar_time) == (FLATTEN, ny(next_day, "09:00"))
+    assert flatten.metadata["trigger"] == "closed"
+    assert flatten.metadata["position_entry"] is None  # the book was flat
+    assert result.ignored == [(flatten, NOTHING_TO_FLATTEN)]
+    (closed,) = of_kind(result, PositionEventKind.CLOSED)
+    assert closed.reason is CloseReason.TAKE_PROFIT
+
+
+def test_no_flatten_at_a_window_start_without_a_fill_in_the_last_cycle() -> None:
+    tape = tape_for(window=SETUP)  # armed, never filled: the order expires at 12:00
+    tape.quiet_until(ny(DAY + timedelta(days=1), "09:30"))
+    result = b(tape)
+    assert [s.signal for s in result.signals] == [LONG]
+    assert of_kind(result, PositionEventKind.ORDER_EXPIRED) != []
+
+
+def test_a_setup_armed_during_warm_up_sends_no_cancel_after_the_live_start() -> None:
+    """The order of a setup armed in warm-up was never placed (warm-up signals are
+    discarded): ``ctx.pending_entry`` is None, so when the script fills it at 09:10 the
+    strategy sends no cancel ("fill not matched") — before, it sent an exit the account
+    refused (NO_MATCHING_POSITION)."""
+    bars = tape_for().bars()
+    live_from = ny(DAY, "09:09")  # the setup armed on 09:08 (warm-up), filled at 09:10
+    warm = [bar for bar in bars if bar.open_time < live_from]
+    live = [bar for bar in bars if bar.open_time >= live_from]
+    result = run_1m(IctModelB, live, warmup_bars=warm)
+    assert result.fault is None
+    assert result.signals == []
+    assert of_kind(result, PositionEventKind.OPENED) == []

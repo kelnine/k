@@ -198,6 +198,23 @@ def load_forward_config(lab_path: str | Path) -> LabConfig:
     return LabConfig.load(path, instances_dir=path.parent / INSTANCES_DIR)
 
 
+def instance_origins(lab_path: str | Path) -> dict[str, str]:
+    """Where each instance of the forward configuration is defined: ``lab.yaml`` or
+    ``instances.d/<file>`` (read after :func:`load_forward_config` has validated them)."""
+    path = Path(lab_path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    origins: dict[str, str] = {}
+    sources: list[tuple[str, Any]] = [(path.name, data.get("instances") or [])]
+    for file in instance_files(path.parent / INSTANCES_DIR):
+        entries = yaml.safe_load(file.read_text(encoding="utf-8")) or []
+        sources.append((f"{INSTANCES_DIR}/{file.name}", entries))
+    for where, entries in sources:
+        for entry in entries:
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                origins.setdefault(entry["id"], where)
+    return origins
+
+
 class InstanceFileError(ValueError):
     """An ``instances.d`` file cannot be used (not a list, bad entry, duplicate id)."""
 

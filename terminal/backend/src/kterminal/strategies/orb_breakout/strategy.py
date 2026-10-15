@@ -25,10 +25,13 @@ The script defines no stop, target or exit; doc 13 D3/D4/D5 apply (README):
 stop on the other side of the range (or at its midpoint), a target of
 ``target_r`` × the risk measured from the signal close, flat by
 ``flatten_time`` (16:00 New York) with exit reason ``SESSION_CLOSE``, and no
-entry whose next-open fill would land at or after that time. A signal is
-emitted whenever the script would draw its marker, also while a position is
-open; the definition's ``on_opposite_signal: ignore`` then refuses it in the
-theoretical book and in the accounts alike.
+entry whose next-open fill would land at or after that time. The flatten is
+``ctx.flatten()`` on the first bar that closes at or after each day's
+``flatten_time``, whatever the theoretical book holds: it closes what the
+account holds even if the book is already flat. A signal is emitted whenever
+the script would draw its marker, also while a position is open; the
+definition's ``on_opposite_signal: ignore`` then refuses it in the theoretical
+book and in the accounts alike.
 """
 
 from dataclasses import dataclass
@@ -45,8 +48,6 @@ from kterminal.domain.sessions import format_time, parse_time, to_local, to_utc
 from kterminal.domain.signals import Signal
 from kterminal.indicators import Ema, gt, lt, na
 from kterminal.strategy_engine import (
-    PositionEvent,
-    PositionEventKind,
     SessionString,
     SignalOutput,
     Strategy,
@@ -144,17 +145,7 @@ class OrbBreakout(Strategy[OrbParams]):
         self._flatten = parse_time(p.flatten_time, "flatten_time")
         self._prev_in_or = False  # inOR[1]; false before the first bar, as in Pine
         self._range: OpeningRange | None = None  # Pine's ``var ORDay cur``
-        self._deadline: datetime | None = None  # flatten instant of the open trade
-
-    def on_position_event(self, event: PositionEvent) -> SignalOutput:
-        if event.kind is PositionEventKind.OPENED:
-            # the trade must be flat by the flatten time of the day it was *signalled*
-            signal = event.signal
-            signalled = signal.bar_time if signal is not None else None
-            self._deadline = self.flatten_deadline(signalled or event.time)
-        elif event.kind is PositionEventKind.CLOSED:
-            self._deadline = None
-        return None
+        self._last_close: datetime | None = None  # close of the previous bar (any phase)
 
     def on_bar(self, bar: Bar) -> SignalOutput:
         p = self.params
@@ -204,23 +195,33 @@ class OrbBreakout(Strategy[OrbParams]):
             deadline = to_utc(datetime.combine(day + timedelta(days=1), self._flatten), tz)
         return deadline
 
+    def latest_flatten(self, ts: datetime) -> datetime:
+        """The last flatten instant (``flatten_time`` in ``timezone``) at or before ``ts``."""
+        tz = self.params.timezone
+        day = to_local(ts, tz).date()
+        instant = to_utc(datetime.combine(day, self._flatten), tz)
+        if instant > ts:
+            instant = to_utc(datetime.combine(day - timedelta(days=1), self._flatten), tz)
+        return instant
+
     def _flatten_exit(self, bar: Bar) -> Signal | None:
-        """Close the trade on the first bar that ends at or after its flatten time: the exit
-        fills at the next open, the first price at or after it."""
-        position = self.ctx.position
-        if position is None:
-            return None
-        deadline = self._deadline or self.flatten_deadline(position.entry_time)
-        if bar.close_time < deadline:
+        """Flatten on the first bar that closes at or after a flatten instant — the exit
+        fills at the next open, the first price at or after it. After a data gap that is
+        the first bar past it, which also closes at once a fill the gap delayed past it.
+        ``ctx.flatten()`` closes whatever the book *and the account* hold (in either
+        direction) and changes nothing when both are flat, so it does not ask
+        ``ctx.position``: a position the account kept while the book closed it on a
+        price the account did not trade is closed too."""
+        previous, self._last_close = self._last_close, bar.close_time
+        instant = self.latest_flatten(bar.close_time)
+        if previous is None or not previous < instant <= bar.close_time:
             return None
         metadata: dict[str, JsonValue] = {
             "exit": "flatten",
             "flatten_time": self.params.flatten_time,
-            "flatten_at": deadline.isoformat(),
+            "flatten_at": instant.isoformat(),
         }
-        if position.is_long:
-            return self.ctx.exit_long(session_close=True, metadata=metadata)
-        return self.ctx.exit_short(session_close=True, metadata=metadata)
+        return self.ctx.flatten(metadata=metadata)
 
     def _entry(
         self, direction: Direction, bar: Bar, current: OpeningRange, fast: float, slow: float

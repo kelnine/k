@@ -85,4 +85,7 @@ async def test_sweep_models_record_their_signals_and_audit_clean(database: Datab
             assert isinstance(row.meta["script_entry"], float)
         actions.add(row.action)
     assert {"LONG", "SHORT"} <= actions
-    assert actions & {"EXIT_LONG", "EXIT_SHORT"}
+    assert actions & {"EXIT_LONG", "EXIT_SHORT"}  # cancels of resting orders
+    # the book resolves like the accounts: whatever diverged was an account refusal
+    assert result.consistency["checks"] > 0
+    assert result.consistency["unexplained_episodes"] == 0, result.consistency["examples"]

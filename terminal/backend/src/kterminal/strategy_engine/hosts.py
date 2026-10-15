@@ -16,6 +16,11 @@
 Both expose ``dispatch(bars)`` / ``collect()`` so the lab can hand a bar batch
 to every host first and then gather results in a fixed order: subprocess
 hosts compute in parallel, outputs stay deterministic.
+
+``execution`` (per instrument, from the lab) makes each runner's theoretical book
+resolve orders like the instance's account
+(:class:`~kterminal.strategy_engine.fills.BookExecution`); it is plain data and
+crosses the process boundary like the rest.
 """
 
 import multiprocessing as mp
@@ -29,6 +34,7 @@ from typing import Any, Protocol
 from kterminal.domain.instruments import Instrument
 from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
+from kterminal.strategy_engine.fills import BookExecution
 from kterminal.strategy_engine.instances import ResolvedInstance
 from kterminal.strategy_engine.model import Fault, RunnerOutput
 from kterminal.strategy_engine.runner import DEFAULT_TIME_BUDGET_MS, StrategyRunner
@@ -80,11 +86,17 @@ class _InstanceCore:
         instruments: Mapping[str, Instrument],
         sessions: Any | None,
         time_budget_ms: float,
+        execution: Mapping[str, BookExecution] | None = None,
     ) -> None:
         self.resolved = resolved
+        books = execution or {}
         self.runners = [
             StrategyRunner(
-                resolved, instruments[symbol], sessions=sessions, time_budget_ms=time_budget_ms
+                resolved,
+                instruments[symbol],
+                sessions=sessions,
+                time_budget_ms=time_budget_ms,
+                execution=books.get(symbol),
             )
             for symbol in resolved.spec.instruments
         ]
@@ -140,10 +152,11 @@ class InProcessHost:
         sessions: Any | None = None,
         *,
         time_budget_ms: float = DEFAULT_TIME_BUDGET_MS,
+        execution: Mapping[str, BookExecution] | None = None,
     ) -> None:
         self.instance_id = resolved.id
         self.state = HostState.CREATED
-        self._core = _InstanceCore(resolved, instruments, sessions, time_budget_ms)
+        self._core = _InstanceCore(resolved, instruments, sessions, time_budget_ms, execution)
         self._pending: list[RunnerOutput] = []
 
     @property
@@ -197,8 +210,9 @@ def _child_main(
     instruments: Mapping[str, Instrument],
     sessions: Any | None,
     time_budget_ms: float,
+    execution: Mapping[str, BookExecution] | None = None,
 ) -> None:  # pragma: no cover - runs in the child process (exercised by integration tests)
-    core = _InstanceCore(resolved, instruments, sessions, time_budget_ms)
+    core = _InstanceCore(resolved, instruments, sessions, time_budget_ms, execution)
     while True:
         try:
             command, payload = conn.recv()
@@ -234,6 +248,7 @@ class SubprocessHost:
         call_timeout_s: float = 10.0,
         start_timeout_s: float = 60.0,
         start_method: str = "spawn",
+        execution: Mapping[str, BookExecution] | None = None,
     ) -> None:
         self.instance_id = resolved.id
         self.state = HostState.CREATED
@@ -244,6 +259,11 @@ class SubprocessHost:
         self._instruments = {s: instruments[s] for s in resolved.spec.instruments}
         self._sessions = sessions
         self._time_budget_ms = time_budget_ms
+        self._execution = (
+            None
+            if execution is None
+            else {s: execution[s] for s in execution if s in self._instruments}
+        )
         self._ctx: Any = mp.get_context(start_method)
         self._conn: mpc.Connection | None = None
         self._process: Any = None
@@ -258,7 +278,14 @@ class SubprocessHost:
         parent, child = self._ctx.Pipe(duplex=True)
         self._process = self._ctx.Process(
             target=_child_main,
-            args=(child, self._resolved, self._instruments, self._sessions, self._time_budget_ms),
+            args=(
+                child,
+                self._resolved,
+                self._instruments,
+                self._sessions,
+                self._time_budget_ms,
+                self._execution,
+            ),
             name=f"kterminal-strategy-{self.instance_id}",
             daemon=True,
         )

@@ -77,3 +77,7 @@ def test_forward_trading_loads_and_resolves_every_instance() -> None:
 async def test_every_instance_runs_in_the_lab_without_faults() -> None:
     result, store = await lab_smoke(STRATEGY)
     assert_clean_lab_run(result, store, IDS)
+    # the books resolve like the accounts: any divergence is an account's refusal
+    assert result.consistency["unexplained_episodes"] == 0, result.consistency["examples"]
+    # and none outlives the day: the daily flatten closes what either side still holds
+    assert result.consistency["open_episodes"] == 0

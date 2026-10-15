@@ -21,6 +21,18 @@ defaults:
     max_open_positions: 1
     trading_day: ny_1700
 
+# Forward paper trading (`kterminal paper start`, the engine): runtime tuning only, not
+# part of a session's identity. See docs/12-strategy-lab.md §12.7.
+forward:
+  # How far back warm-up history may reach, in calendar days (default 10). The 15m
+  # instances of elitealgo_ema_confluence, psar_ema200 and smc_sniper warm up on 1000
+  # bars: 1000 x 15 min = 250 hours of trading, which on markets closed at weekends
+  # (~120 trading hours a week) spans about 15 calendar days. 16 leaves a day for a
+  # holiday and the partial first period the aggregator drops; 10 would cut it short.
+  warmup_days: 16
+  poll_delay_s: 2           # first poll this long after a minute closed
+  batch_timeout_s: 20       # then process the minute without instruments still missing
+
 # TradingView strategies are declared here (no code); signals arrive by webhook
 # from Phase 6. Example:
 # external_strategies:

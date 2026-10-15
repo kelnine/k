@@ -17,6 +17,7 @@ def test_only_live_risks_real_money() -> None:
         (SignalAction.EXIT_SHORT, False, True, Direction.SHORT),
         (SignalAction.MOVE_SL, False, False, None),
         (SignalAction.NO_TRADE, False, False, None),
+        (SignalAction.FLATTEN, False, False, None),
     ],
 )
 def test_signal_action_semantics(
@@ -25,6 +26,7 @@ def test_signal_action_semantics(
     assert action.is_entry is is_entry
     assert action.is_exit is is_exit
     assert action.direction is direction
+    assert action.is_flatten is (action is SignalAction.FLATTEN)
 
 
 def test_signal_actions_match_the_specified_set() -> None:
@@ -35,6 +37,7 @@ def test_signal_actions_match_the_specified_set() -> None:
         "EXIT_SHORT",
         "MOVE_SL",
         "NO_TRADE",
+        "FLATTEN",
     ]
 
 

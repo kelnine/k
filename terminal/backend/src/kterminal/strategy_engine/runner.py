@@ -5,13 +5,20 @@ For every batch of bars that closed at the same instant the runner:
 1. appends the bars of its instrument and timeframes to its own series
    (context timeframes first, so higher timeframes are visible exactly when
    they have closed and never before);
-2. if a primary-timeframe bar closed: counts it (``ctx.bar_index``) and updates
+2. with an execution model (the lab), advances the theoretical book on the
+   batch's **base** bar of its instrument exactly as the instance's account
+   does (fills at its open on bid/ask, SL/TP); the book's events wait for the
+   primary bar that contains it;
+3. if a primary-timeframe bar closed: counts it (``ctx.bar_index``) and updates
    the trading day / week / month levels (``ctx.periods``) — during warm-up too —
-   advances the theoretical book (fills at the bar's open, SL/TP), lets the
-   strategy react to position events, then calls ``on_bar``;
-3. checks every returned object is a ``Signal`` carrying *this* instance's
+   ends the bar in the book (expiry; without an execution model the book
+   resolves the whole primary bar at mid prices here), lets the strategy react to
+   position events, then calls ``on_bar``;
+4. checks every returned object is a ``Signal`` carrying *this* instance's
    identity, validates it against the standard, and applies valid ones to the
-   book.
+   book — keeping the book's answer: a signal the book ignored (``POSITION_EXISTS``,
+   ``NO_MATCHING_POSITION`` …) is reported with that reason in
+   :attr:`RunnerOutput.book_reasons`.
 
 Strategy exceptions — including ``SystemExit`` and other ``BaseException``
 subclasses, but not an operator's ``KeyboardInterrupt`` — are caught: the
@@ -46,8 +53,15 @@ from kterminal.domain.signals import (
 from kterminal.strategy_engine.base import Strategy
 from kterminal.strategy_engine.book import TheoreticalBook
 from kterminal.strategy_engine.context import SessionLookup, StrategyContext
+from kterminal.strategy_engine.fills import BookExecution
 from kterminal.strategy_engine.instances import ResolvedInstance
-from kterminal.strategy_engine.model import Fault, PositionEvent, RejectedSignal, RunnerOutput
+from kterminal.strategy_engine.model import (
+    BookState,
+    Fault,
+    PositionEvent,
+    RejectedSignal,
+    RunnerOutput,
+)
 from kterminal.strategy_engine.series import DEFAULT_MAX_BARS, BarSeries
 
 DEFAULT_TIME_BUDGET_MS = 250.0
@@ -76,10 +90,14 @@ class StrategyRunner:
         sessions: SessionLookup | None = None,
         max_bars: int = DEFAULT_MAX_BARS,
         time_budget_ms: float = DEFAULT_TIME_BUDGET_MS,
+        execution: BookExecution | None = None,
     ) -> None:
+        """``execution`` makes the theoretical book resolve orders like the instance's
+        account: on its base bars, with its prices (``kterminal.strategy_engine.fills``)."""
         self.resolved = resolved
         self.instrument = instrument
         self.time_budget_ms = time_budget_ms
+        self.execution = execution
         meta = resolved.definition.meta
         self.series = {
             tf: BarSeries(instrument.symbol, tf, max(max_bars, meta.warmup_bars + 1))
@@ -90,7 +108,9 @@ class StrategyRunner:
             instrument.symbol,
             on_opposite_signal=rules.on_opposite_signal,
             skip_entry_beyond_levels=rules.skip_entry_beyond_levels,
+            execution=execution,
         )
+        self._book_events: list[PositionEvent] = []  # base-bar events of the current bar
         self.source = (
             SignalSource.INTERNAL
             if resolved.definition.strategy_cls is not None
@@ -156,6 +176,7 @@ class StrategyRunner:
         """Replay history so indicators are primed. Signals are discarded and the
         theoretical book stays flat, so live trading starts from a clean slate."""
         self.warming_up = True
+        self.ctx._warming_up = True
         try:
             batch: list[Bar] = []
             for bar in sorted(bars, key=lambda b: (b.close_time, b.timeframe)):
@@ -167,6 +188,7 @@ class StrategyRunner:
                 self.process(batch)
         finally:
             self.warming_up = False
+            self.ctx._warming_up = False
 
     def stop(self) -> None:
         if self._strategy is not None and self.fault is None:
@@ -179,27 +201,37 @@ class StrategyRunner:
 
     # ── bars ────────────────────────────────────────────────────────────────
     def process(self, bars: Sequence[Bar]) -> RunnerOutput | None:
-        """Feed bars that closed at one instant. Returns output when a primary bar closed."""
+        """Feed bars that closed at one instant. Returns output when a primary bar closed —
+        or, with an execution model, when a base bar advanced the book (``book`` only)."""
         symbol = self.instrument.symbol
         mine = [b for b in bars if b.instrument == symbol and b.timeframe in self.series]
-        if not mine:
+        base = self._base_bar(bars)
+        if not mine and base is None:
             return None
         primary: Bar | None = None
         for bar in sorted(mine, key=lambda b: b.timeframe, reverse=True):
             self.series[bar.timeframe]._append(bar)
             if bar.timeframe == self.resolved.timeframe:
                 primary = bar
-        if primary is None:
-            return None
-        self.ctx._advance(primary)
+        if primary is not None:
+            self.ctx._advance(primary)
         if self.fault is not None or not self._started:
             return None
+        if base is not None and not self.warming_up:
+            self._book_events.extend(self.book.on_base_bar(base))
+        if primary is None:
+            if base is None or self.warming_up:
+                return None
+            return RunnerOutput(
+                self.instance_id, symbol, base.close_time, book=self._book_state(base.close_time)
+            )
         if self.is_external:
             return RunnerOutput(
                 self.instance_id,
                 symbol,
                 primary.close_time,
                 events=tuple(self._advance_book(primary)),
+                book=self._book_state(primary.close_time),
             )
 
         started = time.perf_counter()
@@ -242,7 +274,7 @@ class StrategyRunner:
 
         if self.warming_up:
             return None
-        signals, rejected = self._accept(raw, primary.close_time, primary)
+        signals, reasons, rejected = self._accept(raw, primary.close_time, primary)
         return RunnerOutput(
             self.instance_id,
             symbol,
@@ -251,27 +283,52 @@ class StrategyRunner:
             rejected=tuple(rejected),
             events=tuple(events),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            book_reasons=tuple(reasons),
+            book=self._book_state(primary.close_time),
         )
 
     def submit_external(self, signal: Signal) -> RunnerOutput:
         """Apply a validated external (TradingView) signal to this instance's book."""
-        signals, rejected = self._accept([signal], signal.timestamp)
+        signals, reasons, rejected = self._accept([signal], signal.timestamp)
         return RunnerOutput(
             self.instance_id,
             self.instrument.symbol,
             signal.timestamp,
             signals=tuple(signals),
             rejected=tuple(rejected),
+            book_reasons=tuple(reasons),
+            book=self._book_state(signal.timestamp),
         )
 
     # ── internals ───────────────────────────────────────────────────────────
+    def _base_bar(self, bars: Sequence[Bar]) -> Bar | None:
+        """This instrument's base bar in the batch, when the book resolves on base bars."""
+        execution = self.execution
+        if execution is None:
+            return None
+        symbol = self.instrument.symbol
+        for bar in bars:
+            if bar.instrument == symbol and bar.timeframe == execution.base_timeframe:
+                return bar
+        return None
+
     def _advance_book(self, bar: Bar) -> list[PositionEvent]:
-        return self.book.on_bar(bar)
+        """A primary bar closed: the events the strategy is told about. With an execution
+        model the base bars inside it already resolved the orders; without one the book
+        resolves the primary bar itself (mid prices)."""
+        if self.execution is None:
+            return self.book.on_bar(bar)
+        events, self._book_events = self._book_events, []
+        return [*events, *self.book.end_bar(bar.close_time)]
+
+    def _book_state(self, at: datetime) -> BookState | None:
+        return self.book.state(at) if self.execution is not None else None
 
     def _accept(
         self, raw: list[Any], at: datetime, bar: Bar | None = None
-    ) -> tuple[list[Signal], list[RejectedSignal]]:
+    ) -> tuple[list[Signal], list[str | None], list[RejectedSignal]]:
         accepted: list[Signal] = []
+        reasons: list[str | None] = []
         rejected: list[RejectedSignal] = []
         for item in raw:
             if not isinstance(item, Signal):
@@ -296,9 +353,14 @@ class StrategyRunner:
             except (TypeError, ValueError, ArithmeticError) as exc:
                 rejected.append(self._reject(at, "INVALID_SIGNAL", _first_line(exc), item))
                 continue
-            self.book.apply(signal)
+            reason = self.book.apply(signal)
+            if reason is not None:
+                self.ctx.log.debug(
+                    "strategy.signal_ignored", action=signal.signal.value, reason=reason
+                )
             accepted.append(signal)
-        return accepted, rejected
+            reasons.append(reason)
+        return accepted, reasons, rejected
 
     def _identity_mismatch(self, signal: Signal, bar: Bar | None) -> str | None:
         expected: dict[str, Any] = {

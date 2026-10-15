@@ -66,6 +66,10 @@ class SignalAction(StrEnum):
     EXIT_SHORT = "EXIT_SHORT"
     MOVE_SL = "MOVE_SL"
     NO_TRADE = "NO_TRADE"
+    # Close whatever the instance holds on the symbol, in either direction, and cancel its
+    # resting entry: a time exit that reaches the account even when the strategy's
+    # theoretical book is already flat.
+    FLATTEN = "FLATTEN"
 
     @property
     def is_entry(self) -> bool:
@@ -74,8 +78,13 @@ class SignalAction(StrEnum):
 
     @property
     def is_exit(self) -> bool:
-        """Reduces risk — always permitted."""
+        """Closes a position in one direction. Reduces risk — always permitted."""
         return self in (SignalAction.EXIT_LONG, SignalAction.EXIT_SHORT)
+
+    @property
+    def is_flatten(self) -> bool:
+        """Closes any position and cancels resting entries. Reduces risk — always permitted."""
+        return self is SignalAction.FLATTEN
 
     @property
     def direction(self) -> Direction | None:

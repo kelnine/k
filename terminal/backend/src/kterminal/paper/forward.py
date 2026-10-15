@@ -84,6 +84,7 @@ MINUTE = timedelta(minutes=1)
 GENESIS = "0" * 64
 NEW_SESSION_HINT = "start a new session: kterminal paper start --new-session"
 DEFAULT_WARMUP_DAYS = 10.0
+STATUS_EXAMPLES = 5  # divergences listed in the runtime status (the summary keeps more)
 
 
 class ForwardSessionError(KTerminalError):
@@ -646,6 +647,13 @@ class ForwardSession:
                 "account_id": str(member.accounts[0].account_id) if member.accounts else None,
             }
         return status
+
+    def consistency_status(self) -> dict[str, Any]:
+        """The book/account consistency report of this process's lab (the replay included,
+        so it covers the whole session), with its first few divergences."""
+        summary = self.lab.consistency.summary()
+        summary["examples"] = summary["examples"][:STATUS_EXAMPLES]
+        return summary
 
     # ── verification ────────────────────────────────────────────────────────
     async def verify(self, replayed: Sequence[Record]) -> list[str]:

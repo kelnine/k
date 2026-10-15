@@ -15,6 +15,7 @@ from kterminal.strategy_engine.base import (
     StrategyParams,
 )
 from kterminal.strategy_engine.context import StrategyContext
+from kterminal.strategy_engine.fills import BookExecution, MidPrices, VenuePrices
 from kterminal.strategy_engine.instances import (
     InstanceConfigError,
     InstanceSpec,
@@ -22,8 +23,11 @@ from kterminal.strategy_engine.instances import (
     resolve_instance,
 )
 from kterminal.strategy_engine.model import (
+    NOTHING_TO_FLATTEN,
+    BookState,
     CloseReason,
     Fault,
+    PendingEntryView,
     PositionEvent,
     PositionEventKind,
     PositionRules,
@@ -52,12 +56,17 @@ from kterminal.strategy_engine.sessions import (
 
 __all__ = [
     "DEFINITIONS",
+    "NOTHING_TO_FLATTEN",
     "BarSeries",
+    "BookExecution",
+    "BookState",
     "CloseReason",
     "Fault",
     "InstanceConfigError",
     "InstanceSpec",
+    "MidPrices",
     "NoParams",
+    "PendingEntryView",
     "Period",
     "PeriodBar",
     "PeriodLevels",
@@ -79,6 +88,7 @@ __all__ = [
     "StrategyMeta",
     "StrategyParams",
     "TimeZoneName",
+    "VenuePrices",
     "discover_strategies",
     "in_session",
     "parse_session",

@@ -36,6 +36,7 @@ from tests.unit.strategies.pine_port_support import dumps, of_kind, real_catalog
 
 LONG, SHORT = SignalAction.LONG, SignalAction.SHORT
 EXIT_LONG = SignalAction.EXIT_LONG
+FLATTEN = SignalAction.FLATTEN
 
 DAY = date(2026, 1, 6)  # a Tuesday in winter (New York = UTC-5)
 SWING_HIGH: Row = (100.0, 101.0, 99.85, 100.1)  # a 1m spike making the 15m pivot high
@@ -150,7 +151,7 @@ def test_hold_closes_the_trade_at_the_next_20_00() -> None:
     result = a(tape)
     _, exit_ = result.signals
     next_day = DAY + timedelta(days=1)
-    assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(next_day, "20:00"))
+    assert (exit_.signal, exit_.bar_time) == (FLATTEN, ny(next_day, "20:00"))
     assert exit_.reason == CloseReason.SESSION_CLOSE and exit_.metadata["trigger"] == "closed"
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
     assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(next_day, "20:01"))
@@ -161,7 +162,7 @@ def test_flat_variant_closes_the_trade_at_02_00() -> None:
     result = a(tape, {"after_window": "flat"})
     _, exit_ = result.signals
     next_day = DAY + timedelta(days=1)
-    assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(next_day, "01:59"))
+    assert (exit_.signal, exit_.bar_time) == (FLATTEN, ny(next_day, "01:59"))
     assert exit_.metadata["trigger"] == "window end"
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
     assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(next_day, "02:00"))
