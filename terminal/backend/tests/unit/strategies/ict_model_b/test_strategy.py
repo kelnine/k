@@ -238,7 +238,7 @@ def test_limit_left_resting_by_a_missing_last_bar_is_cancelled_after_the_window(
     tape = tape_for(window=(*SETUP, (100.5, 100.6, 100.0, 100.2)), until="12:10")
     bars = [bar for bar in tape.bars() if bar.open_time not in (ny(DAY, "11:58"), ny(DAY, "11:59"))]
     result = run_1m(IctModelB, bars)
-    entry, cancel = result.signals
+    _, cancel = result.signals
     assert cancel.signal is EXIT_LONG and cancel.bar_time == ny(DAY, "12:00")
     assert cancel.metadata["trigger"] == "window end"
     assert of_kind(result, PositionEventKind.ORDER_EXPIRED) == []
@@ -332,7 +332,7 @@ def test_hold_closes_the_trade_at_the_next_window_start() -> None:
 def test_flat_variant_closes_the_trade_at_the_window_end() -> None:
     tape = tape_for(window=(*SETUP, *HOLD), until="13:00")
     result = b(tape, {"after_window": "flat"})
-    entry, exit_ = result.signals
+    _, exit_ = result.signals
     assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(DAY, "11:59"))
     assert exit_.reason == CloseReason.SESSION_CLOSE and exit_.metadata["trigger"] == "window end"
     (closed,) = of_kind(result, PositionEventKind.CLOSED)
@@ -434,3 +434,51 @@ def test_runs_are_deterministic() -> None:
     tape.quiet_until(ny(DAY + timedelta(days=1), "10:00"))
     for params in ({}, {"after_window": "flat"}):
         assert dumps(b(tape, params)) == dumps(b(tape, params))
+
+
+def ce_window(gap_bottom: float, *after: Row) -> tuple[Row, ...]:
+    """The golden setup with the gap's first candle topping at ``gap_bottom``."""
+    return (*SETUP[:6], (99.2, gap_bottom, 99.1, 99.25), *SETUP[7:], *after)
+
+
+CE = {"entry_mode": "FVG 50% (CE)"}
+
+
+def test_a_ce_limit_rounded_towards_the_market_keeps_its_early_fill() -> None:
+    """CE (99.6 + 99.31) / 2 = 99.455 is ordered at 99.46: the book fills on a low of
+    99.46 a bar before the script would (99.40); the trade is kept."""
+    early = (100.5, 100.6, 99.46, 100.2)
+    later = (100.2, 100.3, 99.4, 99.8)
+    result = b(tape_for(window=ce_window(99.31, early, later)), CE)
+    (signal,) = result.signals
+    assert (signal.entry, signal.metadata["script_entry"]) == (Decimal("99.46"), 99.455)
+    (opened,) = of_kind(result, PositionEventKind.OPENED)
+    assert (opened.time, opened.price) == (ny(DAY, "09:09"), Decimal("99.46"))
+    assert of_kind(result, PositionEventKind.CLOSED) == []
+
+
+def test_a_rounded_fill_on_the_bar_the_script_misses_is_closed() -> None:
+    """The same order fills on a bar that also reaches the 101 target: the script calls
+    the setup missed (it never filled at 99.455), so the book's trade is closed."""
+    both = (100.5, 101.05, 99.46, 100.5)
+    result = b(tape_for(window=ce_window(99.31, both)), CE)
+    _, exit_ = result.signals
+    assert (exit_.signal, exit_.bar_time, exit_.metadata["trigger"]) == (
+        EXIT_LONG,
+        ny(DAY, "09:09"),
+        "late fill",
+    )
+    (closed,) = of_kind(result, PositionEventKind.CLOSED)
+    assert (closed.reason, closed.time) == (CloseReason.SESSION_CLOSE, ny(DAY, "09:10"))
+
+
+def test_a_script_fill_the_book_cannot_match_cancels_the_order() -> None:
+    """CE 99.445 is ordered at 99.44; a bar trading off the tick grid down to 99.443
+    fills the script but not the book, so the resting order is cancelled."""
+    off_grid = (100.5, 100.6, 99.443, 100.2)
+    result = b(tape_for(window=ce_window(99.29, off_grid)), CE)
+    entry, cancel = result.signals
+    assert entry.entry == Decimal("99.44")
+    assert (cancel.signal, cancel.metadata["trigger"]) == (EXIT_LONG, "fill not matched")
+    assert of_kind(result, PositionEventKind.OPENED) == []
+    assert strategy_object(result)._model.state == IN_TRADE

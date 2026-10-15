@@ -235,9 +235,16 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
         out: list[Signal] = []
         position = ctx.position
         exiting = False
-        # The book filled our order on this bar although the script did not: it fills on
-        # bars the script no longer checks (after the window end, with missing bars).
-        late_fill = position is not None and self._opened_at == bar.open_time and not step.filled
+        # The book filled our order on a bar where the script dropped the setup instead
+        # (after the window end when its last bars are missing, or a "missed" on a bar
+        # that reached the order's rounded CE price but not the script's). A fill while
+        # the script still waits (a CE level rounded towards the market) is kept.
+        late_fill = (
+            position is not None
+            and self._opened_at == bar.open_time
+            and not step.filled
+            and model.state != ARMED
+        )
         if step.started and position is not None:
             # L470-472: the open trade is closed (neutral) at the model's next window start
             out.append(self._exit(position, "closed", "window start: the script closes it"))

@@ -132,7 +132,12 @@ def transcribe(bars: list[Bar], model: str, p: dict[str, Any]) -> list[tuple[Any
         )
     target_level = (tgt_mode or "Opposite level") == "Opposite level"
 
-    o_, h_, l_, c_, body, avg = [], [], [], [], [], []  # type: ignore[var-annotated]
+    o_: list[float] = []
+    h_: list[float] = []
+    l_: list[float] = []
+    c_: list[float] = []
+    body: list[float] = []
+    avg: list[float] = []
     p_hp: list[float] = []
     p_hb: list[int] = []
     p_lp: list[float] = []
@@ -148,7 +153,8 @@ def transcribe(bars: list[Bar], model: str, p: dict[str, Any]) -> list[tuple[Any
     events: list[tuple[Any, ...]] = []
     for i, bar in enumerate(bars):
         o, h, lo, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
-        o_.append(o), h_.append(h), l_.append(lo), c_.append(c)
+        for series, value in ((o_, o), (h_, h), (l_, lo), (c_, c)):
+            series.append(value)
         body.append(abs(c - o))
         avg.append(math.fsum(body[-20:]) / 20 if len(body) >= 20 else NAN)
         h2 = h_[i - 2] if i >= 2 else NAN
@@ -160,14 +166,12 @@ def transcribe(bars: list[Bar], model: str, p: dict[str, Any]) -> list[tuple[Any
         bull_disp = i >= 1 and bull_gap and gt(c_[i - 1], o_[i - 1]) and ge(b1, disp_mult * a1)
         bear_disp = i >= 1 and bear_gap and gt(o_[i - 1], c_[i - 1]) and ge(b1, disp_mult * a1)
         ph, pl = pivot(h_, i, mss_len, True), pivot(l_, i, mss_len, False)
-        if not math.isnan(ph):
-            p_hp.append(ph), p_hb.append(i - mss_len)
-            if len(p_hp) > 100:
-                p_hp.pop(0), p_hb.pop(0)
-        if not math.isnan(pl):
-            p_lp.append(pl), p_lb.append(i - mss_len)
-            if len(p_lp) > 100:
-                p_lp.pop(0), p_lb.pop(0)
+        for value, prices, pbars in ((ph, p_hp, p_hb), (pl, p_lp, p_lb)):
+            if not math.isnan(value):
+                prices.append(value)
+                pbars.append(i - mss_len)
+                if len(prices) > 100:
+                    del prices[0], pbars[0]
 
         if model == "A":  # lookahead_on + [1]: the state after the previous 15m bucket
             k = bar.open_time.replace(minute=bar.open_time.minute // 15 * 15)

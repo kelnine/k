@@ -148,7 +148,7 @@ def test_hold_closes_the_trade_at_the_next_20_00() -> None:
     """D6 main: the trade is not closed at 02:00; the next window start closes it."""
     tape = tape_for(window=(*SETUP, *HOLD), until="20:30", days=1)
     result = a(tape)
-    entry, exit_ = result.signals
+    _, exit_ = result.signals
     next_day = DAY + timedelta(days=1)
     assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(next_day, "20:00"))
     assert exit_.reason == CloseReason.SESSION_CLOSE and exit_.metadata["trigger"] == "closed"
@@ -159,7 +159,7 @@ def test_hold_closes_the_trade_at_the_next_20_00() -> None:
 def test_flat_variant_closes_the_trade_at_02_00() -> None:
     tape = tape_for(window=(*SETUP, *HOLD), until="03:00", days=1)
     result = a(tape, {"after_window": "flat"})
-    entry, exit_ = result.signals
+    _, exit_ = result.signals
     next_day = DAY + timedelta(days=1)
     assert (exit_.signal, exit_.bar_time) == (EXIT_LONG, ny(next_day, "01:59"))
     assert exit_.metadata["trigger"] == "window end"

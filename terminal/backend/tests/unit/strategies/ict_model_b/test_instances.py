@@ -1,7 +1,7 @@
 """``config/instances.d/ict_model_b.yaml``: the doc 13 D6/D10 instances of Model B, and a lab
 run of all of them side by side on synthetic data (each on its own Paper 50K account)."""
 
-from kterminal.paper.records import SignalRecord
+from kterminal.paper.records import DecisionRecord, SignalRecord
 from kterminal.strategy_engine import resolve_instance
 from kterminal.strategy_engine.registry import DEFINITIONS, discover_strategies
 from tests.unit.strategies.pine_port_support import (
@@ -53,5 +53,10 @@ def test_forward_trading_loads_and_resolves_every_instance() -> None:
 async def test_every_instance_runs_in_the_lab_without_faults() -> None:
     result, store = await lab_smoke(STRATEGY)
     assert_clean_lab_run(result, store, IDS)
-    triggers = {str(r.signal.metadata.get("trigger")) for r in store.of(SignalRecord)}
+    signals = [r for r in store.of(SignalRecord) if r.signal is not None]
+    triggers = {str(r.signal.metadata.get("trigger")) for r in signals if r.signal}
+    # every cancel of a resting limit and every time exit found its order or position
+    exits = {r.id for r in signals if r.signal and r.signal.signal.is_exit}
+    decided = [d for d in store.of(DecisionRecord) if d.signal_id in exits]
+    assert decided and all(d.approved for d in decided)
     assert {"B long setup", "B short setup"} <= triggers
