@@ -3,7 +3,7 @@
 
 import { api } from '../api/client'
 import type { Json, Signal, TradeExplain as Explain } from '../api/types'
-import { between, dateTime, decimal, label, money, params, qty, rMultiple, shortId, tone } from '../lib/format'
+import { between, dateTime, decimal, label, money, params, qty, rMultiple, ruleDetails, shortId, tone } from '../lib/format'
 import { usePoll } from '../lib/hooks'
 import { Link } from '../lib/router'
 import { Drawer } from './Drawer'
@@ -49,16 +49,16 @@ function RuleTable({ rules }: { rules: Json[] }) {
           {rules.map((rule, i) => {
             const obj = rule && typeof rule === 'object' && !Array.isArray(rule) ? rule : {}
             const passed = obj.passed ?? obj.ok
-            const rest = Object.fromEntries(
-              Object.entries(obj).filter(([k]) => !['rule', 'code', 'name', 'passed', 'ok'].includes(k)),
-            )
             return (
               <tr key={i}>
                 <td>{ruleName(rule)}</td>
                 <td>
                   {passed === false ? <Badge tone="bad">failed</Badge> : passed === true ? <Badge tone="ok">passed</Badge> : '—'}
                 </td>
-                <td className="mono small">{params(rest) || '—'}</td>
+                <td className="mono small">
+                  {passed === false && typeof obj.code === 'string' && <span className="down">{obj.code} </span>}
+                  {ruleDetails(obj) || '—'}
+                </td>
               </tr>
             )
           })}

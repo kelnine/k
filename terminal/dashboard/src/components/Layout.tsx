@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type { RuntimeView } from '../api/types'
 import { useAuth } from '../auth'
 import { ago } from '../lib/format'
+import { runtimeHealth } from '../lib/runtime'
 import { useNow, usePoll } from '../lib/hooks'
 import { Link, useLocation } from '../lib/router'
 import { Dot, type Tone } from './ui'
@@ -24,20 +25,11 @@ interface SystemInfo {
 }
 
 export function runtimeTone(view: RuntimeView | null): Tone {
-  if (!view || !view.present) return 'muted'
-  if (view.stale || view.error) return 'bad'
-  const status = view.status?.status?.toUpperCase()
-  if (status === 'RUNNING') return 'ok'
-  if (status === 'FAILED' || status === 'FAULTED') return 'bad'
-  return 'warn'
+  return runtimeHealth(view).tone
 }
 
 export function runtimeLabel(view: RuntimeView | null): string {
-  if (!view) return 'runtime …'
-  if (!view.present) return 'no forward session'
-  if (view.error) return 'status unreadable'
-  if (view.stale) return 'runtime silent'
-  return (view.status?.status ?? 'unknown').toLowerCase()
+  return runtimeHealth(view).label
 }
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -69,7 +61,9 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="spacer" />
         <div
           className="pill"
-          title={view?.status?.updated_at ? `last update ${ago(view.status.updated_at, now)}` : undefined}
+          title={[runtimeHealth(view).detail, view?.status?.updated_at ? `last update ${ago(view.status.updated_at, now)}` : null]
+            .filter(Boolean)
+            .join(' · ') || undefined}
         >
           <Dot tone={runtimeTone(view)} /> {runtimeLabel(view)}
         </div>

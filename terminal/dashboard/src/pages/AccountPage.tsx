@@ -90,13 +90,20 @@ export function AccountPage({ id }: { id: string }) {
           </div>
           {a.kind === 'FORWARD' && (
             <div className="head-actions">
-              <KillSwitchButton target={{ scope: 'ACCOUNT', scopeId: a.id, label: a.name }} active={switchFor('ACCOUNT')} onChanged={refresh} compact />
+              <KillSwitchButton
+                target={{ scope: 'ACCOUNT', scopeId: a.id, label: a.name }}
+                active={switchFor('ACCOUNT')}
+                onChanged={refresh}
+                compact
+                noun="account"
+              />
               {a.instance_id && (
                 <KillSwitchButton
                   target={{ scope: 'STRATEGY', scopeId: a.instance_id, label: `strategy ${a.instance_id}` }}
                   active={switchFor('STRATEGY')}
                   onChanged={refresh}
                   compact
+                  noun="strategy"
                 />
               )}
             </div>

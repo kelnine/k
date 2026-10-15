@@ -22,6 +22,7 @@ from kterminal.api.queries.system import RUNTIME_STATE_KEY
 from kterminal.core.clock import SimulatedClock
 from kterminal.db import models as m
 from kterminal.domain.timeframes import Timeframe
+from kterminal.paper.runtime import PaperRuntime
 from tests.integration.api.conftest import demo_session, sign_in
 from tests.integration.api.demo import DemoData, runtime_status
 
@@ -435,8 +436,10 @@ def test_overview(viewer: TestClient, demo: DemoData) -> None:
     runtime = overview["runtime"]
     assert runtime["present"] and not runtime["stale"]
     assert runtime["age_seconds"] == 5.0
-    assert runtime["status"]["instruments"]["XAUUSD"]["state"] == "LIVE"
-    assert runtime["status"]["kill_switch"]["global"] is False
+    assert runtime["status"]["status"] == "running"
+    assert runtime["status"]["error"] is None
+    assert runtime["status"]["instruments"]["XAUUSD"]["state"] == "ok"
+    assert runtime["status"]["kill_switch"] == {"global": False, "accounts": [], "strategies": []}
     forward = overview["forward"]
     assert forward["accounts"] == 2
     assert forward["open_positions"] == 2
@@ -491,6 +494,22 @@ def test_no_forward_session_yet(viewer: TestClient, demo: DemoData) -> None:
         broken = get(viewer, "/system/runtime")
         assert broken["present"] and broken["status"] is None
         assert broken["error"] == "the runtime status could not be read"
+        asyncio.run(remove())
+        # a runtime that could not even be built publishes its reason
+        failure = PaperRuntime.failure_document(
+            "DataSourceError: no source for XAUUSD", demo.now - timedelta(seconds=5)
+        )
+        asyncio.run(restore(failure))
+        failed = get(viewer, "/system/runtime")
+        assert failed["present"] and failed["error"] is None
+        assert failed["status"]["status"] == "error"
+        assert failed["status"]["error"] == "DataSourceError: no source for XAUUSD"
+        assert failed["status"]["run_id"] is None and failed["status"]["instruments"] == {}
+        assert failed["status"]["kill_switch"] == {
+            "global": False,
+            "accounts": [],
+            "strategies": [],
+        }
     finally:
         asyncio.run(remove())
         last = demo.forward_bars[-1]

@@ -28,8 +28,10 @@ k/                                   repository root
     ├── deploy/
     │   ├── docker-compose.yml   ✅  postgres · api · engine · worker · caddy
     │   ├── docker-compose.dev.yml ✅ exposes Postgres on 127.0.0.1 for local dev
-    │   └── caddy/Caddyfile      ✅  TLS, TradingView IP allow-list, body limits
-    ├── dashboard/               ✅  (placeholder) React + Vite SPA — Phase 8
+    │   └── caddy/               ✅  Caddyfile (TLS, security headers, TradingView IP allow-list,
+    │                                /api → api, the SPA) · Dockerfile (dashboard built into the image)
+    ├── dashboard/               ✅  React + TypeScript + Vite SPA (docs/17): src/pages, src/components,
+    │                                src/lib (tested helpers), src/kcharts (the KCharts engine + trade markers)
     └── backend/
         ├── pyproject.toml       ✅  deps, ruff, mypy, pytest, import-linter contracts
         ├── uv.lock              ✅
@@ -89,8 +91,10 @@ k/                                   repository root
             │                             idempotency.py, service.py
             ├── notifications/       (11) base.py (Notifier), telegram.py, policy.py,
             │                             templates.py, reports.py, delivery.py
-            ├── api/                 ✅ (12) app factory, middleware, routes/{health ✅, webhooks,
-            │                             accounts, strategies, trades, analytics, risk, system}
+            ├── api/                 ✅ (12) app factory, middleware, auth/ (argon2id, signed session
+            │                             cookies, CSRF, sign-in limits, users), queries/ (read models),
+            │                             schemas.py, metrics.py, routes/{health, auth, system, accounts,
+            │                             trades, market, strategies, killswitches ✅; webhooks}
             └── runtime/             ✅  composition root: container.py, service.py (process
                                          lifecycle), engine.py, worker.py
 ```

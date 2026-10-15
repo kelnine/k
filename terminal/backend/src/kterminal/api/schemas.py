@@ -53,41 +53,42 @@ class FeedStatus(ApiModel):
 
     provider: str | None = None
     last_bar_open: datetime | None = None
-    lag_seconds: float | None = None
-    state: str | None = None
-    last_error: str | None = None
+    lag_seconds: float | None = None  # now − the newest bar's close
+    state: str | None = None  # ok | stale | closed | no_provider
+    last_error: str | None = None  # the provider's last error; for no_provider why
 
 
 class InstanceRuntime(ApiModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    state: str | None = None
-    fault: JsonValue = None
+    state: str | None = None  # strategy host: RUNNING | FAULTED | STOPPED
+    fault: str | None = None  # "<error type>: <message>" of a faulted host
     account_id: str | None = None
 
 
 class RuntimeKillSwitch(ApiModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
-    global_: bool | None = Field(default=None, alias="global")
-    accounts: JsonValue = None
-    strategies: JsonValue = None
+    global_: bool = Field(default=False, alias="global")
+    accounts: list[str] = Field(default_factory=list)
+    strategies: list[str] = Field(default_factory=list)
 
 
 class RuntimeStatus(ApiModel):
-    """What the forward paper runtime last reported about itself."""
+    """What the forward paper runtime last reported about itself (docs/12 §12.7)."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     session_id: str | None = None
     run_id: str | None = None
-    status: str | None = None
+    status: str | None = None  # starting | warming_up | running | stopped | error
     started_at: datetime | None = None
     updated_at: datetime | None = None
     last_batch_close: datetime | None = None
     instruments: dict[str, FeedStatus] = Field(default_factory=dict)
     instances: dict[str, InstanceRuntime] = Field(default_factory=dict)
     kill_switch: RuntimeKillSwitch | None = None
+    error: str | None = None  # the reason, when status is "error"
 
 
 class RuntimeView(ApiModel):
@@ -474,9 +475,14 @@ class KillSwitchOut(ApiModel):
 
 
 class KillSwitchEvent(ApiModel):
+    """An audit entry: a switch changed (``killswitch.activate`` / ``killswitch.deactivate``,
+    scope GLOBAL/ACCOUNT/STRATEGY) or a forward session applied the switches
+    (``killswitch.applied``, scope ``RUN``, ``scope_id`` the session's run id)."""
+
     seq: int
     ts: datetime
     actor: str
+    actor_username: str | None
     action: str
     scope: str
     scope_id: str

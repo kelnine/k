@@ -1,9 +1,13 @@
 """Kill switches: read them all (any role); activate or release one (OPERATOR and up).
 
-The forward runtime reads ``kill_switches`` at every batch. Activating is always
-allowed and needs no confirmation (a risk-reducing action); releasing a switch
-re-enables trading, so it needs the operator's password again (docs/09 §9.2:
-re-authentication for sensitive actions; TOTP joins it once 2FA exists).
+Changes go through :mod:`kterminal.db.repositories.kill_switches` — the same
+code as ``kterminal killswitch on/off`` — which upserts the ``kill_switches``
+row and appends ``killswitch.activate`` / ``killswitch.deactivate`` to the audit
+log in one transaction. The forward runtime reads the table before every
+minute (docs/12 §12.7). Activating is always allowed and needs no confirmation
+(a risk-reducing action); releasing a switch re-enables trading, so it needs
+the operator's password again (docs/09 §9.2: re-authentication for sensitive
+actions; TOTP joins it once 2FA exists).
 """
 
 import asyncio
@@ -18,7 +22,6 @@ from kterminal.api.auth.service import AuthService, Principal
 from kterminal.api.auth.users import Role
 from kterminal.api.errors import ApiError
 from kterminal.api.queries.system import (
-    GLOBAL_SCOPE_ID,
     kill_switch_history,
     kill_switch_rows,
     kill_switches_out,
@@ -27,6 +30,7 @@ from kterminal.api.queries.system import (
 from kterminal.api.routes.common import ClockDep, DbSession
 from kterminal.api.schemas import KillSwitchesOut, KillSwitchOut, KillSwitchRequest
 from kterminal.db import models as m
+from kterminal.db.repositories.kill_switches import GLOBAL_SCOPE_ID, KillSwitchError
 
 router = APIRouter(prefix="/kill-switches", tags=["kill switches"])
 
@@ -57,24 +61,21 @@ async def set_switch(
         )
         if not confirmed:
             raise ApiError(403, "REAUTH_REQUIRED", "enter your password to release a kill switch")
-    await set_kill_switch(
-        session,
-        scope=body.scope,
-        scope_id=scope_id,
-        active=body.active,
-        reason=body.reason.strip(),
-        close_positions=body.close_positions,
-        user_id=principal.user.id,
-        username=principal.user.username,
-        now=clock.now(),
-    )
+    try:
+        record = await set_kill_switch(
+            session,
+            scope=body.scope,
+            scope_id=scope_id,
+            active=body.active,
+            reason=body.reason,
+            close_positions=body.close_positions,
+            user_id=principal.user.id,
+            now=clock.now(),
+        )
+    except KillSwitchError as exc:
+        raise ApiError(422, "INVALID_KILL_SWITCH", str(exc)) from None
     await session.commit()
-    rows = [
-        r
-        for r in await kill_switch_rows(session)
-        if r.scope == body.scope and r.scope_id == scope_id
-    ]
-    (out,) = await kill_switches_out(session, rows)
+    (out,) = await kill_switches_out(session, [record])
     return out
 
 

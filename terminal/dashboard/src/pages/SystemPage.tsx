@@ -9,6 +9,7 @@ import { Leaderboard } from '../components/Leaderboard'
 import { Badge, Card, Empty, ErrorBox, Json, KeyValues, Loading, Pager, StateBadge, Tabs } from '../components/ui'
 import { ago, between, dateTime, params, shortId } from '../lib/format'
 import { usePoll } from '../lib/hooks'
+import { switchEventText, switchEventTone } from '../lib/killswitch'
 import { Link, navigate } from '../lib/router'
 import { instanceColor } from '../kcharts/trades'
 
@@ -177,16 +178,14 @@ function SwitchHistory({ switches }: { switches: KillSwitches | null }) {
             <tr key={e.seq}>
               <td>{dateTime(e.ts, { seconds: true })}</td>
               <td>
-                <Badge tone={e.action.endsWith('activate') ? 'bad' : 'ok'}>{e.action.replace('killswitch.', '')}</Badge>
+                <Badge tone={switchEventTone(e)}>{e.action.replace('killswitch.', '')}</Badge>
               </td>
               <td>
-                {e.scope.toLowerCase()} <span className="mono small">{e.scope_id === '*' ? '' : shortId(e.scope_id, 24)}</span>
+                {e.scope === 'RUN' ? 'session' : e.scope.toLowerCase()}{' '}
+                <span className="mono small">{e.scope_id === '*' ? '' : shortId(e.scope_id, 24)}</span>
               </td>
-              <td>{typeof e.data.username === 'string' ? e.data.username : e.actor}</td>
-              <td className="small">
-                {typeof e.data.reason === 'string' ? e.data.reason : ''}
-                {e.data.close_positions === true && <Badge tone="warn">close positions</Badge>}
-              </td>
+              <td>{e.actor_username ?? e.actor}</td>
+              <td className="small">{switchEventText(e)}</td>
             </tr>
           ))}
         </tbody>

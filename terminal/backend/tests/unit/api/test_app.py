@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from kterminal.api.app import create_app
 from kterminal.api.auth.deps import current_principal
 from kterminal.api.auth.service import Principal
+from kterminal.api.auth.settings import AuthSettings
 from kterminal.api.auth.tokens import SessionClaims
 from kterminal.api.auth.users import Role, User
 from kterminal.config.settings import Settings
@@ -133,3 +134,18 @@ def test_openapi_docs_follow_settings(settings: Settings) -> None:
     with TestClient(create_app(production, FakeDatabase())) as prod:
         assert prod.get("/api/v1/openapi.json").status_code == 404
         assert prod.get("/api/v1/docs").status_code == 404
+
+
+def test_production_refuses_cookies_over_plain_http() -> None:
+    production = Settings(
+        _env_file=None, environment="production", database={"password": "a-real-password"}
+    )
+    insecure = AuthSettings(_env_file=None, cookie_secure=False)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="secure session cookies"):
+        create_app(production, FakeDatabase(), auth_settings=insecure)
+
+
+def test_the_api_serves_no_static_files(client: TestClient) -> None:
+    """Caddy serves the dashboard; the API answers only its own routes."""
+    for path in ("/", "/index.html", "/assets/index.js", "/accounts/x"):
+        assert client.get(path).status_code == 404

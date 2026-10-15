@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, between, dateTime, decimal, fixed, label, money, params, pct, qty, ratio, rMultiple, seconds, shortId, toNumber, tone } from './format'
+import { ago, between, dateTime, decimal, fixed, label, money, params, pct, qty, ratio, rMultiple, ruleDetails, seconds, shortId, toNumber, tone } from './format'
 
 describe('numbers', () => {
   it('parses decimal strings and refuses junk', () => {
@@ -91,6 +91,28 @@ describe('labels', () => {
     expect(params({ fast: 9, slow: 21, reward_risk: '2' })).toBe('fast=9 slow=21 reward_risk=2')
     expect(params({ window: { start: '0930' } })).toBe('window={"start":"0930"}')
     expect(params(null)).toBe('')
-    expect(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a527')).toBe('01a13cc6')
+    expect(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a527')).toBe('a7a7a527')
+    expect(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a528')).not.toBe(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a527'))
+    expect(shortId('6ee1b0891c03a9f2', 12)).toBe('6ee1b0891c03')
+  })
+})
+
+describe('ruleDetails', () => {
+  it('shows the message and the values of a rule result, nothing empty', () => {
+    expect(ruleDetails({ rule: 'market_open', passed: true, values: {}, message: '' })).toBe('')
+    expect(ruleDetails({ rule: 'max_open_positions', passed: true, values: { open: 0, limit: 1 }, message: '' })).toBe(
+      'open=0 · limit=1',
+    )
+    expect(
+      ruleDetails({
+        rule: 'kill_switch',
+        passed: false,
+        values: {},
+        message: 'GLOBAL kill switch active: CPI release drill',
+      }),
+    ).toBe('GLOBAL kill switch active: CPI release drill')
+    expect(
+      ruleDetails({ rule: 'position_size', values: { qty: '115.2', risk_pct: '0.499676638617208326', note: null } }),
+    ).toBe('qty=115.2 · risk_pct=0.499676')
   })
 })

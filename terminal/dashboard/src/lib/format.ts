@@ -134,8 +134,14 @@ export function tone(value: Numeric): 'up' | 'down' | '' {
   return n > 0 ? 'up' : 'down'
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** A short handle for an id. UUIDs keep their END: the ids the terminal makes are
+ * UUIDv7, whose first characters are a timestamp shared by everything made in the
+ * same moment. Anything else (hashes, symbols) keeps its start. */
 export function shortId(id: string | null | undefined, length = 8): string {
-  return id ? id.slice(0, length) : '—'
+  if (!id) return '—'
+  return UUID.test(id) ? id.slice(-length) : id.slice(0, length)
 }
 
 /** Strategy parameters as `fast=9 slow=21`. */
@@ -151,4 +157,20 @@ export function label(code: string | null | undefined): string {
   if (!code) return '—'
   const words = code.toLowerCase().split('_')
   return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
+}
+
+/** What a risk rule result says beyond its name and verdict: its message, then its
+ * values (`open=0 limit=1`); long decimals are cut to 6 places, empty parts dropped. */
+export function ruleDetails(result: Record<string, unknown>): string {
+  const parts: string[] = []
+  if (typeof result.message === 'string' && result.message) parts.push(result.message)
+  const values = result.values
+  if (values && typeof values === 'object' && !Array.isArray(values)) {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === null || value === '') continue
+      const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+      parts.push(`${key}=${/^-?\d+\.\d{7,}$/.test(text) ? text.replace(/(\.\d{6})\d+$/, '$1') : text}`)
+    }
+  }
+  return parts.join(' · ')
 }

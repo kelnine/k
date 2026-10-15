@@ -20,16 +20,19 @@ export function KillSwitchButton({
   active,
   onChanged,
   compact = false,
+  noun,
 }: {
   target: Target
   active: boolean
   onChanged: () => void
   compact?: boolean
+  noun?: string // "account", "strategy": tells two buttons side by side apart
 }) {
   const { can } = useAuth()
   const [open, setOpen] = useState(false)
   if (!can('OPERATOR')) return null
-  const text = active ? 'Release' : target.scope === 'GLOBAL' ? 'Halt all trading' : 'Halt'
+  const verb = active ? 'Release' : 'Halt'
+  const text = target.scope === 'GLOBAL' && !active ? 'Halt all trading' : noun ? `${verb} ${noun}` : verb
   return (
     <>
       <button className={`btn ${active ? '' : 'danger'} ${compact ? 'small' : ''}`} onClick={() => setOpen(true)}>

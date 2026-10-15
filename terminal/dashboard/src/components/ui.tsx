@@ -68,6 +68,8 @@ const STATE_TONES: Record<string, Tone> = {
   WARMING_UP: 'info',
   CATCHING_UP: 'warn',
   STALE: 'warn',
+  CLOSED: 'muted',
+  NO_PROVIDER: 'bad',
   DELAYED: 'warn',
   PAUSED: 'warn',
   HALTED: 'bad',

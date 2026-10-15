@@ -1027,7 +1027,9 @@ def killswitch_status() -> None:
 # ════════════════════════ end of the forward paper trading block ════════════════════════
 
 
-# ── dashboard users (docs/17-dashboard.md) ───────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# Dashboard users (docs/17-dashboard.md)
+# ════════════════════════════════════════════════════════════════════════════
 # Accounts for the web dashboard: VIEWER reads, OPERATOR also operates kill
 # switches, ADMIN also manages users. Passwords are argon2id hashes; every change
 # is written to the audit log.
@@ -1154,3 +1156,6 @@ def users_set_password(username: str) -> None:
         )
     )
     typer.echo(f"password of {user.username} changed")
+
+
+# ════════════════════════ end of the dashboard users block ════════════════════════

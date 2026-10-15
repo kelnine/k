@@ -99,13 +99,16 @@ def test_an_operator_halts_and_releases_one_account(
     assert row is not None and not row.active
 
     entries = audit_entries(demo, f"ACCOUNT:{account_id}")
-    assert [e.action for e in entries] == ["killswitch.activate", "killswitch.release"]
-    assert entries[0].data["username"] == "otto"
+    assert [e.action for e in entries] == ["killswitch.activate", "killswitch.deactivate"]
+    assert {e.actor for e in entries} == {f"user:{demo.user_ids['otto']}"}
     assert entries[0].data["close_positions"] is True
+    assert entries[0].data["reason"] == "feed looks wrong"
     assert "password" not in str(entries[1].data)
     history = client.get(URL).json()["history"]
-    assert history[0]["action"] == "killswitch.release"
+    assert history[0]["action"] == "killswitch.deactivate"
+    assert history[0]["scope"] == "ACCOUNT"
     assert history[0]["scope_id"] == account_id
+    assert history[0]["actor_username"] == "otto"
 
     async def chain_ok() -> bool:
         async with demo_session(demo) as session:
@@ -177,6 +180,7 @@ def test_global_and_strategy_switches(
         ({"scope": "STRATEGY", "scope_id": "nope", "active": True, "reason": "x y z"}, 404, None),
         ({"scope": "BROKER", "active": True, "reason": "x y z"}, 422, None),
         ({"scope": "GLOBAL", "active": True, "reason": ""}, 422, None),
+        ({"scope": "GLOBAL", "active": True, "reason": "     "}, 422, "INVALID_KILL_SWITCH"),
         ({"scope": "GLOBAL", "active": True, "reason": "ok", "extra": 1}, 422, None),
     ],
 )

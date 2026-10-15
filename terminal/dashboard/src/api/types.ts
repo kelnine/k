@@ -27,30 +27,32 @@ export interface Session {
   expires_at: Iso
 }
 
+// system_state['paper.runtime'] as the forward runtime writes it (docs/12 §12.7).
 export interface FeedStatus {
   provider: string | null
   last_bar_open: Iso | null
   lag_seconds: number | null
-  state: string | null
+  state: string | null // ok | stale | closed | no_provider
   last_error: string | null
 }
 
 export interface InstanceRuntime {
-  state: string | null
-  fault: Json
+  state: string | null // RUNNING | FAULTED | STOPPED
+  fault: string | null
   account_id: string | null
 }
 
 export interface RuntimeStatus {
   session_id: string | null
   run_id: string | null
-  status: string | null
+  status: string | null // starting | warming_up | running | stopped | error
   started_at: Iso | null
   updated_at: Iso | null
   last_batch_close: Iso | null
   instruments: Record<string, FeedStatus>
   instances: Record<string, InstanceRuntime>
-  kill_switch: { global: boolean | null; accounts: Json; strategies: Json } | null
+  kill_switch: { global: boolean; accounts: string[]; strategies: string[] } | null
+  error: string | null
 }
 
 export interface RuntimeView {
@@ -417,10 +419,13 @@ export interface KillSwitch {
   changed_at: Iso
 }
 
+// killswitch.activate / killswitch.deactivate (scope GLOBAL | ACCOUNT | STRATEGY) and
+// killswitch.applied (scope RUN: a forward session applied the switches).
 export interface KillSwitchEvent {
   seq: number
   ts: Iso
   actor: string
+  actor_username: string | null
   action: string
   scope: string
   scope_id: string

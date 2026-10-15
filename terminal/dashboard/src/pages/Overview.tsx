@@ -2,37 +2,39 @@
 // and how is every forward account doing.
 
 import { api } from '../api/client'
-import type { Account, FeedStatus, Overview as OverviewData, Page } from '../api/types'
+import type { Account, FeedStatus, Overview as OverviewData, Page, RuntimeStatus } from '../api/types'
 import { KillSwitchButton, KillSwitchList } from '../components/KillSwitch'
-import { runtimeLabel, runtimeTone } from '../components/Layout'
 import { Leaderboard } from '../components/Leaderboard'
-import { Badge, Card, Dot, Empty, ErrorBox, Loading, Stat, stateTone } from '../components/ui'
+import { Badge, Card, Dot, Empty, ErrorBox, Loading, Stat } from '../components/ui'
 import { ago, dateTime, money, pct, seconds, shortId, tone } from '../lib/format'
 import { totals } from '../lib/leaderboard'
 import { useNow, usePoll } from '../lib/hooks'
+import { feedLabel, feedsByAttention, feedTone, runtimeHealth } from '../lib/runtime'
 import { Link } from '../lib/router'
 
 function Runtime({ data, now }: { data: OverviewData; now: number }) {
   const view = data.runtime
   const status = view.status
+  const health = runtimeHealth(view)
   if (!view.present)
     return (
       <Empty title="No forward session yet">
-        The forward paper runtime has not reported in. Start it on the server; this card turns green once it writes
-        its first status.
+        The forward paper runtime has not reported in. Start it on the server (<code>kterminal paper start</code>, or the{' '}
+        <code>engine</code> service); this card turns green once it writes its first status.
       </Empty>
     )
   return (
     <div>
       <div className="runtime-head">
-        <Dot tone={runtimeTone(view)} />
-        <span className="runtime-state">{runtimeLabel(view)}</span>
-        {view.stale && <Badge tone="bad">no update for {seconds(view.age_seconds)}</Badge>}
+        <Dot tone={health.tone} />
+        <span className="runtime-state">{health.label}</span>
+        {view.stale && status?.status !== 'stopped' && <Badge tone="bad">no update for {seconds(view.age_seconds)}</Badge>}
       </div>
-      {view.error && <div className="error-box">{view.error}</div>}
+      {health.tone === 'bad' && health.detail && <div className="error-box">{health.detail}</div>}
+      {health.tone !== 'bad' && health.detail && <p className="muted small">{health.detail}</p>}
       {status && (
         <div className="stats">
-          <Stat label="Session" value={status.session_id ?? '—'} sub={status.run_id ? `run ${shortId(status.run_id)}` : undefined} />
+          <Stat label="Session" value={status.run_id ? shortId(status.run_id) : '—'} sub={status.session_id ? `attach ${shortId(status.session_id)}` : undefined} />
           <Stat label="Started" value={dateTime(status.started_at)} sub={ago(status.started_at, now)} />
           <Stat label="Last batch close" value={dateTime(status.last_batch_close)} sub={ago(status.last_batch_close, now)} />
           <Stat label="Updated" value={ago(status.updated_at, now)} sub={`stale after ${seconds(view.stale_after_seconds)}`} />
@@ -43,7 +45,7 @@ function Runtime({ data, now }: { data: OverviewData; now: number }) {
 }
 
 function Feeds({ feeds, now }: { feeds: Record<string, FeedStatus>; now: number }) {
-  const rows = Object.entries(feeds).sort(([a], [b]) => a.localeCompare(b))
+  const rows = feedsByAttention(feeds)
   if (!rows.length) return <Empty title="No data feeds reported" />
   return (
     <div className="table-wrap">
@@ -66,7 +68,7 @@ function Feeds({ feeds, now }: { feeds: Record<string, FeedStatus>; now: number 
               </td>
               <td>{feed.provider ?? '—'}</td>
               <td>
-                <Dot tone={stateTone(feed.state)} /> {feed.state?.toLowerCase() ?? 'unknown'}
+                <Dot tone={feedTone(feed)} /> {feedLabel(feed)}
               </td>
               <td>
                 {dateTime(feed.last_bar_open)} <span className="muted small">{ago(feed.last_bar_open, now)}</span>
@@ -78,6 +80,19 @@ function Feeds({ feeds, now }: { feeds: Record<string, FeedStatus>; now: number 
         </tbody>
       </table>
     </div>
+  )
+}
+
+function RuntimeSwitches({ seen }: { seen: NonNullable<RuntimeStatus['kill_switch']> }) {
+  const parts = [
+    seen.global ? 'global ON' : 'global off',
+    `${seen.accounts.length} account${seen.accounts.length === 1 ? '' : 's'}`,
+    `${seen.strategies.length} strateg${seen.strategies.length === 1 ? 'y' : 'ies'}`,
+  ]
+  return (
+    <p className="muted small" title="A change takes effect at the runtime's next minute">
+      Runtime applies: {parts.join(' · ')}
+    </p>
   )
 }
 
@@ -131,11 +146,7 @@ export function Overview() {
             }
           >
             <KillSwitchList switches={data.active_kill_switches} onChanged={refresh} />
-            {data.runtime.status?.kill_switch && (
-              <p className="muted small">
-                Runtime last saw: global {data.runtime.status.kill_switch.global ? 'on' : 'off'}
-              </p>
-            )}
+            {data.runtime.status?.kill_switch && <RuntimeSwitches seen={data.runtime.status.kill_switch} />}
           </Card>
         </div>
       )}

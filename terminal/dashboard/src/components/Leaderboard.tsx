@@ -119,7 +119,9 @@ export function Leaderboard({
                   <td className={`num ${tone(m.expectancy)}`}>{money(m.expectancy, { signed: true })}</td>
                   <td className={`num ${tone(m.net_pnl)}`}>{money(m.net_pnl, { signed: true })}</td>
                   <td className={`num ${tone(m.return_pct)}`}>{pct(m.return_pct, { signed: true })}</td>
-                  <td className="num down-soft">{m.max_drawdown_pct === null ? '—' : `${fixed(m.max_drawdown_pct)}%`}</td>
+                  <td className={`num ${Number(m.max_drawdown_pct ?? 0) > 0 ? 'down-soft' : ''}`}>
+                    {m.max_drawdown_pct === null ? '—' : `${fixed(m.max_drawdown_pct)}%`}
+                  </td>
                   <td className="num">{m.open_positions || ''}</td>
                   <td>
                     {a.halted ? <Badge tone="bad">halted</Badge> : a.runtime ? <StateBadge state={a.runtime.state} /> : a.kind === 'RUN' ? <Badge>run</Badge> : <Badge>idle</Badge>}

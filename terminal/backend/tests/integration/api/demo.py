@@ -221,11 +221,12 @@ async def _populate(url: str, database: Database) -> DemoData:
 def runtime_status(
     run_id: UUID, last_bar: Bar, accounts: dict[Any, UUID], now: datetime
 ) -> dict[str, Any]:
-    """A ``paper.runtime`` document as the forward runtime writes it."""
+    """A ``paper.runtime`` document shaped exactly as the forward runtime writes it
+    (``PaperRuntime.status_document``, docs/12 §12.7)."""
     return {
-        "session_id": "fwd-0001",
+        "session_id": str(uuid7()),
         "run_id": str(run_id),
-        "status": "RUNNING",
+        "status": "running",
         "started_at": FORWARD_START.isoformat(),
         "updated_at": (now - timedelta(seconds=5)).isoformat(),
         "last_batch_close": last_bar.close_time.isoformat(),
@@ -234,9 +235,9 @@ def runtime_status(
                 "provider": "oanda",
                 "last_bar_open": last_bar.open_time.isoformat(),
                 "lag_seconds": 4.2,
-                "state": "LIVE",
+                "state": "ok",
                 "last_error": None,
-            }
+            },
         },
         "instances": {
             "demo_sma_fast": {
@@ -251,6 +252,7 @@ def runtime_status(
             },
         },
         "kill_switch": {"global": False, "accounts": [], "strategies": []},
+        "error": None,
     }
 
 

@@ -6,8 +6,7 @@ from typing import Final
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kterminal.api.auth.users import usernames_by_id
@@ -19,16 +18,19 @@ from kterminal.api.schemas import (
     RuntimeStatus,
     RuntimeView,
 )
-from kterminal.db import audit
 from kterminal.db import models as m
+from kterminal.db.repositories import kill_switches as repository
+from kterminal.db.repositories.kill_switches import KillSwitchRecord, list_kill_switches
+from kterminal.paper.pg_forward import KILL_SWITCH_APPLIED, STATUS_KEY
 
-RUNTIME_STATE_KEY: Final = "paper.runtime"
+RUNTIME_STATE_KEY: Final = STATUS_KEY
 """``system_state`` key the forward paper runtime writes its status to."""
+
+USER_ACTOR: Final = "user:"
+"""Audit actors and ``kill_switches.changed_by`` of dashboard users: ``user:<user id>``."""
 
 RUNTIME_STALE_AFTER: Final = timedelta(seconds=120)
 """A status older than this means the runtime is not running (or is stuck)."""
-
-GLOBAL_SCOPE_ID: Final = "*"
 
 
 # ── runtime ──────────────────────────────────────────────────────────────────
@@ -81,14 +83,12 @@ class KillSwitchState:
         )
 
 
-async def kill_switch_rows(session: AsyncSession) -> list[m.KillSwitchRow]:
-    rows = await session.execute(
-        select(m.KillSwitchRow).order_by(m.KillSwitchRow.scope, m.KillSwitchRow.scope_id)
-    )
-    return list(rows.scalars())
+async def kill_switch_rows(session: AsyncSession) -> list[KillSwitchRecord]:
+    """Every switch the runtime reads (active or not), from the kill-switch repository."""
+    return await list_kill_switches(session)
 
 
-def kill_switch_state(rows: list[m.KillSwitchRow]) -> KillSwitchState:
+def kill_switch_state(rows: list[KillSwitchRecord]) -> KillSwitchState:
     active = [row for row in rows if row.active]
     return KillSwitchState(
         global_active=any(row.scope == "GLOBAL" for row in active),
@@ -98,15 +98,9 @@ def kill_switch_state(rows: list[m.KillSwitchRow]) -> KillSwitchState:
 
 
 async def kill_switches_out(
-    session: AsyncSession, rows: list[m.KillSwitchRow]
+    session: AsyncSession, rows: list[KillSwitchRecord]
 ) -> list[KillSwitchOut]:
-    account_ids = []
-    user_ids = set()
-    for row in rows:
-        if row.scope == "ACCOUNT":
-            account_ids.append(_uuid(row.scope_id))
-        if row.changed_by.startswith("user:") and (uid := _uuid(row.changed_by[5:])):
-            user_ids.add(uid)
+    account_ids = [_uuid(row.scope_id) for row in rows if row.scope == "ACCOUNT"]
     names: dict[str, str] = {}
     wanted = [a for a in account_ids if a is not None]
     if wanted:
@@ -114,7 +108,7 @@ async def kill_switches_out(
             select(m.AccountRow.id, m.AccountRow.name).where(m.AccountRow.id.in_(wanted))
         )
         names = {str(r.id): r.name for r in result}
-    users = await usernames_by_id(session, user_ids)
+    users = await _usernames(session, [row.changed_by for row in rows])
     out = []
     for row in rows:
         if row.scope == "GLOBAL":
@@ -123,7 +117,6 @@ async def kill_switches_out(
             label = names.get(row.scope_id, row.scope_id)
         else:
             label = row.scope_id
-        uid = _uuid(row.changed_by[5:]) if row.changed_by.startswith("user:") else None
         out.append(
             KillSwitchOut(
                 scope=row.scope,  # type: ignore[arg-type]  # CHECK constraint: one of the three
@@ -134,7 +127,7 @@ async def kill_switches_out(
                 cancel_orders=row.cancel_orders,
                 reason=row.reason,
                 changed_by=row.changed_by,
-                changed_by_username=users.get(uid) if uid else None,
+                changed_by_username=users.get(row.changed_by),
                 changed_at=row.changed_at,
             )
         )
@@ -142,20 +135,39 @@ async def kill_switches_out(
 
 
 async def kill_switch_history(session: AsyncSession, limit: int = 50) -> list[KillSwitchEvent]:
-    rows = await session.execute(
-        select(m.AuditLogRow)
-        .where(m.AuditLogRow.entity_type == "kill_switch")
-        .order_by(m.AuditLogRow.seq.desc())
-        .limit(limit)
+    """Kill-switch changes (``killswitch.activate`` / ``.deactivate``) and the moments a
+    forward session applied them (``killswitch.applied``), newest first."""
+    rows = list(
+        (
+            await session.execute(
+                select(m.AuditLogRow)
+                .where(
+                    or_(
+                        m.AuditLogRow.entity_type == "kill_switch",
+                        and_(
+                            m.AuditLogRow.entity_type == "run",
+                            m.AuditLogRow.action == KILL_SWITCH_APPLIED,
+                        ),
+                    )
+                )
+                .order_by(m.AuditLogRow.seq.desc())
+                .limit(limit)
+            )
+        ).scalars()
     )
+    users = await _usernames(session, [row.actor for row in rows])
     events = []
-    for row in rows.scalars():
-        scope, _, scope_id = row.entity_id.partition(":")
+    for row in rows:
+        if row.entity_type == "run":
+            scope, scope_id = "RUN", row.entity_id
+        else:
+            scope, _, scope_id = row.entity_id.partition(":")
         events.append(
             KillSwitchEvent(
                 seq=row.seq,
                 ts=row.ts,
                 actor=row.actor,
+                actor_username=users.get(row.actor),
                 action=row.action,
                 scope=scope,
                 scope_id=scope_id,
@@ -163,6 +175,17 @@ async def kill_switch_history(session: AsyncSession, limit: int = 50) -> list[Ki
             )
         )
     return events
+
+
+async def _usernames(session: AsyncSession, actors: list[str]) -> dict[str, str]:
+    """``{"user:<id>": username}`` for the dashboard users among ``actors``."""
+    ids = {
+        uid
+        for actor in actors
+        if actor.startswith(USER_ACTOR) and (uid := _uuid(actor.removeprefix(USER_ACTOR)))
+    }
+    names = await usernames_by_id(session, ids)
+    return {f"{USER_ACTOR}{uid}": name for uid, name in names.items()}
 
 
 async def set_kill_switch(
@@ -174,43 +197,19 @@ async def set_kill_switch(
     reason: str,
     close_positions: bool,
     user_id: UUID,
-    username: str,
     now: datetime,
-) -> None:
-    """Write the switch the runtime reads at every batch, and its audit entry, in one
-    transaction (the caller commits)."""
-    values = {
-        "scope": scope,
-        "scope_id": scope_id,
-        "active": active,
-        "close_positions": close_positions and active,
-        "cancel_orders": True,
-        "reason": reason,
-        "changed_by": f"user:{user_id}",
-        "changed_at": now,
-    }
-    stmt = pg_insert(m.KillSwitchRow).values(**values)
-    await session.execute(
-        stmt.on_conflict_do_update(
-            index_elements=[m.KillSwitchRow.scope, m.KillSwitchRow.scope_id],
-            set_={k: v for k, v in values.items() if k not in ("scope", "scope_id")},
-        )
-    )
-    await audit.append(
+) -> KillSwitchRecord:
+    """Write the switch the runtime reads before every minute, and its audit entry, through
+    the kill-switch repository (the caller commits)."""
+    return await repository.set_kill_switch(
         session,
-        actor=f"user:{user_id}",
-        action="killswitch.activate" if active else "killswitch.release",
-        entity_type="kill_switch",
-        entity_id=f"{scope}:{scope_id}",
-        data={
-            "scope": scope,
-            "scope_id": scope_id,
-            "active": active,
-            "reason": reason,
-            "close_positions": close_positions and active,
-            "username": username,
-        },
+        scope=scope,
+        scope_id=scope_id,
+        active=active,
+        reason=reason,
+        changed_by=f"{USER_ACTOR}{user_id}",
         ts=now,
+        close_positions=close_positions,
     )
 
 
