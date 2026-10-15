@@ -1025,3 +1025,137 @@ def killswitch_status() -> None:
 
 
 # ════════════════════════ end of the forward paper trading block ════════════════════════
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Dashboard users (docs/17-dashboard.md)
+# ════════════════════════════════════════════════════════════════════════════
+# Accounts for the web dashboard: VIEWER reads, OPERATOR also operates kill
+# switches, ADMIN also manages users. Passwords are argon2id hashes; every change
+# is written to the audit log.
+users_app = typer.Typer(help="Dashboard users: add, list, disable.", no_args_is_help=True)
+app.add_typer(users_app, name="users")
+
+
+def _prompt_new_password(username: str) -> str:
+    from kterminal.api.auth.passwords import password_problems
+    from kterminal.api.auth.settings import load_auth_settings
+
+    min_length = load_auth_settings().password_min_length
+    password: str = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    problems = password_problems(password, min_length=min_length, username=username)
+    if problems:
+        typer.echo("Password rejected: " + "; ".join(problems), err=True)
+        raise typer.Exit(1)
+    return password
+
+
+def _run_users(action: Callable[[Any], Awaitable[Any]]) -> Any:
+    from kterminal.api.auth.users import UserError
+    from kterminal.db.session import Database
+
+    settings = _bootstrap("users")
+
+    async def _run() -> Any:
+        database = Database(settings.database, application_name="kterminal-users")
+        try:
+            async with database.session() as session:
+                return await action(session)
+        finally:
+            await database.dispose()
+
+    try:
+        return asyncio.run(_run())
+    except UserError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+
+@users_app.command("add")
+def users_add(
+    username: Annotated[str, typer.Argument(help="3-32 characters: a-z, 0-9, '.', '_', '-'")],
+    role: Annotated[str, typer.Option(help="VIEWER | OPERATOR | ADMIN")] = "VIEWER",
+) -> None:
+    """Create a dashboard user; the password is asked for twice and never echoed."""
+    from kterminal.api.auth.passwords import Passwords
+    from kterminal.api.auth.users import Role, create_user, normalize_username
+
+    try:
+        chosen = Role(role.upper())
+    except ValueError:
+        raise typer.BadParameter("must be VIEWER, OPERATOR or ADMIN", param_hint="--role") from None
+    name = normalize_username(username)
+    password_hash = Passwords().hash(_prompt_new_password(name))
+    user = _run_users(
+        lambda session: create_user(
+            session,
+            username=name,
+            password_hash=password_hash,
+            role=chosen,
+            actor="cli",
+            now=datetime.now(UTC),
+        )
+    )
+    typer.echo(f"user {user.username} created ({user.role.value})")
+
+
+@users_app.command("list")
+def users_list() -> None:
+    """Every dashboard user with role and state."""
+    from kterminal.api.auth.users import list_users
+
+    users = _run_users(list_users)
+    if not users:
+        typer.echo("no users yet — create one with: kterminal users add NAME --role ADMIN")
+        return
+    for user in users:
+        state = "disabled" if user.disabled else "active"
+        typer.echo(
+            f"{user.username:<32} {user.role.value:<9} {state:<9} "
+            f"created {user.created_at:%Y-%m-%d %H:%M} UTC"
+        )
+
+
+@users_app.command("disable")
+def users_disable(username: str) -> None:
+    """Disable a user; their open sessions end on their next request."""
+    from kterminal.api.auth.users import set_disabled
+
+    user = _run_users(
+        lambda session: set_disabled(
+            session, username, disabled=True, actor="cli", now=datetime.now(UTC)
+        )
+    )
+    typer.echo(f"user {user.username} disabled")
+
+
+@users_app.command("enable")
+def users_enable(username: str) -> None:
+    """Re-enable a disabled user."""
+    from kterminal.api.auth.users import set_disabled
+
+    user = _run_users(
+        lambda session: set_disabled(
+            session, username, disabled=False, actor="cli", now=datetime.now(UTC)
+        )
+    )
+    typer.echo(f"user {user.username} enabled")
+
+
+@users_app.command("set-password")
+def users_set_password(username: str) -> None:
+    """Set a new password (asked for twice); the user's open sessions end."""
+    from kterminal.api.auth.passwords import Passwords
+    from kterminal.api.auth.users import change_password, normalize_username
+
+    name = normalize_username(username)
+    password_hash = Passwords().hash(_prompt_new_password(name))
+    user = _run_users(
+        lambda session: change_password(
+            session, name, password_hash=password_hash, actor="cli", now=datetime.now(UTC)
+        )
+    )
+    typer.echo(f"password of {user.username} changed")
+
+
+# ════════════════════════ end of the dashboard users block ════════════════════════

@@ -72,6 +72,37 @@ jobs:
           uv run kterminal lab provision
           uv run kterminal lab demo --days 3 --store postgres
 
+  dashboard:
+    name: Dashboard · types · tests · build · Caddy image
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: terminal/dashboard/package-lock.json
+      - name: Install (from the lock file)
+        run: npm ci --no-audit --no-fund
+      - name: Type-check
+        run: npm run typecheck
+      - name: Unit tests (vitest)
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Build the Caddy image (dashboard built inside it)
+        working-directory: terminal
+        run: docker build -f deploy/caddy/Dockerfile -t kterminal-caddy:ci .
+      - name: Smoke-test the Caddy image (configuration, SPA files)
+        working-directory: terminal
+        run: |
+          docker run --rm kterminal-caddy:ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --entrypoint sh kterminal-caddy:ci -c \
+            'test -s /srv/dashboard/index.html && ls /srv/dashboard/assets/*.js >/dev/null'
+
   container:
     name: Docker image · Compose · Caddy
     runs-on: ubuntu-latest

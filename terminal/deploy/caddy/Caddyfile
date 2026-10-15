@@ -1,5 +1,10 @@
-# K Terminal edge proxy: automatic HTTPS, security headers, TradingView allow-list.
-# KT_PUBLIC_DOMAIN=localhost uses Caddy's internal CA (local testing only).
+# K Terminal edge proxy: automatic HTTPS, security headers, the dashboard, the API
+# and the TradingView allow-list. KT_PUBLIC_DOMAIN=localhost uses Caddy's internal
+# CA (local testing only).
+#
+# The dashboard's static files are baked into the image (deploy/caddy/Dockerfile)
+# under /srv/dashboard; the API serves nothing static. Every /api/v1 route except
+# sign-in requires a session (docs/17-dashboard.md).
 
 {$KT_PUBLIC_DOMAIN:localhost} {
 	encode zstd gzip
@@ -9,6 +14,12 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
+		# The dashboard loads only its own scripts, styles and images and talks only
+		# to its own origin. React sets styles through the CSSOM, which needs no
+		# 'unsafe-inline'.
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		-Server
 	}
 
@@ -25,19 +36,25 @@
 		reverse_proxy api:8000
 	}
 
-	# Dashboard + authenticated API (Phase 8). Until authentication exists nothing
-	# else is published; operators reach the API over a VPN or SSH tunnel.
-	#
-	# handle /api/* {
-	# 	reverse_proxy api:8000
-	# }
-	# handle {
-	# 	root * /srv/dashboard
-	# 	try_files {path} /index.html
-	# 	file_server
-	# }
+	# The dashboard API (session cookie + CSRF token; see docs/17-dashboard.md) and
+	# the health probes.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /health/* {
+		reverse_proxy api:8000
+	}
 
+	# The dashboard: a single-page app. A path that is not a file is a client-side
+	# route and gets index.html. Hashed assets are cached for good; index.html never,
+	# so a new deployment is picked up on the next load.
 	handle {
-		respond 404
+		root * /srv/dashboard
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@shell not path /assets/*
+		header @shell Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
 	}
 }
