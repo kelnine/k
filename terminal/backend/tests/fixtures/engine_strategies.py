@@ -13,7 +13,9 @@ from kterminal.core.enums import OrderType
 from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.strategy_engine import (
+    PendingEntryView,
     PositionEvent,
+    PositionView,
     SessionString,
     SignalOutput,
     Strategy,
@@ -30,12 +32,14 @@ class Step(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     bar: int
-    action: Literal["long", "short", "exit_long", "exit_short", "move_sl"]
+    action: Literal["long", "short", "exit_long", "exit_short", "move_sl", "flatten"]
     entry: Decimal | None = None
     stop: Decimal | None = None
     target: Decimal | None = None
     order_type: OrderType = OrderType.MARKET
     session_close: bool = False
+    expires_after_bars: int | None = None
+    reason: str | None = None  # flatten: the exit reason (default SESSION_CLOSE)
 
 
 class PlanParams(StrategyParams):
@@ -66,6 +70,8 @@ class Planned(Strategy[PlanParams]):
             return ctx.exit_long(session_close=step.session_close)
         if step.action == "exit_short":
             return ctx.exit_short(session_close=step.session_close)
+        if step.action == "flatten":
+            return ctx.flatten() if step.reason is None else ctx.flatten(reason=step.reason)
         if step.stop is None:
             raise ValueError(f"{step.action} needs a stop")
         if step.action == "move_sl":
@@ -76,7 +82,25 @@ class Planned(Strategy[PlanParams]):
             take_profit=step.target,
             entry=step.entry,
             order_type=step.order_type,
+            expires_after_bars=step.expires_after_bars,
         )
+
+
+class Probe(Planned):
+    """``Planned``, recording what the SDK showed it on every bar, warm-up included:
+    ``(warming_up, pending_entry, position)``."""
+
+    meta = StrategyMeta(id="probe", name="Probe", version="1.0.0", warmup_bars=0)
+    Params = PlanParams
+
+    def on_start(self) -> None:
+        super().on_start()
+        self.seen: list[tuple[bool, PendingEntryView | None, PositionView | None]] = []
+
+    def on_bar(self, bar: Bar) -> SignalOutput:
+        ctx = self.ctx
+        self.seen.append((ctx.warming_up, ctx.pending_entry, ctx.position))
+        return super().on_bar(bar)
 
 
 class Recorder(Strategy[NoParams]):

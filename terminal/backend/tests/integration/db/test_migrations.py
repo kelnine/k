@@ -36,7 +36,7 @@ async def _tables(engine: AsyncEngine) -> dict[str, str]:
 
 async def test_upgrade_downgrade_upgrade_round_trip(migrated_url: str, engine: AsyncEngine) -> None:
     head = migrate.head_revision()
-    assert head == "0002"
+    assert head == "0003"
     assert await migrate.current(migrated_url) == head
 
     tables = await _tables(engine)
@@ -124,6 +124,45 @@ async def test_0002_backfills_the_strategy_instance_of_existing_decisions(
             owner = await conn.scalar(text("SELECT strategy_instance_id FROM risk_decisions"))
         assert owner == "migration_probe"
         assert await migrate.check(migrated_url) == []
+    finally:  # leave a clean schema at head for the other tests
+        await reset_schema(migrated_url)
+        await migrate.upgrade(migrated_url)
+
+
+async def test_0003_accepts_flatten_signals_and_refuses_to_drop_them(
+    migrated_url: str, engine: AsyncEngine
+) -> None:
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+            await seed_catalog(session, "fp-migration-0003")
+            version_id, _ = await seed_lab_subject(session, "flatten_probe")
+            await insert_signal(
+                session,
+                instance_id="flatten_probe",
+                version_id=version_id,
+                action="FLATTEN",
+                entry=None,
+                stop_loss=None,
+                take_profit=None,
+            )
+        with pytest.raises(Exception, match="FLATTEN"):
+            await migrate.downgrade(migrated_url, "0002")
+        assert await migrate.current(migrated_url) == "0003"
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM signals WHERE action = 'FLATTEN'"))
+        await migrate.downgrade(migrated_url, "0002")
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            with pytest.raises(Exception, match="ck_signals_action"):
+                async with session.begin():
+                    await insert_signal(
+                        session,
+                        instance_id="flatten_probe",
+                        version_id=version_id,
+                        action="FLATTEN",
+                        entry=None,
+                        stop_loss=None,
+                        take_profit=None,
+                    )
     finally:  # leave a clean schema at head for the other tests
         await reset_schema(migrated_url)
         await migrate.upgrade(migrated_url)
