@@ -83,7 +83,7 @@ start a new session (16.6) so its instances are primed.
   kill switches) and the open session's accounts with balances and trade
   counts.
 * `kterminal paper sessions` — every forward session, newest first.
-* The dashboard reads the same document from `system_state['paper.runtime']`
+* The dashboard ([17](17-dashboard.md)) reads the same document from `system_state['paper.runtime']`
   (schema in [12.7](12-strategy-lab.md#runtime-status-system_statepaperruntime)).
 
 | Instrument state | Meaning |

@@ -1,0 +1,53 @@
+# S8 · Combined SMC Suite (script 4), PSAR section — 200 EMA filtered Parabolic SAR.
+# Strategy: backend/src/kterminal/strategies/psar_ema200 (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  fill at the next open; skip the entry when that open is already past the stop
+#   D4  script 4: stop and reverse on the flip (reverse only when the new side's
+#       filters pass, as the script does; otherwise flat)
+#   D5  main: exit/reverse on the closed-candle flip, protective stop fixed at the
+#       SAR printed on the signal bar; variant: stop trailed every bar on the
+#       projected SAR (MOVE_SL, never widening)
+#   D10 15m, plus a 5m variant, all 14 instruments, one Paper 50K account per variant
+#       and timeframe, one position per instrument (max_open_positions: 14)
+#   D12 the PSAR + channel confluence alert stays levels-only (not run)
+#   D13 script defaults
+- id: psar_ema200_main_15m
+  strategy: psar_ema200
+  name: PSAR 200 EMA · stop at the signal bar's SAR · 15m
+  description: Script 4 PSAR defaults; protective stop fixed at the SAR printed on the signal bar (D5).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { stop_mode: sar }
+  tags: [pine-port, script-4, s8, main]
+  account: { max_open_positions: 14 }
+
+- id: psar_ema200_main_5m
+  strategy: psar_ema200
+  name: PSAR 200 EMA · stop at the signal bar's SAR · 5m
+  description: Script 4 PSAR defaults on 5m (D10 variant); stop fixed at the signal bar's SAR (D5).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { stop_mode: sar }
+  tags: [pine-port, script-4, s8, variant]
+  account: { max_open_positions: 14 }
+
+- id: psar_ema200_trail_15m
+  strategy: psar_ema200
+  name: PSAR 200 EMA · stop trailed on the projected SAR · 15m
+  description: Script 4 PSAR defaults; the stop follows TradingView's projected SAR every bar (D5 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { stop_mode: trail }
+  tags: [pine-port, script-4, s8, variant]
+  account: { max_open_positions: 14 }
+
+- id: psar_ema200_trail_5m
+  strategy: psar_ema200
+  name: PSAR 200 EMA · stop trailed on the projected SAR · 5m
+  description: Script 4 PSAR defaults on 5m; the stop follows the projected SAR every bar (D5 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { stop_mode: trail }
+  tags: [pine-port, script-4, s8, variant]
+  account: { max_open_positions: 14 }

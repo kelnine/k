@@ -1,0 +1,14 @@
+# Build context of deploy/caddy/Dockerfile is terminal/: send only what the image
+# needs (the dashboard sources and the Caddyfile), never node_modules, builds,
+# secrets or the backend.
+*
+!dashboard/package.json
+!dashboard/package-lock.json
+!dashboard/index.html
+!dashboard/tsconfig*.json
+!dashboard/vite.config.ts
+!dashboard/public/
+!dashboard/src/
+!deploy/caddy/Caddyfile
+dashboard/node_modules
+dashboard/dist

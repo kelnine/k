@@ -67,3 +67,25 @@ def _request_id_from(scope: Scope) -> str:
                 return candidate
             break
     return str(uuid7())
+
+
+class NoStoreMiddleware:
+    """``Cache-Control: no-store`` on every API response: account data must never be
+    kept by the browser or an intermediary cache."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope["path"].startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_no_store(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if "cache-control" not in headers:
+                    headers.append("Cache-Control", "no-store")
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)

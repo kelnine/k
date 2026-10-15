@@ -1,6 +1,8 @@
 # K Terminal — production-style stack.
 #
 #   make secrets     # once: generates deploy/secrets/postgres_password
+#   python3 -c "import secrets; print(secrets.token_urlsafe(48))" > secrets/session_secret
+#                    # once: signs dashboard sessions (docs/17-dashboard.md)
 #   make up          # build + start
 #
 # Only Caddy publishes ports. PostgreSQL lives on an internal network with no
@@ -18,7 +20,7 @@ x-backend: &backend
   tmpfs: [/tmp]
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
-  environment:
+  environment: &backend-env
     KT_ENVIRONMENT: ${KT_ENVIRONMENT:-production}
     KT_LOGGING__FORMAT: ${KT_LOGGING__FORMAT:-json}
     KT_LOGGING__LEVEL: ${KT_LOGGING__LEVEL:-INFO}
@@ -68,6 +70,12 @@ services:
   api:
     <<: *backend
     command: ["api"]
+    environment:
+      <<: *backend-env
+      # Dashboard sessions: signing secret (Docker secret), HTTPS-only cookies.
+      KT_AUTH__SESSION_SECRET_FILE: /run/secrets/session_secret
+      KT_AUTH__COOKIE_SECURE: "true"
+    secrets: [postgres_password, session_secret]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
       interval: 15s
@@ -87,8 +95,11 @@ services:
     command: ["worker"]
     networks: [data, egress]
 
-  caddy:
-    image: caddy:2-alpine
+  caddy:                   # edge proxy; serves the dashboard built into its image
+    build:
+      context: ..
+      dockerfile: deploy/caddy/Dockerfile
+    image: kterminal-caddy:local
     restart: unless-stopped
     environment:
       KT_PUBLIC_DOMAIN: ${KT_PUBLIC_DOMAIN:-localhost}
@@ -97,7 +108,6 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on: [api]
@@ -115,6 +125,8 @@ networks:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password
+  session_secret:
+    file: ./secrets/session_secret
 
 volumes:
   pgdata:
