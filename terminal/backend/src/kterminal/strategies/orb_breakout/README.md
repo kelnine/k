@@ -27,8 +27,9 @@ Each entry carries in `metadata`: `pine_signal` (`orLong` / `orShort`),
 `close`, `or_high`, `or_low`, `or_mid` (`math.avg`, L135), `or_start` (open
 time of the bar that started the range), `stale_range`, `ema_fast`,
 `ema_slow` (null while na), `or_filter`, `stop_mode`, `target_r`, `flatten_at`
-(the trade's flatten instant) and `bar_index`. Flatten exits carry `exit:
-flatten`, `flatten_time` and `flatten_at`.
+(the trade's flatten instant) and `bar_index`. Flatten signals (`FLATTEN`,
+from `ctx.flatten()`) carry `exit: flatten`, `flatten_time` and `flatten_at`
+(the instant they flatten for).
 
 ## Params
 
@@ -69,11 +70,11 @@ instruments (one position per instrument).
 |---|---|
 | Entries fill at the **next bar's open**; stop and target stay at the levels computed from the signal close | The lab's fill model (doc 01 §1.7, doc 13 D3); the user compares against the marker on the signal bar |
 | Stop at the other side of the opening range (`range`) or its midpoint (`midpoint`); target `target_r` × \|close − stop\| from the signal close. Both exact in decimal, rounded to the tick, ties away from zero | Doc 13 D5: the script defines no stop or target; the lab needs a stop to size the trade |
-| A trade is closed with exit reason `SESSION_CLOSE` at the open of the first bar at or after `flatten_time` of the day it was **signalled**: the exit is decided on the bar whose close reaches that time (15:55 on 5m, filled at 16:00). A fill that a data gap delayed past that time is closed at once | Doc 13 D5 "flat by 16:00 (16:30 London)" |
+| Flat by `flatten_time` with exit reason `SESSION_CLOSE`: every day, on the first bar whose close reaches the flatten instant (15:55 on 5m, filled at the 16:00 open), the strategy sends `ctx.flatten()`, whatever `ctx.position` says. It closes the trade wherever it is still open — the theoretical book, the account or both — and changes nothing where both are flat (the signal is then recorded `IGNORED`, reason `NOTHING_TO_FLATTEN`). After a data gap it is sent on the first bar past the instant, which also closes at once a fill the gap delayed past it | Doc 13 D5 "flat by 16:00 (16:30 London)"; a position the account kept after the book closed it must not stay open overnight (doc 13 P7/P8) |
 | A signal whose next-open fill would land at or after `flatten_time` (the bar closing at 16:00) is not traded: a persisted `NO_TRADE` with reason `FILL_AT_OR_AFTER_FLATTEN` and the script's metadata. Its counter is used up | Doc 13 D5 / spec: "skip signals whose fill would land at or after 16:00" |
 | An entry whose fill bar opens at or beyond its stop or target is skipped (`ORDER_CANCELLED`, `OPEN_BEYOND_STOP` / `OPEN_BEYOND_TARGET`; meta `skip_entry_beyond_levels`) | Doc 13 D3 |
 | A stop or target that is not beyond the rounded entry is not traded (`STOP_WRONG_SIDE` / `TARGET_WRONG_SIDE`) | Doc 13 D3. Cannot happen with these stops (the close is strictly beyond the range) and a target_r > 0 on a one-tick risk; kept as a guard |
-| An opposite signal while in a trade is ignored (meta `on_opposite_signal: ignore`); a same-direction signal is ignored too (one position per instrument) | Doc 13 D4 for script 8. With either stop the opposite breakout can only close beyond the stop, so the trade is already stopped out when it is decided: the policy never changes a trade in the book (tested). An account filling at bid/ask can still hold a trade the book closed |
+| An opposite signal while in a trade is ignored (meta `on_opposite_signal: ignore`); a same-direction signal is ignored too (one position per instrument) | Doc 13 D4 for script 8. With either stop the opposite breakout can only close beyond the stop, so the trade is already stopped out when it is decided: the policy never changes a trade in the book (tested). The book resolves on the account's bid/ask (doc 05 §5.3), so the account has closed it too |
 
 ## Parity notes
 
@@ -103,5 +104,5 @@ instruments (one position per instrument).
 
 `meta.warmup_bars = 300`: EMA20 converges (its seed weighs < 1e-12 after 300
 bars) and on 5m the warm-up reaches back about 25 hours, so the current or
-the previous opening range is always seen. The forward runtime's default
-`forward.warmup_days: 10` covers it.
+the previous opening range is always seen. `forward.warmup_days` (16 in
+`lab.yaml`, 10 by default) covers it.

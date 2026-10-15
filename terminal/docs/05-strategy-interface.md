@@ -24,7 +24,7 @@ class Signal(BaseModel, frozen=True, extra="forbid"):
     symbol: str                     # canonical instrument symbol, e.g. "XAUUSD", "MNQ", "NEARUSD"
     timeframe: str                  # canonical: "1m" "5m" "15m" "1h" "4h" "1D" (TradingView/MT5 spellings accepted)
     timestamp: datetime             # decision time, UTC = close time of the evaluated bar
-    signal: SignalAction            # LONG SHORT EXIT_LONG EXIT_SHORT MOVE_SL NO_TRADE
+    signal: SignalAction            # LONG SHORT EXIT_LONG EXIT_SHORT MOVE_SL NO_TRADE FLATTEN
     entry: Decimal | None           # reference price (market) or limit/stop price
     stop_loss: Decimal | None
     take_profit: Decimal | None
@@ -57,7 +57,8 @@ is ever routed; one that fails is rejected as `INVALID_SIGNAL`.
 |---|---|---|---|---|
 | `LONG` | required | **required** | optional | `stop_loss < entry`; `take_profit > entry` if set |
 | `SHORT` | required | **required** | optional | `stop_loss > entry`; `take_profit < entry` if set |
-| `EXIT_LONG` / `EXIT_SHORT` | optional (reference) | — | — | Closes this strategy's position on `symbol` |
+| `EXIT_LONG` / `EXIT_SHORT` | optional (reference) | — | — | Closes this strategy's position on `symbol` (or cancels its resting entry in that direction) |
+| `FLATTEN` | optional (reference) | — | — | Closes whatever this strategy holds on `symbol`, in either direction, and cancels its resting entry — in the book and the account alike (5.3) |
 | `MOVE_SL` | — | **required** (new stop) | optional (new target) | Must not widen risk: the book and every account refuse it (`STOP_WIDENING_NOT_ALLOWED`) |
 | `NO_TRADE` | — | — | — | `reason` recommended |
 
@@ -137,10 +138,12 @@ class Strategy[P: StrategyParams](ABC):
 | `ctx.bar_index` | Index of the evaluated bar among every primary bar the instance has seen, warm-up included: 0 on the first, like Pine's `bar_index`; not capped at the 5,000-bar series length |
 | `ctx.periods.previous("D")`, `ctx.periods.current("W")` | Previous / current trading day, week and month (`"D"`, `"W"`, `"M"`) of the instrument as `PeriodBar` (open, high, low, close, volume, start), built from the primary bars on its trading-day rule — PDH is `ctx.periods.previous("D").high` (5.2.2) |
 | `ctx.position` | This instance's *theoretical* position on the symbol (5.3) or `None` |
+| `ctx.pending_entry` | The theoretical book's entry order on the symbol that has not filled, expired or been cancelled yet, or `None`: a `PendingEntryView` with `direction`, `order_type`, `entry`, `stop_loss`, `take_profit` (on the account's tick grid in the lab), `placed_at`, `bars_waited`, `expires_after_bars` and the `signal` that placed it. Cancel a resting long with `ctx.exit_long()` |
+| `ctx.warming_up` | `True` while the runner replays warm-up bars: whatever the strategy returns is discarded and the book stays flat. Lets a strategy skip work only live trading needs |
 | `ctx.window("ny_orb_15")`, `ctx.in_window(id)` | Configured session windows (ORB ranges, London/New York sessions, kill zones) with DST-correct `window_on(date)`, `window_at(ts)`, `contains(ts)`. Only windows declared in `meta.sessions` (or used by the session classification) are available, so every window a strategy depends on is part of its version |
 | `ctx.in_session(s, tz)`, `ctx.session_started(s, tz)`, `ctx.session_ends(s, tz)` | Pine session strings kept as parameters, e.g. `"2000-0200:1234567"` in `"America/New_York"`: is the evaluated bar inside, is it the first bar inside after a bar outside, is it the last bar of the window (5.2.3) |
 | `ctx.trading_day()`, `ctx.session()` | Trading day per the instrument's rollover rule (e.g. 17:00 New York) and the session label (`asia_session` / `london_session` / `ny_session`) |
-| `ctx.long(...)`, `ctx.short(...)`, `ctx.exit_long()`, `ctx.exit_short()`, `ctx.move_sl(...)`, `ctx.no_trade(reason)` | Signal builders: fill identity and timestamps, default `entry` to the current close, round prices to the tick. `ctx.exit_long(session_close=True)` records a time-based exit with the exit reason `SESSION_CLOSE` |
+| `ctx.long(...)`, `ctx.short(...)`, `ctx.exit_long()`, `ctx.exit_short()`, `ctx.flatten()`, `ctx.move_sl(...)`, `ctx.no_trade(reason)` | Signal builders: fill identity and timestamps, default `entry` to the current close, round prices to the tick. `ctx.flatten(reason="SESSION_CLOSE")` is the time exit: it closes whatever the instance holds on the symbol — in the book *and* the account, also when the book is already flat — and cancels its resting entry (5.3). `ctx.exit_long(session_close=True)` records a directional exit with the exit reason `SESSION_CLOSE` |
 | `ctx.log` | Logger bound with strategy/instrument/timeframe |
 | `ctx.rng` | Seeded NumPy generator (deterministic per instance and instrument) |
 
@@ -214,7 +217,7 @@ class OrbParams(StrategyParams):
 
 if ctx.session_started(p.window, p.timezone): ...        # inSess and not inSess[1]
 if ctx.session_ends(p.window, p.timezone):                # last bar of the window
-    return ctx.exit_long(session_close=True)             # exit reason SESSION_CLOSE
+    return ctx.flatten()                                 # exit reason SESSION_CLOSE
 in_session(ts, "2000-0200", "America/New_York", days=":1234567")   # pure function
 ```
 
@@ -259,11 +262,47 @@ in_session(ts, "2000-0200", "America/New_York", days=":1234567")   # pure functi
 
 Each strategy instance keeps a theoretical position — the position it would
 have if every one of its signals were executed, with SL/TP evaluated on bars,
-exactly like Pine's strategy tester. This lets a strategy reason about "am I
-in a trade?" without knowing about accounts. Accounts can diverge (the risk
-engine may reject an entry on one account but not another); the router
-applies `EXIT_*` and `MOVE_SL` only to account positions that actually exist
-for that strategy and records "no matching position" otherwise.
+like Pine's strategy tester. This lets a strategy reason about "am I in a
+trade?" (`ctx.position`) and "is my order still resting?"
+(`ctx.pending_entry`) without knowing about accounts.
+
+**The book resolves like the account** (doc 13 P8). In the lab and in forward
+sessions the runner gives each book its account's execution model
+(`BookExecution`, `kterminal.strategy_engine.fills`): the book advances on the
+same base (1m) bars as the account, with the account's bid/ask, slippage and
+tick rounding from the instance's cost model — the account calls the same
+functions — and refuses an entry the account would refuse whatever its
+balance: a data-only listing (`NOT_TRADABLE`), a market closed at the decision
+(`MARKET_CLOSED`), a stop or target not beyond the price the entry is placed
+at (`STOP_WRONG_SIDE` / `TARGET_WRONG_SIDE`). A target the mid touches by less
+than half the spread therefore closes neither, and a limit fills in both only
+when the ask (a buy) or the bid (a sale) reaches it. `ctx.position` is what the
+account holds unless the account refused something for risk reasons (sizing,
+limits, an inactive account, a kill switch); the lab checks that after every batch
+([doc 12 §12.8](12-strategy-lab.md#128-bookaccount-consistency)). Events of the
+base bars inside a primary bar reach `on_position_event` when that primary bar
+closes, with the base bar's time (a stop hit in the 10:07 minute closes at
+10:08). The book reports nothing to accounts and the strategy never sees a
+balance; `BookExecution` is plain data, so the subprocess host passes it to its
+process. Without an execution model — `run_strategy` without `execution=`,
+the golden tests — the book trades the primary bars at their mid prices,
+without costs or rounding.
+
+Accounts can still diverge (the risk engine may reject an entry on one account
+but not another); the router applies `EXIT_*`, `FLATTEN` and `MOVE_SL` only to
+account positions that actually exist for that strategy and records "no
+matching position" otherwise (`FLATTEN`: nothing at all).
+
+**The book's answer is kept.** `TheoreticalBook.apply()` returns why a signal
+changed nothing (`POSITION_EXISTS`, `OPPOSITE_POSITION_OPEN`,
+`NO_MATCHING_POSITION`, `NOTHING_TO_FLATTEN`, `NO_POSITION`,
+`STOP_WIDENING_NOT_ALLOWED` or a venue refusal above). The runner returns it
+with the signal (`RunnerOutput.book_reasons`, aligned with `signals`;
+`run_strategy(...).ignored` in tests) and the lab records a signal that had no
+effect anywhere — the book ignored it and no account approved it — as
+`IGNORED` with that code in `reject_code` and its meaning in `reject_detail`
+(doc 12 §12.5). Every signal is still routed to the accounts: an exit the book
+ignores closes a position the account holds.
 
 * `LONG` while flat → open long. `LONG` while long → ignored unless
   `max_pyramiding > 1`. `LONG` while short → reverse (`on_opposite_signal`):
@@ -288,6 +327,22 @@ for that strategy and records "no matching position" otherwise.
 * **Session-close exits:** an exit built with `ctx.exit_long(session_close=True)`
   (its `reason` is `SESSION_CLOSE`) closes with the exit reason
   `SESSION_CLOSE` instead of `SIGNAL_EXIT`.
+* **Flatten:** `FLATTEN` (`ctx.flatten(reason="SESSION_CLOSE")`) closes the
+  position on the symbol at the next base bar's open, whatever its direction,
+  and cancels the resting entry (account orders `CANCELLED_BY_FLATTEN`). The
+  book and every account of the instance apply it to what *they* hold, so it
+  closes a position the account kept while the book is already flat — the
+  reason time exits should use it rather than an `EXIT_*` built from
+  `ctx.position`. Where there is nothing to close or cancel it changes
+  nothing and writes no decision row; when neither the book nor an account had
+  anything the signal is recorded `IGNORED` (`NOTHING_TO_FLATTEN`). The exit
+  reason is `SESSION_CLOSE` for the default `reason`, `SIGNAL_EXIT` for any
+  other. Like every exit it is permitted under a kill switch; a kill switch's
+  own pending flatten (`close_positions`) keeps its `KILL_SWITCH` reason.
+  Returned before an entry on the same bar it acts like the replace rule above.
+* **Warm-up:** while the runner replays warm-up bars (`ctx.warming_up`) the
+  book stays flat and signals are discarded, so a strategy that armed an order
+  in warm-up sees `ctx.pending_entry is None` once live.
 * **Level guard** (`skip_entry_beyond_levels`, off by default): a MARKET entry
   whose fill bar opens at or beyond its stop or its target is skipped — the
   book reports `ORDER_CANCELLED` with `detail` `OPEN_BEYOND_STOP` /
@@ -295,9 +350,9 @@ for that strategy and records "no matching position" otherwise.
   cancels its order with that code at the open. Both compare the bar's (mid)
   open with the signal's levels. A market reversal still exits. This is the
   doc 13 D3 rule for signals priced at the signal bar's close.
-* The paper accounts apply exactly the same rules (plus spread, slippage and
-  costs), so a strategy's `ctx.position` and its account agree unless the
-  account rejected something.
+* The paper accounts apply exactly the same rules (plus commissions and
+  holding costs, which move the balance, not the position), so a strategy's
+  `ctx.position` and its account agree unless the account rejected something.
 
 `on_opposite_signal` and `skip_entry_beyond_levels` come from the definition's
 meta; an instance in `lab.yaml` may override either, and the override reaches
@@ -339,8 +394,11 @@ class DemoSmaCross(Strategy[SmaCrossParams]):
   start-up (plus installed packages exposing the `kterminal.strategies` entry
   point); `@register_strategy` validates the class and registers its
   definition. Duplicate ids are an error. `kterminal strategies list` shows
-  them.
-* **Instances:** `terminal/config/lab.yaml` declares instances — one
+  them, followed by every instance forward sessions run — `lab.yaml` and
+  `instances.d/`, read by the same loader as `kterminal paper start`, each
+  with the file it comes from.
+* **Instances:** `terminal/config/lab.yaml` declares instances (forward
+  sessions also read `config/instances.d/*.yaml`, doc 12 §12.7) — one
   definition can run as many instances with different parameters,
   instruments, timeframes or accounts. Each instance is its own lab subject.
 * **Versions:** for every instance the framework builds a canonical document
@@ -381,10 +439,14 @@ its own account; everything downstream is identical.
 * `kterminal.strategy_engine.testing.run_strategy(StrategyCls, instrument=…,
   bars=…, timeframe="5m", params={…})` runs a strategy through the real runner
   (validation, theoretical book, fault handling) outside the global registry
-  and returns its signals, rejected outputs, position events and any fault —
-  the basis for **golden tests** (`tests/` inside the strategy folder).
+  and returns its signals, rejected outputs, position events, the signals the
+  book ignored with its reason (`ignored`) and any fault — the basis for
+  **golden tests** (`tests/` inside the strategy folder).
   `on_opposite_signal=` and `skip_entry_beyond_levels=` set the instance's
-  position rules, as `lab.yaml` would.
+  position rules, as `lab.yaml` would. The book trades the primary bars at mid
+  prices; `execution=BookExecution(VenuePrices(costs, listing), M1, calendar)`
+  makes it resolve like an account on the base bars instead (`bars` must then
+  include them, as `aggregate_stream` produces).
 * **Parity tests** compare a Python port with TradingView: export the Pine
   strategy's *List of Trades* (CSV) and the same chart's bars, then assert
   entry/exit times match and prices match within one tick (Phase 3).
@@ -412,6 +474,8 @@ its own account; everything downstream is identical.
 | Session / `time()` filters | Declare the window in `meta.sessions` and use `ctx.in_window(id)` — like `time()`, it tests the bar's open time, DST-correct |
 | `input.session` strings, `time(timeframe.period, sess, tz)` | Keep the string as a `SessionString` param and test it with `ctx.in_session(p.window, tz)`; `inSess and not inSess[1]` is `ctx.session_started(...)`; day masks use Pine numbering (5.2.3) |
 | A new signal replaces the open trade (`strategy.close` then `strategy.entry` on one bar) | Return `ctx.exit_long()` **then** the new entry from the same bar: both fill at the next open (5.3) |
-| Flatten at a clock time | `ctx.exit_long(session_close=True)` on the last bar of the window (`ctx.session_ends`): recorded as `SESSION_CLOSE` |
+| Flatten at a clock time | `ctx.flatten()` on the last bar of the window (`ctx.session_ends`), whatever `ctx.position` says: recorded as `SESSION_CLOSE`, closes what the book *and* the account hold, a no-op when both are flat (5.3) |
+| Cancel a resting order (`strategy.cancel`) | `ctx.exit_long()` / `ctx.exit_short()` while `ctx.pending_entry` shows the order; `ctx.flatten()` cancels it in either direction |
+| Skip work while history loads | `ctx.warming_up` is `True` during the warm-up replay (signals are discarded then anyway) |
 | Entry priced at the signal bar's close, skipped once price has passed its levels | `skip_entry_beyond_levels` in meta or per instance: the market entry is cancelled when its fill bar opens at or beyond the stop or target (5.3) |
 | `syminfo.mintick` rounding | `ctx.instrument.tick_size` |

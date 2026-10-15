@@ -41,10 +41,10 @@ inX[1]`, L652-653). Everything runs on closed 1m bars.
 | Displacement FVG | L544-550 / L571-577: `bullDisp`, its first candle at or after `extBar` (`bar_index − 2 >= extBar`) and, once the MSS happened, its middle candle `<= mssBar + 3`; the newest one wins; dropped when a close goes beyond its far edge | Same |
 | MSS | L551-558 / L578-585: a close beyond the `f_pivotBefore(extBar)` pivot | Same |
 | Arming | L559-567 / L586-594: MSS, a live FVG with `fvgBar <= mssBar + 3`, and (B) back inside → limit at `fvgTop` (long) / `fvgBot` (short), or the FVG's 50% (`FVG 50% (CE)`); stop `ext ∓ slBuf`; target the opposite level when it is beyond the entry by ≥ `minRR` × risk, else `entry ± RR × risk` | A **LIMIT** entry with these levels at the arming bar's close (metadata `trigger` `A long setup` / `B short setup`, the script's alertcondition titles; `pine_signal` `evA`/`evB`) |
-| Fill | L496-510: from the next bar, `low <= entry` fills at `min(open, entry)` (short mirrors); a stop touched on the fill bar is a loss | The book and the paper accounts fill resting limits the same way (the accounts on bid/ask) |
-| Missed | L502, L511-512: the target traded before the fill → state 4 | `EXIT_*` of the resting order on that bar (metadata `trigger` `A missed` / `B missed`) |
+| Fill | L496-510: from the next bar, `low <= entry` fills at `min(open, entry)` (short mirrors); a stop touched on the fill bar is a loss | The book and the paper accounts fill resting limits the same way, both on the account's bid/ask (doc 05 §5.3) |
+| Missed | L502, L511-512: the target traded before the fill → state 4 | `EXIT_*` of the book's resting order (`ctx.pending_entry`) on that bar (metadata `trigger` `A missed` / `B missed`) |
 | One cycle per window | After a fill or a miss the model idles until its next window start (L489-490) | Same (state 3 is kept until the next start; the script's 3 → 4 changes nothing it reads) |
-| Trade exits | L452-464: stop first, then target, from the bar after the fill; L470-472: a trade still open at the model's **next window start** is closed "neutral" (no W/L) | The book's / account's bracket; at the next window start an `EXIT_*` with reason `SESSION_CLOSE` (metadata `trigger` `closed`, `pine_signal` `closeTrade(0)`), filled at the next open |
+| Trade exits | L452-464: stop first, then target, from the bar after the fill; L470-472: a trade still open at the model's **next window start** is closed "neutral" (no W/L) | The book's / account's bracket; at the next window start `ctx.flatten()` with reason `SESSION_CLOSE` (metadata `trigger` `closed`, `pine_signal` `closeTrade(0)`), filled at the next open — sent whenever the previous cycle had a fill (below) |
 
 Entry metadata: the window's levels (`range_high`, `range_low`; A:
 `level_high_pivot_time`, `level_low_pivot_time`, `levels_from_15m_bar`; B:
@@ -94,11 +94,12 @@ implemented but not instantiated (D11: after the parity check).
 
 | Deviation | Reason |
 |---|---|
-| The script's cancels become `EXIT_*` signals of the resting order: "missed" on the bar the target trades, and the window end; the order also carries `expires_after_bars` = the bars left in the window, so book and accounts drop it after the window's last bar without a signal | The lab has no such rules. The expiry is the script's "last fill check on the last in-window bar" (L491-496), and keeps the accounts (which fill on bid/ask and may still be waiting when the book has filled) from holding an order past the window |
+| The script's cancels become `EXIT_*` signals of the resting order the theoretical book holds (`ctx.pending_entry`): "missed" on the bar the target trades, and the window end; the order also carries `expires_after_bars` = the bars left in the window, so book and accounts drop it after the window's last bar without a signal. No cancel is sent when the book holds no order (a setup armed during warm-up, whose order was never placed, or an entry the book refused) | The lab has no such rules. The expiry is the script's "last fill check on the last in-window bar" (L491-496) |
+| Time exits — the next window start, the D6 variant's window end and a late fill (below) — are `ctx.flatten()`, sent whenever the window's cycle had a fill, whatever `ctx.position` says: they close the trade wherever it is still open (book, account or both) and change nothing where it already closed (the signal is then recorded `IGNORED` with the book's reason `NOTHING_TO_FLATTEN`) | A position the account kept after the book closed it must not stay open past the script's exit (doc 13 P7/P8) |
 | A setup armed on the window's last bar places no order (persisted `NO_TRADE` `ARMED_ON_LAST_WINDOW_BAR`) | The script cancels it on the next bar before any fill check |
 | A setup whose stop or target is not beyond the entry after tick rounding is not traded (persisted `NO_TRADE` `STOP_WRONG_SIDE` / `TARGET_WRONG_SIDE` / `LEVELS_NA` / `LEVELS_NOT_POSITIVE`); the script's state machine continues as if it were placed | Doc 13 D3; possible only with the CE entry (a half-tick 50% level) |
 | Levels are rounded to the tick on the signal (the script uses the unrounded CE level and `entry ± RR × risk`) | Lab orders are on the tick grid; `script_*` metadata keeps the script's values |
-| Missing bars: when the window's last bars are missing, the expiry (counted in bars) outlives the window, so the strategy cancels on the first bar after it; if the book fills the order on that bar, the position is closed at the next open (`SESSION_CLOSE`, `trigger` `late fill`) | Keeps the book on the script's state machine |
+| Missing bars: when the window's last bars are missing, the expiry (counted in bars) outlives the window, so the strategy cancels on the first bar after it; if the book fills the order on that bar, the position is flattened at the next open (`SESSION_CLOSE`, `trigger` `late fill`) | Keeps the book on the script's state machine |
 | Rounded CE levels: a limit rounded towards the market can fill a tick before the script would; the fill is kept while the script still waits, and closed at the next open (`late fill`) if the script drops the setup on that bar instead ("missed"). If the script fills where the book did not (a bar off the tick grid), the order is cancelled (`fill not matched`) | The order must sit on the tick grid; the script's state machine stays authoritative |
 | The neutral close at the next window start is a real exit at the next bar's open, with P&L | The script closes without a price and leaves it out of W/L (L425-427, L606) |
 | `after_window: flat` closes a filled trade on the window's last bar (at the next open), or on the first bar after the window if its last bar is missing | Doc 13 D6 variant; the script never closes at the window end |
@@ -107,14 +108,14 @@ implemented but not instantiated (D11: after the parity check).
 ## Parity notes
 
 * **Fills on bid/ask.** The script fills, stops and targets on the mid-price
-  touch. The theoretical book does too (so the strategy's state agrees with
-  it), but the paper accounts trigger limits, stops and targets on bid/ask:
-  a limit the mid just touches fills in the script and the book but not in
-  the account. The account then still holds the order until the window's
-  last bar (expiry) and may fill later; a target the mid touches by less than
-  half the spread closes the book's trade but not the account's, which then
-  runs to its own stop or target (the strategy's time exits only reach
-  positions the book holds; doc 13 P8 would resolve the book at bid/ask).
+  touch; the theoretical book and the paper accounts both resolve on the
+  account's bid/ask, on the same 1m bars (doc 13 P8), so `ctx.position` and
+  `ctx.pending_entry` are what the account holds. A limit the mid just
+  touches fills in the script but not in the lab: the script's state machine
+  moves on and the strategy cancels the resting order (`fill not matched`).
+  A target the mid touches by less than half the spread closes the script's
+  trade but neither the book's nor the account's, which run to their stop or
+  target or to the next window start, where `ctx.flatten()` closes them.
 * **Fill bar.** The script never takes profit on the fill bar (L453); the book
   and accounts do when the bar closes beyond the target, and a bar that opens
   beyond the target counts as a target before the stop. Both are rare on 1m.
@@ -143,11 +144,12 @@ implemented but not instantiated (D11: after the parity check).
 Model A: `meta.warmup_bars = 480` **15m** bars (the instance's largest
 timeframe), i.e. 7,215 1m bars, five days round the clock, for the 15m
 swing lists; Model B: 2,880 1m bars (two days) for the 08:00 range, the
-pivots and SMA20(body). Both fit the default `forward.warmup_days: 10`
-(about 7.3 calendar days for A on markets that close at weekends). Signals
-during warm-up are discarded: a setup armed then is not traded, and when it
-ends after the live start the strategy sends one cancel that finds no order
-(the account records `NO_MATCHING_POSITION`).
+pivots and SMA20(body). Both fit `forward.warmup_days` (16 in `lab.yaml`,
+10 by default; about 7.3 calendar days for A on markets that close at
+weekends). Signals during warm-up are discarded: a setup armed then is not
+traded, and as its order never reached the book (`ctx.pending_entry` is None)
+the strategy sends no cancel when the script drops or fills it after the live
+start.
 
 ## Licence
 

@@ -133,14 +133,6 @@ class ConsistencyReport:
         log = _log.info if divergence.explained_by is not None else _log.warning
         log("lab.book_divergence", **divergence.document())
 
-    def instance_counts(self, instance_id: str) -> dict[str, int]:
-        """This instance's divergent batches and episodes (for the runtime status)."""
-        return {
-            "divergent_batches": self.divergent_by_instance[instance_id],
-            "episodes": self.episodes_by_instance[instance_id],
-            "open": sum(1 for key in self._open if key[0] == instance_id),
-        }
-
     def summary(self) -> dict[str, Any]:
         """The report as plain JSON (stored in ``runs.summary["consistency"]``)."""
         return {
