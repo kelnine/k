@@ -68,7 +68,7 @@ AfterWindow = Literal["hold", "flat"]
 
 
 class SweepParams(StrategyParams):
-    """The script's General inputs used by models A and B (L39-44; Pine defaults and
+    """The script's General inputs used by models A and B (L37-42; Pine defaults and
     names) and the doc 13 D6 choice."""
 
     entry_mode: EntryMode = Field(
@@ -101,7 +101,7 @@ class SweepParams(StrategyParams):
 
 
 class ModelAParams(SweepParams):
-    """Model A's inputs (L46-50)."""
+    """Model A's inputs (L44-48)."""
 
     a_swing: int = Field(2, ge=1, le=10, description="aSwing: 15m swing strength")
     a_win: SessionString = Field("2000-0200", description="aWin: trade window (New York)")
@@ -112,7 +112,7 @@ class ModelAParams(SweepParams):
 
 
 class ModelBParams(SweepParams):
-    """Model B's inputs (L52-56)."""
+    """Model B's inputs (L50-54)."""
 
     b_range: SessionString = Field("0800-0900", description="bRange: range candle (New York)")
     b_win: SessionString = Field("0900-1200", description="bWin: trade window (New York)")
@@ -401,7 +401,7 @@ class IctModelA(SweepModelStrategy[ModelAParams]):
     def _engine_config(self, sl_buf: float) -> EngineConfig:
         p = self.params
         return EngineConfig(
-            need_back=False,  # L781
+            need_back=False,  # L783
             target_mode=p.a_tgt,
             rr=p.a_rr,
             min_rr=p.min_rr,

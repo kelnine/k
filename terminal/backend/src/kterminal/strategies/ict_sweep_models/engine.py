@@ -2,12 +2,12 @@
 
 A line-by-line port of ``terminal/pine/received/02_ict_sweep_order_flow_models.pine``:
 
-* :class:`SharedSeries` — the script's shared 1m series (L159-170): the 20-bar SMA of
+* :class:`SharedSeries` — the script's shared 1m series (L155-170): the 20-bar SMA of
   the candle body, the displacement fair value gaps ``bullDisp``/``bearDisp`` and the
   ``mssLen`` swing pivots stored with their pivot bar (``pHp/pHb``, ``pLp/pLb``, cap 100,
   L726-737) and searched by ``f_pivotBefore`` (L184-194);
-* :class:`SweepModel` — the ``SweepModel`` type (L128-148) and its ``run`` method
-  (L466-595), the eight-way state machine: wait for the sweep (0), swept and wait for
+* :class:`SweepModel` — the ``SweepModel`` type (L133-148) and its ``run`` method
+  (L466-595), its five-state machine: wait for the sweep (0), swept and wait for
   the MSS with a displacement FVG (1), limit armed and waiting for the fill (2), filled
   (3), idle until the next window start (4).
 
@@ -25,12 +25,12 @@ from typing import Literal
 from kterminal.indicators import PivotHigh, PivotLow, Sma, ge, gt, le, lt, na, nz
 
 PIVOT_CAP = 100  # pHp/pLp keep the newest 100 pivots (L728-737)
-AVG_BODY_LENGTH = 20  # avgBody = ta.sma(body, 20) (L163)
+AVG_BODY_LENGTH = 20  # avgBody = ta.sma(body, 20) (L159)
 
 EntryMode = Literal["FVG edge", "FVG 50% (CE)"]
 TargetMode = Literal["Opposite level", "Fixed RR"]
 
-# SweepModel.state (L132)
+# SweepModel.state (L137)
 WAIT_SWEEP = 0
 WAIT_MSS = 1
 ARMED = 2
@@ -42,7 +42,7 @@ NAN = math.nan
 
 @dataclass(frozen=True, slots=True)
 class BarState:
-    """One closed 1m bar with the script's shared series (L159-170)."""
+    """One closed 1m bar with the script's shared series (L155-170)."""
 
     index: int  # bar_index
     open: float
@@ -60,7 +60,7 @@ class BarState:
 
 
 class SharedSeries:
-    """The shared 1m series (L159-182) and the stored MSS pivots (L726-737).
+    """The shared 1m series (L155-173) and the stored MSS pivots (L726-737).
 
     ``update`` runs once per closed bar, before the models, like the script's global
     series and the top of its ``barstate.isconfirmed`` block.
@@ -94,14 +94,14 @@ class SharedSeries:
         self.pivot_lows: deque[tuple[float, int]] = deque(maxlen=PIVOT_CAP)
 
     def update(self, index: int, o: float, h: float, low: float, c: float) -> BarState:
-        body = abs(c - o)  # L162
-        avg_body = self._avg_body.update(body)  # L163
+        body = abs(c - o)  # L158
+        avg_body = self._avg_body.update(body)  # L159
         bar1, bar2 = self._bar1, self._bar2
         high2 = bar2[1] if bar2 is not None else NAN
         low2 = bar2[2] if bar2 is not None else NAN
         min_gap = self._min_gap
-        bull_gap = gt(low, high2) and ge(low - high2, min_gap)  # L164
-        bear_gap = lt(h, low2) and ge(low2 - h, min_gap)  # L165
+        bull_gap = gt(low, high2) and ge(low - high2, min_gap)  # L163
+        bear_gap = lt(h, low2) and ge(low2 - h, min_gap)  # L164
         if bar1 is not None:
             o1, c1, body1, avg1 = bar1[0], bar1[3], bar1[4], nz(bar1[5])
         else:
@@ -172,7 +172,7 @@ class Step:
 
 
 class SweepModel:
-    """The script's ``SweepModel`` (L128-148) with ``run`` (L466-595).
+    """The script's ``SweepModel`` (L133-148) with ``run`` (L466-595).
 
     Fields keep the script's names in snake case; ``ext_bar``, ``mss_bar`` and
     ``fvg_bar`` are ``None`` where Pine holds ``na``. Extra fields (``mss_level``,

@@ -26,4 +26,5 @@ accounts.
 | 16 | [Running paper trading](16-running-paper-trading.md) | Runbook: starting, watching, restarting and replacing forward paper sessions; the kill switch; troubleshooting |
 | 17 | [Dashboard](17-dashboard.md) | The web terminal: first user, sign-in and roles, pages, metrics, kill switches from the browser, the `/api/v1` read API, Caddy deployment |
 | S1·S7·S8 | [Ports: EliteAlgo, SuperTrend flip, PSAR](ports-s1-s7-s8.md) | The first Pine ports: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
+| S4·S5 | [Ports: ICT Sweep Models B and A](ports-s4-s5.md) | Script 2's sweep → MSS → displacement-FVG limit models: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | A | [Metric definitions](appendix-a-metrics.md) | Exact formulas used by analytics and the leaderboard |
