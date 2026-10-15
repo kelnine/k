@@ -202,8 +202,8 @@ class PsarEma200(Strategy[PsarEma200Params]):
         if na(projected) or projected <= 0:
             return None
         new_stop = self.ctx.instrument.round_price(Decimal(repr(projected)))
-        tighter = new_stop > position.stop_loss if position.is_long else new_stop < position.stop_loss
-        if not tighter:
+        current = position.stop_loss
+        if not (new_stop > current if position.is_long else new_stop < current):
             return None
         return self.ctx.move_sl(
             new_stop, reason="PSAR trail", metadata={"projected_sar": _num(projected)}

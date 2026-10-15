@@ -155,7 +155,8 @@ class EliteAlgoEmaConfluence(Strategy[EliteAlgoParams]):
         ema_trend = self._ema_trend.update(close)
         rsi = self._rsi.update(close)
         atr = self._atr.update(high, low, close)
-        vwap = self._vwap.update((high + low + close) / 3.0, float(bar.volume), self._new_day()).vwap
+        hlc3 = (high + low + close) / 3.0
+        vwap = self._vwap.update(hlc3, float(bar.volume), self._new_day()).vwap
         dmi = self._dmi.update(high, low, close)
         pulse_hist = self._pulse.update(close).hist
 
