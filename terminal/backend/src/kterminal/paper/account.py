@@ -7,7 +7,8 @@ timeframe bars with the venue profile's specification and costs, and keeps a
 ledger in which every balance change is an entry.
 
 Execution model (the same for every account, which is what makes lab
-comparisons fair):
+comparisons fair, and the same rules — :mod:`kterminal.strategy_engine.fills` — the
+instance's theoretical book resolves its orders with in the lab):
 
 * entries and signal exits fill at the next base bar's open as market orders:
   half the spread plus slippage against the account, rounded adversely to the
@@ -28,6 +29,9 @@ comparisons fair):
   (``OPEN_BEYOND_STOP`` / ``OPEN_BEYOND_TARGET``, on the bar's mid open like the
   book); an exit with reason ``SESSION_CLOSE`` is recorded as one; a ``MOVE_SL``
   that leaves the stop where it is writes no ``STOP_MOVED`` row;
+* ``FLATTEN`` closes the position on the symbol, whatever its direction, at the next
+  open and cancels the resting entry, under a kill switch too; with neither it is a
+  silent no-op (no decision row);
 * signal levels are put on the listing's tick grid, rounded against the
   account (the price an order gets is never better than requested);
 * commissions are charged per fill; funding (perpetuals) and swap (CFD/FX)
@@ -77,6 +81,14 @@ from kterminal.risk.checks import (
     passed,
 )
 from kterminal.risk.sizing import size_position
+from kterminal.strategy_engine.fills import (
+    Fill,
+    VenuePrices,
+    bracket_exit,
+    levels_on_grid,
+    levels_problem,
+    resting_entry_fill,
+)
 from kterminal.strategy_engine.model import PositionRules, exit_reason, open_beyond_levels
 
 MONEY = Decimal("0.0001")
@@ -101,6 +113,11 @@ class InstrumentSetup:
     listing: Listing
     costs: CostCalculator
     calendar: TradingCalendar | None = None
+
+    @property
+    def prices(self) -> VenuePrices:
+        """The listing's bid/ask, slippage and tick grid — what fills are priced with."""
+        return VenuePrices(self.costs, self.listing)
 
 
 @dataclass
@@ -201,6 +218,9 @@ class PaperAccount:
         self.pending_exits: dict[str, _PendingExit] = {}
         self.marks: dict[str, Decimal] = {}
         self.stats = AccountStats()
+        # The latest entry this account refused per symbol (its decision code), cleared by
+        # an approved entry: why the account may hold less than the theoretical book.
+        self.entry_rejects: dict[str, str] = {}
         self._day: Any = None
         self._day_start_equity = settings.starting_balance
         self._outbox: list[Record] = []
@@ -268,6 +288,8 @@ class PaperAccount:
             )
         if signal.signal is SignalAction.NO_TRADE:
             return None
+        if signal.signal.is_flatten:
+            return self._flatten(signal, signal_id, at)
         self.stats.signals += 1
         setup = self.markets.get(signal.symbol)
         if setup is None:
@@ -355,8 +377,8 @@ class PaperAccount:
 
         requested_pct = signal.risk if signal.risk is not None else self.settings.risk_per_trade_pct
         risk_pct = min(requested_pct, self.settings.risk_per_trade_pct)
-        signal = _on_grid(signal, listing, direction)
-        if signal.entry is None or signal.stop_loss is None:  # pragma: no cover - kept by _on_grid
+        signal = levels_on_grid(setup.prices, signal)
+        if signal.entry is None or signal.stop_loss is None:  # pragma: no cover - kept on grid
             raise ValueError("validated entry signal expected")
         reference = (
             self.marks.get(symbol, signal.entry)
@@ -409,6 +431,7 @@ class PaperAccount:
         if not decision.approved:
             self._reverse_anyway(signal, signal_id, decision, existing, reversing)
             return decision
+        self.entry_rejects.pop(symbol, None)
 
         if reversing and existing is not None and signal.order_type is OrderType.MARKET:
             # a market reversal exits at the next open; a resting (LIMIT/STOP) one closes
@@ -465,6 +488,7 @@ class PaperAccount:
         """Reverse = exit, then evaluate the new entry. Exits are always permitted, so a
         rejected market entry still closes the opposite position the strategy has left.
         (A rejected resting reversal is one rejected order: the position stays.)"""
+        self.entry_rejects[signal.symbol] = decision.primary_reason or "REJECTED"
         if reversing and existing is not None and signal.order_type is OrderType.MARKET:
             self.pending_exits[signal.symbol] = _PendingExit(
                 signal, signal_id, "REVERSAL", decision.id
@@ -497,6 +521,38 @@ class PaperAccount:
                 )
             ],
         )
+
+    def _flatten(self, signal: Signal, signal_id: UUID, at: datetime) -> DecisionRecord | None:
+        """Close the position on the symbol in either direction at the next open and cancel
+        the resting entry. Nothing to close or cancel: no decision, no row. A kill switch's
+        own flatten already pending keeps its reason."""
+        symbol = signal.symbol
+        position = self.positions.get(symbol)
+        pending = self.pending_entries.get(symbol)
+        if position is None and pending is None:
+            return None
+        self.stats.signals += 1
+        decision = self._decide(
+            signal,
+            signal_id,
+            at,
+            [
+                passed(
+                    "flatten",
+                    position=None if position is None else position.trade.direction.value,
+                    pending_entry=pending is not None,
+                )
+            ],
+        )
+        if pending is not None:
+            self._cancel_pending(symbol, at, "CANCELLED_BY_FLATTEN")
+        if position is not None:
+            queued = self.pending_exits.get(symbol)
+            if queued is None or queued.purpose != "FLATTEN":
+                self.pending_exits[symbol] = _PendingExit(
+                    signal, signal_id, exit_reason(signal).value, decision.id
+                )
+        return decision
 
     def _move_stop(self, signal: Signal, signal_id: UUID, at: datetime) -> DecisionRecord:
         symbol = signal.symbol
@@ -666,9 +722,8 @@ class PaperAccount:
         if direction is None or signal.stop_loss is None:
             raise ValueError("validated entry signal expected")
         side = direction.entry_side
-        costs = setup.costs
         at = bar.open_time
-        intrabar = False
+        fill: Fill | None
         if signal.order_type is OrderType.MARKET:
             skip = (
                 open_beyond_levels(direction, bar.open, signal.stop_loss, signal.take_profit)
@@ -679,47 +734,32 @@ class PaperAccount:
                 self._cancel_pending(signal.symbol, at, skip)
                 self.stats.cancel_codes[skip] = self.stats.cancel_codes.get(skip, 0) + 1
                 return False
-            fill = costs.market_fill(side, bar.open, at)
-            price, half_spread, slip = fill.price, fill.half_spread, fill.slippage
-            liquidity = Liquidity.TAKER
+            fill = setup.prices.market(side, bar.open, at)
         else:
             level = signal.entry
             if level is None:
                 raise ValueError("resting entry without price")
-            if signal.order_type is OrderType.LIMIT:
-                if not costs.limit_triggered(side, level, bar.high, bar.low, at):
-                    return False
-                opening = _opening_price(costs, setup.listing, side, bar)
-                if (opening <= level) if side is OrderSide.BUY else (opening >= level):
-                    # the bar opened through the limit: it fills at the open (price improvement)
-                    price, liquidity = opening, Liquidity.TAKER
-                else:
-                    price, liquidity = costs.limit_fill_price(side, level), Liquidity.MAKER
-                    intrabar = True
-                half_spread, slip = ZERO, ZERO
-            else:
-                if not costs.stop_triggered(side, level, bar.high, bar.low, at):
-                    return False
-                fill = costs.triggered_stop_fill(side, level, bar.open, at)
-                price, half_spread, slip = fill.price, fill.half_spread, fill.slippage
-                liquidity = Liquidity.TAKER
-                intrabar = fill.reference != bar.open  # not a gap: triggered inside the bar
+            # a LIMIT the bar opens through fills at the open (price improvement), one
+            # reached inside the bar at its price; a STOP entry like a stop (gap: the open)
+            fill = resting_entry_fill(setup.prices, signal.order_type, side, level, bar)
+            if fill is None:
+                return False
         self.pending_entries.pop(signal.symbol, None)
         opposite = self.positions.get(signal.symbol)
         if opposite is not None:  # a resting reversal: the same fill closes the old position
             self._close(
                 opposite,
-                price,
+                fill.price,
                 at,
                 "REVERSAL",
                 "EXIT",
-                half_spread,
-                slip,
-                liquidity,
+                fill.half_spread,
+                fill.slippage,
+                fill.liquidity,
                 pending.signal_id,
             )
-        self._open(pending, setup, price, half_spread, slip, liquidity, at)
-        return intrabar
+        self._open(pending, setup, fill.price, fill.half_spread, fill.slippage, fill.liquidity, at)
+        return fill.intrabar
 
     def _open(
         self,
@@ -811,61 +851,32 @@ class PaperAccount:
         self, position: _Position, bar: Bar, *, after_intrabar_fill: bool = False
     ) -> None:
         trade = position.trade
-        costs = position.setup.costs
         at = bar.close_time  # intrabar timing is unknown; book it at the bar's close
-        exit_side = trade.direction.exit_side
-        target = trade.current_target
-        if target is not None and not after_intrabar_fill:
-            # The open is the bar's first price: a bar that opens beyond the target fills
-            # the resting target at the open, before anything else in the bar can happen.
-            opening = _opening_price(costs, position.setup.listing, exit_side, bar)
-            if (opening >= target) if exit_side is OrderSide.SELL else (opening <= target):
-                self._close(
-                    position,
-                    opening,
-                    at,
-                    "TAKE_PROFIT",
-                    "TAKE_PROFIT",
-                    ZERO,
-                    ZERO,
-                    Liquidity.TAKER,
-                    None,
-                )
-                return
-        if costs.stop_triggered(exit_side, trade.current_stop, bar.high, bar.low, bar.open_time):
-            fill = costs.triggered_stop_fill(exit_side, trade.current_stop, bar.open, bar.open_time)
-            self._close(
-                position,
-                fill.price,
-                at,
-                self._stop_reason(trade),
-                "STOP_LOSS",
-                fill.half_spread,
-                fill.slippage,
-                Liquidity.TAKER,
-                None,
-            )
+        # The open is the bar's first price: a bar that opens beyond the target fills the
+        # resting target at the open; otherwise the stop comes first; after an intrabar
+        # fill only the close is known to come later (fills.bracket_exit).
+        hit = bracket_exit(
+            position.setup.prices,
+            trade.direction,
+            trade.current_stop,
+            trade.current_target,
+            bar,
+            after_intrabar_fill=after_intrabar_fill,
+        )
+        if hit is None:
             return
-        if target is None:
-            return
-        if after_intrabar_fill:
-            # Only the close is known to come after an intrabar fill: the target counts
-            # only if the bar closed beyond it.
-            reached = costs.limit_triggered(exit_side, target, bar.close, bar.close, bar.open_time)
-        else:
-            reached = costs.limit_triggered(exit_side, target, bar.high, bar.low, bar.open_time)
-        if reached:
-            self._close(
-                position,
-                costs.limit_fill_price(exit_side, target),
-                at,
-                "TAKE_PROFIT",
-                "TAKE_PROFIT",
-                ZERO,
-                ZERO,
-                Liquidity.MAKER,
-                None,
-            )
+        kind, fill = hit
+        self._close(
+            position,
+            fill.price,
+            at,
+            self._stop_reason(trade) if kind == "STOP_LOSS" else kind,
+            kind,
+            fill.half_spread,
+            fill.slippage,
+            fill.liquidity,
+            None,
+        )
 
     @staticmethod
     def _stop_reason(trade: TradeRecord) -> str:
@@ -884,7 +895,7 @@ class PaperAccount:
         self, position: _Position, mid: Decimal, at: datetime, pending: _PendingExit
     ) -> None:
         side = position.trade.direction.exit_side
-        fill = position.setup.costs.market_fill(side, mid, at)
+        fill = position.setup.prices.market(side, mid, at)
         self._close(
             position,
             fill.price,
@@ -1138,38 +1149,14 @@ class PaperAccount:
             self._cancel_pending(symbol, at, reason)
 
 
-def _on_grid(signal: Signal, listing: Listing, direction: Direction) -> Signal:
-    """The signal's levels on the listing's tick grid, rounded against the account: the
-    entry as the entry order's side, the stop and target as the exit order's side."""
-    entry_is_buy = direction.entry_side is OrderSide.BUY
-    exit_is_buy = not entry_is_buy
-    update: dict[str, Decimal | None] = {}
-    if signal.order_type is not OrderType.MARKET and signal.entry is not None:
-        update["entry"] = listing.round_price(signal.entry, is_buy=entry_is_buy)
-    if signal.stop_loss is not None:
-        update["stop_loss"] = listing.round_price(signal.stop_loss, is_buy=exit_is_buy)
-    if signal.take_profit is not None:
-        update["take_profit"] = listing.round_price(signal.take_profit, is_buy=exit_is_buy)
-    changed = {k: v for k, v in update.items() if v != getattr(signal, k)}
-    return signal.model_copy(update=changed) if changed else signal
-
-
 def _levels_check(
     direction: Direction, reference: Decimal, stop: Decimal, target: Decimal | None
 ) -> RuleResult:
     """Stop and target must be on their sides of the price the entry is sized from (the
     current mark for market entries) — a venue would refuse anything else."""
-    long = direction is Direction.LONG
-    if (stop >= reference) if long else (stop <= reference):
-        return failed(
-            "levels", "STOP_WRONG_SIDE", f"stop {stop} is not beyond the entry price {reference}"
-        )
-    if target is not None and ((target <= reference) if long else (target >= reference)):
-        return failed(
-            "levels",
-            "TARGET_WRONG_SIDE",
-            f"target {target} is not beyond the entry price {reference}",
-        )
+    problem = levels_problem(direction, reference, stop, target)
+    if problem is not None:
+        return failed("levels", *problem)
     return passed("levels", reference=reference)
 
 
@@ -1178,15 +1165,6 @@ def _at_breakeven(trade: TradeRecord, stop: Decimal) -> bool:
     (its requested entry) and the account's actual fill (which includes costs)."""
     low, high = sorted((trade.entry_requested, trade.entry_price))
     return low <= stop <= high
-
-
-def _opening_price(costs: CostCalculator, listing: Listing, side: OrderSide, bar: Bar) -> Decimal:
-    """The price an order of ``side`` could trade at the bar's open (bid for a sale, ask
-    for a purchase), on the listing's grid, rounded against the account."""
-    half = costs.spread(bar.open_time) / 2
-    if side is OrderSide.BUY:
-        return listing.round_price(bar.open + half, is_buy=True)
-    return listing.round_price(bar.open - half, is_buy=False)
 
 
 def snapshot_due(last: datetime | None, now: datetime, every: timedelta) -> bool:

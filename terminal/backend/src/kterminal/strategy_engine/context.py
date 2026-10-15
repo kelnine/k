@@ -3,8 +3,9 @@
 Everything here is read-only: the instrument, closed bar series for the
 primary and context timeframes (also as TradingView's ``request.security``
 sees them), the primary bar index, previous/current trading day, week and
-month levels, the theoretical position, session/time-zone helpers (catalog
-windows and Pine session strings), a seeded random generator and a logger.
+month levels, the theoretical position and resting entry, whether the runner is
+replaying warm-up bars, session/time-zone helpers (catalog windows and Pine
+session strings), a seeded random generator and a logger.
 The signal builders fill in the strategy id, version, symbol, timeframe and
 timestamps and round prices to the instrument's tick, so strategy code only
 expresses intent.
@@ -26,7 +27,7 @@ from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.domain.timeframes import Timeframe
 from kterminal.strategy_engine.book import TheoreticalBook
-from kterminal.strategy_engine.model import CloseReason, PositionView
+from kterminal.strategy_engine.model import CloseReason, PendingEntryView, PositionView
 from kterminal.strategy_engine.periods import PeriodLevels
 from kterminal.strategy_engine.series import BarSeries, SeriesView
 from kterminal.strategy_engine.sessions import SessionSpec, parse_session
@@ -92,6 +93,7 @@ class StrategyContext:
         self._windows = frozenset(windows) if windows is not None else None
         self._source = source
         self._bar: Bar | None = None
+        self._warming_up = False  # set by the runner while it replays warm-up bars
         self._primary_bars = 0  # every primary bar seen, warm-up included (bar_index)
         self._last_open: datetime | None = None  # open time of the latest primary bar
         self._previous_open: datetime | None = None  # … and of the one before it
@@ -192,7 +194,20 @@ class StrategyContext:
 
     @property
     def position(self) -> PositionView | None:
+        """This instance's theoretical position on the symbol, or None."""
         return self._book.position
+
+    @property
+    def pending_entry(self) -> PendingEntryView | None:
+        """The theoretical book's resting entry order on the symbol (a LIMIT/STOP entry
+        that has not filled, expired or been cancelled yet), or None."""
+        return self._book.pending_entry
+
+    @property
+    def warming_up(self) -> bool:
+        """True while the runner replays warm-up bars: signals returned now are discarded
+        and the theoretical book stays flat."""
+        return self._warming_up
 
     # ── sessions & time zones ───────────────────────────────────────────────
     # Without an explicit ``ts`` these helpers look at the evaluated bar's *open* time
@@ -330,6 +345,25 @@ class StrategyContext:
             SignalAction.EXIT_SHORT,
             entry=self._price(self.bar.close),
             reason=_exit_reason(reason, session_close),
+            metadata=metadata,
+        )
+
+    def flatten(
+        self,
+        *,
+        reason: str = CloseReason.SESSION_CLOSE.value,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> Signal:
+        """Close whatever this instance holds on the symbol — in either direction, in the
+        theoretical book and in the account alike, even when the book is already flat —
+        at the next base bar's open, and cancel any resting entry. Changes nothing when
+        there is nothing to close (no decision row). The trade's exit reason is
+        ``SESSION_CLOSE`` for the default ``reason``, ``SIGNAL_EXIT`` for any other.
+        Always permitted, also under a kill switch."""
+        return self._make(
+            SignalAction.FLATTEN,
+            entry=self._price(self.bar.close),
+            reason=reason,
             metadata=metadata,
         )
 

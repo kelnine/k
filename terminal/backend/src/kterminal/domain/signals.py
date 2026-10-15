@@ -18,6 +18,7 @@ SHORT          required  required    optional     take_profit < entry < stop
 EXIT_LONG/…    optional  —           —            closes this strategy's position
 MOVE_SL        optional  required    optional     new stop (and optionally new target)
 NO_TRADE       —         —           —            ``reason`` recommended
+FLATTEN        optional  —           —            closes any position, cancels resting entries
 =============  ========  ==========  ===========  =========================================
 """
 
@@ -135,7 +136,7 @@ def validate_signal(signal: Signal) -> Signal:
                 raise InvalidSignalError("EXPIRY_NOT_APPLICABLE", "market entries cannot expire")
             if signal.expires_after_bars < 1:
                 raise InvalidSignalError("INVALID_EXPIRY", "expires_after_bars must be >= 1")
-    elif action.is_exit:
+    elif action.is_exit or action.is_flatten:
         if stop is not None or target is not None:
             raise InvalidSignalError("PRICES_NOT_ALLOWED", f"{action} takes no stop/target")
     elif action is SignalAction.MOVE_SL:

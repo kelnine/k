@@ -18,6 +18,7 @@ from kterminal.domain.instruments import Instrument
 from kterminal.domain.market import Bar
 from kterminal.domain.signals import Signal
 from kterminal.strategy_engine.base import Strategy
+from kterminal.strategy_engine.fills import BookExecution
 from kterminal.strategy_engine.instances import InstanceSpec, resolve_instance
 from kterminal.strategy_engine.model import (
     Fault,
@@ -36,6 +37,7 @@ class StrategyTestResult:
     events: list[PositionEvent] = field(default_factory=list)
     fault: Fault | None = None
     runner: StrategyRunner | None = None
+    ignored: list[tuple[Signal, str]] = field(default_factory=list)  # the book's reason
 
 
 def group_by_close(bars: Iterable[Bar]) -> list[list[Bar]]:
@@ -59,7 +61,13 @@ def run_strategy(
     instance_id: str = "test_instance",
     on_opposite_signal: OppositeSignalPolicy | None = None,
     skip_entry_beyond_levels: bool | None = None,
+    execution: BookExecution | None = None,
 ) -> StrategyTestResult:
+    """Run ``strategy_cls`` on ``bars`` through the real runner.
+
+    Without ``execution`` the theoretical book trades the primary bars at their mid
+    prices. With it the book resolves like an account (``kterminal.strategy_engine.fills``)
+    on the bars of ``execution.base_timeframe``, which ``bars`` must then include."""
     registry: Registry[StrategyDefinition] = Registry("strategy definition")
     definition = definition_from_class(strategy_cls)
     registry.register(definition.id, definition)
@@ -76,7 +84,7 @@ def run_strategy(
     resolved = resolve_instance(
         spec, instruments={instrument.symbol: instrument}, sessions=sessions, definitions=registry
     )
-    runner = StrategyRunner(resolved, instrument, sessions=sessions)
+    runner = StrategyRunner(resolved, instrument, sessions=sessions, execution=execution)
     result = StrategyTestResult(runner=runner)
     result.fault = runner.start()
     if warmup_bars:
@@ -86,6 +94,11 @@ def run_strategy(
         if output is None:
             continue
         result.signals.extend(output.signals)
+        result.ignored.extend(
+            (signal, reason)
+            for i, signal in enumerate(output.signals)
+            if (reason := output.book_reason(i)) is not None
+        )
         result.rejected.extend(output.rejected)
         result.events.extend(output.events)
         if output.fault is not None:
