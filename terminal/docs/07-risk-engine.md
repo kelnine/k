@@ -172,7 +172,7 @@ least every few seconds live):
 |---|---|
 | Scopes | `GLOBAL`, `ACCOUNT:<id>`, `STRATEGY:<id>` |
 | Effect | Blocks all new risk-increasing orders immediately (rule #1). Optionally cancels pending entry orders (`cancel_orders`, default on) and closes open positions (`close_positions`, default **off**, configurable per activation and as a global default) |
-| Activation | Dashboard button, `POST /api/v1/risk/kill-switch`, Telegram `/kill`, CLI `kterminal kill`, and **automatically** on: repeated execution failures, broker disconnect with open positions, reconciliation mismatch, engine crash-loop |
+| Activation | Dashboard button, `POST /api/v1/risk/kill-switch`, Telegram `/kill`, CLI `kterminal killswitch on` / `off` / `status` (implemented in Phase 3 for forward paper sessions, see 12.7), and **automatically** on: repeated execution failures, broker disconnect with open positions, reconciliation mismatch, engine crash-loop |
 | Persistence | Stored in `kill_switches`; loaded first at engine start — a restart never silently re-enables trading |
 | Deactivation | Manual only (dashboard + 2FA re-auth, or CLI). Never automatic. Audited |
 | Notification | `KILL SWITCH ACTIVATED` sent to every Telegram route with highest priority |

@@ -254,15 +254,21 @@ class PostgresLabStore:
 
     # ── records ─────────────────────────────────────────────────────────────
     async def write(self, records: Sequence[Record], *, run_id: UUID) -> None:
+        async with self.db.session() as session:
+            await self.write_records(session, records, run_id=run_id)
+
+    async def write_records(
+        self, session: AsyncSession, records: Sequence[Record], *, run_id: UUID
+    ) -> None:
+        """Write ``records`` in the caller's transaction (dependency order)."""
         grouped: dict[type, list[Any]] = defaultdict(list)
         for record in records:
             grouped[type(record)].append(record)
         snapshot_id = self._catalog_snapshot.get(run_id)
-        async with self.db.session() as session:
-            for kind in _ORDER:
-                rows = grouped.get(kind)
-                if rows:
-                    await self._write_kind(session, kind, rows, run_id, snapshot_id)
+        for kind in _ORDER:
+            rows = grouped.get(kind)
+            if rows:
+                await self._write_kind(session, kind, rows, run_id, snapshot_id)
 
     async def _write_kind(
         self,

@@ -16,29 +16,37 @@ For every batch of bars that closed at the same instant the lab:
 Faulted instances stop producing signals; everyone else carries on. A signal
 that its own account cannot process faults that instance only. If the run
 itself fails, every host is stopped and the run is recorded as FAILED.
+
+:meth:`Lab.run` processes a finite list of bars in one call. A forward session
+drives the same steps incrementally — :meth:`Lab.begin` (accounts, warm-up),
+:meth:`Lab.process_bars` / :meth:`Lab.process_batch` as bars arrive, and
+:meth:`Lab.end` — with ids from an injected :class:`~kterminal.paper.ids.IdSource`
+and kill switches applied between a batch's fills and its signals.
 """
 
 import itertools
 import traceback
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from kterminal.analytics.summary import TradeSummary, summarize_trades
 from kterminal.core.enums import SignalAction
-from kterminal.core.ids import uuid7
 from kterminal.core.registry import Registry
 from kterminal.domain.accounts import AccountSettings
 from kterminal.domain.catalog import InstrumentCatalog
 from kterminal.domain.market import Bar
 from kterminal.domain.timeframes import Timeframe
-from kterminal.marketdata.aggregator import aggregate_stream
+from kterminal.marketdata.aggregator import StreamAggregator
 from kterminal.observability.logging import get_logger
 from kterminal.paper.account import InstrumentSetup, PaperAccount
 from kterminal.paper.config import LabConfig
+from kterminal.paper.ids import IdSource, RandomIds
+from kterminal.paper.kill_switch import NO_KILL_SWITCHES, KillSwitchState
 from kterminal.paper.records import FaultRecord, Record, SignalRecord
 from kterminal.paper.store import LabStore, ProvisionedAccount
 from kterminal.strategy_engine.base import StrategyMeta
@@ -93,6 +101,17 @@ class LabResult:
     accounts: list[AccountResult] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class AccountOpening:
+    """A persistent (dedicated) account an instance continues to trade in."""
+
+    account_id: UUID
+    config_version_id: UUID
+    name: str
+    balance: Decimal  # from the ledger when the session began
+    high_water_mark: Decimal
+
+
 class Lab:
     def __init__(
         self,
@@ -105,6 +124,7 @@ class Lab:
         run_name: str = "lab",
         config_dir: Path | None = None,
         discover: bool = True,
+        ids: IdSource | None = None,
     ) -> None:
         self.config = config
         self.catalog = catalog
@@ -116,8 +136,21 @@ class Lab:
         self.discover = discover
         self.base_timeframe = Timeframe.parse(config.base_timeframe)
         self.members: list[LabMember] = []
+        self.ids: IdSource = ids if ids is not None else RandomIds()
+        self.run_id: UUID | None = None
+        self.batch_count = 0
+        self.started_at: datetime | None = None  # open time of the first processed batch
+        self.last_batch_at: datetime | None = None  # close time of the latest processed batch
+        self.kill_switches: KillSwitchState = NO_KILL_SWITCHES
         self._records: list[Record] = []
         self._clock_start = _epoch()
+        self._stream: StreamAggregator | None = None
+        self._snapshot_every = timedelta(minutes=config.equity_snapshot_minutes)
+        self._last_snapshot: datetime | None = None
+        self._kill_pending: KillSwitchState | None = None
+        self._kill_schedule: dict[datetime, KillSwitchState] = {}
+        self._kill_changes: list[tuple[datetime, KillSwitchState]] = []
+        self._injected: dict[tuple[str, datetime | None], Fault] = {}
 
     # ── setup ───────────────────────────────────────────────────────────────
     async def setup(self) -> None:
@@ -199,19 +232,40 @@ class Lab:
                 opened_at=self._clock_start,
             )
             member.accounts = [
-                PaperAccount(
-                    account_id=provisioned.account_id,
-                    name=provisioned.name,
-                    instance_id=spec.id,
-                    settings=settings,
-                    config_version_id=provisioned.config_version_id,
-                    markets=member.markets,
-                    timeframe=member.resolved.timeframe.code,
-                    trading_day_rule=self.catalog.sessions.trading_day_rule(settings.trading_day),
-                    classify=self.catalog.sessions.classify,
-                    rules=member.resolved.position_rules,
-                )
+                self._account(member, provisioned.account_id, provisioned.name, provisioned)
             ]
+
+    def _open_accounts(self, openings: Mapping[str, AccountOpening]) -> None:
+        """Each instance continues in its own persistent account (forward sessions)."""
+        for member in self.members:
+            opening = openings.get(member.resolved.id)
+            if opening is None:
+                raise ValueError(f"no account for instance {member.resolved.id}")
+            account = self._account(member, opening.account_id, opening.name, opening)
+            account.open_with(opening.balance, opening.high_water_mark)
+            member.accounts = [account]
+
+    def _account(
+        self,
+        member: LabMember,
+        account_id: UUID,
+        name: str,
+        provisioned: ProvisionedAccount | AccountOpening,
+    ) -> PaperAccount:
+        settings = member.settings
+        return PaperAccount(
+            account_id=account_id,
+            name=name,
+            instance_id=member.resolved.spec.id,
+            settings=settings,
+            config_version_id=provisioned.config_version_id,
+            markets=member.markets,
+            timeframe=member.resolved.timeframe.code,
+            trading_day_rule=self.catalog.sessions.trading_day_rule(settings.trading_day),
+            classify=self.catalog.sessions.classify,
+            rules=member.resolved.position_rules,
+            new_id=self.ids,
+        )
 
     @property
     def timeframes(self) -> list[Timeframe]:
@@ -230,6 +284,7 @@ class Lab:
         warmup_bars: Sequence[Bar] = (),
         close_at_end: bool = True,
     ) -> LabResult:
+        """Run a whole simulation: a fresh run, run-scoped accounts, every bar, results."""
         if not self.members:
             await self.setup()
         bars_iter = iter(base_bars)
@@ -246,10 +301,18 @@ class Lab:
             started_at=self._clock_start,
         )
         try:
-            return await self._run(run_id, first, bars_iter, warmup_bars, close_at_end)
+            await self.begin(run_id, warmup_bars=warmup_bars)
+            await self.process_bars(itertools.chain([first], bars_iter))
+            result = await self.end(close_positions=close_at_end)
+            await self.store.finish_run(
+                run_id,
+                status="COMPLETED",
+                summary={"batches": result.batches, "accounts": len(result.accounts)},
+                finished_at=result.finished_at or self._clock_start,
+            )
+            return result
         except BaseException as exc:
-            for member in self.members:
-                member.host.stop()
+            self.abort()
             await self.store.finish_run(
                 run_id,
                 status="FAILED",
@@ -258,89 +321,183 @@ class Lab:
             )
             raise
 
-    async def _run(
+    # ── incremental processing ──────────────────────────────────────────────
+    async def begin(
         self,
         run_id: UUID,
-        first: Bar,
-        bars_iter: Iterator[Bar],
-        warmup_bars: Sequence[Bar],
-        close_at_end: bool,
-    ) -> LabResult:
-        started: datetime | None = None
-        last: datetime | None = None
-        await self._provision_accounts(run_id)
-        # One aggregator over warm-up and live bars: a higher-timeframe period that spans
-        # the boundary is built from all of its base bars, never from the live part only.
-        batches = aggregate_stream(
-            itertools.chain(warmup_bars, [first], bars_iter), self.base_timeframe, self.timeframes
-        )
+        *,
+        warmup_bars: Sequence[Bar] = (),
+        accounts: Mapping[str, AccountOpening] | None = None,
+        started_at: datetime | None = None,
+    ) -> None:
+        """Open the accounts, start every host and warm it up on ``warmup_bars``.
+
+        Without ``accounts`` each instance gets a fresh run-scoped account; with them
+        (forward sessions) each continues in its persistent account. Warm-up bars are
+        time-ordered base bars before the first live bar; they prime indicators and are
+        never traded. One aggregator spans warm-up and live bars, so a higher-timeframe
+        period that straddles the boundary is built from all of its base bars.
+        """
+        if not self.members:
+            await self.setup()
+        if started_at is not None:
+            self._clock_start = started_at
+        self.run_id = run_id
+        if accounts is None:
+            await self._provision_accounts(run_id)
+        else:
+            self._open_accounts(accounts)
+        stream = StreamAggregator(self.base_timeframe, self.timeframes)
+        self._stream = stream
         warm: list[Bar] = []
-        live_head: list[list[Bar]] = []
+        for bar in warmup_bars:
+            for batch in stream.push(bar):
+                warm.extend(batch)
         if warmup_bars:
-            warm_end = warmup_bars[-1].close_time
-            for batch in batches:
-                if batch[0].close_time > warm_end:
-                    live_head.append(batch)
-                    break
+            for batch in stream.complete_through(warmup_bars[-1].close_time):
                 warm.extend(batch)
         for member in self.members:
             member.host.start()
+            self._inject_fault(member, None)
             if warm:
                 member.host.warmup(warm)
             self._check_fault(member, None)
-        await self._flush(run_id)
+        await self._flush()
 
-        snapshot_every = timedelta(minutes=self.config.equity_snapshot_minutes)
-        last_snapshot: datetime | None = None
-        count = 0
-        for batch in itertools.chain(live_head, batches):
-            at = batch[0].close_time
-            started = started or batch[0].open_time
-            last = at
-            count += 1
-            base = [b for b in batch if b.timeframe == self.base_timeframe]
-            for account in self.accounts:  # 1. fills/brackets/costs on this batch's bars
-                for bar in base:
-                    account.on_bar(bar)
-            for member in self.members:  # 2. same batch to every instance
-                member.host.dispatch(batch)
-            for member in self.members:  # 3. collect in fixed order and route
-                for output in member.host.collect():
-                    self._route(member, output, batch, run_id)
-                self._check_fault(member, at)
-            if last_snapshot is None or at - last_snapshot >= snapshot_every:
-                for account in self.accounts:
-                    account.mark(at)
-                last_snapshot = at
-            await self._flush(run_id)
+    async def process_bars(self, bars: Iterable[Bar], *, through: datetime | None = None) -> int:
+        """Feed time-ordered base bars and process every batch they complete.
 
+        ``through`` declares that no base bar opening before it will follow (a live
+        minute is over): batches closing at or before it are processed now instead of
+        when the next bar arrives. Returns the number of batches processed.
+        """
+        stream = self._require_stream()
+        processed = 0
+        for bar in bars:
+            for batch in stream.push(bar):
+                await self.process_batch(batch)
+                processed += 1
+        if through is not None:
+            for batch in stream.advance(through):
+                await self.process_batch(batch)
+                processed += 1
+        return processed
+
+    async def process_batch(self, batch: Sequence[Bar]) -> None:
+        """Process one batch of bars that closed at the same instant."""
+        at = batch[0].close_time
+        self.ids.advance(at)
+        self.started_at = self.started_at or batch[0].open_time
+        self.last_batch_at = at
+        self.batch_count += 1
+        base = [b for b in batch if b.timeframe == self.base_timeframe]
+        for account in self.accounts:  # 1. fills/brackets/costs on this batch's bars
+            for bar in base:
+                account.on_bar(bar)
+        self._apply_kill_switches(at)  # a change takes effect after fills, before signals
+        for member in self.members:  # 2. same batch to every instance
+            self._inject_fault(member, at)
+            member.host.dispatch(batch)
+        for member in self.members:  # 3. collect in fixed order and route
+            for output in member.host.collect():
+                self._route(member, output, batch)
+            self._check_fault(member, at)
+        if self._last_snapshot is None or at - self._last_snapshot >= self._snapshot_every:
+            for account in self.accounts:
+                account.mark(at)
+            self._last_snapshot = at
+        await self._flush()
+
+    async def end(self, *, close_positions: bool = True) -> LabResult:
+        """Process what is left of the stream, optionally flatten, stop every host and
+        return the results (computed from the recorded rows)."""
+        stream = self._require_stream()
+        for batch in stream.finish():
+            await self.process_batch(batch)
+        last = self.last_batch_at
         if last is not None:
             for account in self.accounts:
-                if close_at_end:
+                if close_positions:
                     account.close_all(last)
                 account.mark(last)  # replaces a snapshot the last batch took at the same instant
         for member in self.members:
             member.host.stop()
-        await self._flush(run_id)
-        result = await self._result(run_id, count, started, last)
-        await self.store.finish_run(
-            run_id,
-            status="COMPLETED",
-            summary={"batches": count, "accounts": len(result.accounts)},
-            finished_at=last or self._clock_start,
-        )
-        return result
+        await self._flush()
+        if self.run_id is None:  # pragma: no cover - begin() sets it
+            raise RuntimeError("the lab was not begun")
+        return await self._result(self.run_id, self.batch_count, self.started_at, last)
 
-    def _route(
-        self, member: LabMember, output: RunnerOutput, batch: Sequence[Bar], run_id: UUID
-    ) -> None:
+    def abort(self) -> None:
+        """Stop every host (the run failed, or the process is shutting down)."""
+        for member in self.members:
+            member.host.stop()
+
+    def _require_stream(self) -> StreamAggregator:
+        if self._stream is None:
+            raise RuntimeError("Lab.begin() must be called first")
+        return self._stream
+
+    # ── kill switches and replayed faults ───────────────────────────────────
+    def set_kill_switches(self, state: KillSwitchState) -> None:
+        """Make ``state`` the active kill switches from the next processed batch on."""
+        self._kill_pending = state
+
+    def schedule_kill_switches(self, at: datetime, state: KillSwitchState) -> None:
+        """Apply ``state`` at the batch that closes at ``at`` (replaying a session)."""
+        self._kill_schedule[at] = state
+
+    def drain_kill_switch_changes(self) -> list[tuple[datetime, KillSwitchState]]:
+        """The states that took effect since the last call, with their batch times."""
+        changes, self._kill_changes = self._kill_changes, []
+        return changes
+
+    def inject_fault(self, instance_id: str, at: datetime | None, fault: Fault) -> None:
+        """Fault an instance at the batch closing at ``at`` (``None``: at warm-up) — used
+        to replay host failures (time-outs, crashed processes) that replay cannot cause."""
+        self._injected[(instance_id, at)] = fault
+
+    def _inject_fault(self, member: LabMember, at: datetime | None) -> None:
+        fault = self._injected.pop((member.resolved.id, at), None)
+        if fault is not None and member.host.fault is None:
+            member.host.fail(fault)
+
+    def _apply_kill_switches(self, at: datetime) -> None:
+        state = self._kill_schedule.pop(at, None)
+        if state is None:
+            state = self._kill_pending
+        self._kill_pending = None
+        if state is None or state == self.kill_switches:
+            return
+        previous = self.kill_switches
+        for member in self.members:
+            instance = member.resolved.id
+            for account in member.accounts:
+                was_halted = previous.halt_reason(account.account_id, instance) is not None
+                reason = state.halt_reason(account.account_id, instance)
+                account.entry_halt = reason
+                if (
+                    reason is not None
+                    and not was_halted
+                    and state.cancels_orders(account.account_id, instance)
+                ):
+                    account.cancel_entries(at, "KILL_SWITCH")
+                if state.closes_positions(
+                    account.account_id, instance
+                ) and not previous.closes_positions(account.account_id, instance):
+                    account.flatten(at, "KILL_SWITCH")
+        self.kill_switches = state
+        self._kill_changes.append((at, state))
+        _log.warning("lab.kill_switches", at=at.isoformat(), **state.summary())
+
+    def _route(self, member: LabMember, output: RunnerOutput, batch: Sequence[Bar]) -> None:
         resolved = member.resolved
+        run_id = self.run_id
         if member.routing_stopped:
             return
         for rejected in output.rejected:
             self._records.append(
                 SignalRecord(
-                    id=uuid7(),
+                    id=self.ids(),
                     instance_id=resolved.id,
                     strategy_version=resolved.version,
                     definition_id=resolved.definition.id,
@@ -358,7 +515,7 @@ class Lab:
                 raise RuntimeError(f"{resolved.id} produced a signal for {signal.strategy_id}")
             if signal.signal is SignalAction.NO_TRADE and not signal.persist:
                 continue
-            signal_id = uuid7()
+            signal_id = self.ids()
             routed = signal.signal is not SignalAction.NO_TRADE
             self._records.append(
                 SignalRecord(
@@ -399,13 +556,15 @@ class Lab:
                 stage=fault.stage,
             )
 
-    async def _flush(self, run_id: UUID) -> None:
+    async def _flush(self) -> None:
         records = list(self._records)
         self._records.clear()
         for account in self.accounts:
             records.extend(account.drain())
         if records:
-            await self.store.write(records, run_id=run_id)
+            if self.run_id is None:  # pragma: no cover - begin() sets it
+                raise RuntimeError("the lab was not begun")
+            await self.store.write(records, run_id=self.run_id)
 
     async def _result(
         self, run_id: UUID, batches: int, started: datetime | None, finished: datetime | None
@@ -450,7 +609,7 @@ def _route_fault(instance_id: str, symbol: str, at: datetime, exc: Exception) ->
 
 
 def _snapshot(
-    symbol: str, timeframe: str, batch: Sequence[Bar], fingerprint: str, run_id: UUID
+    symbol: str, timeframe: str, batch: Sequence[Bar], fingerprint: str, run_id: UUID | None
 ) -> dict[str, Any]:
     """The bar a signal was decided on, plus the data/catalog provenance."""
     for bar in batch:
@@ -476,4 +635,4 @@ def _epoch() -> datetime:
     return datetime(1970, 1, 1, tzinfo=UTC)
 
 
-__all__ = ["AccountResult", "HostState", "Lab", "LabMember", "LabResult"]
+__all__ = ["AccountOpening", "AccountResult", "HostState", "Lab", "LabMember", "LabResult"]

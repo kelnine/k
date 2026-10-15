@@ -24,13 +24,24 @@ with its own ``account`` overrides. ``on_opposite_signal`` and
 ``skip_entry_beyond_levels`` override the definition's position rules for this
 instance (its theoretical book and its account alike); they are part of the
 instance's version.
+
+Forward paper trading (``kterminal paper start``, the engine) also reads every
+``*.yaml`` / ``*.yml`` file in ``instances.d/`` next to ``lab.yaml``, in file-name
+order: each holds a YAML list of instance entries with the schema above, added
+after ``lab.yaml``'s own instances. An id defined twice is an error naming both
+files. The optional ``forward`` section tunes the forward runtime::
+
+    forward:
+      warmup_days: 10        # how far back warm-up history may reach (cap)
+      poll_delay_s: 2        # first poll this long after a minute closed
+      batch_timeout_s: 20    # then process the minute without instruments still missing
 """
 
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from kterminal.domain.accounts import AccountSettings
 from kterminal.domain.timeframes import Timeframe
@@ -50,6 +61,17 @@ class ExternalStrategyConfig(StrategyMeta):
     """An EXTERNAL (TradingView) definition; ``pine_source`` is hashed for versioning."""
 
     pine_source: str | None = None
+
+
+class ForwardConfig(BaseModel):
+    """Forward-runtime tuning (``forward:`` in lab.yaml). Not part of a session's
+    identity: changing it never stops an open session from resuming."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    warmup_days: float = Field(default=10.0, ge=0, le=366)
+    poll_delay_s: float = Field(default=2.0, ge=0, le=50)
+    batch_timeout_s: float = Field(default=20.0, gt=0, le=55)
 
 
 class LabInstance(BaseModel):
@@ -102,6 +124,7 @@ class LabConfig(BaseModel):
     external_strategies: tuple[ExternalStrategyConfig, ...] = ()
     instances: tuple[LabInstance, ...] = ()
     experiments: tuple[ExperimentConfig, ...] = ()
+    forward: ForwardConfig = Field(default_factory=ForwardConfig)
 
     @model_validator(mode="after")
     def _unique_and_valid(self) -> "LabConfig":
@@ -129,8 +152,15 @@ class LabConfig(BaseModel):
         return self
 
     @classmethod
-    def load(cls, path: str | Path) -> "LabConfig":
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    def load(cls, path: str | Path, *, instances_dir: str | Path | None = None) -> "LabConfig":
+        """``lab.yaml``, plus the instance files in ``instances_dir`` when given (a missing
+        or empty directory adds nothing)."""
+        file = Path(path)
+        data = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+        if instances_dir is not None:
+            if not isinstance(data, dict):
+                raise InstanceFileError(f"{file.name}: expected a mapping")
+            data = {**data, "instances": _merged_instances(file, data, Path(instances_dir))}
         return cls.model_validate(data)
 
     def account_settings(self, instance: LabInstance) -> AccountSettings:
@@ -156,3 +186,64 @@ class LabConfig(BaseModel):
     @property
     def enabled_instances(self) -> tuple[LabInstance, ...]:
         return tuple(i for i in self.instances if i.enabled)
+
+
+INSTANCES_DIR = "instances.d"
+
+
+def load_forward_config(lab_path: str | Path) -> LabConfig:
+    """The configuration forward paper trading runs: ``lab.yaml`` plus the instance files
+    in ``instances.d/`` beside it."""
+    path = Path(lab_path)
+    return LabConfig.load(path, instances_dir=path.parent / INSTANCES_DIR)
+
+
+class InstanceFileError(ValueError):
+    """An ``instances.d`` file cannot be used (not a list, bad entry, duplicate id)."""
+
+
+def instance_files(directory: Path) -> list[Path]:
+    """The instance files of ``directory`` in the order they are read (by file name)."""
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (p for p in directory.iterdir() if p.is_file() and p.suffix in (".yaml", ".yml")),
+        key=lambda p: p.name,
+    )
+
+
+def _merged_instances(lab_file: Path, data: dict[str, Any], directory: Path) -> list[Any]:
+    entries: list[Any] = list(data.get("instances") or [])
+    origin: dict[str, str] = {}
+    for entry in entries:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            origin.setdefault(entry["id"], lab_file.name)
+    for file in instance_files(directory):
+        where = f"{directory.name}/{file.name}"
+        try:
+            loaded = yaml.safe_load(file.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise InstanceFileError(f"{where}: invalid YAML: {exc}") from None
+        if loaded is None:
+            continue
+        if not isinstance(loaded, list):
+            raise InstanceFileError(f"{where}: expected a YAML list of instance entries")
+        for index, entry in enumerate(loaded, start=1):
+            try:
+                instance = LabInstance.model_validate(entry)
+            except ValidationError as exc:
+                problems = "; ".join(
+                    f"{'.'.join(str(part) for part in error['loc']) or 'entry'}: {error['msg']}"
+                    for error in exc.errors(include_input=False, include_url=False)
+                )
+                raise InstanceFileError(f"{where}: entry {index}: {problems}") from None
+            if instance.id in origin:
+                first = origin[instance.id]
+                raise InstanceFileError(
+                    f"instance id {instance.id!r} is defined twice in {where}"
+                    if first == where
+                    else f"instance id {instance.id!r} is defined in both {first} and {where}"
+                )
+            origin[instance.id] = where
+            entries.append(entry)
+    return entries
