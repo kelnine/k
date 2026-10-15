@@ -8,8 +8,14 @@ import pytest
 from pydantic import ValidationError
 
 from kterminal.core.enums import Direction, SignalAction
+from kterminal.domain.signals import Signal
 from kterminal.strategies.orb_breakout import OrbBreakout, OrbParams
-from kterminal.strategy_engine import CloseReason, InstanceSpec, PositionEventKind
+from kterminal.strategy_engine import (
+    NOTHING_TO_FLATTEN,
+    CloseReason,
+    InstanceSpec,
+    PositionEventKind,
+)
 from kterminal.strategy_engine.registry import definition_from_class
 from kterminal.strategy_engine.testing import StrategyTestResult
 from tests.unit.strategies.orb_breakout.helpers import (
@@ -29,14 +35,20 @@ from tests.unit.strategies.pine_port_support import (
 )
 
 LONG, SHORT = SignalAction.LONG, SignalAction.SHORT
+FLATTEN = SignalAction.FLATTEN
 LONG_0945 = {**OR_ROWS, "09:45": (100, 101.8, 99.9, 101.6)}
+
+
+def flattens(result: StrategyTestResult) -> list[Signal]:
+    return [s for s in result.signals if s.signal is FLATTEN]
 
 
 def test_flat_at_1600_exit_decided_on_the_1555_bar() -> None:
     result = run(day_bars(TUE, LONG_0945), params=NO_FILTER)
-    exits = [s for s in result.signals if s.signal is SignalAction.EXIT_LONG]
-    assert at(exits) == [("15:55", SignalAction.EXIT_LONG)]
+    exits = flattens(result)
+    assert at(exits) == [("15:55", FLATTEN)]
     assert exits[0].reason == "SESSION_CLOSE"
+    assert [s for s in result.signals if s.signal.is_exit] == []  # ctx.flatten, not EXIT_*
     [closed] = of_kind(result, PositionEventKind.CLOSED)
     assert closed.reason is CloseReason.SESSION_CLOSE
     assert hhmm(closed.time) == "16:00"  # at the 16:00 bar's open
@@ -46,10 +58,9 @@ def test_flat_at_1600_exit_decided_on_the_1555_bar() -> None:
 def test_short_is_flattened_too() -> None:
     bars = day_bars(TUE, {**OR_ROWS, "09:45": (100, 100.1, 98.5, 98.9)})
     result = run(bars, params=NO_FILTER)
-    assert at([s for s in result.signals if s.signal.is_exit]) == [
-        ("15:55", SignalAction.EXIT_SHORT)
-    ]
+    assert at(flattens(result)) == [("15:55", FLATTEN)]  # one flatten, whatever the direction
     [closed] = of_kind(result, PositionEventKind.CLOSED)
+    assert closed.direction is Direction.SHORT
     assert closed.reason is CloseReason.SESSION_CLOSE
 
 
@@ -57,14 +68,17 @@ def test_flatten_after_a_data_gap_exits_on_the_first_bar_past_1600() -> None:
     # No 15:55 bar: the 15:50 bar ends at 15:55 (before 16:00), so the exit is decided on
     # the 16:00 bar, the first that ends after the flatten time.
     result = run(day_bars(TUE, LONG_0945, skip=("15:55",)), params=NO_FILTER)
-    exits = [s for s in result.signals if s.signal.is_exit]
-    assert at(exits) == [("16:00", SignalAction.EXIT_LONG)]
+    assert at(flattens(result)) == [("16:00", FLATTEN)]
 
 
-def test_no_exit_when_the_stop_or_target_closed_the_trade_first() -> None:
+def test_the_flatten_changes_nothing_when_the_stop_or_target_closed_the_trade_first() -> None:
     bars = day_bars(TUE, {**LONG_0945, "11:00": (101.6, 107, 101.6, 106.9)})
     result = run(bars, params=NO_FILTER)
-    assert [s for s in result.signals if s.signal.is_exit] == []
+    # the daily flatten is still sent (an account could hold what the book does not); the
+    # book has nothing to close
+    [flatten] = flattens(result)
+    assert at([flatten]) == [("15:55", FLATTEN)]
+    assert result.ignored == [(flatten, NOTHING_TO_FLATTEN)]
     [closed] = of_kind(result, PositionEventKind.CLOSED)
     assert closed.reason is CloseReason.TAKE_PROFIT
     assert float(closed.price or 0) == 106.8
@@ -76,7 +90,8 @@ def test_signal_whose_fill_lands_at_or_after_1600_is_skipped_but_consumed() -> N
     bars = day_bars(TUE, {**OR_ROWS, "15:55": (100, 102, 100, 101.9)})
     result = run(bars, params=NO_FILTER)
     assert entries(result) == []
-    [skipped] = result.signals
+    flatten, skipped = result.signals  # the bar's flatten comes first, then the marker
+    assert flatten.signal is FLATTEN
     assert skipped.signal is SignalAction.NO_TRADE
     assert skipped.reason == "FILL_AT_OR_AFTER_FLATTEN"
     assert skipped.persist is True
@@ -89,7 +104,7 @@ def test_signal_whose_fill_lands_at_or_after_1600_is_skipped_but_consumed() -> N
 def test_signal_on_the_1550_bar_still_trades_and_is_flattened_next_bar() -> None:
     bars = day_bars(TUE, {**OR_ROWS, "15:50": (100, 102, 100, 101.9)})
     result = run(bars, params=NO_FILTER)
-    assert at(result.signals) == [("15:50", SignalAction.LONG), ("15:55", SignalAction.EXIT_LONG)]
+    assert at(result.signals) == [("15:50", SignalAction.LONG), ("15:55", FLATTEN)]
     closed = of_kind(result, PositionEventKind.CLOSED)
     assert [c.reason for c in closed] == [CloseReason.SESSION_CLOSE]
 
@@ -193,9 +208,10 @@ def test_a_fill_delayed_past_the_flatten_by_a_data_gap_is_closed_at_once() -> No
     result = run(bars, params=NO_FILTER)
     [opened] = of_kind(result, PositionEventKind.OPENED)
     assert opened.time == local(WED, "09:30")
-    exits = [s for s in result.signals if s.signal.is_exit]
+    exits = flattens(result)
     assert [(s.bar_time, s.signal) for s in exits] == [
-        (local(WED, "09:30"), SignalAction.EXIT_LONG)
+        (local(WED, "09:30"), FLATTEN),  # the first bar past Tuesday's 16:00
+        (local(WED, "15:55"), FLATTEN),  # Wednesday's own (nothing left to close)
     ]
     assert exits[0].metadata["flatten_at"] == local(TUE, "16:00").isoformat()
     [closed] = of_kind(result, PositionEventKind.CLOSED)
@@ -224,10 +240,7 @@ def test_a_window_past_midnight_flattens_on_the_next_day() -> None:
     [signal] = entries(result)
     assert at([signal]) == [("20:15", SignalAction.LONG)]
     assert signal.metadata["flatten_at"] == local(WED, "02:00").isoformat()
-    exits = [s for s in result.signals if s.signal.is_exit]
-    assert [(s.bar_time, s.signal) for s in exits] == [
-        (local(WED, "01:55"), SignalAction.EXIT_LONG)
-    ]
+    assert [(s.bar_time, s.signal) for s in flattens(result)] == [(local(WED, "01:55"), FLATTEN)]
     assert strategy_object(result).flatten_deadline(local(TUE, "20:15")) == local(WED, "02:00")
 
 

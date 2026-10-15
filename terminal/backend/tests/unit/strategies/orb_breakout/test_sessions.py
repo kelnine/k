@@ -54,7 +54,7 @@ def test_new_york_windows_follow_the_us_clock(day: date, signal_utc: str, flatte
     [signal] = entries(result)
     assert utc(signal.bar_time) == signal_utc  # 09:45 New York
     assert signal.metadata["or_high"] == 101.5  # 09:30-09:40 New York, whatever UTC says
-    [exit_signal] = [s for s in result.signals if s.signal.is_exit]
+    [exit_signal] = [s for s in result.signals if s.signal.is_flatten]
     assert utc(exit_signal.bar_time) == flatten_utc  # 15:55 New York
     assert signal.metadata["flatten_at"] == (
         exit_signal.timestamp.isoformat()  # the flatten bar closes at 16:00 New York
@@ -76,8 +76,8 @@ def test_london_variant_follows_the_uk_clock(day: date, signal_utc: str, flatten
     assert utc(signal.bar_time) == signal_utc
     assert signal.metadata["or_high"] == 101.5
     assert signal.metadata["or_low"] == 99.0
-    [exit_signal] = [s for s in result.signals if s.signal.is_exit]
-    assert at([exit_signal], tz=LONDON) == [("16:25", SignalAction.EXIT_LONG)]
+    [exit_signal] = [s for s in result.signals if s.signal.is_flatten]
+    assert at([exit_signal], tz=LONDON) == [("16:25", SignalAction.FLATTEN)]
     assert utc(exit_signal.bar_time) == flatten_utc
     [closed] = of_kind(result, PositionEventKind.CLOSED)
     assert closed.reason is CloseReason.SESSION_CLOSE
