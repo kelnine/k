@@ -76,6 +76,25 @@ from kterminal.strategy_engine.model import (
     open_beyond_levels,
 )
 
+IGNORE_REASONS: dict[str, str] = {
+    "POSITION_EXISTS": "a position in this direction is already open",
+    "OPPOSITE_POSITION_OPEN": "an opposite position is open and opposite signals are ignored",
+    "NO_MATCHING_POSITION": "no position or resting entry in this direction to close",
+    NOTHING_TO_FLATTEN: "no position and no resting entry to close",
+    "NO_POSITION": "no open position whose stop could move",
+    "STOP_WIDENING_NOT_ALLOWED": "the new stop would widen the risk",
+    "NOT_TRADABLE": "the account's listing is data-only",
+    "MARKET_CLOSED": "the market is closed at the decision",
+    "STOP_WRONG_SIDE": "the stop is not beyond the price the entry is placed at",
+    "TARGET_WRONG_SIDE": "the target is not beyond the price the entry is placed at",
+}
+"""Why :meth:`TheoreticalBook.apply` ignores a signal (its return value), in words."""
+
+
+def ignore_detail(reason: str) -> str:
+    """The recorded explanation of a signal the theoretical book ignored."""
+    return f"ignored by the theoretical book: {IGNORE_REASONS.get(reason, reason)}"
+
 
 @dataclass(frozen=True, slots=True)
 class _Pending:

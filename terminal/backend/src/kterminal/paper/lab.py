@@ -6,11 +6,18 @@ For every batch of bars that closed at the same instant the lab:
    decided on the previous close fill at these bars' opens, brackets and
    holding costs are applied;
 2. hands the **same immutable batch** to every strategy host (subprocess
-   hosts compute in parallel) and collects outputs in a fixed order;
+   hosts compute in parallel) and collects outputs in a fixed order; each
+   instance's theoretical book resolves the batch's base bars with its
+   account's own prices and rules (``BookExecution``);
 3. records each signal and routes it **only to the accounts allocated to the
    instance that produced it** — an instance can never reach another
-   instance's account;
-4. snapshots equity on a fixed cadence and flushes all records to the store in
+   instance's account. A signal that changed nothing — the theoretical book
+   ignored it (``POSITION_EXISTS``, ``NO_MATCHING_POSITION``,
+   ``NOTHING_TO_FLATTEN`` …) and no account approved it — is recorded
+   ``IGNORED`` with the book's reason;
+4. compares every instance's book with its account (the consistency report,
+   :mod:`kterminal.paper.consistency`);
+5. snapshots equity on a fixed cadence and flushes all records to the store in
    one write per batch.
 
 Faulted instances stop producing signals; everyone else carries on. A signal
@@ -45,14 +52,17 @@ from kterminal.marketdata.aggregator import StreamAggregator
 from kterminal.observability.logging import get_logger
 from kterminal.paper.account import InstrumentSetup, PaperAccount
 from kterminal.paper.config import LabConfig
+from kterminal.paper.consistency import ConsistencyReport
 from kterminal.paper.ids import IdSource, RandomIds
 from kterminal.paper.kill_switch import NO_KILL_SWITCHES, KillSwitchState
 from kterminal.paper.records import FaultRecord, Record, SignalRecord
 from kterminal.paper.store import LabStore, ProvisionedAccount
 from kterminal.strategy_engine.base import StrategyMeta
+from kterminal.strategy_engine.book import ignore_detail
+from kterminal.strategy_engine.fills import BookExecution
 from kterminal.strategy_engine.hosts import HostState, InProcessHost, StrategyHost, SubprocessHost
 from kterminal.strategy_engine.instances import ResolvedInstance, resolve_instance
-from kterminal.strategy_engine.model import Fault, RunnerOutput
+from kterminal.strategy_engine.model import BookState, Fault, RunnerOutput
 from kterminal.strategy_engine.registry import (
     DEFINITIONS,
     StrategyDefinition,
@@ -73,6 +83,7 @@ class LabMember:
     markets: dict[str, InstrumentSetup]
     fault_recorded: bool = False
     routing_stopped: bool = False  # set when the instance's output broke its own account
+    books: dict[str, BookState] = field(default_factory=dict)  # latest book per instrument
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +110,7 @@ class LabResult:
     started_at: datetime | None
     finished_at: datetime | None
     accounts: list[AccountResult] = field(default_factory=list)
+    consistency: dict[str, Any] = field(default_factory=dict)  # ConsistencyReport.summary()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +154,7 @@ class Lab:
         self.started_at: datetime | None = None  # open time of the first processed batch
         self.last_batch_at: datetime | None = None  # close time of the latest processed batch
         self.kill_switches: KillSwitchState = NO_KILL_SWITCHES
+        self.consistency = ConsistencyReport()
         self._records: list[Record] = []
         self._clock_start = _epoch()
         self._stream: StreamAggregator | None = None
@@ -190,8 +203,20 @@ class Lab:
                     costs=self.catalog.cost_calculator(listing),
                     calendar=self.catalog.calendar_for(listing),
                 )
+            # each instrument's book resolves orders like the account: its prices, base bars
+            execution = {
+                symbol: BookExecution(
+                    prices=setup.prices,
+                    base_timeframe=self.base_timeframe,
+                    calendar=setup.calendar,
+                    tradable=setup.listing.tradable,
+                )
+                for symbol, setup in markets.items()
+            }
             host_cls = SubprocessHost if spec.host == "subprocess" else InProcessHost
-            host = host_cls(resolved, self.catalog.instruments, self.catalog.sessions)
+            host = host_cls(
+                resolved, self.catalog.instruments, self.catalog.sessions, execution=execution
+            )
             self.members.append(LabMember(resolved, version_id, host, [], settings, markets))
         _log.info("lab.setup", instances=[m.resolved.id for m in self.members])
 
@@ -307,7 +332,11 @@ class Lab:
             await self.store.finish_run(
                 run_id,
                 status="COMPLETED",
-                summary={"batches": result.batches, "accounts": len(result.accounts)},
+                summary={
+                    "batches": result.batches,
+                    "accounts": len(result.accounts),
+                    "consistency": result.consistency,
+                },
                 finished_at=result.finished_at or self._clock_start,
             )
             return result
@@ -402,6 +431,7 @@ class Lab:
             for output in member.host.collect():
                 self._route(member, output, batch)
             self._check_fault(member, at)
+        self._check_consistency()  # 4. every book against its account
         if self._last_snapshot is None or at - self._last_snapshot >= self._snapshot_every:
             for account in self.accounts:
                 account.mark(at)
@@ -489,11 +519,21 @@ class Lab:
         self._kill_changes.append((at, state))
         _log.warning("lab.kill_switches", at=at.isoformat(), **state.summary())
 
+    def _check_consistency(self) -> None:
+        for member in self.members:
+            if member.host.fault is not None or member.routing_stopped:
+                continue  # a faulted instance's book stops; its account keeps its brackets
+            for state in member.books.values():
+                for account in member.accounts:
+                    self.consistency.observe(member.resolved.id, account, state)
+
     def _route(self, member: LabMember, output: RunnerOutput, batch: Sequence[Bar]) -> None:
         resolved = member.resolved
         run_id = self.run_id
         if member.routing_stopped:
             return
+        if output.book is not None:
+            member.books[output.instrument] = output.book
         for rejected in output.rejected:
             self._records.append(
                 SignalRecord(
@@ -510,13 +550,29 @@ class Lab:
                     reject_detail=rejected.message,
                 )
             )
-        for signal in output.signals:
+        for index, signal in enumerate(output.signals):
             if signal.strategy_id != resolved.id:  # defence in depth: runner already checks
                 raise RuntimeError(f"{resolved.id} produced a signal for {signal.strategy_id}")
-            if signal.signal is SignalAction.NO_TRADE and not signal.persist:
+            action = signal.signal
+            if action is SignalAction.NO_TRADE and not signal.persist:
                 continue
             signal_id = self.ids()
-            routed = signal.signal is not SignalAction.NO_TRADE
+            book_reason = output.book_reason(index)
+            approved = False
+            broke: Exception | None = None
+            if action is not SignalAction.NO_TRADE:
+                for account in member.accounts:  # only this instance's own accounts
+                    try:
+                        decision = account.handle_signal(signal, signal_id, output.time)
+                    except Exception as exc:
+                        broke = exc
+                        break
+                    approved = approved or (decision is not None and decision.approved)
+            # no effect anywhere: the book ignored it and no account approved it (an exit
+            # still reaches an account that holds what the book does not)
+            ignored = action is SignalAction.NO_TRADE or (
+                book_reason is not None and broke is None and not approved
+            )
             self._records.append(
                 SignalRecord(
                     id=signal_id,
@@ -524,25 +580,25 @@ class Lab:
                     strategy_version=resolved.version,
                     definition_id=resolved.definition.id,
                     received_at=signal.timestamp,
-                    status="ROUTED" if routed else "IGNORED",
+                    status="IGNORED" if ignored else "ROUTED",
                     signal=signal,
                     instrument=signal.symbol,
                     timeframe=signal.timeframe,
+                    reject_code=book_reason if ignored else None,
+                    reject_detail=ignore_detail(book_reason)
+                    if ignored and book_reason is not None
+                    else None,
                     market_snapshot=_snapshot(
                         signal.symbol, signal.timeframe, batch, self.catalog.fingerprint, run_id
                     ),
                 )
             )
-            if routed:
-                for account in member.accounts:  # only this instance's own accounts
-                    try:
-                        account.handle_signal(signal, signal_id, output.time)
-                    except Exception as exc:
-                        # The instance's output broke its own account: fault that instance
-                        # (its account keeps its state); nobody else is affected.
-                        member.host.fail(_route_fault(resolved.id, signal.symbol, output.time, exc))
-                        member.routing_stopped = True
-                        return
+            if broke is not None:
+                # The instance's output broke its own account: fault that instance (its
+                # account keeps its state); nobody else is affected.
+                member.host.fail(_route_fault(resolved.id, signal.symbol, output.time, broke))
+                member.routing_stopped = True
+                return
 
     def _check_fault(self, member: LabMember, at: datetime | None) -> None:
         fault = member.host.fault
@@ -570,6 +626,7 @@ class Lab:
         self, run_id: UUID, batches: int, started: datetime | None, finished: datetime | None
     ) -> LabResult:
         result = LabResult(run_id, batches, started, finished)
+        result.consistency = self.consistency.summary()
         for member in self.members:
             for account in member.accounts:
                 trades = await self.store.closed_trades(account.account_id)

@@ -355,7 +355,7 @@ class StrategyRunner:
                 continue
             reason = self.book.apply(signal)
             if reason is not None:
-                self.ctx.log.info(
+                self.ctx.log.debug(
                     "strategy.signal_ignored", action=signal.signal.value, reason=reason
                 )
             accepted.append(signal)

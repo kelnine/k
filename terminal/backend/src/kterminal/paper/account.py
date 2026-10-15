@@ -714,6 +714,16 @@ class PaperAccount:
             pending.last_period = period
         return pending.periods > pending.expires_after
 
+    def entry_used_up(self, symbol: str, at: datetime) -> bool:
+        """Whether the resting entry on ``symbol`` has rested through all of its
+        ``expires_after_bars`` primary periods by ``at``: the next base bar drops it before
+        it can fill (the theoretical book has already reported it expired)."""
+        pending = self.pending_entries.get(symbol)
+        if pending is None or pending.expires_after is None or pending.last_period is None:
+            return False
+        period_end = pending.last_period + self._tf.duration
+        return pending.periods >= pending.expires_after and at >= period_end
+
     def _try_entry(self, pending: _PendingEntry, setup: InstrumentSetup, bar: Bar) -> bool:
         """Fill a pending entry on this bar if it triggers. Returns True when it filled
         *inside* the bar (the bar's earlier prices traded before the position existed)."""
