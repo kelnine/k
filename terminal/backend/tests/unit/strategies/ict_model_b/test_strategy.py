@@ -22,6 +22,7 @@ from kterminal.strategy_engine import CloseReason, PositionEventKind
 from kterminal.strategy_engine.testing import StrategyTestResult
 from tests.unit.strategies.ict_sweep_models.scenario import (
     ARMED_AT,
+    BELOW_RANGE,
     FILLED_AT,
     HOLD,
     RETRACE,
@@ -42,24 +43,6 @@ NO_TRADE = SignalAction.NO_TRADE
 DAY = date(2026, 1, 6)  # a Tuesday in winter (New York = UTC-5)
 RANGE_HIGH: Row = (100.0, 101.0, 99.85, 100.1)  # 08:20
 RANGE_LOW: Row = (100.0, 100.15, 99.0, 99.9)  # 08:40
-
-# A sweep that keeps closing below the range low; the MSS level (a pivot high at 98.3,
-# 09:05) is below it too. Back inside only at 09:11.
-BELOW_RANGE: tuple[Row, ...] = (
-    (100.0, 100.15, 99.85, 99.9),  # 09:00
-    (99.9, 99.9, 98.6, 98.7),  # 09:01 sweep: low 98.6, close 98.7 (not back in)
-    (98.7, 98.75, 98.0, 98.1),  # 09:02 new extreme 98.0
-    (98.1, 98.15, 97.9, 98.0),  # 09:03 new extreme 97.9
-    (98.0, 98.1, 97.95, 98.05),  # 09:04
-    (98.05, 98.3, 98.0, 98.25),  # 09:05 pivot high 98.3 (confirmed at 09:07)
-    (98.25, 98.28, 97.6, 97.7),  # 09:06 new extreme 97.6
-    (97.7, 97.75, 97.5, 97.6),  # 09:07 new extreme 97.5; gap candle 1 (high 97.75)
-    (97.6, 98.6, 97.55, 98.55),  # 09:08 displacement, close > 98.3: MSS
-    (98.55, 98.7, 97.9, 98.6),  # 09:09 low 97.9: FVG 97.75-97.9; still below 99
-    (98.6, 98.75, 98.3, 98.7),  # 09:10 still below 99
-    (98.7, 99.3, 98.6, 99.2),  # 09:11 close 99.2 > 99: back inside → armed
-    (99.2, 99.3, 98.9, 99.0),  # 09:12
-)
 
 
 def tape_for(

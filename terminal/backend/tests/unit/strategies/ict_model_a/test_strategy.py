@@ -18,9 +18,9 @@ from kterminal.core.enums import OrderType, SignalAction
 from kterminal.strategies.ict_sweep_models import IDLE, WAIT_SWEEP, IctModelA
 from kterminal.strategy_engine import CloseReason, PositionEventKind
 from kterminal.strategy_engine.testing import StrategyTestResult
-from tests.unit.strategies.ict_model_b.test_strategy import BELOW_RANGE
 from tests.unit.strategies.ict_sweep_models.scenario import (
     ARMED_AT,
+    BELOW_RANGE,
     HOLD,
     RETRACE,
     SETUP,

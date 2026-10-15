@@ -128,3 +128,22 @@ HOLD: tuple[Row, ...] = (
 ARMED_AT = 8  # minutes after the window start
 FILLED_AT = 10
 TARGET_AT = 12
+
+# A sweep that keeps closing below the range low (99); the MSS level, a pivot high at
+# 98.3 (+5), is below it too. Back inside only at +11. Times are minutes after the
+# window start (09:00 for Model B, 20:00 for Model A).
+BELOW_RANGE: tuple[Row, ...] = (
+    (100.0, 100.15, 99.85, 99.9),  # +00
+    (99.9, 99.9, 98.6, 98.7),  # +01 sweep: low 98.6, close 98.7 (not back in)
+    (98.7, 98.75, 98.0, 98.1),  # +02 new extreme 98.0
+    (98.1, 98.15, 97.9, 98.0),  # +03 new extreme 97.9
+    (98.0, 98.1, 97.95, 98.05),  # +04
+    (98.05, 98.3, 98.0, 98.25),  # +05 pivot high 98.3 (confirmed at +07)
+    (98.25, 98.28, 97.6, 97.7),  # +06 new extreme 97.6
+    (97.7, 97.75, 97.5, 97.6),  # +07 new extreme 97.5; gap candle 1 (high 97.75)
+    (97.6, 98.6, 97.55, 98.55),  # +08 displacement, close > 98.3: MSS
+    (98.55, 98.7, 97.9, 98.6),  # +09 low 97.9: FVG 97.75-97.9; still below 99
+    (98.6, 98.75, 98.3, 98.7),  # +10 still below 99
+    (98.7, 99.3, 98.6, 99.2),  # +11 close 99.2 > 99: back inside → armed
+    (99.2, 99.3, 98.9, 99.0),  # +12
+)
