@@ -1,0 +1,90 @@
+# S6 · Breakout Targets + ICT Levels + CISD (script 1), main-chart model — a CISD (close
+# through the open of the latest opposing run, body >= 0.3 ATR) within 12 bars of a
+# liquidity sweep of PDH/PDL, PWH/PWL, PMH/PML, the last Asia/London/NY AM high/low or
+# the latest 5/5 pivot.
+# Strategy: backend/src/kterminal/strategies/cisd_sweep (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  market comparison: fill at the next open with the script's levels; no trade when
+#       the stop or target is not beyond the signal close; skipped when the next open has
+#       passed either (the strategy's meta)
+#   D4  replace: a new CISD cancels the resting limit or exits the open trade at the next
+#       open and enters (the market comparison reverses on an opposite CISD)
+#   D7  limit at the CISD level, expiring after 12 bars, cancelled when TP1 trades after
+#       the signal bar before the fill; TP1-only and TP2-only instances (no partial
+#       exits, the stop never moves); a market-at-next-open comparison instance
+#   D8  PDH/PWH/PMH on the catalog's trading day (17:00 New York; UTC midnight for crypto)
+#   D10 5m, all 14 instruments, one Paper 50K account per variant, one position per
+#       instrument
+#   D11 signal windows "Any time" (script default), "NY AM", "London + NY AM", each with
+#       TP1 and TP2
+#   D13 script defaults
+- id: cisd_sweep_any_tp1_5m
+  strategy: cisd_sweep
+  name: CISD sweep · any time · limit, TP1 · 5m
+  description: Script 1 CISD defaults (signals at any time); limit at the CISD level, target TP1 = 1R (D7).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: Any time, entry: limit, target: tp1 }
+  tags: [pine-port, script-1, s6, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_any_tp2_5m
+  strategy: cisd_sweep
+  name: CISD sweep · any time · limit, TP2 · 5m
+  description: Script 1 CISD defaults (signals at any time); limit at the CISD level, target TP2 = 2R, the script's trade end (D7).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: Any time, entry: limit, target: tp2 }
+  tags: [pine-port, script-1, s6, main]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_nyam_tp1_5m
+  strategy: cisd_sweep
+  name: CISD sweep · NY AM · limit, TP1 · 5m
+  description: Script 1 CISD, signals only 09:30-12:00 New York; limit at the CISD level, target TP1 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: NY AM, entry: limit, target: tp1 }
+  tags: [pine-port, script-1, s6, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_nyam_tp2_5m
+  strategy: cisd_sweep
+  name: CISD sweep · NY AM · limit, TP2 · 5m
+  description: Script 1 CISD, signals only 09:30-12:00 New York; limit at the CISD level, target TP2 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: NY AM, entry: limit, target: tp2 }
+  tags: [pine-port, script-1, s6, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_lonny_tp1_5m
+  strategy: cisd_sweep
+  name: CISD sweep · London + NY AM · limit, TP1 · 5m
+  description: Script 1 CISD, signals only 02:00-05:00 and 09:30-12:00 New York; limit at the CISD level, target TP1 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: London + NY AM, entry: limit, target: tp1 }
+  tags: [pine-port, script-1, s6, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_lonny_tp2_5m
+  strategy: cisd_sweep
+  name: CISD sweep · London + NY AM · limit, TP2 · 5m
+  description: Script 1 CISD, signals only 02:00-05:00 and 09:30-12:00 New York; limit at the CISD level, target TP2 (D7, D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: London + NY AM, entry: limit, target: tp2 }
+  tags: [pine-port, script-1, s6, variant]
+  account: { max_open_positions: 14 }
+
+- id: cisd_sweep_any_market_5m
+  strategy: cisd_sweep
+  name: CISD sweep · any time · market at the next open, TP2 · 5m
+  description: Script 1 CISD defaults; comparison instance filled at the next open with the script's stop and TP2, skipped when the levels are already passed (D7, D3).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { sig_window: Any time, entry: market, target: tp2 }
+  tags: [pine-port, script-1, s6, variant, market]
+  account: { max_open_positions: 14 }

@@ -127,7 +127,9 @@ def transcribe(
     prev_bull = prev_bear = False
     for i, bar in enumerate(bars):
         # ta.atr(14): RMA of the true range (high - low on the first bar)
-        tr = h[i] - lo[i] if i == 0 else max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
+        tr = h[i] - lo[i]
+        if i > 0:
+            tr = max(tr, abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
         trs.append(tr)
         if i == 13:
             atr = sum(trs) / 14
@@ -224,6 +226,16 @@ def port_setups(result: Any) -> list[Setup]:
     return out
 
 
+def swept_levels(result: Any) -> list[str]:
+    """The names of the levels taken by the sweeps behind every CISD of a run."""
+    names = []
+    for s in result.signals:
+        sweep = s.metadata.get("sweep")
+        if isinstance(sweep, dict):
+            names += [str(level["level"]) for level in sweep["levels"]]
+    return names
+
+
 def walk(
     instrument: Instrument, *, seed: int, timeframe: str = "5m", days: int = 41, calendar: bool
 ) -> list[Bar]:
@@ -255,7 +267,7 @@ def test_port_matches_the_transcription_with_script_defaults(seed: int, calendar
     assert result.fault is None and result.rejected == []
     assert len(expected) > 100  # a CISD every few hours on a random walk
     assert port_setups(result) == expected
-    swept = {lv["level"] for s in result.signals for lv in s.metadata.get("sweep", {}).get("levels", [])}  # type: ignore[union-attr]
+    swept = set(swept_levels(result))
     # every kind of level was swept at least once in these 41 days
     assert {"pivot high", "pivot low", "PDH", "PDL", "PWH", "PWL", "Asia high", "Asia low"} <= swept
 
@@ -306,3 +318,25 @@ def test_other_timeframes_and_no_session_levels_above_60_minutes(timeframe: str)
     if timeframe == "4h":  # showSess off: no session levels, the window is ignored
         levels = [s.metadata["levels"] for s in result.signals if "levels" in s.metadata]
         assert all(lv["Asia high"] is None and lv["NY AM low"] is None for lv in levels)  # type: ignore[index, call-overload]
+
+
+def test_previous_month_levels_are_swept_like_the_script() -> None:
+    # from 1 February (31 January 17:00 New York, a complete month) to mid-April: PMH/PML
+    # of February and March are live in March and April
+    bars = list(
+        synthetic_bars(
+            "XAUUSD",
+            start=datetime(2026, 1, 31, 22, 0, tzinfo=UTC),
+            count=70 * 288,
+            start_price=Decimal("2650"),
+            tick_size=XAUUSD.tick_size,
+            timeframe=Timeframe.parse("5m"),
+            volatility=0.0015,
+            seed=1,
+        )
+    )
+    result = run(CisdSweep, bars)
+    assert result.fault is None and result.rejected == []
+    assert port_setups(result) == transcribe(bars)
+    swept = swept_levels(result)
+    assert "PMH" in swept and "PML" in swept

@@ -256,4 +256,3 @@ def test_session_windows_are_parameters() -> None:
     params = {"sig_window": "London + NY AM", "lon_sess": "0500-0700"}
     (signal,) = cisd(tape, params).signals
     assert bar_offset(tape, signal, anchor) == SIGNAL_AT
-

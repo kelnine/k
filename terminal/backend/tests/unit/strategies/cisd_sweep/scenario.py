@@ -14,7 +14,7 @@ also the short one.
 """
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -85,7 +85,8 @@ class Tape:
     def time_of(self, index: int) -> datetime:
         return self.start + index * self.timeframe.duration
 
-    def index(self, t: datetime) -> int:
+    def index(self, t: datetime | None) -> int:
+        assert t is not None
         return int((t - self.start) / self.timeframe.duration)
 
     def quiet_until(self, until: datetime, level: float | None = None) -> "Tape":
