@@ -28,4 +28,5 @@ accounts.
 | S1·S7·S8 | [Ports: EliteAlgo, SuperTrend flip, PSAR](ports-s1-s7-s8.md) | The first Pine ports: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | S2·S3 | [Ports: Opening range breakout, Smart Money sniper](ports-s2-s3.md) | NY and London ORB with the EMA 9/20 filter and the 16:00 flatten; the script 5 sniper (BOS + score, 2R): strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | S4·S5 | [Ports: ICT Sweep Models B and A](ports-s4-s5.md) | Script 2's sweep → MSS → displacement-FVG limit models: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
+| S6·S10 | [Ports: Script 1 CISD after a sweep, Scanner CISD](ports-s6-s10.md) | Script 1's two CISD models — after a PDH/PW/PM, session or pivot sweep, and the MTF scanner's 3/3-swing model with the A+ grade: strategies, D7 limit/TP1/TP2 handling, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | A | [Metric definitions](appendix-a-metrics.md) | Exact formulas used by analytics and the leaderboard |

@@ -28,6 +28,7 @@ bars). Comparisons are Pine's (``gt``/``ge``…: 1e-10 tolerance, false with na)
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 
 from kterminal.indicators import Atr, PivotHigh, PivotLow, ge, gt, le, lt, na, nz
 from kterminal.strategies.cisd_sweep import CisdRuns, Cross
@@ -37,7 +38,9 @@ PIVOT = 3  # ta.pivothigh(high, 3, 3) (L779-780): fixed in the script
 ATR_LENGTH = 14  # ta.atr(14) (L781)
 
 # tSt (L842): 0 active, 1 TP1 hit, 2 TP2 hit, -1 stopped, 3 TP1 then stopped
-STATUS = {0: "active", 1: "TP1 hit", 2: "TP2 hit", -1: "stopped", 3: "TP1 then stopped"}
+STATUS = MappingProxyType(
+    {0: "active", 1: "TP1 hit", 2: "TP2 hit", -1: "stopped", 3: "TP1 then stopped"}
+)
 
 
 @dataclass(frozen=True, slots=True)
