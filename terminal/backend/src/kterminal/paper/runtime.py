@@ -29,6 +29,8 @@ Status document (``system_state['paper.runtime']``)::
                                  "lag_seconds": 4.2, "state": "ok", "last_error": null}},
       "instances": {"demo_sma_fast": {"state": "RUNNING", "fault": null, "account_id": "..."}},
       "kill_switch": {"global": false, "accounts": [], "strategies": []},
+      "book_consistency": {"checks": 0, "divergent": 0, "episodes": 0, ...},
+                                    # theoretical books vs accounts (docs/12 §12.8)
       "error": null                 # the reason, when status is "error"
     }
 """
@@ -291,6 +293,7 @@ class PaperRuntime:
             "instruments": {} if self.feed is None else self.feed.status(),
             "instances": {} if session is None else session.instances_status(),
             "kill_switch": self.kill_switches.summary(),
+            "book_consistency": None if session is None else session.consistency_status(),
             "error": self.error if self.status == "error" else None,
         }
 
@@ -308,6 +311,7 @@ class PaperRuntime:
             "instruments": {},
             "instances": {},
             "kill_switch": NO_KILL_SWITCHES.summary(),
+            "book_consistency": None,
             "error": error[:2_000],
         }
 

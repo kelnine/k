@@ -231,8 +231,9 @@ def catalog_resolve(
 def strategies_list(
     lab_config: Annotated[Path | None, typer.Option("--config", help="lab.yaml")] = None,
 ) -> None:
-    """Registered strategy definitions, and the instances configured in lab.yaml."""
-    from kterminal.paper.config import LabConfig
+    """Registered strategy definitions, and the instances forward paper trading runs:
+    lab.yaml plus every file in instances.d/ beside it."""
+    from kterminal.paper.config import INSTANCES_DIR, instance_origins
     from kterminal.strategy_engine import DEFINITIONS, discover_strategies
 
     settings = _load_settings_or_exit()
@@ -248,14 +249,20 @@ def strategies_list(
     if not path.exists():
         typer.echo(f"(no lab config at {path})")
         return
-    config = LabConfig.load(path)
-    typer.echo(f"Instances ({path}):")
+    config = _forward_config_or_exit(path)  # the same loader as kterminal paper start
+    origins = instance_origins(path)
+    typer.echo(f"Instances ({path} + {path.parent / INSTANCES_DIR}/*.yaml):")
+    id_width = max([24, *(len(i.id) for i in config.instances)])
+    strategy_width = max([20, *(len(i.strategy) for i in config.instances)])
     for instance in config.instances:
         account = config.account_settings(instance)
         state = "enabled" if instance.enabled else "disabled"
+        symbols = instance.instruments
+        markets = ",".join(symbols) if len(symbols) <= 4 else f"{len(symbols)} instruments"
         typer.echo(
-            f"  {instance.id:<24} {instance.strategy:<20} {','.join(instance.instruments):<12} "
-            f"{instance.timeframe:<4} {account.display_name_prefix:<11} {state}"
+            f"  {instance.id:<{id_width}} {instance.strategy:<{strategy_width}} {markets:<27} "
+            f"{instance.timeframe:<4} {account.display_name_prefix:<11} {state:<8} "
+            f"{origins.get(instance.id, path.name)}"
         )
 
 
