@@ -133,17 +133,18 @@ base bars (1m) ─▶ aggregator ─▶ closed bars 1m/5m/15m/1h (identical, imm
 
 Each instance's theoretical book is given its account's execution model, so
 it resolves the batch's base bars with the account's own prices and rules
-(doc 05 §5.3): the position a strategy sees is the one its account holds. A
-signal is recorded `ROUTED` when the book applied it or an account approved
-it; one that had no effect anywhere — the book ignored it and no account
-approved it — is recorded `IGNORED`, with the book's reason in `reject_code`
-(`POSITION_EXISTS`, `OPPOSITE_POSITION_OPEN`, `NO_MATCHING_POSITION`,
-`NOTHING_TO_FLATTEN`, `NO_POSITION`, `STOP_WIDENING_NOT_ALLOWED`, a venue
-refusal such as `MARKET_CLOSED`) and its meaning in `reject_detail` ("ignored
-by the theoretical book: …"). Every signal still reaches the accounts, whose
-decisions are recorded as before; a `FLATTEN` with nothing to close writes no
-decision. After the routing the lab compares every book with its account
-(§12.8).
+(doc 05 §5.3): the position a strategy sees is the one its account holds.
+Every signal reaches the instance's accounts, whose decisions are recorded as
+before (a `FLATTEN` with nothing to close writes none). A signal the book
+ignored carries the book's reason in `reject_code` (`POSITION_EXISTS`,
+`OPPOSITE_POSITION_OPEN`, `NO_MATCHING_POSITION`, `NOTHING_TO_FLATTEN`,
+`NO_POSITION`, `STOP_WIDENING_NOT_ALLOWED`, a venue refusal such as
+`MARKET_CLOSED`) and its meaning in `reject_detail` ("ignored by the
+theoretical book: …"). Its status is `IGNORED` when no account decided on it
+either — it had no effect and has no decision row — and `ROUTED` otherwise,
+where the account's decision (a refusal, or an exit of a position only the
+account held) is its outcome. After the routing the lab compares every book
+with its account (§12.8).
 
 `kterminal lab demo` runs this end to end with two dummy strategies and
 prints each account's state, recomputed from the recorded trades.

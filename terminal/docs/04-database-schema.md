@@ -606,11 +606,11 @@ CREATE INDEX ix_signals_strategy_version_id ON signals (strategy_version_id);
 table); a strategy can mark one as `persist=True` when the *reason* is worth
 analysing (e.g. "filtered by news window"); the reason is kept in `reason`.
 `FLATTEN` (revision `0003`; `ctx.flatten()`, doc 05 §5.3) closes whatever the
-instance holds on the instrument and cancels its resting entry. A signal that
-had no effect — the strategy's theoretical book ignored it and no account
-approved it — is `IGNORED` with the book's reason in `reject_code` (e.g.
-`POSITION_EXISTS`, `NOTHING_TO_FLATTEN`) and its meaning in `reject_detail`
-(doc 12 §12.5).
+instance holds on the instrument and cancels its resting entry. A signal the
+strategy's theoretical book ignored carries the book's reason in `reject_code`
+(e.g. `POSITION_EXISTS`, `NOTHING_TO_FLATTEN`) and its meaning in
+`reject_detail`; it is `IGNORED` when no account decided on it either, else
+`ROUTED` with the account's risk decision (doc 12 §12.5).
 The framework refuses, for that instance only, any signal these columns could
 not hold exactly (prices ≥ 10¹⁴ or with more than 10 decimals, risk with more
 than 4 decimals, NUL characters), so one strategy's output can never fail a

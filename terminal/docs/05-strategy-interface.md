@@ -276,10 +276,10 @@ balance: a data-only listing (`NOT_TRADABLE`), a market closed at the decision
 (`MARKET_CLOSED`), a stop or target not beyond the price the entry is placed
 at (`STOP_WRONG_SIDE` / `TARGET_WRONG_SIDE`). A target the mid touches by less
 than half the spread therefore closes neither, and a limit fills in both only
-when the ask (a buy) or the bid (a sale) reaches it. `ctx.position` is what the
-account holds unless the account refused something for risk reasons (sizing,
-limits, an inactive account, a kill switch); the lab checks that after every batch
-([doc 12 §12.8](12-strategy-lab.md#128-bookaccount-consistency)). Events of the
+when the ask (a buy) or the bid (a sale) reaches it. `ctx.position` is what
+the account holds unless the account refused something for risk reasons
+(sizing, limits, an inactive account, a kill switch); the lab checks that after
+every batch ([doc 12 §12.8](12-strategy-lab.md#128-bookaccount-consistency)). Events of the
 base bars inside a primary bar reach `on_position_event` when that primary bar
 closes, with the base bar's time (a stop hit in the 10:07 minute closes at
 10:08). The book reports nothing to accounts and the strategy never sees a
@@ -298,11 +298,12 @@ changed nothing (`POSITION_EXISTS`, `OPPOSITE_POSITION_OPEN`,
 `NO_MATCHING_POSITION`, `NOTHING_TO_FLATTEN`, `NO_POSITION`,
 `STOP_WIDENING_NOT_ALLOWED` or a venue refusal above). The runner returns it
 with the signal (`RunnerOutput.book_reasons`, aligned with `signals`;
-`run_strategy(...).ignored` in tests) and the lab records a signal that had no
-effect anywhere — the book ignored it and no account approved it — as
-`IGNORED` with that code in `reject_code` and its meaning in `reject_detail`
-(doc 12 §12.5). Every signal is still routed to the accounts: an exit the book
-ignores closes a position the account holds.
+`run_strategy(...).ignored` in tests) and the lab records it in the signal's
+`reject_code`, its meaning in `reject_detail` (doc 12 §12.5). The signal is
+`IGNORED` when no account decided on it either (a `FLATTEN` with nothing to
+close anywhere), otherwise `ROUTED` with the account's decision as its outcome.
+Every signal is still routed to the accounts: an exit the book ignores closes a
+position the account holds.
 
 * `LONG` while flat → open long. `LONG` while long → ignored unless
   `max_pyramiding > 1`. `LONG` while short → reverse (`on_opposite_signal`):

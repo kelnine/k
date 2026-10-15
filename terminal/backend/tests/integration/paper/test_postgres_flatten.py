@@ -97,7 +97,7 @@ async def test_flatten_and_ignored_signals_are_recorded_in_postgres(database: Da
         summary = await session.scalar(select(m.RunRow.summary).where(m.RunRow.id == result.run_id))
     assert [tuple(row) for row in signals] == [
         ("LONG", "ROUTED", None),
-        ("LONG", "IGNORED", "POSITION_EXISTS"),
+        ("LONG", "ROUTED", "POSITION_EXISTS"),  # the account refused it too: a decision
         ("FLATTEN", "ROUTED", None),
         ("SHORT", "ROUTED", None),
         ("FLATTEN", "ROUTED", None),

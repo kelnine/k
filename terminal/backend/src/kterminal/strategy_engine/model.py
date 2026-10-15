@@ -34,12 +34,13 @@ class CloseReason(StrEnum):
     STOP_LOSS = "STOP_LOSS"
     SIGNAL_EXIT = "SIGNAL_EXIT"
     REVERSAL = "REVERSAL"
-    SESSION_CLOSE = "SESSION_CLOSE"  # a time-based exit (EXIT signal with reason SESSION_CLOSE)
+    SESSION_CLOSE = "SESSION_CLOSE"  # a time exit (EXIT/FLATTEN with reason SESSION_CLOSE)
 
 
 def exit_reason(signal: Signal) -> CloseReason:
-    """The close reason an ``EXIT_*`` signal records: ``SESSION_CLOSE`` when its ``reason``
-    is exactly that code (``ctx.exit_long(session_close=True)``), else ``SIGNAL_EXIT``.
+    """The close reason an ``EXIT_*`` or ``FLATTEN`` signal records: ``SESSION_CLOSE`` when
+    its ``reason`` is exactly that code (``ctx.exit_long(session_close=True)``, the default
+    of ``ctx.flatten()``), else ``SIGNAL_EXIT``.
     The theoretical book and every paper account use this one rule."""
     if signal.reason == CloseReason.SESSION_CLOSE:
         return CloseReason.SESSION_CLOSE

@@ -104,8 +104,9 @@ async def test_flatten_closes_what_the_account_holds_when_the_book_is_flat() -> 
     assert trade.exit_time == bars[5].open_time  # at the next base bar's open
     assert signal_rows(store) == [
         ("LONG", "ROUTED", None),
-        ("FLATTEN", "ROUTED", None),  # the book had nothing, the account did: it acted
-        ("FLATTEN", "IGNORED", NOTHING_TO_FLATTEN),  # nothing anywhere: no effect
+        # the book had nothing (its reason is kept), the account did: it acted
+        ("FLATTEN", "ROUTED", NOTHING_TO_FLATTEN),
+        ("FLATTEN", "IGNORED", NOTHING_TO_FLATTEN),  # nothing anywhere: no decision at all
     ]
     flatten_ids = [
         r.id for r in store.of(SignalRecord) if r.signal and r.signal.signal.value == "FLATTEN"
@@ -141,29 +142,37 @@ async def test_flatten_cancels_the_resting_entry_under_a_kill_switch_too() -> No
     assert report["divergent"] == 0  # … in the book as well
 
 
-async def test_a_signal_without_effect_is_ignored_with_the_books_reason() -> None:
+async def test_the_books_reason_is_recorded_and_undecided_signals_are_ignored() -> None:
     steps = [
         {"bar": 1, "action": "long", "stop": "3990"},
         {"bar": 2, "action": "long", "stop": "3990"},
         {"bar": 3, "action": "exit_short"},
         {"bar": 4, "action": "exit_long"},
+        {"bar": 6, "action": "flatten"},
     ]
     lab, store = await begin(config(steps))
     await feed(lab, minutes(8))
     result = await lab.end()
+    # the book's reason is kept on every signal it ignored; the account still decided
+    # (and refused) the first two — their outcome is that decision, so they stay ROUTED —
+    # while nothing anywhere decided on the last: IGNORED
     assert signal_rows(store) == [
         ("LONG", "ROUTED", None),
-        ("LONG", "IGNORED", "POSITION_EXISTS"),
-        ("EXIT_SHORT", "IGNORED", "NO_MATCHING_POSITION"),
+        ("LONG", "ROUTED", "POSITION_EXISTS"),
+        ("EXIT_SHORT", "ROUTED", "NO_MATCHING_POSITION"),
         ("EXIT_LONG", "ROUTED", None),
+        ("FLATTEN", "IGNORED", NOTHING_TO_FLATTEN),
     ]
-    ignored = [r for r in store.of(SignalRecord) if r.status == "IGNORED"]
-    assert ignored[0].reject_detail == (
+    noted = [r for r in store.of(SignalRecord) if r.reject_code is not None]
+    assert noted[0].reject_detail == (
         "ignored by the theoretical book: a position in this direction is already open"
     )
-    # the account still decided (and refused) them: exits always reach it
-    refused = {d.primary_reason for d in store.of(DecisionRecord) if not d.approved}
-    assert refused == {"POSITION_EXISTS", "NO_MATCHING_POSITION"}
+    assert noted[-1].reject_detail == (
+        "ignored by the theoretical book: no position and no resting entry to close"
+    )
+    refused = {d.signal_id: d.primary_reason for d in store.of(DecisionRecord) if not d.approved}
+    assert sorted(refused.values()) == ["NO_MATCHING_POSITION", "POSITION_EXISTS"]
+    assert set(refused) == {r.id for r in noted[:2]}  # no decision for the ignored FLATTEN
     assert result.consistency["divergent"] == 0
     assert result.consistency["checks"] == 8
 

@@ -11,10 +11,11 @@ For every batch of bars that closed at the same instant the lab:
    account's own prices and rules (``BookExecution``);
 3. records each signal and routes it **only to the accounts allocated to the
    instance that produced it** — an instance can never reach another
-   instance's account. A signal that changed nothing — the theoretical book
-   ignored it (``POSITION_EXISTS``, ``NO_MATCHING_POSITION``,
-   ``NOTHING_TO_FLATTEN`` …) and no account approved it — is recorded
-   ``IGNORED`` with the book's reason;
+   instance's account. A signal the theoretical book ignored carries the
+   book's reason (``POSITION_EXISTS``, ``NO_MATCHING_POSITION``,
+   ``NOTHING_TO_FLATTEN`` …) in ``reject_code``; it is recorded ``IGNORED``
+   when no account decided on it either, else ``ROUTED`` with the account's
+   decision;
 4. compares every instance's book with its account (the consistency report,
    :mod:`kterminal.paper.consistency`);
 5. snapshots equity on a fixed cadence and flushes all records to the store in
@@ -558,7 +559,7 @@ class Lab:
                 continue
             signal_id = self.ids()
             book_reason = output.book_reason(index)
-            approved = False
+            decided = False
             broke: Exception | None = None
             if action is not SignalAction.NO_TRADE:
                 for account in member.accounts:  # only this instance's own accounts
@@ -567,11 +568,13 @@ class Lab:
                     except Exception as exc:
                         broke = exc
                         break
-                    approved = approved or (decision is not None and decision.approved)
-            # no effect anywhere: the book ignored it and no account approved it (an exit
-            # still reaches an account that holds what the book does not)
+                    decided = decided or decision is not None
+            # The book's reason is kept whenever it ignored the signal. The signal is
+            # IGNORED when no account decided on it either (a FLATTEN with nothing to
+            # close anywhere); an account's decision — its refusal, or an exit of what only
+            # the account held — is the outcome of a ROUTED signal.
             ignored = action is SignalAction.NO_TRADE or (
-                book_reason is not None and broke is None and not approved
+                book_reason is not None and broke is None and not decided
             )
             self._records.append(
                 SignalRecord(
@@ -584,10 +587,8 @@ class Lab:
                     signal=signal,
                     instrument=signal.symbol,
                     timeframe=signal.timeframe,
-                    reject_code=book_reason if ignored else None,
-                    reject_detail=ignore_detail(book_reason)
-                    if ignored and book_reason is not None
-                    else None,
+                    reject_code=book_reason,
+                    reject_detail=None if book_reason is None else ignore_detail(book_reason),
                     market_snapshot=_snapshot(
                         signal.symbol, signal.timeframe, batch, self.catalog.fingerprint, run_id
                     ),
