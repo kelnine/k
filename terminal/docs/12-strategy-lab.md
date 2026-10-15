@@ -326,8 +326,12 @@ entries (`KILL_SWITCH`); an unexplained episode is an engine bug to report.
 * **Logged:** `lab.book_divergence` when an episode starts — a warning when it
   is unexplained, info otherwise — with both sides; `lab.book_divergence_resolved`
   when it ends, with its length in batches.
-* **Recorded:** the run summary of every lab run (`runs.summary["consistency"]`,
-  also `LabResult.consistency`):
+* **Recorded:** in the run summary of every lab run
+  (`runs.summary["consistency"]`, also `LabResult.consistency`) and, for a
+  forward session, in the runtime status (`book_consistency`, §12.7, with the
+  first five examples), covering the replay and the live minutes of the current
+  runtime process — a restart rebuilds it from the replay. `examples` keeps the
+  first 20 episodes (their first batch):
 
 ```json
 {"checks": 4320, "divergent": 3, "episodes": 1, "unexplained_episodes": 0,
@@ -339,11 +343,6 @@ entries (`KILL_SWITCH`); an unexplained episode is an engine bug to report.
                "account": {"position": null, "pending_entry": null},
                "explained_by": "SIZE_TOO_SMALL"}]}
 ```
-
-  `examples` keeps the first 20 episodes (their first batch). A forward
-  session publishes the same document in the runtime status
-  (`book_consistency`, §12.7), covering the replay and the live minutes of the
-  current runtime process; a restart rebuilds it from the replay.
 
 What still diverges by design:
 
