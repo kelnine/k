@@ -17,12 +17,14 @@ time on all seven days:
 The engine's transitions become signals: an armed setup is a resting LIMIT entry at
 the FVG edge with the script's stop (sweep extreme ∓ buffer) and target (the opposite
 level, or the fixed RR); the script's cancels — the target traded before the fill
-(``missed``) and the window end — are EXITs of the resting order (the lab has no such
-rule), and the order also expires with the window's last bar. A filled trade is held
-as the script holds it, until its stop or target or the model's next window start,
-where it exits with the reason ``SESSION_CLOSE`` (doc 13 D6); ``after_window: flat``
-closes it at the window end instead (the D6 variant). The README lists every
-deviation from the script.
+(``missed``) and the window end — are EXITs of the resting order the theoretical book
+holds (``ctx.pending_entry``; the lab has no such rule), and the order also expires
+with the window's last bar. A filled trade is held as the script holds it, until its
+stop or target or the model's next window start, where ``ctx.flatten()`` closes it with
+the reason ``SESSION_CLOSE`` (doc 13 D6); ``after_window: flat`` flattens at the window
+end instead (the D6 variant). The time exits are sent whenever the window's cycle had a
+fill, whatever ``ctx.position`` says, so they also close a position the account kept
+after the book closed it. The README lists every deviation from the script.
 """
 
 import math
@@ -48,9 +50,9 @@ from kterminal.strategies.ict_sweep_models.engine import (
 )
 from kterminal.strategies.ict_sweep_models.levels import LiquiditySwings, RangeCandle
 from kterminal.strategy_engine import (
+    PendingEntryView,
     PositionEvent,
     PositionEventKind,
-    PositionView,
     SessionSpec,
     SessionString,
     SignalOutput,
@@ -191,17 +193,15 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
         self._model = SweepModel(self.TAG)
         self._config = self._engine_config(p.sl_buf_ticks * tick)
         self._clock = WindowClock(self._window())
-        self._order: Signal | None = None  # our resting LIMIT, as far as the book reported
         self._opened_at: datetime | None = None  # open time of the book's latest fill
+        self._traded = False  # a fill since the last time exit: the next one must flatten
         self._start_levels: dict[str, JsonValue] = {}
         self._start_model()
 
     def on_position_event(self, event: PositionEvent) -> SignalOutput:
         if event.kind is PositionEventKind.OPENED:
-            self._order = None
             self._opened_at = event.time
-        elif event.kind in (PositionEventKind.ORDER_EXPIRED, PositionEventKind.ORDER_CANCELLED):
-            self._order = None
+            self._traded = True
         return None
 
     def on_bar(self, bar: Bar) -> SignalOutput:
@@ -233,35 +233,29 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
         model = self._model
         clock = self._clock
         out: list[Signal] = []
-        position = ctx.position
-        exiting = False
+        flatten: Signal | None = None
         # The book filled our order on a bar where the script dropped the setup instead
         # (after the window end when its last bars are missing, or a "missed" on a bar
         # that reached the order's rounded CE price but not the script's). A fill while
         # the script still waits (a CE level rounded towards the market) is kept.
-        late_fill = (
-            position is not None
-            and self._opened_at == bar.open_time
-            and not step.filled
-            and model.state != ARMED
-        )
-        if step.started and position is not None:
+        late_fill = self._opened_at == bar.open_time and not step.filled and model.state != ARMED
+        if step.started and self._traded:
             # L470-472: the open trade is closed (neutral) at the model's next window start
-            out.append(self._exit(position, "closed", "window start: the script closes it"))
-            exiting = True
-        if self._order is not None and model.state != ARMED:
-            out.append(self._cancel(self._order, step))
-            self._order = None
-        if late_fill and not exiting and position is not None:
-            out.append(self._exit(position, "late fill", "filled after the script cancelled"))
-            exiting = True
-        if self.params.after_window == "flat" and position is not None and not exiting:
+            flatten = self._flatten("closed", "window start: the script closes it")
+        pending = ctx.pending_entry
+        if flatten is None and pending is not None and model.state != ARMED:
+            out.append(self._cancel(pending, step))
+        if flatten is None and late_fill:
+            flatten = self._flatten("late fill", "filled after the script cancelled")
+        if flatten is None and self.params.after_window == "flat" and self._traded:
             end = clock.end
             window_over = (end is not None and end <= bar.close_time) or (
                 not clock.inside and clock.previous
             )
             if window_over:  # D6 variant: flat at the window end
-                out.append(self._exit(position, "window end", "flat at the window end (D6)"))
+                flatten = self._flatten("window end", "flat at the window end (D6)")
+        if flatten is not None:
+            out.insert(0, flatten)
         if step.armed:
             out.append(self._entry(bar, step))
         return out
@@ -307,7 +301,7 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
         if problem is not None:  # doc 13 D3: no trade with levels on the wrong side
             return ctx.no_trade(problem, persist=True, metadata=metadata)
         build = ctx.long if is_long else ctx.short
-        signal = build(
+        return build(
             entry=model.entry,
             stop_loss=model.sl,
             take_profit=model.tp,
@@ -316,12 +310,10 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
             reason=f"Model {self.TAG} {side} setup: limit in the displacement FVG",
             metadata=metadata,
         )
-        self._order = signal
-        return signal
 
-    def _cancel(self, order: Signal, step: Step) -> Signal:
-        """Cancel the resting limit: the script dropped the setup (or filled it where the
-        book did not)."""
+    def _cancel(self, order: PendingEntryView, step: Step) -> Signal:
+        """Cancel the book's resting limit: the script dropped the setup (or filled it
+        where the book did not)."""
         if step.missed:
             trigger, why = f"{self.TAG} missed", "target traded before the fill"
         elif step.window_cancelled is not None:
@@ -331,20 +323,23 @@ class SweepModelStrategy[P: SweepParams](Strategy[P]):
         else:
             trigger, why = "fill not matched", "the script filled, the book did not"
         metadata = {**self._common(trigger), "order_entry": _decimal(order.entry)}
-        is_long = order.signal.direction is Direction.LONG
+        is_long = order.direction is Direction.LONG
         build = self.ctx.exit_long if is_long else self.ctx.exit_short
         return build(reason=f"Model {self.TAG}: {why}", metadata=metadata)
 
-    def _exit(self, position: PositionView, trigger: str, why: str) -> Signal:
-        """A time exit of the open position at the next open (``SESSION_CLOSE``)."""
+    def _flatten(self, trigger: str, why: str) -> Signal:
+        """A time exit at the next open (``SESSION_CLOSE``): ``ctx.flatten()`` closes the
+        trade wherever it is still open — the theoretical book, the account or both — and
+        changes nothing where it already closed."""
+        self._traded = False
+        position = self.ctx.position
         metadata: dict[str, JsonValue] = {
             **self._common(trigger),
             "detail": why,
             "pine_signal": "closeTrade(0)" if trigger == "closed" else None,
-            "position_entry": _decimal(position.entry_price),
+            "position_entry": None if position is None else _decimal(position.entry_price),
         }
-        build = self.ctx.exit_long if position.is_long else self.ctx.exit_short
-        return build(session_close=True, metadata=metadata)
+        return self.ctx.flatten(metadata=metadata)
 
     def _common(self, trigger: str) -> dict[str, JsonValue]:
         return {
