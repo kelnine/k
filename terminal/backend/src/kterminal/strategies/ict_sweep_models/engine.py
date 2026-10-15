@@ -260,7 +260,7 @@ class SweepModel:
             return step
         if self.state == ARMED:  # L496-512: wait for price to retrace into the FVG
             self._fill_or_miss(bar, step)
-        if self.state <= WAIT_MSS:  # L515-538: sweep, or a new extreme beyond the sweep
+        if self.state <= WAIT_MSS:  # L516-538: sweep, or a new extreme beyond the sweep
             if (self.dir == -1 and gt(bar.high, self.ext)) or (
                 self.dir != -1 and gt(bar.high, self.hi)
             ):
