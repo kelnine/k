@@ -5,11 +5,13 @@ the roll-back-everything session of ``tests/integration/db``. Each test gets
 its own database created next to the test database and dropped afterwards.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import pool, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from kterminal.config.settings import DatabaseSettings
@@ -42,7 +44,23 @@ async def fresh_url(database_url: str) -> AsyncIterator[str]:
         await migrate.upgrade(url)
         yield url
     finally:
-        await _admin(database_url, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await _drop(database_url, name)
+
+
+async def _drop(database_url: str, name: str) -> None:
+    """Drop a test database, waiting out backends this role may not terminate.
+
+    ``WITH (FORCE)`` refuses when another role's backend (typically an autovacuum
+    worker after heavy writes) is connected; those finish within moments.
+    """
+    for attempt in range(50):
+        try:
+            await _admin(database_url, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            return
+        except DBAPIError as exc:
+            if "permission denied to terminate process" not in str(exc) or attempt == 49:
+                raise
+            await asyncio.sleep(0.2)
 
 
 @pytest.fixture
