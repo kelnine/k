@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from kterminal.core.enums import SignalAction
+from kterminal.core.enums import Direction, SignalAction
 from kterminal.domain.catalog import InstrumentCatalog
 from kterminal.domain.instruments import Instrument
 from kterminal.domain.market import Bar
@@ -26,7 +26,7 @@ from kterminal.paper.demo import demo_bars
 from kterminal.paper.lab import Lab, LabResult
 from kterminal.paper.records import FaultRecord, SignalRecord
 from kterminal.paper.store import InMemoryLabStore
-from kterminal.strategy_engine import PositionEvent, PositionEventKind, Strategy
+from kterminal.strategy_engine import CloseReason, PositionEvent, PositionEventKind, Strategy
 from kterminal.strategy_engine.registry import discover_strategies
 from kterminal.strategy_engine.testing import StrategyTestResult, run_strategy
 from tests.fixtures.catalog import lab_catalog
@@ -136,6 +136,33 @@ def of_kind(result: StrategyTestResult, kind: PositionEventKind) -> list[Positio
 
 def entries(result: StrategyTestResult) -> list[Signal]:
     return [s for s in result.signals if s.signal.is_entry]
+
+
+def positions_at_decisions(bars: list[Bar], events: list[PositionEvent]) -> list[Direction | None]:
+    """The theoretical position each ``on_bar`` saw. Fills, cancels and signal exits happen
+    at a bar's open (event time = its open), stops and targets inside it (its close)."""
+    by_open = {bar.open_time: i for i, bar in enumerate(bars)}
+    by_close = {bar.close_time: i for i, bar in enumerate(bars)}
+    per_bar: dict[int, list[PositionEvent]] = {}
+    for event in events:
+        if event.kind is PositionEventKind.STOP_MOVED:
+            continue
+        intrabar = event.kind is PositionEventKind.CLOSED and event.reason in (
+            CloseReason.STOP_LOSS,
+            CloseReason.TAKE_PROFIT,
+        )
+        bar = by_close[event.time] if intrabar else by_open[event.time]
+        per_bar.setdefault(bar, []).append(event)
+    held: Direction | None = None
+    out: list[Direction | None] = []
+    for i in range(len(bars)):
+        for event in per_bar.get(i, []):
+            if event.kind is PositionEventKind.OPENED:
+                held = event.direction
+            elif event.kind is PositionEventKind.CLOSED:
+                held = None
+        out.append(held)
+    return out
 
 
 def strategy_object(result: StrategyTestResult) -> Any:
