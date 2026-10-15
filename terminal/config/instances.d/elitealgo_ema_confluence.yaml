@@ -1,0 +1,50 @@
+# S1 · EliteAlgo v32 (script 9) — EMA 8/21 cross, 4-of-7 confluence, 1.5 ATR stop, 2R.
+# Strategy: backend/src/kterminal/strategies/elitealgo_ema_confluence (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  fill at the next open with the script's close-based levels; skip the entry
+#       when that open is already past the stop or target (the strategy's meta)
+#   D4  script 9: ignore new signals while in a trade (meta); 'reverse' variant below
+#   D8  VWAP reset at the instrument's trading day (17:00 New York; 00:00 UTC crypto)
+#   D9  all instruments; on OANDA feeds (metals, index CFDs, FX) the VWAP check uses
+#       tick volume (signal metadata bar_source names the feed)
+#   D10 5m and 15m, all 14 instruments, one Paper 50K account per variant and
+#       timeframe, one position per instrument (max_open_positions: 14)
+#   D13 script defaults (no params overridden)
+- id: elitealgo_ema_confluence_main_5m
+  strategy: elitealgo_ema_confluence
+  name: EliteAlgo EMA confluence · ignore opposite · 5m
+  description: Script 9 defaults; an opposite signal while in a trade is ignored (D4).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  tags: [pine-port, script-9, s1, main]
+  account: { max_open_positions: 14 }
+
+- id: elitealgo_ema_confluence_main_15m
+  strategy: elitealgo_ema_confluence
+  name: EliteAlgo EMA confluence · ignore opposite · 15m
+  description: Script 9 defaults; an opposite signal while in a trade is ignored (D4).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  tags: [pine-port, script-9, s1, main]
+  account: { max_open_positions: 14 }
+
+- id: elitealgo_ema_confluence_reverse_5m
+  strategy: elitealgo_ema_confluence
+  name: EliteAlgo EMA confluence · reverse on opposite · 5m
+  description: Script 9 defaults; an opposite signal reverses the open trade at the next open (D4 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  on_opposite_signal: reverse
+  tags: [pine-port, script-9, s1, variant]
+  account: { max_open_positions: 14 }
+
+- id: elitealgo_ema_confluence_reverse_15m
+  strategy: elitealgo_ema_confluence
+  name: EliteAlgo EMA confluence · reverse on opposite · 15m
+  description: Script 9 defaults; an opposite signal reverses the open trade at the next open (D4 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  on_opposite_signal: reverse
+  tags: [pine-port, script-9, s1, variant]
+  account: { max_open_positions: 14 }
