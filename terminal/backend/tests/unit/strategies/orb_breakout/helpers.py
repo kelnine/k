@@ -3,40 +3,32 @@
 Bars are written by *local* wall-clock time (New York or London), so a test
 reads like the chart: ``{"09:30": (100, 101, 99.5, 100.5)}``. Every bar not
 given is a flat bar at the previous close, so the opening range and the EMAs
-are exactly what the rows say.
+are exactly what the rows say. The real catalog's instruments (NAS100, MNQ …)
+and session book come from the shared Pine-port helpers.
 """
 
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time
-from functools import cache
-from pathlib import Path
 from typing import Any
 
 from kterminal.core.enums import SignalAction
-from kterminal.domain.catalog import InstrumentCatalog
 from kterminal.domain.instruments import Instrument
 from kterminal.domain.market import Bar
 from kterminal.domain.sessions import to_local, to_utc
 from kterminal.domain.signals import Signal
 from kterminal.domain.timeframes import Timeframe
 from kterminal.strategies.orb_breakout import OrbBreakout
-from kterminal.strategy_engine import PositionEvent, PositionEventKind
 from kterminal.strategy_engine.testing import StrategyTestResult, run_strategy
+from tests.unit.strategies.pine_port_support import real_catalog
 
-CONFIG_DIR = Path(__file__).resolve().parents[5] / "config"
 NY = "America/New_York"
 LONDON = "Europe/London"
 
 Row = tuple[float, float, float, float]
 
 
-@cache
-def catalog() -> InstrumentCatalog:
-    return InstrumentCatalog.load(CONFIG_DIR / "catalog")
-
-
 def instrument(symbol: str = "NAS100") -> Instrument:
-    return catalog().instrument(symbol)
+    return real_catalog().instrument(symbol)
 
 
 def local(day: date, hhmm: str, tz: str = NY) -> datetime:
@@ -104,7 +96,7 @@ def run(
         bars=bars,
         timeframe=timeframe,
         params=params,
-        sessions=catalog().sessions,
+        sessions=real_catalog().sessions,
         **kwargs,
     )
 
@@ -116,14 +108,6 @@ def at(signals: Sequence[Signal], tz: str = NY) -> list[tuple[str, SignalAction]
         assert signal.bar_time is not None
         out.append((hhmm(signal.bar_time, tz), signal.signal))
     return out
-
-
-def entries(result: StrategyTestResult) -> list[Signal]:
-    return [s for s in result.signals if s.signal.is_entry]
-
-
-def of_kind(result: StrategyTestResult, kind: PositionEventKind) -> list[PositionEvent]:
-    return [e for e in result.events if e.kind is kind]
 
 
 def strategy_object(result: StrategyTestResult) -> OrbBreakout:

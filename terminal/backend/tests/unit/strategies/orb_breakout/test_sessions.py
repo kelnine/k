@@ -12,11 +12,10 @@ from tests.unit.strategies.orb_breakout.helpers import (
     LONDON,
     at,
     day_bars,
-    entries,
-    of_kind,
     run,
 )
 from tests.unit.strategies.orb_breakout.test_rules import NO_FILTER, OR_ROWS
+from tests.unit.strategies.pine_port_support import entries, of_kind
 
 LONG_0945 = {**OR_ROWS, "09:45": (100, 101.8, 99.9, 101.6)}
 LONDON_PARAMS = {
@@ -50,9 +49,7 @@ def utc(signal_time: datetime | None) -> str:
         (date(2026, 11, 2), "14:45", "20:55"),  # Monday after it: EST again
     ],
 )
-def test_new_york_windows_follow_the_us_clock(
-    day: date, signal_utc: str, flatten_utc: str
-) -> None:
+def test_new_york_windows_follow_the_us_clock(day: date, signal_utc: str, flatten_utc: str) -> None:
     result = run(day_bars(day, LONG_0945), params=NO_FILTER)
     [signal] = entries(result)
     assert utc(signal.bar_time) == signal_utc  # 09:45 New York

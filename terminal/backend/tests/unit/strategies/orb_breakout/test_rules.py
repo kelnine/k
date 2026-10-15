@@ -10,13 +10,12 @@ from kterminal.strategy_engine import PositionEventKind
 from tests.unit.strategies.orb_breakout.helpers import (
     at,
     day_bars,
-    entries,
     hhmm,
     local,
-    of_kind,
     run,
     strategy_object,
 )
+from tests.unit.strategies.pine_port_support import entries, of_kind
 
 TUE = date(2026, 1, 6)
 WED = date(2026, 1, 7)
@@ -239,3 +238,27 @@ def test_two_runs_give_identical_signals() -> None:
     second = [s.model_dump(mode="json") for s in run(bars).signals]
     assert first == second
     assert first  # the scenario does signal
+
+
+def test_a_gap_from_one_range_window_into_the_next_is_not_a_new_start() -> None:
+    # Tuesday's data stops at the 09:40 bar and resumes on Wednesday at 09:30: the two
+    # bars are consecutive and both inside the window, so `inOR[1]` is true and no new
+    # range starts (session_started in docs/05 §5.2.3). Wednesday's OR bars widen
+    # Tuesday's range, which forms on Wednesday 09:45.
+    bars = day_bars(TUE, OR_ROWS, end="09:45")
+    bars += day_bars(
+        WED,
+        {
+            "09:30": (100, 102.5, 100, 102),
+            "09:35": (102, 102.2, 101.6, 102),
+            "09:40": 102.0,
+            "09:45": (102, 103, 102, 102.6),
+        },
+        start="09:30",
+    )
+    [signal] = entries(run(bars, params=NO_FILTER))
+    assert signal.bar_time == local(WED, "09:45")
+    assert signal.metadata["or_start"] == local(TUE, "09:30").isoformat()
+    assert signal.metadata["or_high"] == 102.5  # Wednesday's 09:30 high widened it
+    assert signal.metadata["or_low"] == 99.0  # Tuesday's 09:40 low
+    assert signal.metadata["stale_range"] is True

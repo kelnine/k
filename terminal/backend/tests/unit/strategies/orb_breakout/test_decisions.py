@@ -2,24 +2,33 @@
 trade), D5 (stop, target, flat at 16:00, no fill at or after it) and its variants."""
 
 from datetime import date
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from kterminal.core.enums import Direction, SignalAction
 from kterminal.strategies.orb_breakout import OrbBreakout, OrbParams
 from kterminal.strategy_engine import CloseReason, InstanceSpec, PositionEventKind
 from kterminal.strategy_engine.registry import definition_from_class
+from kterminal.strategy_engine.testing import StrategyTestResult
 from tests.unit.strategies.orb_breakout.helpers import (
     at,
     day_bars,
-    entries,
     hhmm,
-    of_kind,
+    local,
     run,
     strategy_object,
 )
-from tests.unit.strategies.orb_breakout.test_rules import NO_FILTER, OR_ROWS, TUE
+from tests.unit.strategies.orb_breakout.test_rules import NO_FILTER, OR_ROWS, TUE, WED
+from tests.unit.strategies.pine_port_support import (
+    dumps,
+    entries,
+    of_kind,
+    positions_at_decisions,
+)
 
+LONG, SHORT = SignalAction.LONG, SignalAction.SHORT
 LONG_0945 = {**OR_ROWS, "09:45": (100, 101.8, 99.9, 101.6)}
 
 
@@ -105,7 +114,7 @@ def test_gap_guard_skips_a_fill_that_opens_at_or_beyond_the_stop() -> None:
     [("1", 101.6 + 1.35), ("1.5", 101.6 + 1.5 * 1.35), (None, None)],
 )
 def test_midpoint_stop_variants(target_r: str | None, target: float | None) -> None:
-    params = {**NO_FILTER, "stop": "midpoint", "target_r": target_r}
+    params = {**NO_FILTER, "stop_mode": "midpoint", "target_r": target_r}
     [signal] = entries(run(day_bars(TUE, LONG_0945), params=params))
     assert float(signal.stop_loss or 0) == 100.25  # (101.5 + 99) / 2
     if target is None:
@@ -121,13 +130,13 @@ def test_midpoint_rounds_to_the_tick_ties_away_from_zero() -> None:
         "09:35": (101, 101.01, 100, 100.5),
         "09:45": (100.5, 101.5, 100.5, 101.2),
     }
-    [signal] = entries(run(day_bars(TUE, rows), params={**NO_FILTER, "stop": "midpoint"}))
+    [signal] = entries(run(day_bars(TUE, rows), params={**NO_FILTER, "stop_mode": "midpoint"}))
     assert str(signal.stop_loss) == "100.51"  # math.avg = 100.505 → round_to_mintick
 
 
 def test_no_target_variant_closes_only_at_the_flatten() -> None:
     bars = day_bars(TUE, {**LONG_0945, "11:00": (101.6, 120, 101.6, 119)})
-    result = run(bars, params={**NO_FILTER, "stop": "midpoint", "target_r": None})
+    result = run(bars, params={**NO_FILTER, "stop_mode": "midpoint", "target_r": None})
     [closed] = of_kind(result, PositionEventKind.CLOSED)
     assert closed.reason is CloseReason.SESSION_CLOSE
     assert float(closed.price or 0) == 119
@@ -155,16 +164,16 @@ def test_params_mirror_the_script_inputs_and_are_strict() -> None:
         "0930-1600:1234567",
     )
     assert (p.or_filter, p.fast_length, p.slow_length) == (True, 9, 20)
-    assert (p.stop, str(p.target_r), p.flatten_time) == ("range", "2", "16:00")
-    with pytest.raises(ValueError):
-        OrbParams(stop="atr")  # type: ignore[arg-type]
-    with pytest.raises(ValueError):
-        OrbParams(target_r=0)
-    with pytest.raises(ValueError):
+    assert (p.stop_mode, str(p.target_r), p.flatten_time) == ("range", "2", "16:00")
+    with pytest.raises(ValidationError, match="stop_mode"):
+        OrbParams(stop_mode="atr")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="target_r"):
+        OrbParams.model_validate({"target_r": 0})
+    with pytest.raises(ValidationError, match="or_session"):
         OrbParams(or_session="9:30-9:45")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError, match="timezone"):
         OrbParams(timezone="Mars/Olympus")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError, match="unknown"):
         OrbParams(unknown=1)  # type: ignore[call-arg]
     InstanceSpec(id="x_orb", strategy="orb_breakout", instruments=("MNQ",), timeframe="5m")
 
@@ -173,3 +182,85 @@ def test_position_direction_of_the_flatten_matches_the_trade() -> None:
     result = run(day_bars(TUE, LONG_0945), params=NO_FILTER)
     [opened] = of_kind(result, PositionEventKind.OPENED)
     assert opened.direction is Direction.LONG
+
+
+def test_a_fill_delayed_past_the_flatten_by_a_data_gap_is_closed_at_once() -> None:
+    # Signal on the 15:50 bar (its fill would be at 15:55), then no bars until Wednesday
+    # 09:30: the long fills at Wednesday's first open and is closed on that same bar's
+    # decision — the deadline is the signal day's 16:00, not the fill day's.
+    bars = day_bars(TUE, {**OR_ROWS, "15:50": (100, 102, 100, 101.9)}, end="15:55")
+    bars += day_bars(WED, {}, start="09:30", price=101.9)
+    result = run(bars, params=NO_FILTER)
+    [opened] = of_kind(result, PositionEventKind.OPENED)
+    assert opened.time == local(WED, "09:30")
+    exits = [s for s in result.signals if s.signal.is_exit]
+    assert [(s.bar_time, s.signal) for s in exits] == [
+        (local(WED, "09:30"), SignalAction.EXIT_LONG)
+    ]
+    assert exits[0].metadata["flatten_at"] == local(TUE, "16:00").isoformat()
+    [closed] = of_kind(result, PositionEventKind.CLOSED)
+    assert closed.reason is CloseReason.SESSION_CLOSE
+    assert closed.time == local(WED, "09:35")
+
+
+def test_a_window_past_midnight_flattens_on_the_next_day() -> None:
+    # An evening range (20:00-20:15) whose levels run to 02:00 and flatten at 02:00: the
+    # deadline is the first 02:00 after the signal, so the trade is held over midnight.
+    params = {
+        **NO_FILTER,
+        "or_session": "2000-2015",
+        "levels_session": "2000-0200",
+        "flatten_time": "02:00",
+    }
+    rows = {
+        "20:00": (100, 101, 99.5, 100.5),
+        "20:05": (100.5, 101.5, 100, 101),
+        "20:10": (101, 101.2, 99, 100),
+        "20:15": (100, 101.8, 99.9, 101.6),
+    }
+    bars = day_bars(TUE, rows, start="18:00", end="23:55")
+    bars += day_bars(WED, {}, start="00:00", end="03:00", price=101.6)
+    result = run(bars, params=params)
+    [signal] = entries(result)
+    assert at([signal]) == [("20:15", SignalAction.LONG)]
+    assert signal.metadata["flatten_at"] == local(WED, "02:00").isoformat()
+    exits = [s for s in result.signals if s.signal.is_exit]
+    assert [(s.bar_time, s.signal) for s in exits] == [
+        (local(WED, "01:55"), SignalAction.EXIT_LONG)
+    ]
+    assert strategy_object(result).flatten_deadline(local(TUE, "20:15")) == local(WED, "02:00")
+
+
+def test_flatten_deadline_follows_the_clock_change() -> None:
+    # 16:00 New York is 21:00 UTC in winter and 20:00 UTC in summer.
+    strategy = strategy_object(run(day_bars(TUE, {})))
+    assert strategy.flatten_deadline(local(TUE, "10:00")).hour == 21
+    summer = local(date(2026, 7, 15), "10:00")
+    assert strategy.flatten_deadline(summer).hour == 20
+    assert strategy.flatten_deadline(local(TUE, "16:00")) == local(TUE, "16:00")
+
+
+def test_opposite_signal_policy_never_changes_a_trade_with_these_stops() -> None:
+    # D4 (ignore) is the definition rule, but with the stop on the other side of the
+    # range (or at its midpoint) the opposite breakout can only close beyond that stop,
+    # so the trade is already stopped out when the opposite signal is decided.
+    rows = {**LONG_0945, "10:30": (101.6, 101.6, 98.0, 98.5)}
+    bars = day_bars(TUE, rows)
+    for stop_mode in ("range", "midpoint"):
+        params = {**NO_FILTER, "stop_mode": stop_mode}
+        ignore = run(bars, params=params)
+        reverse = run(bars, params=params, on_opposite_signal="reverse")
+        assert at(entries(ignore)) == [("09:45", LONG), ("10:30", SHORT)]
+        held = positions_at_decisions(bars, ignore.events)
+        short_bar = next(i for i, b in enumerate(bars) if hhmm(b.open_time) == "10:30")
+        assert held[short_bar] is None  # stopped out inside the 10:30 bar
+        assert held[short_bar - 1] is Direction.LONG
+        # the same signals and trades; only the version (it hashes the policy) differs
+        assert unversioned(ignore) == unversioned(reverse)
+        assert [(e.kind, e.time, e.price, e.reason) for e in ignore.events] == [
+            (e.kind, e.time, e.price, e.reason) for e in reverse.events
+        ]
+
+
+def unversioned(result: StrategyTestResult) -> list[dict[str, Any]]:
+    return [{k: v for k, v in s.items() if k != "strategy_version"} for s in dumps(result)]

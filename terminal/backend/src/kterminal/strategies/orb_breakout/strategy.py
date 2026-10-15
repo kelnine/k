@@ -1,4 +1,4 @@
-"""S2 · Opening range breakout — the port of script 8, "FRVP + ORB + 9/20 EMA".
+"""S2 · Opening range breakout — the port of script 8, "FRVP + ORB + 9/20 EMA" (doc 13).
 
 Source: ``terminal/pine/received/08_frvp_orb_ema.pine`` (spec
 ``terminal/pine/specs/08_frvp_orb_ema.md``); line numbers below refer to it.
@@ -21,29 +21,32 @@ What the script does, bar by bar (lines 100-156):
 5. A day without OR bars keeps the previous day's range and its unused
    signals (``cur`` is only replaced by ``orStart``).
 
-The script defines no stop, target or exit; doc 13 D4/D5 apply (README):
-stop on the other side of the range (or its midpoint), a target of
-``target_r`` × the risk measured from the signal close, flat at
+The script defines no stop, target or exit; doc 13 D3/D4/D5 apply (README):
+stop on the other side of the range (or at its midpoint), a target of
+``target_r`` × the risk measured from the signal close, flat by
 ``flatten_time`` (16:00 New York) with exit reason ``SESSION_CLOSE``, and no
-entry whose next-open fill would land at or after that time. Signals are
+entry whose next-open fill would land at or after that time. A signal is
 emitted whenever the script would draw its marker, also while a position is
-open; the definition's ``on_opposite_signal: ignore`` then refuses them in the
+open; the definition's ``on_opposite_signal: ignore`` then refuses it in the
 theoretical book and in the accounts alike.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
+from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, JsonValue
 
 from kterminal.core.enums import Direction
+from kterminal.domain.instruments import quantize_to_step
 from kterminal.domain.market import Bar
 from kterminal.domain.sessions import format_time, parse_time, to_local, to_utc
 from kterminal.domain.signals import Signal
-from kterminal.indicators import Ema, gt, lt, na, round_to_mintick
+from kterminal.indicators import Ema, gt, lt, na
 from kterminal.strategy_engine import (
+    PositionEvent,
+    PositionEventKind,
     SessionString,
     SignalOutput,
     Strategy,
@@ -53,7 +56,7 @@ from kterminal.strategy_engine import (
     register_strategy,
 )
 
-TRIGGER_LONG = "ORB long"  # the script's alertcondition titles (lines 161-162)
+TRIGGER_LONG = "ORB long"  # the script's plotshape / alertcondition titles (lines 158-162)
 TRIGGER_SHORT = "ORB short"
 SKIP_AFTER_FLATTEN = "FILL_AT_OR_AFTER_FLATTEN"
 
@@ -67,27 +70,32 @@ WallTime = Annotated[str, AfterValidator(_wall_time), Field(validate_default=Tru
 
 
 class OrbParams(StrategyParams):
-    # ── the script's inputs that change signals (Pine defaults) ──────────────
-    timezone: TimeZoneName = "America/New_York"  # tz (line 9)
-    or_session: SessionString = "0930-0945"  # orSess, "Opening range" (line 30)
-    levels_session: SessionString = "0930-1600"  # lvlSess, "Levels active during" (line 31)
-    or_filter: bool = True  # orFilter, "Only in the direction of the EMAs" (line 34)
-    fast_length: int = Field(9, ge=1, le=1_000)  # fastLen (line 38)
-    slow_length: int = Field(20, ge=1, le=1_000)  # slowLen (line 40)
-    # ── doc 13 D5 (the script defines no stop, target or exit) ───────────────
-    stop: Literal["range", "midpoint"] = Field(
+    """The script's inputs that change signals (lines 9-40; Pine defaults, names as the
+    inputs) and the doc 13 D5 exit choices the script leaves open."""
+
+    # ── the script's inputs ──────────────────────────────────────────────────
+    timezone: TimeZoneName = Field("America/New_York", description="tz (line 9)")
+    or_session: SessionString = Field("0930-0945", description="orSess, 'Opening range' (line 30)")
+    levels_session: SessionString = Field(
+        "0930-1600", description="lvlSess, 'Levels active during' (line 31)"
+    )
+    or_filter: bool = Field(True, description="orFilter, 'Only in the direction of the EMAs'")
+    fast_length: int = Field(9, ge=1, le=1_000, description="fastLen (line 38)")
+    slow_length: int = Field(20, ge=1, le=1_000, description="slowLen (line 40)")
+    # ── doc 13 D5: the script defines no stop, target or exit ─────────────────
+    stop_mode: Literal["range", "midpoint"] = Field(
         "range", description="Stop on the other side of the opening range, or at its midpoint"
     )
     target_r: Decimal | None = Field(
         Decimal("2"),
         gt=0,
         le=100,
-        description="Target = signal close ± target_r × (close − stop); null = no target",
+        description="Target = signal close ± target_r × |close − stop|; null = no target",
     )
     flatten_time: WallTime = Field(
         "16:00",
-        description="Local time (in `timezone`) by which every position is closed; signals "
-        "whose next-open fill would land at or after it are skipped",
+        description="Local time (in `timezone`) by which a trade is closed; a signal whose "
+        "next-open fill would land at or after it is not traded",
     )
 
 
@@ -117,11 +125,11 @@ class OrbBreakout(Strategy[OrbParams]):
         description=(
             "Port of 'FRVP + ORB + 9/20 EMA': first close beyond the opening range per "
             "direction and OR day, EMA 9/20 direction filter; stop at the other side of the "
-            "range, 2R, flat at 16:00 New York (doc 13 D5)."
+            "range, 2R, flat at 16:00 New York (doc 13 S2, D5)."
         ),
         # The OR must hold at least one bar: a chart timeframe no bigger than the range.
         timeframes=("1m", "5m", "15m"),
-        # EMA 20 convergence and the latest opening range: a full day of 5m bars.
+        # EMA 20 converges to 1e-12 and the latest opening range is seen: a day of 5m bars.
         warmup_bars=300,
         on_opposite_signal="ignore",  # D4: ignore while in a trade
         skip_entry_beyond_levels=True,  # D3: no fill once the open has passed stop/target
@@ -131,11 +139,22 @@ class OrbBreakout(Strategy[OrbParams]):
 
     def on_start(self) -> None:
         p = self.params
-        self._ema_fast = Ema(p.fast_length)
-        self._ema_slow = Ema(p.slow_length)
+        self._ema_fast = Ema(p.fast_length)  # line 100
+        self._ema_slow = Ema(p.slow_length)  # line 101
         self._flatten = parse_time(p.flatten_time, "flatten_time")
         self._prev_in_or = False  # inOR[1]; false before the first bar, as in Pine
-        self._range: OpeningRange | None = None  # Pine's ``cur``
+        self._range: OpeningRange | None = None  # Pine's ``var ORDay cur``
+        self._deadline: datetime | None = None  # flatten instant of the open trade
+
+    def on_position_event(self, event: PositionEvent) -> SignalOutput:
+        if event.kind is PositionEventKind.OPENED:
+            # the trade must be flat by the flatten time of the day it was *signalled*
+            signal = event.signal
+            signalled = signal.bar_time if signal is not None else None
+            self._deadline = self.flatten_deadline(signalled or event.time)
+        elif event.kind is PositionEventKind.CLOSED:
+            self._deadline = None
+        return None
 
     def on_bar(self, bar: Bar) -> SignalOutput:
         p = self.params
@@ -146,7 +165,7 @@ class OrbBreakout(Strategy[OrbParams]):
         bull, bear = gt(fast, slow), lt(fast, slow)
 
         out: list[Signal] = []
-        flatten = self._flatten_exit(bar)  # D5: flat by flatten_time
+        flatten = self._flatten_exit(bar)  # D5: flat by flatten_time; the exit comes first
         if flatten is not None:
             out.append(flatten)
 
@@ -168,7 +187,7 @@ class OrbBreakout(Strategy[OrbParams]):
             return out
         # lines 150-156; the runner only delivers closed bars (barstate.isconfirmed)
         if not current.long_done and gt(close, current.high) and (not p.or_filter or bull):
-            current.long_done = True
+            current.long_done = True  # consumed whether or not a trade follows (the marker)
             out.append(self._entry(Direction.LONG, bar, current, fast, slow))
         if not current.short_done and lt(close, current.low) and (not p.or_filter or bear):
             current.short_done = True
@@ -176,21 +195,28 @@ class OrbBreakout(Strategy[OrbParams]):
         return out
 
     # ── decisions the script leaves open (doc 13 D5) ────────────────────────
-    def flatten_at(self, ts: datetime) -> datetime:
-        """The flatten instant of the local day (in ``timezone``) that ``ts`` falls on."""
+    def flatten_deadline(self, ts: datetime) -> datetime:
+        """The first flatten instant (``flatten_time`` in ``timezone``) at or after ``ts``."""
         tz = self.params.timezone
-        local_day = to_local(ts, tz).date()
-        return to_utc(datetime.combine(local_day, self._flatten), tz)
+        day = to_local(ts, tz).date()
+        deadline = to_utc(datetime.combine(day, self._flatten), tz)
+        if deadline < ts:  # e.g. a window that runs past midnight
+            deadline = to_utc(datetime.combine(day + timedelta(days=1), self._flatten), tz)
+        return deadline
 
     def _flatten_exit(self, bar: Bar) -> Signal | None:
-        """Close the position on the first bar that ends at or after its day's flatten time:
-        the exit fills at the next open, the first price at or after it."""
+        """Close the trade on the first bar that ends at or after its flatten time: the exit
+        fills at the next open, the first price at or after it."""
         position = self.ctx.position
-        if position is None or bar.close_time < self.flatten_at(position.entry_time):
+        if position is None:
+            return None
+        deadline = self._deadline or self.flatten_deadline(position.entry_time)
+        if bar.close_time < deadline:
             return None
         metadata: dict[str, JsonValue] = {
             "exit": "flatten",
             "flatten_time": self.params.flatten_time,
+            "flatten_at": deadline.isoformat(),
         }
         if position.is_long:
             return self.ctx.exit_long(session_close=True, metadata=metadata)
@@ -201,20 +227,12 @@ class OrbBreakout(Strategy[OrbParams]):
     ) -> Signal:
         p = self.params
         ctx = self.ctx
-        tick = ctx.instrument.tick_size
         long = direction is Direction.LONG
         close = float(bar.close)
-        if p.stop == "range":
-            stop = current.low if long else current.high
-        else:
-            stop = round_to_mintick(current.mid, tick)
-        target: float | None = None
-        if p.target_r is not None:
-            risk = close - stop if long else stop - close
-            move = float(p.target_r) * risk
-            target = round_to_mintick(close + move if long else close - move, tick)
-        flatten = self.flatten_at(bar.open_time)
+        stop, target = self.levels(direction, bar.close, current)
+        deadline = self.flatten_deadline(bar.open_time)
         metadata: dict[str, JsonValue] = {
+            "pine_signal": "orLong" if long else "orShort",
             "trigger": TRIGGER_LONG if long else TRIGGER_SHORT,
             "close": close,
             "or_high": current.high,
@@ -225,14 +243,17 @@ class OrbBreakout(Strategy[OrbParams]):
             "ema_fast": _num(fast),
             "ema_slow": _num(slow),
             "or_filter": p.or_filter,
-            "stop_mode": p.stop,
+            "stop_mode": p.stop_mode,
             "target_r": None if p.target_r is None else str(p.target_r),
-            "flatten_at": flatten.isoformat(),
+            "flatten_at": deadline.isoformat(),
+            "bar_index": ctx.bar_index,
         }
-        if bar.close_time >= flatten:  # the next-open fill would be at or after the flatten
+        if bar.close_time >= deadline:  # the next-open fill would be at or after the flatten
             return ctx.no_trade(SKIP_AFTER_FLATTEN, persist=True, metadata=metadata)
-        if (stop >= close) if long else (stop <= close):  # cannot happen: close is beyond OR
-            return ctx.no_trade("WRONG_SIDE_STOP", persist=True, metadata=metadata)
+        entry = ctx.instrument.round_price(bar.close)
+        skip = _invalid_levels(entry, stop, target, long)
+        if skip is not None:  # D3: never with these stops, kept as the lab's guard
+            return ctx.no_trade(skip, persist=True, metadata=metadata)
         build = ctx.long if long else ctx.short
         return build(
             stop_loss=stop,
@@ -241,10 +262,44 @@ class OrbBreakout(Strategy[OrbParams]):
             metadata=metadata,
         )
 
+    def levels(
+        self, direction: Direction, close: Decimal, current: OpeningRange
+    ) -> tuple[Decimal, Decimal | None]:
+        """D5 stop and target, exact in decimal and rounded to the tick (ties away from
+        zero): the other side of the range or its midpoint, and ``target_r`` × the risk
+        measured from the signal close (None without a target)."""
+        p = self.params
+        tick = self.ctx.instrument.tick_size
+        long = direction is Direction.LONG
+        high, low = _decimal(current.high), _decimal(current.low)
+        level = (low if long else high) if p.stop_mode == "range" else (high + low) / 2
+        stop = quantize_to_step(level, tick, ROUND_HALF_UP)
+        if p.target_r is None:
+            return stop, None
+        move = p.target_r * abs(close - stop)
+        target = quantize_to_step(close + move if long else close - move, tick, ROUND_HALF_UP)
+        return stop, target
+
     def _stale(self, current: OpeningRange, bar: Bar) -> bool:
-        """Whether the range is a previous day's (no OR bars today, lines 120-156)."""
+        """Whether the range is an earlier day's (no OR bars today, lines 120-156)."""
         tz = self.params.timezone
         return to_local(current.start, tz).date() != to_local(bar.open_time, tz).date()
+
+
+def _invalid_levels(
+    entry: Decimal, stop: Decimal, target: Decimal | None, long: bool
+) -> str | None:
+    """Why the levels cannot be traded against the rounded entry, or None (doc 13 D3)."""
+    if (stop >= entry) if long else (stop <= entry):
+        return "STOP_WRONG_SIDE"
+    if target is not None and ((target <= entry) if long else (target >= entry)):
+        return "TARGET_WRONG_SIDE"
+    return None
+
+
+def _decimal(price: float) -> Decimal:
+    """A bar price back as the decimal it was read from (the shortest repr round-trips)."""
+    return Decimal(repr(price))
 
 
 def _num(value: float) -> float | None:
