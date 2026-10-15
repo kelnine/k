@@ -37,7 +37,7 @@ Display inputs (EMA ribbon, MACD, money flow, volume heatmap, take-profit
 diamonds, divergences, supply/demand zones, scanner, dashboard) do not change
 the BUY/SELL signals and are not ported.
 
-## Instances (`config/instances.d/supertrend_flip.yaml`)
+## Variants and instances (`config/instances.d/supertrend_flip.yaml`)
 
 | Instance | Signals | Stop |
 |---|---|---|

@@ -77,5 +77,7 @@ applies.
 `warmup_bars` is 1000 for S1 and S8 (EMA200 and the Wilder averages) and 500
 for S7. The forward runtime warms each instrument up on at most
 `forward.warmup_days` (default 10) of history: enough for the 5m instances,
-not for 1000 bars of 15m on markets that close at weekends (about 21 days).
-Those instances log `paper.warmup_short` and start on a less converged EMA200.
+not for 1000 bars of 15m (10.4 days round the clock, about 15 calendar days on
+markets that close at weekends). Those instances log `paper.warmup_short` and
+start on a less converged EMA200; `forward.warmup_days: 16` in `lab.yaml`
+would cover them.

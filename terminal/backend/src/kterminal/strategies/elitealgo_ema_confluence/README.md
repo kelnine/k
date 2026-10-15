@@ -40,7 +40,7 @@ feed). `confidence` is the script's L73 `conf` / 100 (0.14 / 0.43 / 0.71 / 1.0).
 script's default (`true`). Display inputs (colours, labels, panel, regime and
 session texts, L47-49 and L75-78) do not change signals and are not ported.
 
-## Instances (`config/instances.d/elitealgo_ema_confluence.yaml`)
+## Variants and instances (`config/instances.d/elitealgo_ema_confluence.yaml`)
 
 | Instance | Timeframe | Opposite signal while in a trade |
 |---|---|---|
@@ -85,7 +85,8 @@ instance with `max_open_positions: 14` (one position per instrument).
 
 `meta.warmup_bars = 1000` (spec: ≥ 1000 for EMA200 and the Wilder averages);
 the strategy also reads `ctx.periods`, so forward warm-up covers at least
-`period_warmup_bars("D", tf)`. With the default `forward.warmup_days: 10` a
-15m instance gets fewer bars than that on markets that close at weekends
-(`paper.warmup_short` is logged); its first signals then rest on a less
-converged EMA200.
+`period_warmup_bars("D", tf)`. 1000 bars of 15m are 10.4 days round the
+clock and about 15 calendar days on markets that close at weekends, so with
+the default `forward.warmup_days: 10` a 15m instance starts short
+(`paper.warmup_short` is logged) and its first signals rest on a less
+converged EMA200; the 5m instances are fully warmed up.

@@ -42,7 +42,7 @@ ported; nor are the display inputs. The script's other modules (order blocks,
 channels, KCharts, DepthFlow) and the PSAR + channel confluence alert stay
 levels-only (doc 13 D12).
 
-## Instances (`config/instances.d/psar_ema200.yaml`)
+## Variants and instances (`config/instances.d/psar_ema200.yaml`)
 
 | Instance | Timeframe | Stop |
 |---|---|---|
@@ -82,9 +82,10 @@ instance with `max_open_positions: 14`. Stop and reverse (D4).
 
 ## Warm-up
 
-`meta.warmup_bars = 1000` (spec: ≥ 1000 for EMA200 and ADX(14, 14)). With the
-default `forward.warmup_days: 10` a 15m instance gets fewer bars than that on
-markets that close at weekends (`paper.warmup_short`).
+`meta.warmup_bars = 1000` (spec: ≥ 1000 for EMA200 and ADX(14, 14)). 1000 bars
+of 15m are 10.4 days round the clock and about 15 calendar days on markets
+that close at weekends, so with the default `forward.warmup_days: 10` the 15m
+instances start short (`paper.warmup_short`); the 5m instances do not.
 
 ## Licence
 
