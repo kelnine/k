@@ -1,0 +1,47 @@
+# S11 · ICT Sweep + Order Flow Models [NY] (script 2), Model D — order-flow (proxy)
+# absorption: at a 15m FVG or a key level (overnight value area, overnight high/low,
+# previous day high/low) an aggressive selling bar (candle-estimate delta) absorbed by
+# an aggressive buying bar closing above it within 10 bars, 09:30-16:00 New York, 2R
+# (shorts mirror it).
+# Strategy: backend/src/kterminal/strategies/ict_model_d (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  the script prices the entry at the signal bar's close: market entry at the next
+#       open with the script's stop and target, skipped when that open is at or beyond
+#       either (the strategy's meta); no trade when a level is on the wrong side after
+#       tick rounding (persisted NO_TRADE)
+#   D4  one trade at a time, no daily cap (on_opposite_signal: ignore, the meta); a new
+#       trade while the book still holds one the script already closed replaces it
+#   D6  main: the trade is held until its stop, its target or the next 09:30 window
+#       start, where it is closed (SESSION_CLOSE, the script's neutral close); variant:
+#       closed at the 16:00 window end
+#   D8  previous day high/low on the instrument's trading day (CME 17:00 New York,
+#       crypto 00:00 UTC), from ctx.periods
+#   D9  volume-driven: only instruments with exchange volume, MNQ and the crypto pairs;
+#       the tick-volume CFDs and FX wait for a separate, labelled instance
+#   D10 1m (the script is built for 1m; 15m context for the zones), one Paper 50K
+#       account per variant, one position per instrument
+#   D11 script defaults plus the D6 variant; 'HTF FVG only' / 'Key levels only' wait for
+#       the parity check; the 'Intrabar (lower TF)' delta needs seconds data (not ported)
+#   D13 script defaults
+- id: ict_model_d_main_1m
+  strategy: ict_model_d
+  name: ICT Model D · absorption at 15m FVG / key levels · hold to the next window · 1m
+  description: Script 2 Model D defaults (candle-estimate delta); the trade runs to its stop or target or the next 09:30 New York (D6).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  context_timeframes: [15m]
+  params: { after_window: hold }
+  tags: [pine-port, script-2, s11, main]
+  account: { max_open_positions: 7 }
+
+- id: ict_model_d_flat_1m
+  strategy: ict_model_d
+  name: ICT Model D · absorption at 15m FVG / key levels · flat at 16:00 · 1m
+  description: Script 2 Model D defaults (candle-estimate delta); a trade still open at the 16:00 New York window end is closed (D6 variant).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  context_timeframes: [15m]
+  params: { after_window: flat }
+  tags: [pine-port, script-2, s11, variant]
+  account: { max_open_positions: 7 }

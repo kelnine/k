@@ -1,0 +1,40 @@
+# S9 · ICT Sweep + Order Flow Models [NY] (script 2), Model C — the 1H PD-array bias picks
+# the side; a 5m FVG of that side tapped (around the clock) triggers in 09:30-12:00 New
+# York on a 1m inversion FVG or a close beyond the zone's CISD level.
+# Strategy: backend/src/kterminal/strategies/ict_model_c (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  the script prices the entry at the signal bar's close: market entry at the next
+#       open with the script's stop and target, skipped when that open is at or beyond
+#       either (the strategy's meta); no trade when a level is on the wrong side after
+#       tick rounding (persisted NO_TRADE)
+#   D4  one trade a day, never two at once (on_opposite_signal: ignore, the meta)
+#   D6  main: the trade is held until its stop, its target or the next 09:30 window
+#       start, where it is closed (SESSION_CLOSE, the script's neutral close); variant:
+#       closed at the 12:00 window end
+#   D10 1m (the script is built for 1m; 5m and 1h context), all 14 instruments, one
+#       Paper 50K account per variant, one position per instrument
+#   D11 script defaults plus the D6 variant; the IFVG-only / CISD-only triggers, the 15m
+#       setup FVG and the Fixed RR target wait for the parity check
+#   D13 script defaults
+- id: ict_model_c_main_1m
+  strategy: ict_model_c
+  name: ICT Model C · 1H bias + 5m FVG, IFVG / CISD · hold to the next window · 1m
+  description: Script 2 Model C defaults; the trade runs to its stop or target or the next 09:30 New York (D6).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  context_timeframes: [5m, 1h]
+  params: { after_window: hold }
+  tags: [pine-port, script-2, s9, main]
+  account: { max_open_positions: 14 }
+
+- id: ict_model_c_flat_1m
+  strategy: ict_model_c
+  name: ICT Model C · 1H bias + 5m FVG, IFVG / CISD · flat at 12:00 · 1m
+  description: Script 2 Model C defaults; a trade still open at the 12:00 New York window end is closed (D6 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  context_timeframes: [5m, 1h]
+  params: { after_window: flat }
+  tags: [pine-port, script-2, s9, variant]
+  account: { max_open_positions: 14 }
