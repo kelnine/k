@@ -30,8 +30,9 @@ from tests.unit.strategies.wyckoff_auto.scenario import (
     DEMOTED,
     E_FAILED,
     E_TIMEOUT,
-    NEW_SC,
+    NEW_CLIMAX,
     PROVISIONAL,
+    QUIET_INVALID,
     RESEEDED,
     RETEST,
     SC,
@@ -49,6 +50,7 @@ from tests.unit.strategies.wyckoff_auto.scenario import (
     phase_b_goes_stale,
     phase_c_goes_stale_then_new_climax,
     phase_c_invalidated,
+    phase_c_quietly_invalidated,
     phase_d_demoted,
     phase_d_invalidated,
     phase_e_fails,
@@ -71,6 +73,7 @@ ENDS = [
     (phase_b_goes_stale, "RS_STALE", 419, PHASE_B, RS_STALE),
     (phase_b_departs, "RS_DEPART", 310, PHASE_B, RS_DEPART),
     (phase_c_invalidated, "RS_INVALID", TEST + PIVOT + 5, PHASE_C, RS_INVALID),
+    (phase_c_quietly_invalidated, "RS_INVALID", QUIET_INVALID, PHASE_C, RS_INVALID),
     (phase_c_goes_stale_then_new_climax, "RS_STALE", STALE_C, PHASE_C, RS_STALE),
     (phase_d_invalidated, "RS_INVALID", SOS + 4, PHASE_D, RS_INVALID),
     (phase_e_fails, "RS_EEND", E_FAILED, PHASE_E, RS_EEND),
@@ -193,8 +196,8 @@ def test_a_climax_after_a_stale_reset_seeds_into_an_empty_slot() -> None:
     trace = run_engine(phase_c_goes_stale_then_new_climax())
     assert trace.ends("RS_STALE") == [STALE_C]
     assert trace.ends("RESEED") == []  # nothing to replace: the slot was empty
-    assert trace.steps[NEW_SC].seeded == DIR_ACCUM
-    assert trace.after[NEW_SC - 1].phase == "-" and trace.after[NEW_SC].phase == "A"
+    assert trace.steps[NEW_CLIMAX].seeded == DIR_DIST
+    assert trace.after[NEW_CLIMAX - 1].phase == "-" and trace.after[NEW_CLIMAX].phase == "A"
 
 
 def test_a_deeper_climax_replaces_a_phase_a_campaign() -> None:

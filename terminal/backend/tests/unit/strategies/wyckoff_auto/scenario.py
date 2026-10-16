@@ -403,19 +403,36 @@ def phase_c_invalidated() -> Tape:
 
 
 STALE_C = 369
-NEW_SC = 424
+NEW_CLIMAX = 419
 
 
 def phase_c_goes_stale_then_new_climax() -> Tape:
     """After the Test entry (318) nothing happens for 50 bars: the campaign goes stale at
-    369 (RS_STALE, limit 50 in Phase C); a downtrend later ends in a new selling climax
-    that seeds a campaign at 424."""
+    369 (RS_STALE, limit 50 in Phase C); a rally later ends in a buying climax that seeds
+    a distribution campaign at 419."""
     t = accumulation("test")
     t.flat(60)  # 319-378
-    t.trend(45, -0.3)  # 379-423
+    t.trend(40, 0.3)  # 379-418
     c = t.close
-    t.bar(c, c + 0.2, c - 2.5, c - 1.2, 400).mark("sc2")  # 424
-    t.path([round(t.close + 0.6 * k, 6) for k in range(1, 4)])  # 425-427
+    t.bar(c, c + 2.5, c - 0.2, c + 1.0, 400).mark("bc")  # 419
+    t.path([round(t.close - 0.6 * k, 6) for k in range(1, 5)])  # 420-423
+    return t
+
+
+QUIET_INVALID = 356
+
+
+def phase_c_quietly_invalidated() -> Tape:
+    """After the Test entry (318) price sinks to just above the Spring low, the bars go
+    quiet (the ATR shrinks from about 0.8 to 0.25), then two closes at 119.0 are more
+    than 0.5 x the current ATR under the Spring low: RS_INVALID at 356 (L1199) while the
+    lows stay above a stop placed 0.5 x the entry bar's ATR under it."""
+    t = accumulation("test")
+    t.path([121.5, 121.1, 120.7, 120.3, 119.9, 119.7])  # 319-324
+    t.flat(30, half=0.1)  # 325-354
+    t.bar(119.7, 119.75, 118.95, 119.0)  # 355
+    t.bar(119.0, 119.05, 118.95, 119.0)  # 356
+    t.path([119.2, 119.4])  # 357-358
     return t
 
 
