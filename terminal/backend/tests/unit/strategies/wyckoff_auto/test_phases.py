@@ -86,7 +86,7 @@ def dist() -> Trace:
 
 def test_the_accumulation_walks_through_every_phase_on_the_scripted_bars(acc: Trace) -> None:
     assert changes(acc) == TRANSITIONS, acc.describe(SC - 5)
-    assert acc.phases()[: SC] == ["-"] * SC  # nothing before the climax
+    assert acc.phases()[:SC] == ["-"] * SC  # nothing before the climax
     assert acc.ends("RS_INVALID") == acc.ends("RS_STALE") == []
 
 
@@ -107,7 +107,12 @@ def test_phase_a_seeds_on_the_climax_bar_with_its_extreme_and_effort(acc: Trace)
     engine = run_engine(accumulation("sc")).engine
     assert engine is not None
     s = engine.s
-    assert (s.stop_side, s.outcome, s.climax_bar, s.climax_price) == (DIR_ACCUM, DIR_NONE, SC, 119.5)
+    assert (s.stop_side, s.outcome, s.climax_bar, s.climax_price) == (
+        DIR_ACCUM,
+        DIR_NONE,
+        SC,
+        119.5,
+    )
     assert s.orig_low == s.range_low == 119.5  # f_seed (L746-748)
     assert s.climax_eff == 400.0 and s.climax_spr == pytest.approx(2.7)
     assert s.climax_score == 6  # every one of the six points (L1258)
