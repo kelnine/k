@@ -17,6 +17,12 @@ high and two traversals, a Spring under the range low, its Test, a sign of stren
 through the AR high, a last point of support and the markup that is Phase E. Each phase
 change happens on the bar the comments name; :func:`distribution` is the same tape
 mirrored (prices reflected about 300), so every rule is also exercised short.
+
+The targeted variants below branch off the canonical tape at one stage to take one
+other path of the script (a reset, the demotion, a provisional Spring, a C-Test, a
+replacement …); each docstring names the bar the engine acts on. :func:`stitched` puts
+them back to back, and :func:`minute_bars` turns a tape into 1-minute bars that
+aggregate back to it exactly, for runs through the lab.
 """
 
 from collections.abc import Iterable, Sequence
