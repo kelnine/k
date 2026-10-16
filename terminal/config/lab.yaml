@@ -24,12 +24,15 @@ defaults:
 # Forward paper trading (`kterminal paper start`, the engine): runtime tuning only, not
 # part of a session's identity. See docs/12-strategy-lab.md §12.7.
 forward:
-  # How far back warm-up history may reach, in calendar days (default 10). The 15m
-  # instances of elitealgo_ema_confluence, psar_ema200 and smc_sniper warm up on 1000
-  # bars: 1000 x 15 min = 250 hours of trading, which on markets closed at weekends
-  # (~120 trading hours a week) spans about 15 calendar days. 16 leaves a day for a
-  # holiday and the partial first period the aggregator drops; 10 would cut it short.
-  warmup_days: 16
+  # How far back warm-up history may reach, in calendar days (default 10). Each
+  # instrument warms up for the largest need of the instances trading it, capped here.
+  # The largest need is wyckoff_auto on 1h: 1000 bars of 1h are about 42 days of
+  # crypto and about 60 calendar days on markets closed at weekends. The 15m instances
+  # (1000 bars) need about 15 days. A larger cap only makes the first start of a
+  # session (and the replay after a restart) take longer; venues with short history
+  # (Hyperliquid keeps ~5,000 1m candles) simply deliver what they have, and the
+  # runtime logs paper.warmup_short for the instances that start under-warmed.
+  warmup_days: 60
   poll_delay_s: 2           # first poll this long after a minute closed
   batch_timeout_s: 20       # then process the minute without instruments still missing
 

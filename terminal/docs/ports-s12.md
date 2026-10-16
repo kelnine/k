@@ -92,7 +92,7 @@ smoke run on demo data shows no signals; the scenario tapes provide the trades.
 
 ## Warm-up
 
-`warmup_bars` 1000 (the measures need about 300; campaigns are path dependent). The
-default `forward.warmup_days: 16` covers the 5m and 15m instances; 1h needs about 42
-days of crypto and 60 calendar days of weekday markets, so with the cap a 1h instance
-warms up on about 270-380 bars and logs `paper.warmup_short`.
+`warmup_bars` 1000 (the measures need about 300; campaigns are path dependent). 1h needs
+about 42 days of crypto and 60 calendar days of weekday markets, so `config/lab.yaml`
+sets `forward.warmup_days: 60`; with a smaller cap a 1h instance warms up on fewer bars
+and logs `paper.warmup_short`.
