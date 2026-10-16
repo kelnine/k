@@ -1,0 +1,170 @@
+# Generic prop-firm TradeLocker CFD server — a TYPICAL server, not any one firm.
+#
+# venue_symbol is the instrument's display name; orders use the numeric
+# tradableInstrumentId plus INFO/TRADE routeIds from
+# GET /trade/accounts/{accountId}/instruments, and contract size is the
+# instrument's lotSize (read per account). A real firm's TradeLocker server
+# becomes its own venue with verified, synced specs.
+#
+# Metals and FX use the same typical CFD conventions as generic_mt5_cfd (the
+# research covers MT5 and TradeLocker prop servers together: 100 oz gold,
+# 5,000 oz silver, 100k FX lots, 0.01 lot min/step).
+#
+# Index CFDs are tradable: false here. Their contract size (1) and lot
+# min/step (0.01) are the research's typical values, but the TICK is
+# unverified for TradeLocker: the research's 0.1 default was rejected by the
+# verify pass (FTMO and Tickmill MT5 servers quote 0.01) and no TradeLocker
+# server spec was captured. The tick below is a placeholder.
+
+venue: generic_tradelocker_cfd
+
+listings:
+  # ── metals ─────────────────────────────────────────────────────────────────
+  - instrument: XAUUSD
+    venue_symbol: XAUUSD
+    aliases: [GOLD]
+    contract_type: CFD
+    tick_size: "0.01"
+    contract_size: "100"       # troy oz per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_metals
+    verified_on: "2026-10-06"
+    source: https://public-api.tradelocker.com
+    notes: >-
+      Typical prop CFD gold on TradeLocker: 100 oz per lot, 2 digits (some
+      servers 3). Read lotSize and tick from the account's instrument details
+      before trading a real server. Triple swap Wednesday.
+
+  - instrument: XAGUSD
+    venue_symbol: XAGUSD
+    aliases: [SILVER]
+    contract_type: CFD
+    tick_size: "0.001"
+    contract_size: "5000"      # troy oz per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_silver
+    verified_on: "2026-10-06"
+    source: https://www.robomarkets.de/en/market-trading/trading/specifications/card/prime-prime-ecn/XAGUSD
+    notes: >-
+      Typical prop CFD silver: 5,000 oz per lot, 3 digits. Silver lot sizes
+      vary more across brokers than gold (1,000 oz exists) — read lotSize.
+
+  # ── FX ─────────────────────────────────────────────────────────────────────
+  - instrument: EURUSD
+    venue_symbol: EURUSD
+    contract_type: CFD
+    tick_size: "0.00001"
+    contract_size: "100000"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_fx_majors
+    verified_on: "2026-10-06"
+    source: https://www.tickmill.com/about/faq/when-are-swaps-charged-at-a-triple-rate-for-currency-pairs-and-metals
+    notes: Standard 100k lot, 5-digit pricing. Triple swap Wednesday.
+
+  - instrument: GBPUSD
+    venue_symbol: GBPUSD
+    contract_type: CFD
+    tick_size: "0.00001"
+    contract_size: "100000"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_fx_gbpusd
+    verified_on: "2026-10-06"
+    source: https://www.tickmill.com/about/faq/when-are-swaps-charged-at-a-triple-rate-for-currency-pairs-and-metals
+    notes: Standard 100k lot, 5-digit pricing. Triple swap Wednesday.
+
+  # ── US index CFDs (tick unverified) ────────────────────────────────────────
+  - instrument: NAS100
+    venue_symbol: NAS100
+    aliases: [US100, USTEC, US100.cash, NAS100.cash, USTECH100, NDX100]
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.01"          # placeholder — TradeLocker tick unverified (0.01 or 0.1)
+    contract_size: "1"         # research typical; a real server may use 10 or 20
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_nas100
+    source: https://tradelocker.com/how-to/instrument-details/
+    notes: >-
+      spec unverified — enable after syncing from the venue API (TradeLocker
+      instrument details: lotSize, tick). Contract size 1 ($1/pt) is the
+      research's typical value; 10 and 20 exist at some brokers.
+
+  - instrument: US30
+    venue_symbol: US30
+    aliases: [US30.cash, DJ30, WS30]
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.01"          # placeholder — TradeLocker tick unverified
+    contract_size: "1"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us30
+    source: https://tradelocker.com/how-to/instrument-details/
+    notes: >-
+      spec unverified — enable after syncing from the venue API (TradeLocker
+      instrument details: lotSize, tick).
+
+  - instrument: US500
+    venue_symbol: US500
+    aliases: [US500.cash, SPX500, SP500]
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.01"          # placeholder — TradeLocker tick unverified
+    contract_size: "1"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us500
+    source: https://tradelocker.com/how-to/instrument-details/
+    notes: >-
+      spec unverified — enable after syncing from the venue API (TradeLocker
+      instrument details: lotSize, tick).
+
+  # ── crypto CFDs (unverified; no fitting cost profile) ──────────────────────
+  - instrument: BTCUSD
+    venue_symbol: BTCUSD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.01"          # research (low confidence)
+    contract_size: "1"         # research (low confidence): 1 lot = 1 BTC
+    quantity_unit: LOTS
+    min_qty: "0.01"            # research (low confidence)
+    qty_step: "0.01"           # research (low confidence)
+    quote_currency: USD
+    source: https://fxnx.com/en/blog/btcusd-cfd-contract-specs-lot-size-margin-weekend-swap
+    notes: >-
+      spec unverified — enable after syncing from the venue API (TradeLocker
+      instrument details). Also needs a crypto-CFD cost profile (% commission
+      plus 7-day swap).
+
+  - instrument: SOLUSD
+    venue_symbol: SOLUSD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.001"         # placeholder — unverified
+    contract_size: "1"         # placeholder — 1, 10 or 100 SOL per lot all occur
+    quantity_unit: LOTS
+    min_qty: "0.01"            # placeholder
+    qty_step: "0.01"           # placeholder
+    quote_currency: USD
+    source: https://propfirmmatch.com/crypto/prop-firms/ftmo
+    notes: >-
+      spec unverified — enable after syncing from the venue API (TradeLocker
+      instrument details). Every number is a placeholder.

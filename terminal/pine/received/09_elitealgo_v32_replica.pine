@@ -1,0 +1,149 @@
+//@version=6
+indicator("EliteAlgo v32 pulse ai (replica+)", shorttitle="EliteAlgo v32+", overlay=false, max_labels_count=500, max_lines_count=500)
+
+// ===== Inputs =====
+gS = "Signal engine"
+fastLen   = input.int(8,   "Fast EMA",   group=gS)
+slowLen   = input.int(21,  "Slow EMA",   group=gS)
+trndLen   = input.int(200, "Trend EMA",  group=gS)
+rsiLen    = input.int(14,  "RSI",        group=gS)
+adxLen    = input.int(14,  "DMI length", group=gS)
+adxSm     = input.int(14,  "ADX smooth", group=gS)
+atrLen    = input.int(14,  "ATR",        group=gS)
+pF        = input.int(5,   "Pulse fast", group=gS)
+pSl       = input.int(60,  "Pulse slow", group=gS)
+pSig      = input.int(20,  "Pulse sig",  group=gS)
+minConfl  = input.int(4,   "Min confluence for signal (0-7)", minval=0, maxval=7, group=gS)
+useTrendF = input.bool(true, "Trend filter (long > 200 EMA, short < 200 EMA)", group=gS)
+waitClose = input.bool(true, "Confirm signals on bar close (no repaint)",      group=gS)
+coolBars  = input.int(5,     "Cooldown bars between signals", minval=0,        group=gS)
+
+gR = "Risk"
+showRisk = input.bool(true,   "SL/TP lines",       group=gR)
+slMult   = input.float(1.5,   "Stop = ATR ×", step=0.1, minval=0.1, group=gR)
+rrRatio  = input.float(2.0,   "Take profit R:R",   step=0.1, minval=0.1, group=gR)
+
+gV = "Visuals"
+showLabels = input.bool(true, "Signal arrows", group=gV)
+showPanel  = input.bool(true, "Dashboard",     group=gV)
+showEntry  = input.bool(true, "Entry line",    group=gV)
+showEmas   = input.bool(true, "EMAs on price", group=gV)
+showVwap   = input.bool(true, "VWAP on price", group=gV)
+bull  = input.color(#26c281, "Bull", group=gV)
+bear  = input.color(#e5484d, "Bear", group=gV)
+vwCol = input.color(#b06ff2, "VWAP", group=gV)
+
+// ===== Calcs =====
+emaF = ta.ema(close, fastLen)
+emaS = ta.ema(close, slowLen)
+emaT = ta.ema(close, trndLen)
+rsi  = ta.rsi(close, rsiLen)
+atr  = ta.atr(atrLen)
+vwap = ta.vwap(hlc3)
+[diP, diM, adx] = ta.dmi(adxLen, adxSm)
+pulse = ta.ema(close, pF) - ta.ema(close, pSl)
+pHist = pulse - ta.ema(pulse, pSig)
+
+atrPct   = atr / close * 100
+highVol  = atrPct > ta.sma(atrPct, 100)
+trending = adx > 20
+
+b2i(c) => c ? 1 : 0
+nChecks  = 7
+bullCnt  = b2i(close > emaT) + b2i(emaF > emaS) + b2i(rsi > 50) + b2i(diP > diM) + b2i(pHist > 0) + b2i(close > open) + b2i(close > vwap)
+bearCnt  = nChecks - bullCnt
+biasBull = bullCnt >= bearCnt
+
+// ===== Signals =====
+confirmed = not waitClose or barstate.isconfirmed
+var int lastSigBar = na
+coolOK   = na(lastSigBar) or bar_index - lastSigBar >= coolBars
+trendOKL = not useTrendF or close > emaT
+trendOKS = not useTrendF or close < emaT
+
+longSig  = ta.crossover(emaF, emaS)  and bullCnt >= minConfl and trendOKL and coolOK and confirmed
+shortSig = ta.crossunder(emaF, emaS) and bearCnt >= minConfl and trendOKS and coolOK and confirmed
+
+int stars = 0
+if longSig
+    stars := math.max(1, math.min(3, bullCnt - minConfl + 1))
+if shortSig
+    stars := math.max(1, math.min(3, bearCnt - minConfl + 1))
+
+conf     = math.round(math.abs(bullCnt - bearCnt) / nChecks * 100)   // spread-based: 0% = coin flip, 100% = all 7 agree
+strength = math.abs(rsi - 50) * 2
+regime   = (trending ? "Trending" : "Ranging") + (highVol ? " · High vol" : " · Low vol")
+lon  = not na(time(timeframe.period, "0800-1630", "Europe/London"))
+ny   = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+sess = lon and ny ? "London/NY" : lon ? "London" : ny ? "New York" : "Asia/Off"
+vwUp = close > vwap
+
+// ===== Trade state =====
+var int   lStars = 0
+var int   dir    = 0
+var float entryP = na
+var float slP    = na
+var float tpP    = na
+var line  eLn    = na
+var line  slLn   = na
+var line  tpLn   = na
+
+if longSig or shortSig
+    lStars     := stars
+    lastSigBar := bar_index
+    dir        := longSig ? 1 : -1
+    entryP     := close
+    risk        = atr * slMult
+    slP        := dir == 1 ? close - risk : close + risk
+    tpP        := dir == 1 ? close + risk * rrRatio : close - risk * rrRatio
+    line.delete(eLn)
+    line.delete(slLn)
+    line.delete(tpLn)
+    if showEntry
+        eLn := line.new(bar_index, entryP, bar_index + 1, entryP, extend=extend.right, color=color.new(dir == 1 ? bull : bear, 20), style=line.style_dashed, force_overlay=true)
+    if showRisk
+        slLn := line.new(bar_index, slP, bar_index + 1, slP, extend=extend.right, color=color.new(bear, 45), style=line.style_dotted, force_overlay=true)
+        tpLn := line.new(bar_index, tpP, bar_index + 1, tpP, extend=extend.right, color=color.new(bull, 45), style=line.style_dotted, force_overlay=true)
+    alert("EliteAlgo v32 " + (dir == 1 ? "BUY " : "SELL ") + syminfo.ticker + " @ " + str.tostring(entryP, format.mintick) + " | SL " + str.tostring(slP, format.mintick) + " | TP " + str.tostring(tpP, format.mintick) + " | " + str.tostring(stars) + "★", alert.freq_once_per_bar)
+
+// ===== Price-chart drawings =====
+plot(showEmas ? emaF : na, "Fast EMA", color=color.new(#4a90d9, 30), force_overlay=true)
+plot(showEmas ? emaS : na, "Slow EMA", color=color.new(#ffb300, 30), force_overlay=true)
+plot(showVwap ? vwap : na, "VWAP",     color=color.new(vwCol, 0), linewidth=2, force_overlay=true)
+
+if showLabels and longSig
+    label.new(bar_index, low,  "Buy\n" + str.tostring(stars) + "★", yloc=yloc.belowbar, style=label.style_label_up,   color=bull, textcolor=#06371f,     size=size.small, force_overlay=true)
+if showLabels and shortSig
+    label.new(bar_index, high, str.tostring(stars) + "★\nSell",     yloc=yloc.abovebar, style=label.style_label_down, color=bear, textcolor=color.white, size=size.small, force_overlay=true)
+
+// ===== ElitePulse pane =====
+up     = pHist >= 0
+rising = up ? pHist >= pHist[1] : pHist <= pHist[1]
+pcol   = up ? (rising ? bull : color.new(bull, 55)) : (rising ? bear : color.new(bear, 55))
+plot(pHist, "Pulse", style=plot.style_columns, color=pcol)
+plot(ta.ema(pHist, pSig), "Momentum", color=color.new(#cfd6dd, 10), linewidth=2)
+hline(0, "Zero", color=color.new(color.gray, 60))
+bgcolor(up ? color.new(bull, 92) : color.new(bear, 92))
+
+// ===== Dashboard =====
+tcell(table tb, int row, string k, string v, color vc) =>
+    table.cell(tb, 0, row, k, text_color=#8b96a0, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, row, v, text_color=vc,      text_size=size.small, text_halign=text.align_right)
+
+var table t = table.new(position.top_right, 2, 10, bgcolor=color.new(#0a0e12, 8), frame_color=color.new(#2b3138, 20), frame_width=1, border_color=color.new(#2b3138, 40), border_width=1)
+if showPanel and barstate.islast
+    dirCol = biasBull ? bull : bear
+    table.cell(t, 0, 0, biasBull ? "▲ LONG" : "▼ SHORT", text_color=dirCol,  text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 0, str.tostring(lStars) + "★",       text_color=#ffb300, text_size=size.small, text_halign=text.align_right)
+    tcell(t, 1, "Bias",       (biasBull ? "▲ Bullish " : "▼ Bearish ") + str.tostring(biasBull ? bullCnt : bearCnt) + "/" + str.tostring(nChecks), dirCol)
+    tcell(t, 2, "Market",     regime,                                #ffb300)
+    tcell(t, 3, "Session",    sess,                                  #cfd6dd)
+    tcell(t, 4, "Confidence", str.tostring(conf, "#") + "%",         #26c281)
+    tcell(t, 5, "Strength",   str.tostring(strength, "#.##") + "%",  #4a90d9)
+    tcell(t, 6, "VWAP",       vwUp ? "Above ▲" : "Below ▼",          vwUp ? bull : bear)
+    tcell(t, 7, "Signal",     dir == 0 ? "—" : (dir == 1 ? "▲ Long @ " : "▼ Short @ ") + str.tostring(entryP, format.mintick), dir == 1 ? bull : dir == -1 ? bear : #8b96a0)
+    tcell(t, 8, "SL / TP",    na(slP) ? "—" : str.tostring(slP, format.mintick) + " / " + str.tostring(tpP, format.mintick), #cfd6dd)
+    tcell(t, 9, "ATR",        str.tostring(atrPct, "#.##") + "%",    #cfd6dd)
+
+alertcondition(longSig,  "Buy signal",  "EliteAlgo v32: Buy {{ticker}} @ {{close}}")
+alertcondition(shortSig, "Sell signal", "EliteAlgo v32: Sell {{ticker}} @ {{close}}")

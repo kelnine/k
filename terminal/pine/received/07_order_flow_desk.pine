@@ -1,0 +1,818 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+//
+// =====================================================================================
+//  ORDER FLOW DESK  ·  Pine Script v6
+//  A single-pane order-flow workstation: volume profile, VWAP + deviation bands,
+//  aggressive-vs-passive volume bubbles, a purple liquidity heat map, resting-liquidity
+//  (book proxy) levels, gamma / options strike levels, and a live prints tape.
+//
+//  ── WHAT PINE CAN AND CANNOT SEE ───────────────────────────────────────────────────
+//  TradingView's Pine runtime only receives OHLCV bars. It has NO access to:
+//     · the options tape (individual options prints, premium, sweeps)
+//     · dealer gamma exposure computed from an options chain
+//     · level-2 depth / resting limit orders / the DOM
+//  Anything a script claims about those is inferred, not observed. This indicator is
+//  explicit about which side of that line each module sits on:
+//
+//     OBSERVED  (real data)      Volume profile · VWAP + bands · volume / relative
+//                                volume · prints tape from intrabar data
+//     INFERRED  (proxy models)   Aggressor delta (intrabar tick-rule approximation)
+//                                · liquidity heat map (traded volume-at-price with
+//                                  decay, not book depth) · resting liquidity
+//                                  (absorption shelves + stop-cluster pools)
+//     EXTERNAL  (you supply it)  Gamma flip / call wall / put wall / extra strikes are
+//                                typed into the settings — paste them from your options
+//                                provider. The script draws, tracks and alerts on them.
+//
+//  The strike grid, wall zones, magnet alerts and gamma-regime shading behave exactly
+//  like a GEX overlay once the levels are entered; only the chain math happens outside.
+// =====================================================================================
+
+//@version=6
+indicator("Order Flow Desk [v6]", "OF Desk", overlay = true, max_bars_back = 3000,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  0 · GROUPS
+// ─────────────────────────────────────────────────────────────────────────────────────
+string G_FLW = "① Flow engine · delta & bubbles"
+string G_VP  = "② Volume profile"
+string G_VW  = "③ VWAP"
+string G_HM  = "④ Liquidity heat map"
+string G_BK  = "⑤ Book proxy · resting liquidity"
+string G_GX  = "⑥ Gamma / options levels"
+string G_TP  = "⑦ Tape"
+string G_DSH = "⑧ Dashboard"
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  1 · INPUTS
+// ─────────────────────────────────────────────────────────────────────────────────────
+// ① flow engine
+ltfChoice = input.string("Auto", "Intrabar resolution", options = ["Auto", "1S", "5S", "10S", "15S", "30S", "1", "3", "5", "15", "Off"], group = G_FLW,
+     tooltip = "Sub-bar data used to split volume into aggressive buying vs selling.\nSeconds resolutions require a plan with seconds data.\n'Off' — or unavailable data — falls back to the close-position estimate.")
+volLen    = input.int(20, "Relative-volume baseline", minval = 2, maxval = 500, group = G_FLW)
+cvdReset  = input.string("Session", "Cumulative delta reset", options = ["Session", "Week", "Never"], group = G_FLW)
+bubShow   = input.bool(true, "Volume bubbles", group = G_FLW, tooltip = "Bubble radius scales with relative volume, colour with the aggressor side. Hover a bubble for the full breakdown.")
+bubMin    = input.float(1.5, "Bubble: min relative volume", minval = 0.5, step = 0.1, group = G_FLW)
+
+// ② volume profile
+vpShow    = input.bool(true, "Show volume profile", group = G_VP)
+vpMode    = input.string("Session", "Range", options = ["Session", "Fixed lookback", "Visible range"], group = G_VP)
+vpLook    = input.int(240, "Fixed lookback (bars)", minval = 10, maxval = 2000, group = G_VP)
+vpRows    = input.int(24, "Rows", minval = 8, maxval = 60, group = G_VP)
+vpVaPct   = input.float(70, "Value area %", minval = 30, maxval = 95, step = 5, group = G_VP)
+vpSide    = input.string("Right", "Anchor", options = ["Right", "Left"], group = G_VP)
+vpWidth   = input.int(60, "Width (bars)", minval = 10, maxval = 300, group = G_VP)
+vpSplit   = input.bool(true, "Split buy / sell volume", group = G_VP)
+vpThick   = input.int(3, "Row thickness (px)", minval = 1, maxval = 12, group = G_VP)
+vpLevels  = input.bool(true, "Extend POC / VAH / VAL", group = G_VP)
+vpNodes   = input.bool(true, "Mark HVN / LVN", group = G_VP, tooltip = "High-volume nodes are acceptance shelves. Low-volume nodes are the gaps price travels through quickly.")
+cBuy      = input.color(color.new(#26a69a, 45), "Buy rows", inline = "vpc", group = G_VP)
+cSell     = input.color(color.new(#ef5350, 45), "Sell rows", inline = "vpc", group = G_VP)
+cPoc      = input.color(#ffb300, "POC", inline = "vpc2", group = G_VP)
+cVa       = input.color(color.new(#42a5f5, 20), "Value area", inline = "vpc2", group = G_VP)
+
+// ③ vwap
+vwShow    = input.bool(true, "Show VWAP", group = G_VW)
+vwAnchor  = input.string("Session", "Anchor", options = ["Session", "Week", "Month", "Quarter", "Year"], group = G_VW)
+vwSrc     = input.source(hlc3, "Source", group = G_VW)
+vwB1      = input.float(1.0, "σ", minval = 0, step = 0.25, inline = "vb", group = G_VW)
+vwB2      = input.float(2.0, "σ", minval = 0, step = 0.25, inline = "vb", group = G_VW)
+vwB3      = input.float(3.0, "σ", minval = 0, step = 0.25, inline = "vb", group = G_VW)
+vwPrev    = input.bool(true, "Carry previous anchor's closing VWAP", group = G_VW)
+
+// ④ liquidity heat map
+hmShow    = input.bool(true, "Show heat map", group = G_HM,
+     tooltip = "Pine has no level-2 feed. This maps traded volume-at-price per time slice with exponential recency decay: the trail of where size actually transacted and where it keeps getting defended. Read it as consumed and defended liquidity, not as a depth ladder.")
+hmRows    = input.int(32, "Price rows", minval = 8, maxval = 60, group = G_HM)
+hmCols    = input.int(8, "Time columns", minval = 2, maxval = 20, group = G_HM)
+hmBarsCol = input.int(10, "Bars per column", minval = 1, maxval = 60, group = G_HM)
+hmDecay   = input.float(0.92, "Column decay", minval = 0.5, maxval = 1.0, step = 0.01, group = G_HM,
+     tooltip = "How fast older columns fade. 1.00 = no fade (pure volume map), 0.85 = strong recency bias.")
+hmContrast = input.float(0.55, "Contrast", minval = 0.2, maxval = 2.0, step = 0.05, group = G_HM)
+hmFloor   = input.float(0.06, "Noise floor", minval = 0, maxval = 0.5, step = 0.01, group = G_HM)
+hmTrans   = input.int(62, "Transparency", minval = 0, maxval = 95, group = G_HM)
+hmC0      = input.color(#1b0033, "Cold", inline = "hmc", group = G_HM)
+hmC1      = input.color(#7b2fbe, "Mid", inline = "hmc", group = G_HM)
+hmC2      = input.color(#e0a9ff, "Hot", inline = "hmc", group = G_HM)
+
+// ⑤ book proxy
+bkAbs     = input.bool(true, "Absorption shelves", group = G_BK,
+     tooltip = "High volume plus a compressed range means aggressive orders hit resting passive size. The shelf marks where those passive orders sat.")
+absRv     = input.float(1.8, "Absorption: min relative volume", minval = 1.0, step = 0.1, group = G_BK)
+absRng    = input.float(0.7, "Absorption: max range × ATR", minval = 0.1, maxval = 2.0, step = 0.05, group = G_BK)
+absKeep   = input.int(6, "Max absorption shelves", minval = 1, maxval = 20, group = G_BK)
+bkPool    = input.bool(true, "Liquidity pools (stop clusters)", group = G_BK,
+     tooltip = "Equal highs and equal lows. Resting stop orders cluster just beyond them — the one book feature price action does expose.")
+pivLen    = input.int(8, "Pivot length", minval = 2, maxval = 50, group = G_BK)
+poolTol   = input.float(0.15, "Equal-level tolerance × ATR", minval = 0.02, maxval = 1.0, step = 0.01, group = G_BK)
+poolKeep  = input.int(6, "Max pools per side", minval = 1, maxval = 15, group = G_BK)
+poolSweep = input.bool(true, "Mark sweeps", group = G_BK)
+
+// ⑥ gamma / options levels
+gxShow    = input.bool(true, "Show gamma levels", group = G_GX)
+gxFlip    = input.float(0, "Gamma flip / zero gamma", minval = 0, group = G_GX,
+     tooltip = "0 = off. Above it dealers are long gamma and fade moves, so vol compresses. Below it they are short gamma and chase, so vol expands.")
+gxCall    = input.float(0, "Call wall", minval = 0, inline = "gw", group = G_GX)
+gxPut     = input.float(0, "Put wall", minval = 0, inline = "gw", group = G_GX)
+gxZone    = input.float(0.10, "Wall zone width %", minval = 0, maxval = 2, step = 0.05, group = G_GX)
+gxExtra   = input.string("", "Extra levels", group = G_GX,
+     tooltip = "Comma separated. Price, optionally a colon and a label:\n6120:HVL, 6150:1D GEX, 6200")
+gxStep    = input.float(0, "Strike grid spacing", minval = 0, group = G_GX, tooltip = "0 = off. 5 for SPX, 1 for SPY, 500 for BTC, and so on.")
+gxCount   = input.int(4, "Strikes each side", minval = 1, maxval = 12, group = G_GX)
+gxMagnet  = input.float(0.15, "Magnet distance %", minval = 0.01, maxval = 2, step = 0.01, group = G_GX)
+gxRegime  = input.bool(true, "Shade gamma regime", group = G_GX)
+cCall     = input.color(#ef5350, "Call wall", inline = "gc", group = G_GX)
+cPut      = input.color(#26a69a, "Put wall", inline = "gc", group = G_GX)
+cFlip     = input.color(#ffa726, "Flip", inline = "gc", group = G_GX)
+
+// ⑦ tape
+tpShow    = input.bool(true, "Show prints tape", group = G_TP,
+     tooltip = "Large intrabar prints in the underlying. Options prints are not available to Pine — keep the options tape on its own monitor and use this panel to time the underlying against it.")
+tpRows    = input.int(12, "Rows", minval = 3, maxval = 30, group = G_TP)
+tpMult    = input.float(2.5, "Min print size × average", minval = 1.0, step = 0.1, group = G_TP)
+tpPos     = input.string("Middle right", "Position", options = ["Top right", "Middle right", "Bottom right", "Bottom left"], group = G_TP)
+tpSize    = input.string("Tiny", "Text size", options = ["Tiny", "Small", "Normal"], group = G_TP)
+
+// ⑧ dashboard
+dshShow   = input.bool(true, "Show dashboard", group = G_DSH)
+dshPos    = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_DSH)
+dshSize   = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal"], group = G_DSH)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  2 · HELPERS
+// ─────────────────────────────────────────────────────────────────────────────────────
+f_num(v) =>
+    a = math.abs(v)
+    a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" :
+     a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" :
+     a >= 1e3 ? str.tostring(v / 1e3, "#.#") + "K" : str.tostring(v, "#.##")
+
+f_px(v) => na(v) ? "—" : str.tostring(v, format.mintick)
+
+f_signed(v, d) => (v >= 0 ? "+" : "") + str.tostring(v, d)
+
+f_tblPos(s) =>
+    switch s
+        "Top right"    => position.top_right
+        "Top left"     => position.top_left
+        "Middle right" => position.middle_right
+        "Bottom right" => position.bottom_right
+        "Bottom left"  => position.bottom_left
+        => position.top_right
+
+f_txtSize(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.small
+
+// spread one bar's volume across every price row its range touches
+f_spread(dst, rows, lo, rowH, bHi, bLo, vol) =>
+    bool ok = false
+    if rowH > 0 and vol > 0
+        int r1 = math.max(0, math.min(rows - 1, int(math.floor((bLo - lo) / rowH))))
+        int r2 = math.max(0, math.min(rows - 1, int(math.floor((bHi - lo) / rowH))))
+        float per = vol / (r2 - r1 + 1)
+        for r = r1 to r2
+            array.set(dst, r, array.get(dst, r) + per)
+        ok := true
+    ok
+
+f_spreadM(m, col, rows, lo, rowH, bHi, bLo, vol) =>
+    bool ok = false
+    if rowH > 0 and vol > 0
+        int r1 = math.max(0, math.min(rows - 1, int(math.floor((bLo - lo) / rowH))))
+        int r2 = math.max(0, math.min(rows - 1, int(math.floor((bHi - lo) / rowH))))
+        float per = vol / (r2 - r1 + 1)
+        for r = r1 to r2
+            matrix.set(m, r, col, matrix.get(m, r, col) + per)
+        ok := true
+    ok
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  3 · FLOW ENGINE — intrabar aggressor split
+// ─────────────────────────────────────────────────────────────────────────────────────
+int tfSecs = timeframe.in_seconds(timeframe.period)
+string autoLtf = tfSecs >= 3600 ? "5" : tfSecs >= 180 ? "1" : tfSecs >= 60 ? "15S" : "5S"
+string ltfRes = ltfChoice == "Auto" ? autoLtf : ltfChoice == "Off" ? timeframe.period : ltfChoice
+
+// a non-lower timeframe is ignored instead of raising, so "Off" and unavailable
+// seconds data both degrade cleanly to the bar-level fallback below
+[ltfO, ltfC, ltfV, ltfT] = request.security_lower_tf(syminfo.tickerid, ltfRes,
+     [open, close, volume, time], ignore_invalid_timeframe = true)
+
+int nSub = na(ltfC) ? 0 : array.size(ltfC)
+float barVol = nz(volume)
+float upVol = 0.0
+float dnVol = 0.0
+
+if nSub > 0
+    for i = 0 to nSub - 1
+        float c = array.get(ltfC, i)
+        float o = array.get(ltfO, i)
+        float v = nz(array.get(ltfV, i))
+        if c > o
+            upVol += v
+        else if c < o
+            dnVol += v
+        else
+            upVol += v * 0.5
+            dnVol += v * 0.5
+else
+    float rng = math.max(high - low, syminfo.mintick)
+    upVol := barVol * (close - low) / rng
+    dnVol := barVol * (high - close) / rng
+
+bool intrabarOK = nSub > 0
+float delta     = upVol - dnVol
+float deltaPct  = barVol > 0 ? delta / barVol : 0.0
+float volAvg    = nz(ta.sma(barVol, volLen))
+float relVol    = volAvg > 0 ? barVol / volAvg : 0.0
+float atr       = nz(ta.atr(14), syminfo.mintick)
+
+bool newDay  = timeframe.change("D")
+bool newWeek = timeframe.change("W")
+bool cvdCut  = cvdReset == "Session" ? newDay : cvdReset == "Week" ? newWeek : false
+
+var float cvd = 0.0
+cvd := (cvdCut ? 0.0 : nz(cvd)) + delta
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  4 · VWAP + DEVIATION BANDS
+// ─────────────────────────────────────────────────────────────────────────────────────
+string vwTf = switch vwAnchor
+    "Session" => "D"
+    "Week"    => "W"
+    "Month"   => "M"
+    "Quarter" => "3M"
+    => "12M"
+
+bool vwCut = timeframe.change(vwTf)
+
+var float pvSum = 0.0
+var float vSum = 0.0
+var float pv2Sum = 0.0
+var float vwPrevVal = na
+
+if vwCut
+    if vwPrev and vSum > 0
+        vwPrevVal := pvSum / vSum
+    pvSum  := 0.0
+    vSum   := 0.0
+    pv2Sum := 0.0
+
+float vwWeight = barVol > 0 ? barVol : 1.0
+pvSum  += vwSrc * vwWeight
+vSum   += vwWeight
+pv2Sum += vwSrc * vwSrc * vwWeight
+
+float vwap  = vSum > 0 ? pvSum / vSum : na
+float vwVar = vSum > 0 ? math.max(pv2Sum / vSum - vwap * vwap, 0) : na
+float vwSd  = math.sqrt(vwVar)
+float vwZ   = vwSd > 0 ? (close - vwap) / vwSd : 0.0
+
+plot(vwShow ? vwap : na, "VWAP", color = #2962ff, linewidth = 2)
+p1u = plot(vwShow and vwB1 > 0 ? vwap + vwSd * vwB1 : na, "+1σ", color = color.new(#2962ff, 55))
+p1d = plot(vwShow and vwB1 > 0 ? vwap - vwSd * vwB1 : na, "-1σ", color = color.new(#2962ff, 55))
+p2u = plot(vwShow and vwB2 > 0 ? vwap + vwSd * vwB2 : na, "+2σ", color = color.new(#2962ff, 70))
+p2d = plot(vwShow and vwB2 > 0 ? vwap - vwSd * vwB2 : na, "-2σ", color = color.new(#2962ff, 70))
+plot(vwShow and vwB3 > 0 ? vwap + vwSd * vwB3 : na, "+3σ", color = color.new(#2962ff, 82))
+plot(vwShow and vwB3 > 0 ? vwap - vwSd * vwB3 : na, "-3σ", color = color.new(#2962ff, 82))
+fill(p1u, p1d, color = color.new(#2962ff, 94), title = "1σ fill")
+fill(p2u, p1u, color = color.new(#2962ff, 96), title = "upper 2σ fill")
+fill(p1d, p2d, color = color.new(#2962ff, 96), title = "lower 2σ fill")
+plot(vwShow and vwPrev ? vwPrevVal : na, "Prev anchor VWAP", color = color.new(#787b86, 25), style = plot.style_stepline)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  5 · VOLUME PROFILE
+// ─────────────────────────────────────────────────────────────────────────────────────
+var int sessStart = 0
+if newDay
+    sessStart := bar_index
+
+var array<line>  vpLines = array.new<line>()
+var array<line>  vpLvlLn = array.new<line>()
+var array<label> vpLabs  = array.new<label>()
+var box vaBox = na
+
+var float pocPx = na
+var float vahPx = na
+var float valPx = na
+var float vpBuy = 0.0
+var float vpSell = 0.0
+
+// window length in bars, resolved on the last bar
+f_vpLen() =>
+    int len = vpLook
+    if vpMode == "Session"
+        len := math.max(2, bar_index - sessStart + 1)
+    else if vpMode == "Visible range"
+        int scan = 0
+        for i = 0 to 1999
+            if bar_index - i < 0
+                break
+            if time[i] < chart.left_visible_bar_time
+                break
+            scan += 1
+        len := math.max(2, scan)
+    math.min(len, math.min(bar_index + 1, 2000))
+
+if barstate.islast and (vpShow or dshShow)
+    for l in vpLines
+        line.delete(l)
+    array.clear(vpLines)
+    for l in vpLvlLn
+        line.delete(l)
+    array.clear(vpLvlLn)
+    for lb in vpLabs
+        label.delete(lb)
+    array.clear(vpLabs)
+    box.delete(vaBox)
+
+    int len = f_vpLen()
+    float hi = high
+    float lo = low
+    for i = 0 to len - 1
+        hi := math.max(hi, high[i])
+        lo := math.min(lo, low[i])
+    float rowH = (hi - lo) / vpRows
+
+    if rowH > 0
+        array<float> rowsAll = array.new<float>(vpRows, 0.0)
+        array<float> rowsBuy = array.new<float>(vpRows, 0.0)
+        vpBuy  := 0.0
+        vpSell := 0.0
+
+        for i = 0 to len - 1
+            float v = nz(volume[i])
+            if v > 0
+                float r = math.max(high[i] - low[i], syminfo.mintick)
+                float bp = math.min(1.0, math.max(0.0, (close[i] - low[i]) / r))
+                f_spread(rowsAll, vpRows, lo, rowH, high[i], low[i], v)
+                f_spread(rowsBuy, vpRows, lo, rowH, high[i], low[i], v * bp)
+                vpBuy  += v * bp
+                vpSell += v * (1 - bp)
+
+        float total = array.sum(rowsAll)
+        float maxV  = array.max(rowsAll)
+        int   pocIx = array.indexof(rowsAll, maxV)
+        pocPx := lo + (pocIx + 0.5) * rowH
+
+        // value area expands from the POC, always taking the heavier neighbour
+        int   up   = pocIx + 1
+        int   dn   = pocIx - 1
+        int   vTop = pocIx
+        int   vBot = pocIx
+        float acc  = array.get(rowsAll, pocIx)
+        float goal = total * vpVaPct / 100.0
+        while acc < goal and (up < vpRows or dn >= 0)
+            float vU = up < vpRows ? array.get(rowsAll, up) : -1.0
+            float vD = dn >= 0 ? array.get(rowsAll, dn) : -1.0
+            if vU >= vD
+                acc  += vU
+                vTop := up
+                up   += 1
+            else
+                acc  += vD
+                vBot := dn
+                dn   -= 1
+        vahPx := lo + (vTop + 1) * rowH
+        valPx := lo + vBot * rowH
+
+        if vpShow and maxV > 0
+            int xA = vpSide == "Right" ? bar_index + 2 : bar_index - len + 1
+            float avgV = total / vpRows
+
+            for r = 0 to vpRows - 1
+                float rv = array.get(rowsAll, r)
+                if rv > 0
+                    float y = lo + (r + 0.5) * rowH
+                    int   w = int(math.round(vpWidth * rv / maxV))
+                    bool  inVa = r >= vBot and r <= vTop
+                    bool  isPoc = r == pocIx
+                    if w > 0
+                        if vpSplit
+                            float bv = array.get(rowsBuy, r)
+                            int wb = int(math.round(w * bv / rv))
+                            color cb = isPoc ? cPoc : color.new(cBuy, int(inVa ? color.t(cBuy) : math.min(95, color.t(cBuy) + 25)))
+                            color cs = isPoc ? cPoc : color.new(cSell, int(inVa ? color.t(cSell) : math.min(95, color.t(cSell) + 25)))
+                            if wb > 0
+                                array.push(vpLines, line.new(xA, y, xA + wb, y, xloc = xloc.bar_index, color = cb, width = vpThick))
+                            if w - wb > 0
+                                array.push(vpLines, line.new(xA + wb, y, xA + w, y, xloc = xloc.bar_index, color = cs, width = vpThick))
+                        else
+                            color cc = isPoc ? cPoc : inVa ? cVa : color.new(cVa, 70)
+                            array.push(vpLines, line.new(xA, y, xA + w, y, xloc = xloc.bar_index, color = cc, width = vpThick))
+
+                        if vpNodes
+                            if rv > avgV * 1.6
+                                array.push(vpLabs, label.new(xA + w, y, "HVN", xloc = xloc.bar_index, style = label.style_label_left,
+                                     color = color.new(color.gray, 88), textcolor = color.new(#b2b5be, 20), size = size.tiny))
+                            else if rv < avgV * 0.35
+                                array.push(vpLabs, label.new(xA + w, y, "LVN", xloc = xloc.bar_index, style = label.style_label_left,
+                                     color = color.new(color.gray, 92), textcolor = color.new(#787b86, 30), size = size.tiny))
+
+            if vpLevels
+                int xL = bar_index - len + 1
+                int xR = bar_index + 12
+                vaBox := box.new(xL, vahPx, xR, valPx, xloc = xloc.bar_index,
+                     border_color = color.new(cVa, 70), bgcolor = color.new(cVa, 93))
+                array.push(vpLvlLn, line.new(xL, pocPx, xR, pocPx, xloc = xloc.bar_index, color = cPoc, width = 2))
+                array.push(vpLvlLn, line.new(xL, vahPx, xR, vahPx, xloc = xloc.bar_index, color = color.new(cVa, 30), style = line.style_dashed))
+                array.push(vpLvlLn, line.new(xL, valPx, xR, valPx, xloc = xloc.bar_index, color = color.new(cVa, 30), style = line.style_dashed))
+                array.push(vpLabs, label.new(xR, pocPx, " POC " + f_px(pocPx), xloc = xloc.bar_index, style = label.style_label_left,
+                     color = color.new(cPoc, 85), textcolor = cPoc, size = size.tiny))
+                array.push(vpLabs, label.new(xR, vahPx, " VAH", xloc = xloc.bar_index, style = label.style_label_left,
+                     color = color.new(cVa, 88), textcolor = color.new(cVa, 10), size = size.tiny))
+                array.push(vpLabs, label.new(xR, valPx, " VAL", xloc = xloc.bar_index, style = label.style_label_left,
+                     color = color.new(cVa, 88), textcolor = color.new(cVa, 10), size = size.tiny))
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  6 · LIQUIDITY HEAT MAP
+// ─────────────────────────────────────────────────────────────────────────────────────
+var array<box> hmBoxes = array.new<box>()
+
+f_hmColor(v) =>
+    v < 0.5 ? color.from_gradient(v, 0.0, 0.5, color.new(hmC0, math.min(99, hmTrans + 30)), color.new(hmC1, hmTrans))
+     : color.from_gradient(v, 0.5, 1.0, color.new(hmC1, hmTrans), color.new(hmC2, math.max(0, hmTrans - 25)))
+
+if barstate.islast and hmShow
+    for b in hmBoxes
+        box.delete(b)
+    array.clear(hmBoxes)
+
+    // keep the grid inside the 500-object budget it shares with the value-area box
+    int cols = hmCols
+    int rows = math.min(hmRows, math.max(4, int(math.floor(430.0 / cols))))
+    int span = math.min(cols * hmBarsCol, math.min(bar_index + 1, 2000))
+
+    float hi = high
+    float lo = low
+    for i = 0 to span - 1
+        hi := math.max(hi, high[i])
+        lo := math.min(lo, low[i])
+    float rowH = (hi - lo) / rows
+
+    if rowH > 0
+        matrix<float> grid = matrix.new<float>(rows, cols, 0.0)
+        for i = 0 to span - 1
+            int col = cols - 1 - int(math.floor(i / hmBarsCol))
+            if col >= 0 and col < cols
+                f_spreadM(grid, col, rows, lo, rowH, high[i], low[i], nz(volume[i]))
+
+        // recency decay, then normalise against the hottest cell
+        float peak = 0.0
+        for c = 0 to cols - 1
+            float w = math.pow(hmDecay, cols - 1 - c)
+            for r = 0 to rows - 1
+                float v = matrix.get(grid, r, c) * w
+                matrix.set(grid, r, c, v)
+                peak := math.max(peak, v)
+
+        if peak > 0
+            for c = 0 to cols - 1
+                int x1 = bar_index - span + 1 + c * hmBarsCol
+                int x2 = x1 + hmBarsCol
+                for r = 0 to rows - 1
+                    float v = math.pow(matrix.get(grid, r, c) / peak, hmContrast)
+                    if v > hmFloor
+                        float y1 = lo + r * rowH
+                        array.push(hmBoxes, box.new(x1, y1 + rowH, x2, y1, xloc = xloc.bar_index,
+                             border_width = 0, border_color = color.new(color.black, 100), bgcolor = f_hmColor(v)))
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  7 · BOOK PROXY — absorption shelves + liquidity pools
+// ─────────────────────────────────────────────────────────────────────────────────────
+// 7a absorption: aggression arrives, price refuses to move → passive size is sitting there
+bool absorbed = bkAbs and relVol >= absRv and (high - low) <= atr * absRng and barVol > 0
+// delta <= 0 → sellers pressed and bids held (resting bids); otherwise resting offers
+bool absBuy   = absorbed and delta <= 0
+
+var array<line>  absLn = array.new<line>()
+var array<label> absLb = array.new<label>()
+
+if absorbed
+    float lvl = absBuy ? low + (high - low) * 0.25 : high - (high - low) * 0.25
+    color ac = absBuy ? #26a69a : #ef5350
+    array.push(absLn, line.new(bar_index, lvl, bar_index + 20, lvl, xloc = xloc.bar_index,
+         color = color.new(ac, 35), width = 2, style = line.style_dotted))
+    array.push(absLb, label.new(bar_index, lvl, absBuy ? "bid" : "ask", xloc = xloc.bar_index,
+         style = label.style_none, textcolor = color.new(ac, 20), size = size.tiny))
+    if array.size(absLn) > absKeep
+        line.delete(array.shift(absLn))
+        label.delete(array.shift(absLb))
+
+// shelves stay live until price closes through them
+if array.size(absLn) > 0
+    for i = array.size(absLn) - 1 to 0
+        line l = array.get(absLn, i)
+        float y = line.get_y1(l)
+        if bar_index - line.get_x1(l) > 1 and math.sign(close - y) != math.sign(close[1] - y)
+            line.delete(l)
+            label.delete(array.get(absLb, i))
+            array.remove(absLn, i)
+            array.remove(absLb, i)
+        else
+            line.set_x2(l, bar_index + 20)
+
+// 7b liquidity pools — equal highs / lows are where stop orders rest
+var array<float> poolHiY = array.new<float>()
+var array<line>  poolHiL = array.new<line>()
+var array<int>   poolHiN = array.new<int>()
+var array<float> poolLoY = array.new<float>()
+var array<line>  poolLoL = array.new<line>()
+var array<int>   poolLoN = array.new<int>()
+
+float ph = bkPool ? ta.pivothigh(pivLen, pivLen) : na
+float pl = bkPool ? ta.pivotlow(pivLen, pivLen) : na
+float tol = atr * poolTol
+
+if not na(ph)
+    int hit = -1
+    if array.size(poolHiY) > 0
+        for i = 0 to array.size(poolHiY) - 1
+            if math.abs(array.get(poolHiY, i) - ph) <= tol
+                hit := i
+                break
+    if hit >= 0
+        array.set(poolHiN, hit, array.get(poolHiN, hit) + 1)
+        line.set_width(array.get(poolHiL, hit), math.min(4, array.get(poolHiN, hit)))
+    else
+        array.push(poolHiY, ph)
+        array.push(poolHiN, 1)
+        array.push(poolHiL, line.new(bar_index - pivLen, ph, bar_index, ph, xloc = xloc.bar_index,
+             color = color.new(#ef5350, 45), width = 1, style = line.style_dashed))
+        if array.size(poolHiY) > poolKeep
+            line.delete(array.shift(poolHiL))
+            array.shift(poolHiY)
+            array.shift(poolHiN)
+
+if not na(pl)
+    int hit = -1
+    if array.size(poolLoY) > 0
+        for i = 0 to array.size(poolLoY) - 1
+            if math.abs(array.get(poolLoY, i) - pl) <= tol
+                hit := i
+                break
+    if hit >= 0
+        array.set(poolLoN, hit, array.get(poolLoN, hit) + 1)
+        line.set_width(array.get(poolLoL, hit), math.min(4, array.get(poolLoN, hit)))
+    else
+        array.push(poolLoY, pl)
+        array.push(poolLoN, 1)
+        array.push(poolLoL, line.new(bar_index - pivLen, pl, bar_index, pl, xloc = xloc.bar_index,
+             color = color.new(#26a69a, 45), width = 1, style = line.style_dashed))
+        if array.size(poolLoY) > poolKeep
+            line.delete(array.shift(poolLoL))
+            array.shift(poolLoY)
+            array.shift(poolLoN)
+
+bool sweptHi = false
+bool sweptLo = false
+
+if array.size(poolHiY) > 0
+    for i = array.size(poolHiY) - 1 to 0
+        float y = array.get(poolHiY, i)
+        line.set_x2(array.get(poolHiL, i), bar_index + 4)
+        if high > y and close < y
+            sweptHi := true
+        if (high > y and close < y) or close > y
+            line.delete(array.get(poolHiL, i))
+            array.remove(poolHiY, i)
+            array.remove(poolHiL, i)
+            array.remove(poolHiN, i)
+
+if array.size(poolLoY) > 0
+    for i = array.size(poolLoY) - 1 to 0
+        float y = array.get(poolLoY, i)
+        line.set_x2(array.get(poolLoL, i), bar_index + 4)
+        if low < y and close > y
+            sweptLo := true
+        if (low < y and close > y) or close < y
+            line.delete(array.get(poolLoL, i))
+            array.remove(poolLoY, i)
+            array.remove(poolLoL, i)
+            array.remove(poolLoN, i)
+
+plotshape(poolSweep and sweptHi, "Sell-side sweep", shape.triangledown, location.abovebar, color.new(#ef5350, 10), size = size.tiny)
+plotshape(poolSweep and sweptLo, "Buy-side sweep", shape.triangleup, location.belowbar, color.new(#26a69a, 10), size = size.tiny)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  8 · GAMMA / OPTIONS LEVELS   (levels are supplied by you — see the header note)
+// ─────────────────────────────────────────────────────────────────────────────────────
+var array<line>  gxLn = array.new<line>()
+var array<label> gxLb = array.new<label>()
+var array<box>   gxBx = array.new<box>()
+
+var float gxNearY = na
+var string gxNearN = ""
+
+f_drawLevel(px, name, c, wid, sty, zone) =>
+    int x1 = math.max(0, bar_index - 300)
+    int x2 = bar_index + 30
+    array.push(gxLn, line.new(x1, px, x2, px, xloc = xloc.bar_index, color = c, width = wid, style = sty))
+    array.push(gxLb, label.new(x2, px, " " + name + "  " + f_px(px), xloc = xloc.bar_index,
+         style = label.style_label_left, color = color.new(c, 88), textcolor = c, size = size.tiny))
+    if zone and gxZone > 0
+        float h = px * gxZone / 100.0
+        array.push(gxBx, box.new(x1, px + h, x2, px - h, xloc = xloc.bar_index,
+             border_color = color.new(c, 100), bgcolor = color.new(c, 90)))
+    true
+
+if barstate.islast and gxShow
+    for l in gxLn
+        line.delete(l)
+    array.clear(gxLn)
+    for lb in gxLb
+        label.delete(lb)
+    array.clear(gxLb)
+    for b in gxBx
+        box.delete(b)
+    array.clear(gxBx)
+
+    gxNearY := na
+    gxNearN := ""
+
+    // strike grid first, so the named levels draw on top of it
+    if gxStep > 0
+        float base = math.round(close / gxStep) * gxStep
+        for k = -gxCount to gxCount
+            float s = base + k * gxStep
+            if s > 0
+                array.push(gxLn, line.new(math.max(0, bar_index - 300), s, bar_index + 30, s,
+                     xloc = xloc.bar_index, color = color.new(#787b86, 82), style = line.style_dotted))
+
+    if gxFlip > 0
+        f_drawLevel(gxFlip, "GAMMA FLIP", cFlip, 2, line.style_solid, false)
+    if gxCall > 0
+        f_drawLevel(gxCall, "CALL WALL", cCall, 3, line.style_solid, true)
+    if gxPut > 0
+        f_drawLevel(gxPut, "PUT WALL", cPut, 3, line.style_solid, true)
+
+    if str.length(gxExtra) > 0
+        array<string> parts = str.split(gxExtra, ",")
+        int drawn = 0
+        for p in parts
+            if drawn < 12
+                array<string> kv = str.split(p, ":")
+                float px = str.tonumber(str.replace_all(array.get(kv, 0), " ", ""))
+                if not na(px) and px > 0
+                    string nm = array.size(kv) > 1 ? array.get(kv, 1) : "LVL"
+                    f_drawLevel(px, nm, color.new(#42a5f5, 10), 1, line.style_dashed, false)
+                    drawn += 1
+
+    // nearest named level — feeds the dashboard and the magnet alert
+    float bestD = 1e20
+    if gxFlip > 0 and math.abs(close - gxFlip) < bestD
+        bestD   := math.abs(close - gxFlip)
+        gxNearY := gxFlip
+        gxNearN := "flip"
+    if gxCall > 0 and math.abs(close - gxCall) < bestD
+        bestD   := math.abs(close - gxCall)
+        gxNearY := gxCall
+        gxNearN := "call wall"
+    if gxPut > 0 and math.abs(close - gxPut) < bestD
+        bestD   := math.abs(close - gxPut)
+        gxNearY := gxPut
+        gxNearN := "put wall"
+
+bool posGamma  = gxFlip > 0 and close > gxFlip
+bool negGamma  = gxFlip > 0 and close < gxFlip
+bool nearWall  = (gxCall > 0 and math.abs(close - gxCall) / close * 100 <= gxMagnet) or
+                 (gxPut > 0 and math.abs(close - gxPut) / close * 100 <= gxMagnet)
+bool flipCross = gxFlip > 0 and ta.cross(close, gxFlip)
+
+bgcolor(gxShow and gxRegime and posGamma ? color.new(#26a69a, 96) :
+        gxShow and gxRegime and negGamma ? color.new(#ef5350, 96) : na, title = "Gamma regime")
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  9 · VOLUME BUBBLES — aggressive buyer vs seller size
+// ─────────────────────────────────────────────────────────────────────────────────────
+if bubShow and relVol >= bubMin and barVol > 0
+    string bsz = relVol >= bubMin * 3 ? size.large : relVol >= bubMin * 2 ? size.normal : relVol >= bubMin * 1.4 ? size.small : size.tiny
+    bool bUp = delta >= 0
+    color bc = color.new(bUp ? #26a69a : #ef5350, math.max(0, math.min(85, int(70 - math.abs(deltaPct) * 55))))
+    label.new(bar_index, bUp ? low - atr * 0.35 : high + atr * 0.35, "",
+         xloc = xloc.bar_index, style = label.style_circle, color = bc, size = bsz,
+         tooltip = "vol " + f_num(barVol) + "   ×" + str.tostring(relVol, "#.#") + " avg" +
+                   "\nbuy  " + f_num(upVol) + "    sell " + f_num(dnVol) +
+                   "\ndelta " + f_num(delta) + "  (" + str.tostring(deltaPct * 100, "#.#") + "%)" +
+                   (intrabarOK ? "\nintrabar " + ltfRes : "\nestimated — no intrabar data"))
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  10 · PRINTS TAPE
+// ─────────────────────────────────────────────────────────────────────────────────────
+var array<float> tpPx = array.new<float>()
+var array<float> tpSz = array.new<float>()
+var array<int> tpSide = array.new<int>()
+var array<int> tpTm = array.new<int>()
+
+f_pushPrint(px, sz, side, tm) =>
+    array.unshift(tpPx, px)
+    array.unshift(tpSz, sz)
+    array.unshift(tpSide, side)
+    array.unshift(tpTm, tm)
+    while array.size(tpPx) > 40
+        array.pop(tpPx)
+        array.pop(tpSz)
+        array.pop(tpSide)
+        array.pop(tpTm)
+    true
+
+if tpShow and barstate.isconfirmed
+    if intrabarOK
+        float subAvg = volAvg / math.max(nSub, 1)
+        for i = 0 to nSub - 1
+            float v = nz(array.get(ltfV, i))
+            if subAvg > 0 and v >= subAvg * tpMult
+                float c = array.get(ltfC, i)
+                float o = array.get(ltfO, i)
+                f_pushPrint(c, v, c > o ? 1 : c < o ? -1 : 0, array.get(ltfT, i))
+    else if relVol >= tpMult
+        f_pushPrint(close, barVol, delta > 0 ? 1 : delta < 0 ? -1 : 0, time)
+
+var table tpTbl = na
+if barstate.islast and tpShow
+    if na(tpTbl)
+        tpTbl := table.new(f_tblPos(tpPos), 4, tpRows + 2, border_width = 1, border_color = color.new(#363a45, 40))
+    table.clear(tpTbl, 0, 0, 3, tpRows + 1)
+    string ts = f_txtSize(tpSize)
+    table.cell(tpTbl, 0, 0, "TAPE", text_color = #d1d4dc, bgcolor = #1e222d, text_size = ts, text_halign = text.align_left)
+    table.cell(tpTbl, 1, 0, "", bgcolor = #1e222d, text_size = ts)
+    table.cell(tpTbl, 2, 0, "", bgcolor = #1e222d, text_size = ts)
+    table.cell(tpTbl, 3, 0, intrabarOK ? ltfRes : "bar", text_color = #787b86, bgcolor = #1e222d, text_size = ts, text_halign = text.align_right)
+    table.cell(tpTbl, 0, 1, "time", text_color = #787b86, bgcolor = #1e222d, text_size = ts)
+    table.cell(tpTbl, 1, 1, "price", text_color = #787b86, bgcolor = #1e222d, text_size = ts)
+    table.cell(tpTbl, 2, 1, "size", text_color = #787b86, bgcolor = #1e222d, text_size = ts)
+    table.cell(tpTbl, 3, 1, "side", text_color = #787b86, bgcolor = #1e222d, text_size = ts)
+
+    int shown = math.min(tpRows, array.size(tpPx))
+    if shown > 0
+        for i = 0 to shown - 1
+            int s = array.get(tpSide, i)
+            color sc = s > 0 ? #26a69a : s < 0 ? #ef5350 : #787b86
+            table.cell(tpTbl, 0, i + 2, str.format_time(array.get(tpTm, i), "HH:mm:ss", syminfo.timezone),
+                 text_color = #787b86, bgcolor = color.new(#131722, 15), text_size = ts)
+            table.cell(tpTbl, 1, i + 2, f_px(array.get(tpPx, i)), text_color = #d1d4dc, bgcolor = color.new(#131722, 15), text_size = ts)
+            table.cell(tpTbl, 2, i + 2, f_num(array.get(tpSz, i)), text_color = sc, bgcolor = color.new(sc, 90), text_size = ts)
+            table.cell(tpTbl, 3, i + 2, s > 0 ? "BUY" : s < 0 ? "SELL" : "—", text_color = sc, bgcolor = color.new(sc, 90), text_size = ts)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  11 · DASHBOARD
+// ─────────────────────────────────────────────────────────────────────────────────────
+var table dsh = na
+
+f_row(t, r, k, v, vc, ts) =>
+    table.cell(t, 0, r, k, text_color = #787b86, bgcolor = color.new(#131722, 10), text_size = ts, text_halign = text.align_left)
+    table.cell(t, 1, r, v, text_color = vc, bgcolor = color.new(#131722, 10), text_size = ts, text_halign = text.align_right)
+    true
+
+if barstate.islast and dshShow
+    if na(dsh)
+        dsh := table.new(f_tblPos(dshPos), 2, 12, border_width = 1, border_color = color.new(#363a45, 40))
+    string ts = f_txtSize(dshSize)
+
+    table.cell(dsh, 0, 0, "ORDER FLOW DESK", text_color = #d1d4dc, bgcolor = #1e222d, text_size = ts, text_halign = text.align_left)
+    table.cell(dsh, 1, 0, syminfo.ticker + "  " + timeframe.period, text_color = #787b86, bgcolor = #1e222d, text_size = ts, text_halign = text.align_right)
+
+    color cD = delta > 0 ? #26a69a : delta < 0 ? #ef5350 : #787b86
+    color cC = cvd > 0 ? #26a69a : cvd < 0 ? #ef5350 : #787b86
+    color cV = close > vwap ? #26a69a : #ef5350
+
+    f_row(dsh, 1, "VWAP", f_px(vwap) + "   " + f_signed(vwZ, "#.#") + "σ", cV, ts)
+    f_row(dsh, 2, "POC", f_px(pocPx), cPoc, ts)
+    f_row(dsh, 3, "Value area", f_px(valPx) + " – " + f_px(vahPx), color.new(cVa, 0), ts)
+    f_row(dsh, 4, "Bar delta", f_num(delta) + "  (" + str.tostring(deltaPct * 100, "#.#") + "%)", cD, ts)
+    f_row(dsh, 5, "CVD", f_num(cvd), cC, ts)
+    f_row(dsh, 6, "Rel volume", "×" + str.tostring(relVol, "#.##"), relVol >= 1.5 ? #ffb300 : #d1d4dc, ts)
+    f_row(dsh, 7, "Profile B / S", f_num(vpBuy) + " / " + f_num(vpSell), vpBuy >= vpSell ? #26a69a : #ef5350, ts)
+
+    string gTxt = gxFlip <= 0 ? "flip not set" : posGamma ? "LONG γ · mean-revert" : "SHORT γ · trend / vol"
+    color gCol = gxFlip <= 0 ? #787b86 : posGamma ? #26a69a : #ef5350
+    f_row(dsh, 8, "Gamma regime", gTxt, gCol, ts)
+
+    string nTxt = na(gxNearY) ? "—" : gxNearN + " " + f_px(gxNearY) + "   " + str.tostring(math.abs(close - gxNearY) / close * 100, "#.##") + "%"
+    f_row(dsh, 9, "Nearest level", nTxt, nearWall ? #ffb300 : #d1d4dc, ts)
+
+    f_row(dsh, 10, "Pools ↑ / ↓", str.tostring(array.size(poolHiY)) + " / " + str.tostring(array.size(poolLoY)), #d1d4dc, ts)
+
+    bool noVol = na(volume) or volAvg == 0
+    string src = noVol ? "no volume on this symbol" : intrabarOK ? "intrabar " + ltfRes : "estimated — no intrabar data"
+    f_row(dsh, 11, "Flow source", src, noVol ? #ef5350 : #787b86, ts)
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+//  12 · ALERTS
+// ─────────────────────────────────────────────────────────────────────────────────────
+alertcondition(ta.cross(close, vwap), "VWAP cross", "Price crossed the anchored VWAP")
+alertcondition(not na(pocPx) and ta.cross(close, pocPx), "POC test", "Price is testing the point of control")
+alertcondition(not na(vahPx) and ta.crossover(close, vahPx), "Value area breakout", "Price accepted above the value area high")
+alertcondition(not na(valPx) and ta.crossunder(close, valPx), "Value area breakdown", "Price accepted below the value area low")
+alertcondition(ta.change(math.sign(delta)) != 0 and relVol > 1.5, "Delta flip on volume", "Aggressor side flipped on above-average volume")
+alertcondition(absorbed, "Absorption", "High volume absorbed in a compressed range — passive size is defending")
+alertcondition(sweptHi, "Sell-side sweep", "Liquidity above equal highs was swept and rejected")
+alertcondition(sweptLo, "Buy-side sweep", "Liquidity below equal lows was swept and rejected")
+alertcondition(nearWall, "Gamma wall touch", "Price entered the call/put wall magnet zone")
+alertcondition(flipCross, "Gamma flip cross", "Price crossed the gamma flip — dealer hedging regime changed")

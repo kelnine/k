@@ -1,0 +1,156 @@
+# OANDA v20 (REST). Quantities are UNITS, not lots: 1 unit = 1 oz (metals),
+# 1 base-currency unit (FX), $1 per index point (index CFDs).
+#
+# Specs from OANDA v20 /accounts/{id}/instruments dumps on GitHub
+# (pipLocation, displayPrecision -> tick, tradeUnitsPrecision /
+# minimumTradeSize -> step/min), confirmed by the verify pass and by
+# QuantConnect Lean's OANDA symbol properties. Re-read them per account at
+# runtime: marginRate, minimumTradeSize and financing differ by OANDA division.
+#
+# Metals and FX are tradable: false for COSTS, not specs: every metals/FX
+# profile in costs.yaml charges commission per 1.0 quantity (= per lot on a
+# CFD server), which on OANDA's per-unit quantities would charge 100x (gold),
+# 5,000x (silver) or 100,000x (FX) too much, and OANDA standard pricing is
+# spread-only anyway. Enable them once spread-only per-unit profiles exist.
+# Index CFDs use the cfd_us_indices_* profiles, whose components (spread in
+# points, no commission, slippage in bp, financing as % of notional) scale
+# correctly with units.
+#
+# Hours: metals Sun-Fri 18:05-16:59, FX 17:05-16:59 New York; index CFDs
+# Sun-Fri 17:01-15:59 Chicago (exact minutes unconfirmed) — the instruments'
+# default calendars match to within minutes. Not offered: index CFDs to US
+# (OANDA Corporation) clients; US metals are unleveraged. OANDA crypto CFDs
+# (BTC_USD, SOL_USD) exist only in some divisions and were not verified, so
+# they are not listed.
+
+venue: oanda
+
+listings:
+  # ── metals ─────────────────────────────────────────────────────────────────
+  - instrument: XAUUSD
+    venue_symbol: XAU_USD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.001"         # displayPrecision 3 (pipLocation -2: pip = 0.01)
+    contract_size: "1"         # 1 troy oz per unit
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # tradeUnitsPrecision 0
+    qty_step: "1"
+    quote_currency: USD
+    verified_on: "2026-10-06"
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      Spec verified (v20 type METAL). Not tradable yet: no cost profile models
+      OANDA's spread-only, per-unit pricing — add one to costs.yaml, then enable.
+      The MetaTrader lot at OANDA is 100 oz. Financing: DAILY_FINANCING at the
+      17:00 New York rollover, weekend reportedly charged on Wednesday (OANDA
+      page blocked during research; read financingDaysOfWeek).
+
+  - instrument: XAGUSD
+    venue_symbol: XAG_USD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"       # displayPrecision 5 (pipLocation -4)
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    verified_on: "2026-10-06"
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      Spec verified (v20 type METAL). Not tradable yet: no cost profile models
+      OANDA's spread-only, per-unit pricing. The MetaTrader lot at OANDA is
+      5,000 oz.
+
+  # ── FX ─────────────────────────────────────────────────────────────────────
+  - instrument: EURUSD
+    venue_symbol: EUR_USD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"       # displayPrecision 5 (pipLocation -4)
+    contract_size: "1"         # 1 EUR per unit (100,000 units = 1 standard lot)
+    quantity_unit: BASE_UNITS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    verified_on: "2026-10-06"
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      Spec verified (v20 type CURRENCY; retail forex rather than a CFD for US
+      accounts). Not tradable yet: no cost profile models OANDA's spread-only,
+      per-unit pricing. Brief daily break 16:59-17:05 New York.
+
+  - instrument: GBPUSD
+    venue_symbol: GBP_USD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"
+    contract_size: "1"         # 1 GBP per unit
+    quantity_unit: BASE_UNITS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    verified_on: "2026-10-06"
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      Spec verified (v20 type CURRENCY). Not tradable yet: no cost profile
+      models OANDA's spread-only, per-unit pricing.
+
+  # ── US index CFDs ──────────────────────────────────────────────────────────
+  - instrument: NAS100
+    venue_symbol: NAS100_USD
+    contract_type: CFD
+    tick_size: "0.1"           # displayPrecision 1 (pipLocation 0: pip = 1 point)
+    contract_size: "1"         # $1 per index point per unit
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"             # minimumTradeSize 0.1, tradeUnitsPrecision 1
+    qty_step: "0.1"
+    max_qty: "2000"            # maximumOrderUnits in the same dump
+    quote_currency: USD
+    cost_profile: cfd_us_indices_nas100
+    verified_on: "2026-10-06"
+    source: https://github.com/ananta-dev/Forex-Bot/blob/main/save_instruments.ipynb
+    notes: >-
+      v20 'US Nas 100' (type CFD). Older / other-division accounts show
+      tradeUnitsPrecision 0 and minimumTradeSize 1 — read them from the API.
+      marginRate typically 0.05 (0.02-0.115 by regulator). Financing is
+      DAILY_FINANCING with financingDaysOfWeek Friday x3; dividends arrive as
+      DIVIDEND_ADJUSTMENT. Spread-only (advertised from ~0.8 points). Not
+      available to US or Japan residents.
+
+  - instrument: US30
+    venue_symbol: US30_USD
+    contract_type: CFD
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us30
+    verified_on: "2026-10-06"
+    source: https://github.com/ananta-dev/Forex-Bot/blob/main/save_instruments.ipynb
+    notes: >-
+      v20 'US Wall St 30'. The current dump shows minimumTradeSize 0.1
+      (tradeUnitsPrecision 1); the older oandapyV20 sample shows 1 and
+      maximumOrderUnits 1000 — read from the API. Friday x3 financing;
+      DIVIDEND_ADJUSTMENT for dividends. Not available to US residents.
+
+  - instrument: US500
+    venue_symbol: SPX500_USD
+    contract_type: CFD
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    max_qty: "10000"           # maximumOrderUnits in the same dump
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us500
+    verified_on: "2026-10-06"
+    source: https://github.com/ananta-dev/Forex-Bot/blob/main/save_instruments.ipynb
+    notes: >-
+      v20 'US SPX 500'. Friday x3 financing; DIVIDEND_ADJUSTMENT for
+      dividends; spread-only (advertised from ~0.4 points). Not available to
+      US or Japan residents.

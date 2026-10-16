@@ -1,0 +1,311 @@
+# Transaction-cost profiles — docs/11-instruments-sessions-costs.md §11.4.
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ EVERY NUMBER IN THIS FILE IS A DEFAULT ASSUMPTION, NOT A VENUE FACT.     │
+# │ The values are deliberately conservative (slightly worse than typical)   │
+# │ so paper results are not flattered. Replace each one with the real fee   │
+# │ schedule, spread statistics and swap/funding tables of the venue (prop   │
+# │ firm server, broker, exchange) an account actually simulates, and note   │
+# │ the source and date in the profile's description when you do.           │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Each listing (catalog/listings) names one profile via `cost_profile`. Every
+# lab account sharing a venue profile is costed with the same profiles, which
+# is what makes strategy comparisons "identical conditions". Changing a value
+# changes the catalog fingerprint; trades keep the fingerprint they were made
+# with, so historical comparisons are never silently rewritten.
+#
+# Format (kterminal.domain.costs):
+#   * Decimals are QUOTED STRINGS ("0.20"), never YAML floats — floats carry
+#     binary rounding noise and are rejected by the loader.
+#   * Local times are quoted "HH:MM" or "HH:MM:SS" ("17:00"): YAML 1.1 reads an
+#     unquoted 17:00 as the number 1020.
+#   * All five components are required; write {model: none} for "no cost".
+#   * spread      none | fixed {points} | fixed_ticks {ticks}
+#                 | session {default_points, by_window: {window_id: points}}
+#                 | quotes {fallback_points}             (full spread, price units)
+#   * commission  none | per_quantity {per_side, minimum}  (per lot/contract, per side)
+#                 | notional {maker_rate, taker_rate, minimum}  (fraction of notional)
+#   * slippage    none | fixed_ticks {ticks} | notional_bps {bps}
+#                 (adverse, market and stop fills only — never limit fills)
+#   * funding     none | constant {rate_per_interval, interval_hours, anchor_hours_utc}
+#                 (positive rate = longs pay shorts; [] anchors = every interval from 00:00 UTC)
+#   * swap        none
+#                 | points {long_points, short_points, rollover_time, timezone, triple_day}
+#                   price points per 1.0 quantity per night, SIGNED AS CHARGED
+#                   (negative = the account pays); amount = points × contract_size × qty
+#                 | annual_rate {long_rate, short_rate, rollover_time, timezone, triple_day,
+#                   day_count} — positive rate = the account pays rate × notional / day_count
+#     Rollovers are the end of the trading day in local time (17:00 New York;
+#     "server midnight" on NY-close MT5 servers). Saturday and Sunday rollovers
+#     are skipped and the triple_day rollover counts three nights (7 per week).
+#     A rollover_time before 12:00 is rejected: a morning rollover ends the
+#     PREVIOUS local day, so write an MT5 server's 00:00 (UTC+2/+3, New York
+#     close) as "17:00" America/New_York — not "00:00" in the server zone.
+#
+# Spreads use `fixed` / `fixed_ticks` here. Once the session windows are
+# settled, a `session` spread (wider in Asia and around the 17:00 New York
+# rollover, when CFD spreads typically blow out) is the more realistic choice.
+
+cost_profiles:
+  # ── frictionless baseline ───────────────────────────────────────────────────
+  - id: zero_cost
+    description: >-
+      Frictionless baseline (no costs at all). For isolating a strategy's raw
+      edge only; never for judging whether it is tradable.
+    spread: {model: none}
+    commission: {model: none}
+    slippage: {model: none}
+    funding: {model: none}
+    swap: {model: none}
+
+  # ── CFD metals (raw-spread prop-firm / ECN account, MT5-style) ─────────────
+  - id: cfd_metals
+    description: >-
+      ASSUMPTION — XAUUSD on a raw-spread prop/ECN CFD server (100 oz per lot,
+      tick 0.01). Spread 0.20 (20 cents; liquid-hours raw spreads are often
+      0.10-0.30). Commission 3.50 USD per lot per side (7.00 round turn).
+      Slippage 3 ticks (0.03) on market/stop fills. Swap long -0.65 per oz per
+      night (~6 % p.a. financing on ~4,000 USD gold); shorts assumed to receive
+      nothing. Wednesday triple swap (spot-settlement convention).
+    spread: {model: fixed, points: "0.20"}
+    commission: {model: per_quantity, per_side: "3.50", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 3}
+    funding: {model: none}
+    swap:
+      model: points
+      long_points: "-0.65"
+      short_points: "0.00"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: WED
+
+  - id: cfd_silver
+    description: >-
+      ASSUMPTION — XAGUSD on a raw-spread prop/ECN CFD server (5,000 oz per
+      lot, tick 0.001). Spread 0.025 (2.5 cents). Commission 3.50 USD per lot
+      per side. Slippage 3 ticks (0.003). Swap long -0.008 per oz per night
+      (~6 % p.a. on ~48 USD silver); shorts assumed to receive nothing.
+      Wednesday triple swap.
+    spread: {model: fixed, points: "0.025"}
+    commission: {model: per_quantity, per_side: "3.50", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 3}
+    funding: {model: none}
+    swap:
+      model: points
+      long_points: "-0.008"
+      short_points: "0.000"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: WED
+
+  # ── CFD / spot FX majors ───────────────────────────────────────────────────
+  - id: cfd_fx_majors
+    description: >-
+      ASSUMPTION — EURUSD on a raw-spread prop/ECN server (100,000 units per
+      lot, tick 0.00001). Spread 0.6 pip = 0.00006 in price. Commission 3.50
+      USD per lot per side. Slippage 2 ticks (0.2 pip). Swap charged on BOTH
+      sides (broker mark-up over the rate differential): long -0.000080
+      (≈ -8 USD/lot/night), short -0.000020 (≈ -2 USD/lot/night). Real FX swaps
+      move with central-bank rates — replace with the venue's daily table.
+      Wednesday triple swap (T+2 value dates roll over the weekend).
+    spread: {model: fixed, points: "0.00006"}
+    commission: {model: per_quantity, per_side: "3.50", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 2}
+    funding: {model: none}
+    swap:
+      model: points
+      long_points: "-0.000080"
+      short_points: "-0.000020"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: WED
+
+  - id: cfd_fx_gbpusd
+    description: >-
+      ASSUMPTION — GBPUSD, whose raw spread is typically wider than EURUSD's:
+      0.9 pip = 0.00009. Commission 3.50 USD per lot per side, slippage 2
+      ticks. Swap -0.000050 on both sides (rate differential near zero, so the
+      broker mark-up dominates). Wednesday triple swap.
+    spread: {model: fixed, points: "0.00009"}
+    commission: {model: per_quantity, per_side: "3.50", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 2}
+    funding: {model: none}
+    swap:
+      model: points
+      long_points: "-0.000050"
+      short_points: "-0.000050"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: WED
+
+  # ── CFD US equity indices ──────────────────────────────────────────────────
+  # One profile per index because the spreads differ by an order of magnitude.
+  # Most prop firms charge no commission on index CFDs (the cost is in the
+  # spread). Financing is modelled as an annual rate of notional so it scales
+  # with the index level: long ≈ USD overnight rate (~3.75 %) + ~2.5 % broker
+  # mark-up; shorts assumed to receive nothing (conservative — dividend
+  # adjustments are not modelled). Triple day: FRIDAY. This is NOT universal:
+  # many brokers triple index CFDs on Friday (the weekend for a cash-settled
+  # index), others on Wednesday like FX — check the venue's contract specs.
+  # Slippage is in basis points so it does not depend on the symbol's digits
+  # (0.2 bp ≈ 0.5 pt on NAS100 at ~25,000, ≈ 0.9 pt on US30, ≈ 0.13 pt on US500).
+  - id: cfd_us_indices_nas100
+    description: >-
+      ASSUMPTION — NAS100 / US100 index CFD: spread 1.0 index point, no
+      commission, slippage 0.2 bp, financing long 6.25 % p.a. (act/360),
+      short 0 %, Friday triple.
+    spread: {model: fixed, points: "1.0"}
+    commission: {model: none}
+    slippage: {model: notional_bps, bps: "0.2"}
+    funding: {model: none}
+    swap:
+      model: annual_rate
+      long_rate: "0.0625"
+      short_rate: "0"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: FRI
+      day_count: 360
+
+  - id: cfd_us_indices_us30
+    description: >-
+      ASSUMPTION — US30 (Dow) index CFD: spread 2.0 index points, no
+      commission, slippage 0.2 bp, financing long 6.25 % p.a. (act/360),
+      short 0 %, Friday triple.
+    spread: {model: fixed, points: "2.0"}
+    commission: {model: none}
+    slippage: {model: notional_bps, bps: "0.2"}
+    funding: {model: none}
+    swap:
+      model: annual_rate
+      long_rate: "0.0625"
+      short_rate: "0"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: FRI
+      day_count: 360
+
+  - id: cfd_us_indices_us500
+    description: >-
+      ASSUMPTION — SPX500 / US500 index CFD: spread 0.5 index point, no
+      commission, slippage 0.2 bp, financing long 6.25 % p.a. (act/360),
+      short 0 %, Friday triple.
+    spread: {model: fixed, points: "0.5"}
+    commission: {model: none}
+    slippage: {model: notional_bps, bps: "0.2"}
+    funding: {model: none}
+    swap:
+      model: annual_rate
+      long_rate: "0.0625"
+      short_rate: "0"
+      rollover_time: "17:00"
+      timezone: America/New_York
+      triple_day: FRI
+      day_count: 360
+
+  # ── CME micro equity-index futures (MNQ, MES, MYM) ─────────────────────────
+  # Effective cost note: futures bars are trade prices, so the "mid" is on the
+  # tick grid, and an odd tick spread puts the bid/ask half a tick off it. Fills
+  # round ADVERSELY to the tick, so each market/stop fill here costs 2 ticks
+  # (0.125 half spread + 0.25 slippage = 0.375, rounded up to 0.50), i.e. 4 ticks
+  # (2.00 USD on MNQ) per round turn before commission — 1 tick more than the
+  # nominal 1-tick spread + 1-tick slippage. Deliberately conservative.
+  - id: cme_micro_equity
+    description: >-
+      ASSUMPTION — CME micro equity-index futures (MNQ: tick 0.25 = 0.50 USD).
+      Spread 1 tick. All-in 0.95 USD per contract per side, the top of the
+      usual 0.62-0.95 range: CME Globex exchange fee ~0.35 (non-member,
+      micro equity) + NFA 0.02 + clearing ~0.10-0.20 + broker/platform
+      ~0.15-0.38 (prop-firm platforms commonly quote 0.62-0.95 all-in).
+      Slippage 1 tick on market/stop fills. No funding or swap: the cost of
+      carry is in the futures price and contracts are rolled, not financed.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: per_quantity, per_side: "0.95", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 1}
+    funding: {model: none}
+    swap: {model: none}
+
+  # ── CME E-mini equity-index futures (NQ, ES, YM) ───────────────────────────
+  # Same tick-based spread/slippage as the micros (they scale with the tick
+  # value), but E-mini exchange fees are ~4x the micro ones, so the micro
+  # profile's 0.95 USD/side would understate them. Same adverse-rounding note.
+  - id: cme_emini_equity
+    description: >-
+      ASSUMPTION — CME E-mini equity-index futures (NQ: tick 0.25 = 5.00 USD).
+      Spread 1 tick. All-in 2.50 USD per contract per side: CME Globex
+      non-member exchange fee ~1.38 (E-mini Nasdaq-100) + NFA 0.01-0.02 +
+      clearing ~0.19 + broker/platform ~0.25-0.90 (prop-firm platforms
+      commonly quote ~2.00-2.50 all-in). Slippage 1 tick on market/stop fills.
+      No funding or swap: the cost of carry is in the futures price.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: per_quantity, per_side: "2.50", minimum: "0"}
+    slippage: {model: fixed_ticks, ticks: 1}
+    funding: {model: none}
+    swap: {model: none}
+
+  # ── crypto ─────────────────────────────────────────────────────────────────
+  # Crypto spreads are 1 tick of the listing (tight on BTC, wider in relative
+  # terms on low-priced coins) and slippage 2 bp — a single assumption for
+  # BTC, SOL, NEAR, ZEC, HYPE and PUMP; thinner books (PUMP, ZEC, HYPE) deserve
+  # their own, wider profiles once real order-book statistics are available.
+  # Constant funding at the exchanges' default interest component (0.01 % per
+  # 8 h) is a baseline only: it charges longs and credits shorts, and real
+  # funding swings with the premium index — replay historical funding rates
+  # before drawing conclusions about long/short bias. Some symbols settle every
+  # 4 h or 1 h instead of 8 h; give those listings their own profile.
+  - id: crypto_spot_taker
+    description: >-
+      ASSUMPTION — crypto spot (Binance-style base tier, no BNB discount):
+      0.10 % of notional maker and taker, spread 1 tick, slippage 2 bp.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: notional, maker_rate: "0.0010", taker_rate: "0.0010", minimum: "0"}
+    slippage: {model: notional_bps, bps: "2"}
+    funding: {model: none}
+    swap: {model: none}
+
+  - id: crypto_perp_binance
+    description: >-
+      ASSUMPTION — Binance USD-M perpetuals, base tier: maker 0.02 %, taker
+      0.05 % of notional; funding 0.01 % per 8 h at 00:00/08:00/16:00 UTC;
+      spread 1 tick, slippage 2 bp.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: notional, maker_rate: "0.0002", taker_rate: "0.0005", minimum: "0"}
+    slippage: {model: notional_bps, bps: "2"}
+    funding:
+      model: constant
+      rate_per_interval: "0.0001"
+      interval_hours: 8
+      anchor_hours_utc: [0, 8, 16]
+    swap: {model: none}
+
+  - id: crypto_perp_bybit
+    description: >-
+      ASSUMPTION — Bybit USDT perpetuals, non-VIP: maker 0.02 %, taker
+      0.055 % of notional; funding 0.01 % per 8 h at 00:00/08:00/16:00 UTC;
+      spread 1 tick, slippage 2 bp.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: notional, maker_rate: "0.0002", taker_rate: "0.00055", minimum: "0"}
+    slippage: {model: notional_bps, bps: "2"}
+    funding:
+      model: constant
+      rate_per_interval: "0.0001"
+      interval_hours: 8
+      anchor_hours_utc: [0, 8, 16]
+    swap: {model: none}
+
+  - id: crypto_perp_hyperliquid
+    description: >-
+      ASSUMPTION — Hyperliquid perpetuals, base tier (< 5M USD 14-day volume):
+      maker 0.015 %, taker 0.045 % of notional; funding settled HOURLY at
+      1/8 of the 8-hour baseline (0.01 % / 8 = 0.00125 % per hour); spread
+      1 tick, slippage 2 bp.
+    spread: {model: fixed_ticks, ticks: 1}
+    commission: {model: notional, maker_rate: "0.00015", taker_rate: "0.00045", minimum: "0"}
+    slippage: {model: notional_bps, bps: "2"}
+    funding:
+      model: constant
+      rate_per_interval: "0.0000125"
+      interval_hours: 1
+      anchor_hours_utc: []
+    swap: {model: none}

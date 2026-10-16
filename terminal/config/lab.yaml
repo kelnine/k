@@ -1,0 +1,74 @@
+# Strategy lab — which strategy instances run, and the paper account each one gets.
+#
+# Every instance is an independently measured lab subject with its OWN paper
+# account (defaults below, overridable per instance). Instances never share
+# state or accounts; all of them see the same bars and the same venue profile,
+# so their results are directly comparable. See docs/12-strategy-lab.md.
+#
+#   kterminal lab demo            # run these instances on synthetic data (demo)
+#   kterminal strategies list     # registered definitions and these instances
+
+base_timeframe: 1m          # every other timeframe is aggregated from this stream
+equity_snapshot_minutes: 15
+
+defaults:
+  host: in_process          # or "subprocess": each instance in its own OS process
+  account:
+    starting_balance: 50000
+    currency: USD
+    venue_profile: lab_default
+    risk_per_trade_pct: 0.5
+    max_open_positions: 1
+    trading_day: ny_1700
+
+# Forward paper trading (`kterminal paper start`, the engine): runtime tuning only, not
+# part of a session's identity. See docs/12-strategy-lab.md §12.7.
+forward:
+  # How far back warm-up history may reach, in calendar days (default 10). Each
+  # instrument warms up for the largest need of the instances trading it, capped here.
+  # The largest need is wyckoff_auto on 1h: 1000 bars of 1h are about 42 days of
+  # crypto and about 60 calendar days on markets closed at weekends. The 15m instances
+  # (1000 bars) need about 15 days. A larger cap only makes the first start of a
+  # session (and the replay after a restart) take longer; venues with short history
+  # (Hyperliquid keeps ~5,000 1m candles) simply deliver what they have, and the
+  # runtime logs paper.warmup_short for the instances that start under-warmed.
+  warmup_days: 60
+  poll_delay_s: 2           # first poll this long after a minute closed
+  batch_timeout_s: 20       # then process the minute without instruments still missing
+
+# TradingView strategies are declared here (no code); signals arrive by webhook
+# from Phase 6. Example:
+# external_strategies:
+#   - id: breakout_retest_tv
+#     name: Breakout + Retest (TradingView)
+#     version: 1.0.0
+#     timeframes: [5m]
+#     instruments: [XAUUSD]
+#     pine_source: strategies/pine/breakout_retest.pine   # optional, hashed for versioning
+
+instances:
+  # ── DEMO strategies (placeholders until real indicators/strategies arrive) ──
+  - id: demo_sma_fast
+    strategy: demo_sma_cross
+    name: Demo SMA 9/21 · XAUUSD 5m
+    params: { fast: 9, slow: 21 }
+    instruments: [XAUUSD]
+    timeframe: 5m
+    context_timeframes: [15m, 1h]
+
+  - id: demo_breakout_xau
+    strategy: demo_breakout
+    name: Demo channel breakout · XAUUSD 5m (1h filter)
+    params: { channel_bars: 20, trend_filter: true }
+    instruments: [XAUUSD]
+    timeframe: 5m
+
+  # A second instance of the same definition with different settings is simply
+  # another entry — it gets its own id, version, account and metrics:
+  # - id: demo_sma_slow
+  #   strategy: demo_sma_cross
+  #   params: { fast: 20, slow: 50 }
+  #   instruments: [XAUUSD]
+  #   timeframe: 5m
+  #   host: subprocess
+  #   account: { starting_balance: 100000 }

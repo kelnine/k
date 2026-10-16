@@ -1,0 +1,58 @@
+# ProjectX Gateway (TopstepX and other ProjectX prop firms). Contract specs are
+# CME's (see cme.yaml); the API returns tickSize 0.25 and tickValue 0.50
+# (MNQ) / 5.00 (NQ).
+#
+# Contracts are addressed by contractId CON.F.US.<root>.<month code><2-digit
+# year>; the contract's 'name' is the Globex-style MNQZ6 and its symbolId is
+# F.US.<root>. ProjectX roots can differ from CME's: NQ is ENQ (docs example
+# CON.F.US.ENQ.H25, name NQH5, symbolId F.US.ENQ — high confidence). The MNQ
+# root is MNQ (CON.F.US.MNQ.Z26; consistent with CON.F.US.MGC.Z25 /
+# symbolId F.US.MGC seen in several client libraries), but F.US.MNQ was
+# inferred and not checked against a live Contract/search — confirm on first
+# connect. Endpoints: POST /api/Contract/search, /api/Contract/searchById.
+#
+# Fees are per firm. TopstepX (effective 2026-04-12, unverified): $0.25/side
+# micros, $0.50/side minis plus exchange and NFA fees (~$1.24 / ~$3.80 round
+# turn under the pre-July-2026 NFA rate). Topstep requires positions flat by
+# about 15:10 CT.
+
+venue: projectx
+
+listings:
+  - instrument: MNQ
+    venue_symbol: F.US.MNQ        # symbolId (inferred from the ENQ/MGC pattern)
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "2"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_micro_equity
+    symbol_format: "CON.F.US.MNQ.{code}{y2}"
+    verified_on: "2026-10-06"
+    source: https://gateway.docs.projectx.com/docs/api-reference/market-data/search-contracts/
+    notes: >-
+      contractId CON.F.US.MNQ.Z26 for Dec 2026 (2-digit year). symbolId
+      F.US.MNQ is inferred — verify with a live Contract/search. Prop-firm
+      rules (daily flat time, news restrictions) are per firm.
+
+  - instrument: NQ
+    venue_symbol: F.US.ENQ        # symbolId; ProjectX names the NQ root ENQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "20"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_emini_equity   # E-mini fees (see cme.yaml)
+    # Literal ENQ, not {root}: the ProjectX root differs from the CME root NQ.
+    symbol_format: "CON.F.US.ENQ.{code}{y2}"
+    verified_on: "2026-10-06"
+    source: https://gateway.docs.projectx.com/docs/api-reference/market-data/search-contracts-by-id/
+    notes: >-
+      contractId CON.F.US.ENQ.Z26 for Dec 2026; the contract name stays
+      Globex-style (NQZ6). TopstepX's reported E-mini all-in (~$3.80 round
+      turn from 2026-04-12, unverified) is below the cme_emini_equity
+      assumption (2.50/side = 5.00 round turn), i.e. costed conservatively.

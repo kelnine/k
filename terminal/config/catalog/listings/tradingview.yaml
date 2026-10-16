@@ -1,0 +1,290 @@
+# TradingView data/alert symbols — DATA ONLY (every row is tradable: false).
+#
+# One listing per instrument (a listing is keyed venue:instrument), chosen as
+# the feed strategy-lab accounts take bars from (venue_profiles.yaml "data").
+# Other TradingView feeds of the same instrument resolve without a listing:
+# the EXCHANGE: prefix and .P suffix are stripped and the remainder matches a
+# global alias (PEPPERSTONE:NAS100 -> NAS100, BYBIT:PUMPFUNUSDT.P -> PUMPUSD);
+# feeds that would not resolve that way are source aliases in instruments.yaml
+# (TVC:NDQ, FOREXCOM:NSXUSD …).
+#
+# Feed choice (research 2026-10-06):
+#   * CFD-type instruments use OANDA's feeds (one consistent broker family with
+#     ~23 h CFD sessions; NASDAQ:NDX / DJ:DJI / SP:SPX cash indices update only
+#     09:30-16:00 New York and have no overnight bars). They are PROXIES for a
+#     prop-firm server's own prices: the basis, digits and session template
+#     differ slightly by broker. Broker CFD charts are believed to be built from
+#     one side of the quote with tick volume only, so the cost layer adds the
+#     spread explicitly.
+#   * Futures use the CME_MINI continuous front month (1!), which switches on a
+#     volume crossover (~8 days before expiry) and is NOT back-adjusted by
+#     default. symbol_format renders the dated contract (CME_MINI:MNQZ2026).
+#   * Crypto uses the feed of the venue the lab executes on where possible
+#     (USDT/USDC-quoted; USDT = USD is an explicit, recorded assumption).
+#
+# Specs on data listings are informational — never used for money math. Ticks
+# follow the source venue; contract_size is TradingView's pointvalue (1 for CFD
+# and crypto feeds, the multiplier for futures); min_qty/qty_step are
+# placeholders ("1") because a data feed has no order size. No verified_on.
+
+venue: tradingview
+
+listings:
+  # ── metals ─────────────────────────────────────────────────────────────────
+  - instrument: XAUUSD
+    venue_symbol: "OANDA:XAUUSD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.001"        # OANDA 3-decimal gold pricing
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      OANDA gold CFD feed (same quotes as v20 XAU_USD). Proxy for prop-server
+      gold. TVC:GOLD / FX_IDC:XAUUSD are composite/indicative series (resolve
+      here via aliases) and are never fill prices. Pine pointvalue 1 (100 qty =
+      1 standard CFD lot) is believed correct but unverified.
+
+  - instrument: XAGUSD
+    venue_symbol: "OANDA:XAGUSD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"      # assumed to follow OANDA's 5-decimal silver pricing (syminfo.mintick unverified)
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      OANDA silver CFD feed. Tick assumed from OANDA's displayPrecision 5;
+      confirm syminfo.mintick. TVC:SILVER is a composite data series.
+
+  # ── US index CFDs ──────────────────────────────────────────────────────────
+  - instrument: NAS100
+    venue_symbol: "OANDA:NAS100USD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://www.tradingview.com/symbols/OANDA-NAS100USD/
+    notes: >-
+      OANDA US Nas 100 CFD feed (v20 NAS100_USD, 1 decimal, tick volume only),
+      ~23 h a day. NASDAQ:NDX (official cash index, RTH only, no volume) and
+      CME_MINI:NQ1! (futures = cash + basis) are different series: never mix
+      feeds within one lab comparison.
+
+  - instrument: US30
+    venue_symbol: "OANDA:US30USD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://www.tradingview.com/symbols/OANDA-US30USD/ideas/page-20/
+    notes: >-
+      OANDA US Wall St 30 CFD feed (v20 US30_USD, 1 decimal). DJ:DJI / TVC:DJI
+      are the cash index (RTH only); CBOT_MINI:YM1! is the E-mini Dow future and
+      is NOT this instrument.
+
+  - instrument: US500
+    venue_symbol: "OANDA:SPX500USD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://www.tradingview.com/symbols/SPX500USD/ideas/
+    notes: >-
+      OANDA US SPX 500 CFD feed (v20 SPX500_USD, 1 decimal). SP:SPX / TVC:SPX
+      are the cash index (RTH only); CME_MINI:ES1! is the future, not this
+      instrument. CAPITALCOM:SPX500 has no evidence of existing (verify pass);
+      CAPITALCOM:US500 is the Capital.com symbol.
+
+  # ── FX ─────────────────────────────────────────────────────────────────────
+  - instrument: EURUSD
+    venue_symbol: "OANDA:EURUSD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      OANDA EUR/USD feed (5-digit pricing), chosen to match the other OANDA
+      feeds. FX:EURUSD (FXCM), FX_IDC:, PEPPERSTONE:, FOREXCOM: feeds differ
+      slightly; pin one per strategy instance. CME:6E1! is a futures symbol
+      (forward points) and does not resolve here.
+
+  - instrument: GBPUSD
+    venue_symbol: "OANDA:GBPUSD"
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.00001"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://developer.oanda.com/rest-live-v20/instrument-df/
+    notes: >-
+      OANDA GBP/USD feed (5-digit pricing). CME:6B1! is futures, not an alias.
+
+  # ── CME futures (continuous front month) ───────────────────────────────────
+  # venue_symbol is the continuous series (what Pine alerts carry);
+  # symbol_format renders the dated contract for a date: CME_MINI:MNQZ2026.
+  # Alerts on MNQ1! must be mapped to the dated contract by the execution
+  # adapter (venue_symbol_for does that from the roll rule).
+  - instrument: MNQ
+    venue_symbol: "CME_MINI:MNQ1!"
+    contract_type: FUTURE
+    tradable: false
+    tick_size: "0.25"
+    contract_size: "2"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    symbol_format: "CME_MINI:{root}{code}{yyyy}"
+    source: https://www.tradingview.com/support/solutions/43000483493-what-are-1-and-2-continuous-futures-contracts/
+    notes: >-
+      Continuous front-month Micro E-mini Nasdaq-100 (data). 1! switches on a
+      volume crossover, not a calendar date; back-adjustment (B-ADJ) is off by
+      default, so the series has roll gaps. CME_MINI:MNQ2! is the second
+      contract (not aliased). Exchange session America/Chicago 17:00-16:00.
+      Daily bars may use settlement as the close.
+
+  - instrument: NQ
+    venue_symbol: "CME_MINI:NQ1!"
+    contract_type: FUTURE
+    tradable: false
+    tick_size: "0.25"
+    contract_size: "20"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    symbol_format: "CME_MINI:{root}{code}{yyyy}"
+    source: https://www.tradingview.com/support/solutions/43000483493-what-are-1-and-2-continuous-futures-contracts/
+    notes: >-
+      Continuous front-month E-mini Nasdaq-100 (data); dated form
+      CME_MINI:NQZ2026. Volume-based roll, back-adjustment off by default.
+
+  # ── crypto ─────────────────────────────────────────────────────────────────
+  - instrument: BTCUSD
+    venue_symbol: "BINANCE:BTCUSDT.P"
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USDT
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/binance.json
+    notes: >-
+      Binance USD-M BTCUSDT perpetual feed — the same listing the lab executes
+      BTCUSD on. Perp prices differ from spot (BINANCE:BTCUSDT,
+      COINBASE:BTCUSD) by the funding premium/basis; do not mix levels.
+      Crypto daily bars close at 00:00 UTC.
+
+  - instrument: SOLUSD
+    venue_symbol: "BYBIT:SOLUSDT.P"
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USDT
+    source: https://www.tv-hub.org/tradingview-to-bybit/solusdt
+    notes: >-
+      Bybit linear SOLUSDT perpetual feed — matches the lab's SOLUSD execution
+      listing (bybit_linear). Feed existence is medium confidence; confirm in
+      TradingView symbol search.
+
+  - instrument: NEARUSD
+    venue_symbol: "BINANCE:NEARUSDT.P"
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.00001"      # placeholder: Binance's NEARUSDT tick was not verifiable
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USDT
+    source: https://www.tradingview.com/symbols/NEARUSDT.P/
+    notes: >-
+      Binance USD-M NEARUSDT perpetual feed (TradingView .P convention; the
+      page could not be fetched on 2026-10-06). The lab executes NEARUSD on the
+      lab_sim generic listing (USD) — the USDT feed is an explicit
+      USDT = USD assumption.
+
+  - instrument: ZECUSD
+    venue_symbol: "COINBASE:ZECUSD"
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.0001"       # placeholder: Coinbase's ZEC-USD quote increment was not verified
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USD
+    source: https://www.tradingview.com/symbols/ZECUSD/markets/
+    notes: >-
+      Coinbase ZEC-USD spot feed in true USD (symbol confirmed by search
+      results). Chosen over the perp feeds (BINANCE:ZECUSDT.P etc., not
+      individually verified) because the lab executes ZECUSD on the USD-quoted
+      lab_sim listing. Privacy coin: listing status varies by venue and region.
+
+  - instrument: HYPEUSD
+    venue_symbol: "HYPERLIQUID:HYPEUSDC.P"
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.001"        # follows Hyperliquid's effective tick at $10-99.99
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USDC
+    source: https://fxnewsgroup.com/forex-news/platforms/tradingview-adds-market-data-from-hyperliquid-and-tradexyz/
+    notes: >-
+      Hyperliquid HYPE perpetual feed — matches the lab's execution listing.
+      UNVERIFIED symbol form: inferred from the confirmed HYPERLIQUID:SOLUSDC.P
+      and the .P convention (the quote suffix could differ); confirm in
+      TradingView symbol search. Alternatives: BINANCE:HYPEUSDT.P,
+      BYBIT:HYPEUSDT.P (resolve via the HYPEUSDT alias).
+
+  - instrument: PUMPUSD
+    venue_symbol: "BINANCE:PUMPUSDT"
+    contract_type: SPOT
+    tradable: false
+    tick_size: "0.0000001"    # placeholder: Binance's PUMPUSDT tick was not verifiable
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"              # placeholder (data only)
+    qty_step: "1"             # placeholder (data only)
+    quote_currency: USDT
+    source: https://en.coin-turk.com/binance-lists-pump-coin-with-exciting-trade-opportunities/
+    notes: >-
+      Binance PUMP/USDT spot feed (listed 2025-09-11, high confidence) — the
+      perp feed form BINANCE:PUMPUSDT.P is inferred only. Bybit's feed is
+      BYBIT:PUMPFUNUSDT.P (page exists). The lab executes PUMPUSD on lab_sim
+      (USD); USDT = USD is an explicit assumption.

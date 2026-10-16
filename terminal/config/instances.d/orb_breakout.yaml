@@ -1,0 +1,72 @@
+# S2 · FRVP + ORB + 9/20 EMA (script 8) — opening range breakout with the EMA 9/20 filter.
+# Strategy: backend/src/kterminal/strategies/orb_breakout (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  fill at the next open with levels from the signal close; skip the entry when
+#       that open is already past the stop or target (the strategy's meta)
+#   D4  script 8: ignore new signals while in a trade (meta); the day's long/short is
+#       used up whenever the script would draw its marker
+#   D5  main: stop on the other side of the opening range, target 2R from the signal
+#       close, flat at 16:00 New York (exit reason SESSION_CLOSE), no entry whose fill
+#       would land at or after 16:00; variants: OR-midpoint stop with 1R, 1.5R and no
+#       target (flat at 16:00 only)
+#   D10 5m with the 15-minute range (09:30-09:45 New York) on MNQ, NAS100, US30, US500;
+#       one Paper 50K account per variant, one position per instrument
+#   D11 London ORB: 08:00-08:15 London range, levels 08:00-16:30, flat at 16:30, on
+#       XAUUSD, EURUSD, GBPUSD, NAS100, US30, US500
+#   D13 script defaults (EMA filter on, 9/20, sessions without a day mask)
+- id: orb_breakout_ny_5m
+  strategy: orb_breakout
+  name: ORB · New York · range stop, 2R · 5m
+  description: Script 8 defaults (09:30-09:45 range, EMA 9/20 filter); stop at the other side of the range, 2R, flat at 16:00 New York (D5).
+  instruments: [MNQ, NAS100, US30, US500]
+  timeframe: 5m
+  params: { stop_mode: range, target_r: 2 }
+  tags: [pine-port, script-8, s2, main]
+  account: { max_open_positions: 4 }
+
+- id: orb_breakout_ny_mid1r_5m
+  strategy: orb_breakout
+  name: ORB · New York · midpoint stop, 1R · 5m
+  description: Script 8 defaults; stop at the opening-range midpoint, 1R, flat at 16:00 New York (D5 variant).
+  instruments: [MNQ, NAS100, US30, US500]
+  timeframe: 5m
+  params: { stop_mode: midpoint, target_r: 1 }
+  tags: [pine-port, script-8, s2, variant]
+  account: { max_open_positions: 4 }
+
+- id: orb_breakout_ny_mid1p5r_5m
+  strategy: orb_breakout
+  name: ORB · New York · midpoint stop, 1.5R · 5m
+  description: Script 8 defaults; stop at the opening-range midpoint, 1.5R, flat at 16:00 New York (D5 variant).
+  instruments: [MNQ, NAS100, US30, US500]
+  timeframe: 5m
+  params: { stop_mode: midpoint, target_r: 1.5 }
+  tags: [pine-port, script-8, s2, variant]
+  account: { max_open_positions: 4 }
+
+- id: orb_breakout_ny_mideod_5m
+  strategy: orb_breakout
+  name: ORB · New York · midpoint stop, flat at 16:00 · 5m
+  description: Script 8 defaults; stop at the opening-range midpoint, no target, closed at 16:00 New York (D5 variant).
+  instruments: [MNQ, NAS100, US30, US500]
+  timeframe: 5m
+  params: { stop_mode: midpoint, target_r: null }
+  tags: [pine-port, script-8, s2, variant]
+  account: { max_open_positions: 4 }
+
+- id: orb_breakout_london_5m
+  strategy: orb_breakout
+  name: ORB · London · range stop, 2R · 5m
+  description: London ORB (08:00-08:15 London range, levels to 16:30); stop at the other side of the range, 2R, flat at 16:30 London (D11).
+  instruments: [XAUUSD, EURUSD, GBPUSD, NAS100, US30, US500]
+  timeframe: 5m
+  params:
+    timezone: Europe/London
+    or_session: "0800-0815"
+    levels_session: "0800-1630"
+    flatten_time: "16:30"
+    stop_mode: range
+    target_r: 2
+  tags: [pine-port, script-8, s2, variant, london]
+  account: { max_open_positions: 6 }

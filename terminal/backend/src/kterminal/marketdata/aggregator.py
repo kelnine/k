@@ -1,0 +1,231 @@
+"""Multi-timeframe bar aggregation.
+
+One base stream (e.g. 1-minute bars) is turned into every timeframe the lab
+needs (5m, 15m, 1h …) by a single aggregator, so every strategy instance sees
+exactly the same bars. A higher-timeframe bar is emitted only when its period
+is complete — when the base bar that ends exactly at the period boundary
+arrives, or, if data is missing at the end of a period (market closed, feed
+gap), as soon as a later base bar proves the period is over. Partial bars are
+never emitted — including the first period of an instrument when its stream
+starts in the middle of that period (the bars before the start are unknown, so
+that period is dropped rather than emitted with a wrong open/high/low/volume).
+
+Intraday timeframes are aligned to the UTC epoch (``Timeframe.floor``);
+session-anchored daily bars arrive with the market-data layer in Phase 3/5.
+"""
+
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass, replace
+from datetime import datetime
+from decimal import Decimal
+
+from kterminal.domain.market import Bar
+from kterminal.domain.timeframes import Timeframe
+
+
+@dataclass(frozen=True, slots=True)
+class _Partial:
+    bar: Bar  # running OHLCV; close_time is the period end
+
+
+class BarAggregator:
+    def __init__(self, base: Timeframe, targets: Iterable[Timeframe]) -> None:
+        if not base.is_intraday:
+            raise ValueError("the base timeframe must be intraday")
+        self.base = base
+        self.targets = tuple(sorted({t for t in targets if t != base}))
+        for target in self.targets:
+            if not target.is_intraday:
+                raise ValueError(f"{target}: only intraday aggregation is supported so far")
+            if not base.divides(target):
+                raise ValueError(f"{target} is not a whole multiple of the base timeframe {base}")
+        self._partials: dict[tuple[str, Timeframe], _Partial] = {}
+        self._last_open: dict[str, datetime] = {}
+        # periods an instrument's stream started inside of: never complete, never emitted
+        self._incomplete: dict[tuple[str, Timeframe], datetime] = {}
+
+    @property
+    def timeframes(self) -> tuple[Timeframe, ...]:
+        return (self.base, *self.targets)
+
+    def add(self, bar: Bar) -> list[Bar]:
+        """Add one closed base bar; return every bar (base included) that is now closed,
+        ordered by close time."""
+        if bar.timeframe != self.base:
+            raise ValueError(f"expected {self.base} bars, got {bar.timeframe}")
+        if not self.base.is_aligned(bar.open_time):
+            raise ValueError(f"base bar not aligned to {self.base}: {bar.open_time.isoformat()}")
+        last = self._last_open.get(bar.instrument)
+        if last is not None and bar.open_time <= last:
+            raise ValueError(
+                f"{bar.instrument}: base bars must be strictly increasing in time "
+                f"({bar.open_time.isoformat()} after {last.isoformat()})"
+            )
+        self._last_open[bar.instrument] = bar.open_time
+        if last is None:
+            for target in self.targets:
+                if target.floor(bar.open_time) != bar.open_time:
+                    self._incomplete[(bar.instrument, target)] = target.floor(bar.open_time)
+
+        closed: list[Bar] = [bar]
+        for target in self.targets:
+            key = (bar.instrument, target)
+            bucket_open = target.floor(bar.open_time)
+            partial = self._partials.get(key)
+            if partial is not None and partial.bar.open_time != bucket_open:
+                self._emit(closed, key, partial.bar)  # period ended without its last bar (gap)
+                partial = None
+            if partial is None:
+                merged = Bar(
+                    instrument=bar.instrument,
+                    timeframe=target,
+                    open_time=bucket_open,
+                    close_time=bucket_open + target.duration,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                    source=bar.source,
+                )
+            else:
+                previous = partial.bar
+                merged = replace(
+                    previous,
+                    high=max(previous.high, bar.high),
+                    low=min(previous.low, bar.low),
+                    close=bar.close,
+                    volume=previous.volume + bar.volume,
+                )
+            if bar.close_time >= merged.close_time:
+                self._emit(closed, key, merged)
+                self._partials.pop(key, None)
+            else:
+                self._partials[key] = _Partial(merged)
+        closed.sort(key=lambda b: (b.close_time, b.timeframe))
+        return closed
+
+    def close_through(self, t: datetime) -> list[Bar]:
+        """Close every pending period that ended at or before ``t``, for *all* instruments.
+
+        In a time-ordered stream, a base bar opening at ``t`` proves those periods are
+        over even for an instrument whose data has a gap (closed market, feed outage), so
+        its bars land in the batch of their own close time instead of arriving late.
+        """
+        closed: list[Bar] = []
+        for key, partial in list(self._partials.items()):
+            if partial.bar.close_time <= t:
+                del self._partials[key]
+                self._emit(closed, key, partial.bar)
+        closed.sort(key=lambda b: (b.close_time, b.timeframe))
+        return closed
+
+    def _emit(self, closed: list[Bar], key: tuple[str, Timeframe], bar: Bar) -> None:
+        if self._incomplete.get(key) == bar.open_time:
+            del self._incomplete[key]  # started mid-period: drop, never emit a partial bar
+            return
+        closed.append(bar)
+
+
+def batches_by_close(bars: Iterable[Bar]) -> Iterator[list[Bar]]:
+    """Group an ordered stream of bars into lists that closed at the same instant."""
+    batch: list[Bar] = []
+    for bar in bars:
+        if batch and bar.close_time != batch[0].close_time:
+            yield batch
+            batch = []
+        batch.append(bar)
+    if batch:
+        yield batch
+
+
+def aggregate_stream(
+    base_bars: Iterable[Bar], base: Timeframe, targets: Sequence[Timeframe]
+) -> Iterator[list[Bar]]:
+    """Base bars (possibly several instruments, time-ordered) → batches of closed bars.
+
+    Bars of different instruments that close at the same instant land in the
+    same batch, which is how the lab keeps every instance on the same clock.
+    """
+    aggregator = BarAggregator(base, targets)
+    pending: dict[datetime, list[Bar]] = {}
+
+    def flush(up_to: datetime | None) -> Iterator[list[Bar]]:
+        for close_time in sorted(t for t in pending if up_to is None or t <= up_to):
+            yield sorted(pending.pop(close_time), key=lambda b: (b.instrument, b.timeframe))
+
+    for bar in base_bars:
+        # A base bar opening at T proves every period ending at or before T is complete
+        # for all instruments (bars of the same instant share a batch).
+        for closed in aggregator.close_through(bar.open_time):
+            pending.setdefault(closed.close_time, []).append(closed)
+        yield from flush(bar.open_time)
+        for closed in aggregator.add(bar):
+            pending.setdefault(closed.close_time, []).append(closed)
+    yield from flush(None)
+
+
+def total_volume(bars: Iterable[Bar]) -> Decimal:
+    return sum((b.volume for b in bars), Decimal(0))
+
+
+class StreamAggregator:
+    """The incremental form of :func:`aggregate_stream`, for feeds that arrive bar by bar.
+
+    ``push(bar)`` adds one base bar and returns the batches that are complete at that
+    point of the stream — exactly the batches ``aggregate_stream`` yields when it reaches
+    the same bar. ``advance(t)`` declares that no base bar opening before ``t`` will be
+    pushed any more (a live minute has been processed) and returns every batch that
+    closes at or before ``t`` without waiting for the next bar; ``finish()`` ends the
+    stream. Advancing only makes a batch available earlier: as long as a later bar does
+    arrive, pushing the same bars yields the same batches, in the same order, with or
+    without it. (After the last bar, only advancing can close a period whose final
+    minutes never came — on a live feed the passing of time proves it is over.)
+    """
+
+    def __init__(self, base: Timeframe, targets: Sequence[Timeframe]) -> None:
+        self._aggregator = BarAggregator(base, targets)
+        self._pending: dict[datetime, list[Bar]] = {}
+        self._floor: datetime | None = None  # no base bar may open before this any more
+
+    @property
+    def advanced_to(self) -> datetime | None:
+        return self._floor
+
+    def push(self, bar: Bar) -> list[list[Bar]]:
+        if self._floor is not None and bar.open_time < self._floor:
+            raise ValueError(
+                f"{bar.instrument}: bar opening {bar.open_time.isoformat()} arrived after the "
+                f"stream advanced to {self._floor.isoformat()}"
+            )
+        ready = self._complete(bar.open_time)
+        for closed in self._aggregator.add(bar):
+            self._pending.setdefault(closed.close_time, []).append(closed)
+        return ready
+
+    def advance(self, t: datetime) -> list[list[Bar]]:
+        ready = self._complete(t)
+        if self._floor is None or t > self._floor:
+            self._floor = t
+        return ready
+
+    def complete_through(self, t: datetime) -> list[list[Bar]]:
+        """The batches that close at or before ``t`` (as :meth:`advance`, without
+        forbidding later pushes of earlier bars)."""
+        return self._complete(t)
+
+    def finish(self) -> list[list[Bar]]:
+        return self._flush(None)
+
+    def _complete(self, t: datetime) -> list[list[Bar]]:
+        # A base bar opening at t proves every period ending at or before t is complete
+        # for all instruments (bars of the same instant share a batch).
+        for closed in self._aggregator.close_through(t):
+            self._pending.setdefault(closed.close_time, []).append(closed)
+        return self._flush(t)
+
+    def _flush(self, up_to: datetime | None) -> list[list[Bar]]:
+        return [
+            sorted(self._pending.pop(close_time), key=lambda b: (b.instrument, b.timeframe))
+            for close_time in sorted(t for t in self._pending if up_to is None or t <= up_to)
+        ]

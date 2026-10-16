@@ -1,0 +1,173 @@
+# Binance USDⓈ-M perpetuals (fapi.binance.com): USDT-margined, quantity in
+# base units (contract_size 1). Filters from GET /fapi/v1/exchangeInfo:
+# PRICE_FILTER.tickSize, LOT_SIZE.minQty/stepSize/maxQty, MARKET_LOT_SIZE,
+# MIN_NOTIONAL.notional. Verified rows come from raw exchangeInfo captures
+# (ccxt fixture; a verbatim XAUUSDT row in darkcite/trading-engine-multivenue),
+# confirmed by the verify pass.
+#
+# Funding: the interval is PER SYMBOL. GET /fapi/v1/fundingInfo returns only
+# symbols with an adjusted cap/floor/interval; a symbol absent from it is on
+# the default 8 h schedule (00/08/16 UTC). The crypto_perp_binance profile
+# assumes 8 h; listings known to settle more often say so in their notes.
+#
+# Fees (assumption, crypto_perp_binance): VIP0 maker 0.02 % / taker 0.05 %
+# (10 % less in BNB).
+#
+# Rows marked "spec unverified" carry PLACEHOLDER numbers (tick = canonical
+# tick, min/step = 1) and are tradable: false.
+
+venue: binance_usdm
+
+listings:
+  # ── crypto ─────────────────────────────────────────────────────────────────
+  - instrument: BTCUSD
+    venue_symbol: BTCUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.1"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    max_qty: "1000"
+    min_notional: "50"
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/binance.json
+    notes: >-
+      PRICE_FILTER 0.10; LOT_SIZE 0.001 (max 1000); MARKET_LOT_SIZE max 120;
+      MIN_NOTIONAL 50 USDT (reported history: 5 -> 100 on 2023-11-02 -> 50 on
+      2026-04-14; dates unverified); PERCENT_PRICE 0.95-1.05. Funding on the
+      default 8 h schedule unless listed in fundingInfo. BTCUSDC perps and
+      quarterly BTCUSDT_YYMMDD futures are separate products.
+
+  - instrument: SOLUSD
+    venue_symbol: SOLUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.01"          # research (medium): 0.01 since 2024-10-14; a 2026 change back to 0.001 was rumoured
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://www.binance.com/en/support/announcement/updates-on-tick-size-for-sol-usd%E2%93%A2-m-and-coin-m-futures-contracts-2024-10-14-8bfe2e9b86734cd08f3cbcdb82b79f51
+    notes: >-
+      spec unverified — enable after syncing from the venue API
+      (/fapi/v1/exchangeInfo): LOT_SIZE and MIN_NOTIONAL were not verifiable.
+      Tick history 0.01 -> 0.001 (2022-11) -> 0.01 (2024-10-14).
+
+  - instrument: NEARUSD
+    venue_symbol: NEARUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.00001"       # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Funding
+      interval unverified (8 h default; many symbols run 4 h) — read
+      fundingInfo.
+
+  - instrument: ZECUSD
+    venue_symbol: ZECUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0001"        # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Funding may
+      be 4 h (volatile symbols) — read fundingInfo.
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPEUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.001"         # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://cryptobriefing.com/hyperliquid-hype-spot-trading-binance/
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Perp live
+      since 2025-05-30 (reported up to 75x); newer listings often fund every
+      4 h.
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMPUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0000001"     # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"               # placeholder
+    qty_step: "1"              # placeholder
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://www.theblock.co/post/361975/pump-token-ico
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Started as a
+      pre-market perp ~2025-07-10, converted after spot launched. Confirm the
+      underlying is pump.fun (an April 2025 PUMPUSDT likely referred to
+      PumpBTC) and whether the symbol carries a 1000 prefix (1000PUMPUSDT).
+
+  # ── TradFi perpetuals (metals) ─────────────────────────────────────────────
+  # contractType TRADIFI_PERPETUAL, issued by Nest Exchange Ltd (ADGM FSRA);
+  # needs a TradFi-perps agreement and is restricted in some jurisdictions.
+  # Since 2026-09-15 reportedly 24/5 (halt Fri 21:00 UTC -> Sun 21:00 UTC, no
+  # trading/liquidations/funding during the halt; UNVERIFIED, and whether the
+  # halt follows US DST is unknown). No calendar in sessions.yaml matches, so
+  # these rows keep the instrument's metals_otc calendar.
+  - instrument: XAUUSD
+    venue_symbol: XAUUSDT
+    contract_type: PERPETUAL
+    tick_size: "0.01"
+    contract_size: "1"          # 1 troy oz per 1.0 qty
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    max_qty: "10000"
+    min_notional: "5"
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    verified_on: "2026-10-06"
+    source: https://www.binance.info/en/futures/XAUUSDT
+    notes: >-
+      Verbatim exchangeInfo row: TRADIFI_PERPETUAL, baseAsset XAU, tick 0.01,
+      LOT_SIZE 0.001 (max 10,000), MARKET_LOT_SIZE max 1,000, MIN_NOTIONAL 5,
+      PERCENT_PRICE +/-2 %. Trading since 2025-12-11 08:05 UTC (onboardDate).
+      FUNDING settled every 4 h (00/04/08/12/16/20 UTC, weekends included)
+      from 2026-05-22 to 2026-08-13 — NOT the 8 h the cost profile assumes;
+      cap/floor +/-0.5 % per interval (2026-09-15 capture). Read
+      fundingIntervalHours live. USDT basis and funding vs spot XAUUSD.
+
+  - instrument: XAGUSD
+    venue_symbol: XAGUSDT
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.01"           # research (medium); no exchangeInfo capture found
+    contract_size: "1"          # 1 troy oz per 1.0 qty
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"            # research (medium)
+    qty_step: "0.001"           # placeholder — LOT_SIZE step unverified
+    quote_currency: USDT
+    cost_profile: crypto_perp_binance
+    source: https://www.cryptopolitan.com/binance-silver-xagusdt-perp-contract/
+    notes: >-
+      spec unverified — enable after syncing from the venue API (no XAGUSDT
+      exchangeInfo or fundingRate capture was found). Launched 2026-01-07 as a
+      TradFi perp; min notional 5 USDT reported. The 0.01 tick is coarse next
+      to a CFD's 0.001.

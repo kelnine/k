@@ -1,0 +1,322 @@
+# Trading calendars, trading-day rules and session windows.
+#
+# Loaded by kterminal.domain.sessions.SessionBook.from_document (see
+# docs/11-instruments-sessions-costs.md §11.3). Every rule is LOCAL wall-clock
+# time in the IANA zone it names; daylight-saving time is handled by zoneinfo,
+# never by fixed UTC offsets.
+#
+# Format notes:
+#   * ALWAYS QUOTE times and dates. YAML reads an unquoted 17:00 as the number
+#     1020 (base 60); the loader rejects it with an explicit error.
+#   * weekly intervals: "DAY HH:MM - DAY HH:MM"; may wrap across days / the week end.
+#   * session window days are the local weekdays on which the window STARTS;
+#     end <= start means the window crosses local midnight.
+#   * holiday_rule:
+#       calendar_date (default) - closed for the whole local calendar date;
+#       trade_date - a holiday cancels the scheduled session(s) that CLOSE on that
+#                    local date (CME: the Thursday 17:00 -> Friday 16:00 session is
+#                    Friday's trade date); the session opening on the holiday
+#                    evening for the next trade date still runs.
+#   * early_closes: closed from that local time until the next scheduled open.
+
+trading_day_rules:
+  - id: ny_1700
+    timezone: America/New_York
+    rollover: "17:00"
+    description: >-
+      FX / CFD / futures convention: a new trading day starts at 17:00 New York
+      (Sunday 18:00 New York already belongs to Monday).
+  - id: utc_midnight
+    timezone: UTC
+    rollover: "00:00"
+    description: Crypto convention, trading day = UTC calendar date.
+
+calendars:
+  # CME Globex equity-index futures (ES/MES, NQ/MNQ, YM/MYM, RTY/M2K).
+  #
+  # !!! HOLIDAYS AND EARLY CLOSES MUST BE REVIEWED EVERY YEAR !!!
+  # Source: CME Group holiday calendar (https://www.cmegroup.com/trading-hours.html).
+  # CME publishes the final hours for each holiday about two weeks in advance;
+  # re-check every entry against the official notice and add the next year
+  # before it starts. Times below are America/Chicago (CT).
+  #   2026 dates were checked against CME's 2026 holiday notices (as reported by
+  #     futures brokers' 2026 schedules), except the Good Friday halt time (see
+  #     2026-04-03); Nov/Dec 2026 follow CME's standard
+  #     Thanksgiving / Christmas hours, final notices not yet published (2026-10-06).
+  #   2027 entries are the dates on CME's holiday calendar with CME's standard
+  #     holiday hours; final 2027 hours are not published yet.
+  #   NOT included (unverified): 2026-12-31 and 2027-12-31 New Year's Eve hours
+  #     (assumed regular), 2027-12-23 (possible early close before the observed
+  #     Christmas holiday).
+  - id: cme_globex_equity
+    timezone: America/Chicago
+    always_open: false
+    weekly:
+      - "SUN 17:00 - MON 16:00"
+      - "MON 17:00 - TUE 16:00"
+      - "TUE 17:00 - WED 16:00"
+      - "WED 17:00 - THU 16:00"
+      - "THU 17:00 - FRI 16:00"
+    holiday_rule: trade_date
+    holidays:
+      - "2026-01-01"  # New Year's Day (Thu): no session; reopens Thu 17:00 CT
+      - "2026-12-25"  # Christmas Day (Fri): no session; reopens Sun 17:00 CT
+      - "2027-01-01"  # New Year's Day (Fri)
+      - "2027-03-26"  # Good Friday
+      - "2027-12-24"  # Christmas Day observed (Fri)
+    early_closes:
+      "2026-01-19": "12:00"  # Martin Luther King Jr. Day
+      "2026-02-16": "12:00"  # Presidents' Day
+      # Good Friday: abbreviated session for the NFP release. The halt TIME is
+      # UNCONFIRMED: third-party reports conflict (08:15, 09:15 and 12:30 CT);
+      # 08:15 CT follows CME's 2021 Good Friday/NFP precedent. Check the CME notice.
+      "2026-04-03": "08:15"
+      "2026-05-25": "12:00"  # Memorial Day
+      "2026-06-19": "12:00"  # Juneteenth
+      "2026-07-03": "12:00"  # Independence Day observed
+      "2026-09-07": "12:00"  # Labor Day
+      "2026-11-26": "12:00"  # Thanksgiving Day (reopens 17:00 CT)
+      "2026-11-27": "12:15"  # Day after Thanksgiving
+      "2026-12-24": "12:15"  # Christmas Eve
+      "2027-01-18": "12:00"  # Martin Luther King Jr. Day
+      "2027-02-15": "12:00"  # Presidents' Day
+      "2027-05-31": "12:00"  # Memorial Day
+      "2027-06-18": "12:00"  # Juneteenth observed
+      "2027-07-05": "12:00"  # Independence Day observed
+      "2027-09-06": "12:00"  # Labor Day
+      "2027-11-25": "12:00"  # Thanksgiving Day
+      "2027-11-26": "12:15"  # Day after Thanksgiving
+    description: >-
+      CME Globex equity-index futures: Sunday-Friday 17:00-16:00 Chicago with a
+      daily 16:00-17:00 maintenance halt; US holiday closures and early closes.
+
+  - id: metals_otc
+    timezone: America/New_York
+    always_open: false
+    weekly:
+      - "SUN 18:00 - MON 17:00"
+      - "MON 18:00 - TUE 17:00"
+      - "TUE 18:00 - WED 17:00"
+      - "WED 18:00 - THU 17:00"
+      - "THU 18:00 - FRI 17:00"
+    holiday_rule: calendar_date
+    holidays: []
+    early_closes: {}
+    description: >-
+      Spot gold / silver (XAUUSD, XAGUSD) as quoted by OTC brokers and CFD
+      servers: Sunday-Friday 18:00-17:00 New York with a daily 17:00-18:00 break.
+      Holiday hours are broker-specific; add them to a listing-specific calendar.
+
+  - id: fx_otc
+    timezone: America/New_York
+    always_open: false
+    weekly:
+      - "SUN 17:00 - FRI 17:00"
+    holiday_rule: calendar_date
+    holidays: []
+    early_closes: {}
+    description: >-
+      Spot FX (EURUSD, GBPUSD): continuous from Sunday 17:00 to Friday 17:00 New
+      York. Holiday hours are broker-specific.
+
+  # Index CFDs (NAS100/US100, US30, SPX500/US500) follow the CME futures they are
+  # priced from: the same hours and holidays expressed in New York time
+  # (CT + 1 h all year, both zones follow US DST). Brokers publish their own
+  # holiday schedules; review together with cme_globex_equity every year.
+  - id: cfd_us_indices
+    timezone: America/New_York
+    always_open: false
+    weekly:
+      - "SUN 18:00 - MON 17:00"
+      - "MON 18:00 - TUE 17:00"
+      - "TUE 18:00 - WED 17:00"
+      - "WED 18:00 - THU 17:00"
+      - "THU 18:00 - FRI 17:00"
+    holiday_rule: trade_date
+    holidays:
+      - "2026-01-01"
+      - "2026-12-25"
+      - "2027-01-01"
+      - "2027-03-26"
+      - "2027-12-24"
+    early_closes:
+      "2026-01-19": "13:00"
+      "2026-02-16": "13:00"
+      "2026-04-03": "09:15"  # unconfirmed, see cme_globex_equity
+      "2026-05-25": "13:00"
+      "2026-06-19": "13:00"
+      "2026-07-03": "13:00"
+      "2026-09-07": "13:00"
+      "2026-11-26": "13:00"
+      "2026-11-27": "13:15"
+      "2026-12-24": "13:15"
+      "2027-01-18": "13:00"
+      "2027-02-15": "13:00"
+      "2027-05-31": "13:00"
+      "2027-06-18": "13:00"
+      "2027-07-05": "13:00"
+      "2027-09-06": "13:00"
+      "2027-11-25": "13:00"
+      "2027-11-26": "13:15"
+    description: >-
+      US index CFDs: CME equity-index hours (18:00-17:00 New York, daily
+      17:00-18:00 break) with CME's holiday closures mirrored in New York time.
+
+  - id: crypto_24x7
+    timezone: UTC
+    always_open: true
+    weekly: []
+    holiday_rule: calendar_date
+    holidays: []
+    early_closes: {}
+    description: Crypto spot and perpetuals trade continuously.
+
+  - id: us_equities_rth
+    timezone: America/New_York
+    always_open: false
+    weekly:
+      - "MON 09:30 - MON 16:00"
+      - "TUE 09:30 - TUE 16:00"
+      - "WED 09:30 - WED 16:00"
+      - "THU 09:30 - THU 16:00"
+      - "FRI 09:30 - FRI 16:00"
+    holiday_rule: calendar_date
+    holidays: []
+    early_closes: {}
+    description: >-
+      US cash-equity regular trading hours, 09:30-16:00 New York. NYSE/Nasdaq
+      holidays are not configured yet.
+
+session_windows:
+  # ── main sessions ────────────────────────────────────────────────────────
+  - id: tokyo
+    name: Tokyo session
+    timezone: Asia/Tokyo
+    start: "09:00"
+    end: "15:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: >-
+      Conventional Tokyo window 09:00-15:00 JST (the TSE cash session runs to
+      15:30 since November 2024). Japan has no DST.
+  - id: london
+    name: London session
+    timezone: Europe/London
+    start: "08:00"
+    end: "16:30"
+    days: [MON, TUE, WED, THU, FRI]
+    description: London cash session 08:00-16:30 London time (GMT/BST).
+  - id: new_york
+    name: New York session
+    timezone: America/New_York
+    start: "09:30"
+    end: "16:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: New York cash session 09:30-16:00 New York time (EST/EDT).
+
+  # ── opens and opening ranges (ORB) ───────────────────────────────────────
+  - id: london_open
+    name: London open
+    timezone: Europe/London
+    start: "08:00"
+    end: "09:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: First hour of London; 03:00 or 04:00 New York depending on both DST regimes.
+  - id: ny_open
+    name: New York open
+    timezone: America/New_York
+    start: "09:30"
+    end: "10:30"
+    days: [MON, TUE, WED, THU, FRI]
+    description: First hour of the New York cash session.
+  - id: ny_orb_5
+    name: New York ORB 5m
+    timezone: America/New_York
+    start: "09:30"
+    end: "09:35"
+    days: [MON, TUE, WED, THU, FRI]
+    description: New York 5-minute opening range.
+  - id: ny_orb_15
+    name: New York ORB 15m
+    timezone: America/New_York
+    start: "09:30"
+    end: "09:45"
+    days: [MON, TUE, WED, THU, FRI]
+    description: New York 15-minute opening range.
+  - id: ny_orb_30
+    name: New York ORB 30m
+    timezone: America/New_York
+    start: "09:30"
+    end: "10:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: New York 30-minute opening range.
+  - id: london_orb_15
+    name: London ORB 15m
+    timezone: Europe/London
+    start: "08:00"
+    end: "08:15"
+    days: [MON, TUE, WED, THU, FRI]
+    description: London 15-minute opening range.
+  - id: london_orb_30
+    name: London ORB 30m
+    timezone: Europe/London
+    start: "08:00"
+    end: "08:30"
+    days: [MON, TUE, WED, THU, FRI]
+    description: London 30-minute opening range.
+
+  # ── kill zones (New York time) ───────────────────────────────────────────
+  - id: asia_kz
+    name: Asian kill zone
+    timezone: America/New_York
+    start: "20:00"
+    end: "00:00"
+    days: [SUN, MON, TUE, WED, THU]
+    description: 20:00-00:00 New York, starting Sunday-Thursday evenings (the next day's Asia).
+  - id: london_kz
+    name: London kill zone
+    timezone: America/New_York
+    start: "02:00"
+    end: "05:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: 02:00-05:00 New York.
+  - id: ny_am_kz
+    name: New York AM kill zone
+    timezone: America/New_York
+    start: "07:00"
+    end: "10:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: 07:00-10:00 New York.
+  - id: ny_pm_kz
+    name: New York PM kill zone
+    timezone: America/New_York
+    start: "13:30"
+    end: "16:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: 13:30-16:00 New York.
+
+  # ── classification partition (one label per trade for analytics) ──────────
+  - id: asia_session
+    name: Asia
+    timezone: America/New_York
+    start: "18:00"
+    end: "03:00"
+    days: [SUN, MON, TUE, WED, THU]
+    description: 18:00-03:00 New York, starting Sunday-Thursday evenings.
+  - id: london_session
+    name: London
+    timezone: America/New_York
+    start: "03:00"
+    end: "08:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: 03:00-08:00 New York.
+  - id: ny_session
+    name: New York
+    timezone: America/New_York
+    start: "08:00"
+    end: "17:00"
+    days: [MON, TUE, WED, THU, FRI]
+    description: 08:00-17:00 New York.
+
+# Ordered: the first window containing an instant labels it; none -> off_hours
+# (the daily 17:00-18:00 New York break and the weekend).
+session_classification: [ny_session, london_session, asia_session]

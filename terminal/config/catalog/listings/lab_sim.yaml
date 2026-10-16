@@ -1,0 +1,78 @@
+# Strategy-lab generic simulation listings.
+#
+# These are NOT any exchange's contract. They exist only because no venue's
+# tick / quantity step for these instruments could be verified on 2026-10-06
+# (every exchange API was blocked during research), and strategy-lab accounts
+# still need a tradable listing with EXPLICIT specs rather than guessed venue
+# numbers. Replace each with a real venue listing (binance_usdm, bybit_linear,
+# hyperliquid …) once that venue's spec is synced and verified, and point
+# venue_profiles.yaml at it.
+#
+# Conservative choices:
+#   * quote USD, contract_size 1 (linear, sized in coins), PERPETUAL so a perp
+#     cost profile (taker fee + funding) applies;
+#   * a tick no coarser than any plausible venue tick at today's price levels,
+#     so strategy price levels are never rounded more coarsely than a real
+#     venue would round them;
+#   * small quantity steps (about $0.005-$1 per step) so sizing is not
+#     distorted by the step;
+#   * min_notional $10 — the strictest VERIFIED minimum among the venues
+#     (Hyperliquid), so tiny orders a real venue would reject are rejected too;
+#   * cost profile crypto_perp_bybit — the most expensive taker fee among the
+#     perp profiles (0.055 %) with 8 h funding.
+# Caveat: the profile's spread is 1 TICK, which on these fine generic ticks is
+# negligible; slippage (2 bp) still applies. A generic crypto profile with a
+# notional-based spread is requested in costs.yaml.
+
+venue: lab_sim
+
+listings:
+  - instrument: NEARUSD
+    venue_symbol: NEARUSD
+    contract_type: PERPETUAL
+    tick_size: "0.00001"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"
+    min_notional: "10"
+    quote_currency: USD
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      generic simulation spec — not any exchange's contract. Replace with a
+      verified venue listing once synced (binance_usdm / bybit_linear NEARUSDT,
+      hyperliquid NEAR).
+
+  - instrument: ZECUSD
+    venue_symbol: ZECUSD
+    contract_type: PERPETUAL
+    tick_size: "0.0001"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    min_notional: "10"
+    quote_currency: USD
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      generic simulation spec — not any exchange's contract. Replace with a
+      verified venue listing once synced. Privacy coin: venue availability is
+      time-varying (OKX delisted 2024, relisted 2025; EU AMLR bars it at CASPs
+      from 2027-07-10).
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMPUSD
+    contract_type: PERPETUAL
+    tick_size: "0.0000001"
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"
+    qty_step: "1"
+    min_notional: "10"
+    quote_currency: USD
+    cost_profile: crypto_perp_bybit
+    notes: >-
+      generic simulation spec — not any exchange's contract. Sub-cent token
+      priced per 1 PUMP (no 1000x prefix); some venues list 1000PUMP / kPUMP,
+      whose contract size differs 1000x. Replace with a verified venue listing
+      once synced.

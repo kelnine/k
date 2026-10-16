@@ -1,0 +1,36 @@
+# S4 · ICT Sweep + Order Flow Models [NY] (script 2), Model B — the 08:00 New York candle
+# swept after 09:00 → close back inside → 1m MSS → displacement-FVG limit.
+# Strategy: backend/src/kterminal/strategies/ict_sweep_models (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  resting limits fill as the script fills them (touch, or the open when the bar
+#       opens through the limit); a setup whose stop or target is on the wrong side of
+#       the entry after tick rounding is not traded (persisted NO_TRADE)
+#   D4  one setup or trade at a time, as the script's state machine implies
+#   D6  main: a filled trade is held until its stop, its target or the next 09:00
+#       window start, where it is closed (SESSION_CLOSE, the script's neutral close);
+#       variant: closed at the 12:00 window end
+#   D10 1m (the script is built for 1m), all 14 instruments, one Paper 50K account per
+#       variant, one position per instrument
+#   D11 script defaults plus the D6 variant; the CE entry and Fixed RR variants wait for
+#       the parity check
+#   D13 script defaults
+- id: ict_model_b_main_1m
+  strategy: ict_model_b
+  name: ICT Model B · 08:00 candle sweep · hold to the next window · 1m
+  description: Script 2 Model B defaults; a filled trade runs to its stop or target or the next 09:00 New York (D6).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  params: { after_window: hold }
+  tags: [pine-port, script-2, s4, main]
+  account: { max_open_positions: 14 }
+
+- id: ict_model_b_flat_1m
+  strategy: ict_model_b
+  name: ICT Model B · 08:00 candle sweep · flat at 12:00 · 1m
+  description: Script 2 Model B defaults; a filled trade still open at the 12:00 New York window end is closed (D6 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1m
+  params: { after_window: flat }
+  tags: [pine-port, script-2, s4, variant]
+  account: { max_open_positions: 14 }

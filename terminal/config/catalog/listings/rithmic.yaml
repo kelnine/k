@@ -1,0 +1,43 @@
+# Rithmic — CME futures through a Rithmic login (FCMs and prop firms such as
+# Apex and Bulenox). Contract specs are CME's (see cme.yaml).
+#
+# Symbol = root + month code + last digit of the year, with the exchange
+# passed as a SEPARATE field (symbol MNQZ6, exchange CME); third-party
+# platforms often display it as MNQZ6.CME. Commission is set by the FCM or
+# prop firm providing the login; Rithmic publishes no fixed rate.
+
+venue: rithmic
+
+listings:
+  - instrument: MNQ
+    venue_symbol: MNQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "2"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_micro_equity
+    symbol_format: "{root}{code}{y1}"
+    verified_on: "2026-10-06"
+    source: https://www.linnsoft.com/support/symbol-guide-rithmic
+    notes: >-
+      Dated symbol MNQZ6 with exchange=CME in its own field (displayed
+      MNQZ6.CME by some platforms — that display form is unverified).
+
+  - instrument: NQ
+    venue_symbol: NQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "20"
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_emini_equity   # E-mini fees (see cme.yaml)
+    symbol_format: "{root}{code}{y1}"
+    verified_on: "2026-10-06"
+    source: https://www.linnsoft.com/support/symbol-guide-rithmic
+    notes: >-
+      Dated symbol NQZ6, exchange CME.
