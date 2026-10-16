@@ -62,6 +62,8 @@ from kterminal.strategies.wyckoff_auto.wyckoff_engine import (
     type_ws,
 )
 from kterminal.strategy_engine import (
+    PositionEvent,
+    PositionEventKind,
     SignalOutput,
     Strategy,
     StrategyMeta,
@@ -81,6 +83,7 @@ EXIT_EVENTS = {
     "RS_DEMOTE": "DEMOTION",
     RESEED: "REPLACED_BY_CLIMAX",
 }
+_ENTRY_DROPPED = (PositionEventKind.ORDER_CANCELLED, PositionEventKind.ORDER_EXPIRED)
 EXIT_REASONS = {
     "INVALIDATION": "campaign invalidated: two closes beyond the hard level by 0.5 ATR",
     "DEMOTION": "Phase D demoted to B: three closes back past the range middle",
@@ -130,6 +133,7 @@ class _Trade:
     serial: int
     direction: int
     bar_index: int
+    opened: bool = False  # the theoretical book filled the entry
     stale: bool = False  # the campaign went stale (RS_STALE) while the trade was open
 
 
@@ -165,6 +169,20 @@ class WyckoffAuto(Strategy[WyckoffAutoParams]):
         )
         self._trade: _Trade | None = None
 
+    def on_position_event(self, event: PositionEvent) -> SignalOutput:
+        """Follow the trade in the theoretical book: once it has closed (stop, target or a
+        structure exit) or its entry was skipped, the campaign no longer owns a trade."""
+        trade = self._trade
+        if trade is None:
+            return None
+        if event.kind is PositionEventKind.OPENED:
+            trade.opened = True
+        elif event.kind is PositionEventKind.CLOSED and trade.opened:
+            self._trade = None
+        elif event.kind in _ENTRY_DROPPED and not trade.opened:
+            self._trade = None  # D3: the next open was already past the stop or target
+        return None
+
     def on_bar(self, bar: Bar) -> SignalOutput:
         ctx = self.ctx
         step = self._engine.update(
@@ -178,6 +196,17 @@ class WyckoffAuto(Strategy[WyckoffAutoParams]):
         )
         if ctx.warming_up:
             return None  # signals are discarded; no trade to follow yet
+        trade = self._trade
+        if (
+            trade is not None
+            and not trade.opened
+            and ctx.bar_index > trade.bar_index
+            and ctx.position is None
+            and ctx.pending_entry is None
+        ):
+            # The market entry would have filled at this bar's open: the book refused it
+            # (a venue refusal, e.g. the market was closed at the decision).
+            self._trade = None
         out: list[Signal] = []
         exit_signal = self._structure_exit(step)
         if exit_signal is not None:

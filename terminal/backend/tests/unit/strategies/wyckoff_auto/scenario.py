@@ -120,9 +120,7 @@ class Tape:
     ) -> list[Bar]:
         tf = Timeframe.parse(timeframe)
         return [
-            Bar.of(
-                instrument, tf, start + i * tf.duration, repr(o), repr(h), repr(low), repr(c), v
-            )
+            Bar.of(instrument, tf, start + i * tf.duration, repr(o), repr(h), repr(low), repr(c), v)
             for i, (o, h, low, c, v) in enumerate(self.rows)
         ]
 
@@ -172,9 +170,7 @@ class Trace:
 
     def entries(self) -> list[int]:
         return [
-            i
-            for i, s in enumerate(self.steps)
-            if s.entry_check is not None and s.entry_check.taken
+            i for i, s in enumerate(self.steps) if s.entry_check is not None and s.entry_check.taken
         ]
 
     def describe(self, start: int = 0, stop: int | None = None) -> str:
