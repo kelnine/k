@@ -81,16 +81,24 @@ class Tape:
             self.step(round(self.close + delta, 6), up=wick, down=wick, v=v)
         return self
 
-    def flat(self, n: int, *, v: float | None = None) -> "Tape":
-        """``n`` alternating bars around the current close (bodies 0.1, range 0.5): equal
-        highs and equal lows, so they make no pivot."""
+    def flat(self, n: int, *, v: float | None = None, half: float = 0.25) -> "Tape":
+        """``n`` alternating bars around the current close (bodies 0.1, range ``2 * half``):
+        equal highs and equal lows, so they make no pivot."""
         level = self.close
+        hi, lo = round(level + half, 6), round(level - half, 6)
         for i in range(n):
             if i % 2 == 0:
-                self.bar(level, level + 0.25, level - 0.25, level + 0.1, v)
+                self.bar(level, hi, lo, round(level + 0.1, 6), v)
             else:
-                self.bar(level + 0.1, level + 0.25, level - 0.25, level, v)
+                self.bar(round(level + 0.1, 6), hi, lo, level, v)
         self.close = level
+        return self
+
+    def cut(self, n: int) -> "Tape":
+        """Keep the first ``n`` rows (the marks after them are dropped)."""
+        self.rows = self.rows[:n]
+        self.close = self.rows[-1][3]
+        self.marks = {k: i for k, i in self.marks.items() if i < n}
         return self
 
     def mark(self, name: str) -> "Tape":
@@ -305,3 +313,188 @@ def distribution(stage: str = "markup") -> Tape:
     """The canonical accumulation mirrored about 300: an uptrend, a buying climax, an
     automatic reaction, an UTAD, its Test, a SOW, an LPSY and the markdown."""
     return accumulation(stage).mirrored()
+
+
+# ── targeted variants (each comment names the bar the engine acts on) ─────────────────────
+def absorption_fails() -> Tape:
+    """SC at 260, then the effort dries up (volume 50): no absorption within 8 bars, so
+    the climax is retired at 269 (RS_ABSORB, L1186/L1193)."""
+    t = accumulation("sc").cut(SC + 1)
+    t.path([121.2, 121.6, 122.0, 122.3, 122.6, 122.9, 123.1, 123.3, 123.5, 123.6], v=50)
+    return t
+
+
+def no_automatic_rally() -> Tape:
+    """SC at 260, absorbed at 263, but the rally peaks 1.8 ATR above the SC low and the
+    range stays flat: no AR within 30 bars, retired at 291 (RS_NORANGE, L1187/L1195)."""
+    t = accumulation("sc").cut(SC + 1)
+    t.path([120.9, 121.0, 121.0, 120.9, 120.8], up=0.3, down=0.3)
+    t.flat(40, half=0.5)  # range 1.0 keeps the ATR at about 1
+    return t
+
+
+def phase_a_invalidated() -> Tape:
+    """SC at 260 (low 119.5), then two closes more than 0.5 ATR below it: retired at 264
+    (RS_INVALID in Phase A, L1184/L1191)."""
+    t = accumulation("sc").cut(SC + 1)
+    t.path([120.5, 119.6, 118.8, 118.7, 118.6])
+    return t
+
+
+def phase_b_goes_stale() -> Tape:
+    """Phase B (last activity: the ST2 registration at 293), then 130 quiet bars in the
+    middle of the range: retired at 419, 126 bars later (RS_STALE, limit 125, L1226)."""
+    t = accumulation("phase_b")
+    t.flat(130)
+    return t
+
+
+def phase_b_departs() -> Tape:
+    """Phase B, then price walks out above the range without any Spring: three closes
+    above the AR high + max(0.35 x height, 0.75 ATR) retire it at 310 (RS_DEPART, L1649,
+    L1661)."""
+    t = accumulation("phase_b")
+    t.path([123.0, 124.0, 125.0, 126.0, 126.8, 127.3, 127.8, 128.2, 128.6])
+    return t
+
+
+PROVISIONAL = 297  # a probe under the range low while Phase B is still immature
+ADOPTED = 312  # the breakout adopts it: Spring + SOS, Phase D on one bar
+
+
+def provisional_spring() -> Tape:
+    """A Spring-like probe at 297, before Phase B is mature (bar 302), is kept as a
+    provisional Spring (L1576-1586); the breakout after maturity adopts it and promotes
+    straight to Phase D at 312 (L1654-1660): no Phase C test, so only Aggressive enters
+    (its SOS fallback, L1740)."""
+    t = accumulation("phase_b").cut(ST2 + 5)  # through 293, ST2 registered
+    t.path([121.6, 121.0, 120.4])  # 294-296
+    t.bar(120.4, 120.9, 119.4, 120.8).mark("provisional")  # 297: 0.4 under 119.825
+    t.path([121.3, 121.8, 122.2, 122.6, 122.9])  # 298-302
+    t.flat(4)  # 303-306
+    t.path([123.4, 123.9, 124.3])  # 307-309
+    t.bar(124.3, 125.6, 124.2, 125.5, 250)  # 310: closes through the AR high
+    t.bar(125.5, 126.4, 125.4, 126.3, 220)  # 311
+    t.path([126.6, 126.9, 127.2])  # 312-314
+    return t
+
+
+C_TEST = 308  # the quiet pivot low of the terminal test
+C_TEST_CONFIRMED = 312
+
+
+def terminal_test() -> Tape:
+    """No Spring: once Phase B is mature, a quiet pivot low at 308 within 1.25 ATR of the
+    range low (holding the ST2 low) is the terminal C-Test, confirmed at 312 (L1328-1348):
+    Phase C with a test — the Standard and Aggressive entry."""
+    t = accumulation("phase_b")  # through 303
+    t.path([121.8, 121.3, 120.9, 120.6])  # 304-307
+    t.bar(120.6, 120.7, 120.3, 120.55, 60).mark("c_test")  # 308
+    t.path([120.9, 121.3, 121.7, 122.1, 122.5, 122.9, 123.3])  # 309-315
+    return t
+
+
+def phase_c_invalidated() -> Tape:
+    """After the Test entry (318), two closes more than 0.5 ATR under the Spring low
+    (119.2): the campaign is retired at 323 (RS_INVALID, L1199)."""
+    t = accumulation("test")
+    t.path([121.0, 120.0, 119.0, 118.4, 118.2, 118.0])
+    return t
+
+
+STALE_C = 369
+NEW_SC = 424
+
+
+def phase_c_goes_stale_then_new_climax() -> Tape:
+    """After the Test entry (318) nothing happens for 50 bars: the campaign goes stale at
+    369 (RS_STALE, limit 50 in Phase C); a downtrend later ends in a new selling climax
+    that seeds a campaign at 424."""
+    t = accumulation("test")
+    t.flat(60)  # 319-378
+    t.trend(45, -0.3)  # 379-423
+    c = t.close
+    t.bar(c, c + 0.2, c - 2.5, c - 1.2, 400).mark("sc2")  # 424
+    t.path([round(t.close + 0.6 * k, 6) for k in range(1, 4)])  # 425-427
+    return t
+
+
+DEMOTED = 329
+
+
+def phase_d_demoted() -> Tape:
+    """After the SOS (323), three closes back under the range middle (122.21): Phase D is
+    demoted to B at 329 (L1210-1211); the campaign keeps its entry (L909-930)."""
+    t = accumulation("sos")
+    t.path([124.6, 123.6, 122.4, 121.6, 121.4, 121.3])
+    return t
+
+
+def phase_d_invalidated() -> Tape:
+    """After the SOS, a collapse: two closes more than 0.5 ATR under the Spring low before
+    three closes under the middle — RS_INVALID at 327 (L1208)."""
+    t = accumulation("sos")
+    t.path([124.8, 121.0, 118.0, 117.9, 117.8])
+    return t
+
+
+RETEST = 343
+
+
+def demoted_then_tested_again() -> Tape:
+    """Demoted at 329, the campaign forms a new Spring (333) and its Test (343) — a
+    qualifying Phase C test that cannot enter: entryTime survived the demotion."""
+    t = phase_d_demoted()
+    t.path([121.0, 120.6, 120.3])  # 330-332
+    t.bar(120.3, 120.9, 119.3, 120.8, 140).mark("spring2")  # 333
+    t.path([121.2, 121.4, 121.0, 120.6, 120.3])  # 334-338
+    t.bar(120.3, 120.6, 119.8, 120.45, 70).mark("test2")  # 339
+    t.path([120.8, 121.2, 121.6, 122.0, 122.4])  # 340-344
+    return t
+
+
+RE_SOS = 334
+
+
+def re_sos() -> Tape:
+    """After the LPS (333), a wide, high-effort close above the AR high is a renewed SOS
+    at 334 (L1678-1685)."""
+    t = accumulation("lps")
+    t.bar(125.8, 126.9, 125.7, 126.8, 250)  # 334
+    return t
+
+
+E_FAILED = 342
+
+
+def phase_e_fails() -> Tape:
+    """Phase E (336), then three closes back under the range middle: RS_EEND at 342
+    (L1221)."""
+    t = accumulation()
+    t.path([126.0, 124.5, 123.0, 122.0, 121.8, 121.6])
+    return t
+
+
+E_TIMEOUT = 637
+
+
+def phase_e_times_out() -> Tape:
+    """Phase E (336) holds above the range for more than 300 bars: RS_EEND at 637
+    (L1222)."""
+    t = accumulation()
+    t.flat(305)
+    return t
+
+
+RESEEDED = 377
+
+
+def phase_e_replaced() -> Tape:
+    """Phase E (336), the markup runs on and ends in a buying climax at 377 that seeds a
+    distribution campaign in place of the accumulation (L1237, L1260-1271)."""
+    t = accumulation()
+    t.trend(40, 0.3)  # 337-376
+    c = t.close
+    t.bar(c, c + 2.5, c - 0.2, c + 1.0, 400).mark("bc")  # 377
+    t.path([round(t.close - 0.6 * k, 6) for k in range(1, 5)])  # 378-381
+    return t
