@@ -22,18 +22,9 @@ from kterminal.strategies.wyckoff_auto.wyckoff_engine import RESEED, Strictness
 from tests.unit.strategies.pine_port_support import real_catalog, run
 from tests.unit.strategies.wyckoff_auto.scenario import (
     Row,
-    Tape,
     Trace,
-    accumulation,
-    demoted_then_tested_again,
-    phase_c_goes_stale_then_new_climax,
-    phase_c_quietly_invalidated,
-    phase_d_demoted,
-    phase_e_fails,
-    phase_e_replaced,
-    provisional_spring,
     run_engine,
-    terminal_test,
+    stitched,
 )
 
 # phase changes of one campaign within one bar (demotion is D → B, adoption B → D)
@@ -159,35 +150,6 @@ def test_the_strategy_only_exits_its_own_campaign(symbol: str, timeframe: str, s
             campaign = meta["serial"]
         elif signal.signal.value == "FLATTEN":
             assert signal.metadata["campaign_serial"] == campaign
-
-
-def stitched() -> Tape:
-    """The targeted scenarios back to back, accumulations and mirrored distributions in
-    turn, each shifted to open at the previous close: complete campaigns, entries and
-    every exit, with the context of the campaign before each one."""
-    parts = [
-        accumulation(),
-        phase_d_demoted().mirrored(),
-        terminal_test(),
-        provisional_spring().mirrored(),
-        phase_e_fails(),
-        phase_c_goes_stale_then_new_climax().mirrored(),
-        demoted_then_tested_again(),
-        phase_e_replaced().mirrored(),
-        phase_c_quietly_invalidated(),
-    ]
-    out = Tape(parts[0].rows[0][0])
-    for part in parts:
-        shift = round(out.close - part.rows[0][0], 6) if out.rows else 0.0
-        for o, h, low, c, v in part.rows:
-            out.bar(
-                round(o + shift, 6),
-                round(h + shift, 6),
-                round(low + shift, 6),
-                round(c + shift, 6),
-                v,
-            )
-    return out
 
 
 @pytest.mark.parametrize(

@@ -515,3 +515,69 @@ def phase_e_replaced() -> Tape:
     t.bar(c, c + 2.5, c - 0.2, c + 1.0, 400).mark("bc")  # 377
     t.path([round(t.close - 0.6 * k, 6) for k in range(1, 5)])  # 378-381
     return t
+
+
+def stitched() -> Tape:
+    """The targeted scenarios back to back, accumulations and mirrored distributions in
+    turn, each shifted to open at the previous close: complete campaigns with entries and
+    every kind of exit, each with the context of the campaign before it (3,159 bars)."""
+    parts = [
+        accumulation(),
+        phase_d_demoted().mirrored(),
+        terminal_test(),
+        provisional_spring().mirrored(),
+        phase_e_fails(),
+        phase_c_goes_stale_then_new_climax().mirrored(),
+        demoted_then_tested_again(),
+        phase_e_replaced().mirrored(),
+        phase_c_quietly_invalidated(),
+    ]
+    out = Tape(parts[0].rows[0][0])
+    for part in parts:
+        shift = round(out.close - part.rows[0][0], 6) if out.rows else 0.0
+        for o, h, low, c, v in part.rows:
+            out.bar(
+                round(o + shift, 6),
+                round(h + shift, 6),
+                round(low + shift, 6),
+                round(c + shift, 6),
+                v,
+            )
+    return out
+
+
+def minute_bars(
+    tape: Tape, *, instrument: str, start: datetime = T0, minutes: int = 15
+) -> list[Bar]:
+    """Each ``minutes``-bar of the tape as 1-minute bars that aggregate back to it exactly:
+    the price runs open → low → high → close (open → high → low → close on a down bar)
+    through waypoints on minute boundaries, on the 0.01 grid; the volume is split into
+    whole units."""
+    m1 = Timeframe.parse("1m")
+    third = minutes // 3
+    out: list[Bar] = []
+    for i, (o, h, low, c, v) in enumerate(tape.rows):
+        points = (o, low, h, c) if c >= o else (o, h, low, c)
+
+        def at(t: int, points: tuple[float, ...] = points) -> float:
+            seg = min(t // third, 2)
+            a, b = points[seg], points[seg + 1]
+            return round(a + (b - a) * (t - seg * third) / third, 2)
+
+        base, extra = divmod(int(v), minutes)
+        for k in range(minutes):
+            p0, p1 = at(k), at(k + 1)
+            out.append(
+                Bar.of(
+                    instrument,
+                    m1,
+                    start + timedelta(minutes=i * minutes + k),
+                    repr(p0),
+                    repr(max(p0, p1)),
+                    repr(min(p0, p1)),
+                    repr(p1),
+                    base + (1 if k < extra else 0),
+                    source="tape",
+                )
+            )
+    return out
