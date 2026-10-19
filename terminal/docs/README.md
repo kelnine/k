@@ -25,6 +25,7 @@ accounts.
 | 15 | [Market data](15-market-data.md) | Data source map, venue providers (Binance, Bybit, Coinbase, Hyperliquid, OANDA, CSV), limits, geo-restrictions, CSV/TradingView import, `kterminal data` |
 | 16 | [Running paper trading](16-running-paper-trading.md) | Runbook: starting, watching, restarting and replacing forward paper sessions; the kill switch; troubleshooting |
 | 17 | [Dashboard](17-dashboard.md) | The web terminal: first user, sign-in and roles, pages, metrics, kill switches from the browser, the `/api/v1` read API, Caddy deployment |
+| 18 | [Quick start on your computer](18-quick-start.md) | Windows or Mac with Docker Desktop: `start.ps1` / `start.sh`, the first login, the OANDA token, what you see in the first hour, everyday commands |
 | S1·S7·S8 | [Ports: EliteAlgo, SuperTrend flip, PSAR](ports-s1-s7-s8.md) | The first Pine ports: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | S2·S3 | [Ports: Opening range breakout, Smart Money sniper](ports-s2-s3.md) | NY and London ORB with the EMA 9/20 filter and the 16:00 flatten; the script 5 sniper (BOS + score, 2R): strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |
 | S4·S5 | [Ports: ICT Sweep Models B and A](ports-s4-s5.md) | Script 2's sweep → MSS → displacement-FVG limit models: strategies, `instances.d` instances, doc 13 decisions applied, what is and is not verified |

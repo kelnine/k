@@ -273,7 +273,8 @@ def _file_overrides(environ: dict[str, str]) -> dict[str, Any]:
         if not all(field_path):
             continue
         try:
-            value = Path(path).read_text(encoding="utf-8").strip()
+            # utf-8-sig: a file saved by a Windows editor may start with a byte-order mark.
+            value = Path(path).read_text(encoding="utf-8-sig").strip()
         except OSError as exc:
             raise OSError(f"cannot read {name}={path!r}: {exc.strerror}") from None
         node = overrides

@@ -78,6 +78,11 @@ secrets: ## Generate deploy/secrets/* (never committed)
 		chmod 444 deploy/secrets/session_secret; \
 		echo "created deploy/secrets/session_secret"; \
 	else echo "deploy/secrets/session_secret already exists"; fi
+	@if [ ! -f deploy/secrets/oanda_token ]; then \
+		: > deploy/secrets/oanda_token; \
+		chmod 644 deploy/secrets/oanda_token; \
+		echo "created deploy/secrets/oanda_token (empty: paste your OANDA token into it)"; \
+	else echo "deploy/secrets/oanda_token already exists"; fi
 
 up: secrets ## Build and start the full stack
 	$(COMPOSE) up -d --build

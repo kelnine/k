@@ -6,8 +6,9 @@ forward-test them on simulated prop-style accounts, receive TradingView
 signals, report to Telegram — and, only after validation, execute on demo,
 prop-firm and live accounts.
 
-> **Status: Phase 2 of 11 complete — database, instrument catalog and strategy lab.**
-> Strategies run side by side on paper accounts; no real orders exist yet.
+> **Status: Phase 3 — the Pine strategy ports paper trade on live market data.**
+> Twelve ported strategies (54 instances) run side by side, each on its own paper
+> account, with a web dashboard; no real orders exist yet.
 > LIVE execution is not implemented and is guarded by multiple interlocks.
 
 ## Design
@@ -55,6 +56,14 @@ and an instance to `config/lab.yaml`; each instance gets its own paper account
 | Processes | `kterminal api` (FastAPI: `/health/live`, `/health/ready`, `/api/v1/system/info`), `kterminal engine` (Postgres advisory-lock leader election — exactly one active engine, automatic standby takeover, stops if leadership is lost), `kterminal worker` |
 | Containers | Multi-stage non-root image; Compose stack (Postgres on an internal network, Docker secrets, read-only containers, dropped capabilities); Caddy with automatic HTTPS and the TradingView IP allow-list |
 | CI | Ruff, mypy `--strict`, architecture contracts, unit + integration tests on real PostgreSQL, image build and smoke test, Compose and Caddyfile validation |
+
+## See it running on your computer
+
+Windows or Mac with Docker Desktop: from the `terminal` folder run
+`powershell -ExecutionPolicy Bypass -File .\start.ps1` (Windows) or
+`bash start.sh` (Mac), then open https://localhost. Every strategy instance
+paper trades on live prices in its own Paper 50K account. Step by step:
+[docs/18](docs/18-quick-start.md).
 
 ## Quick start (local development)
 

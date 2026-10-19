@@ -58,6 +58,28 @@ def test_the_oanda_token_comes_from_a_secret_file_and_is_masked(
     assert settings.trading.live_trading_permitted is False
 
 
+@pytest.mark.parametrize("content", ["", "\n", "  \r\n"])
+def test_an_empty_token_file_means_no_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
+) -> None:
+    # Docker setups always mount deploy/secrets/oanda_token; it stays empty until pasted.
+    secret = tmp_path / "oanda_token"
+    secret.write_text(content)
+    monkeypatch.setenv("KT_MARKETDATA__OANDA_TOKEN_FILE", str(secret))
+    assert not load_settings(env_file=None).marketdata.oanda_configured
+
+
+def test_a_token_file_saved_on_windows_is_read_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "oanda_token"
+    secret.write_bytes("\ufeffabc-123-token\r\n".encode())  # BOM + CRLF (Notepad)
+    monkeypatch.setenv("KT_MARKETDATA__OANDA_TOKEN_FILE", str(secret))
+    token = load_settings(env_file=None).marketdata.oanda_token
+    assert token is not None
+    assert token.get_secret_value() == "abc-123-token"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

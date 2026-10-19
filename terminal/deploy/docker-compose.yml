@@ -1,8 +1,11 @@
 # K Terminal — production-style stack.
 #
 #   make secrets     # once: generates deploy/secrets/postgres_password and
-#                    # deploy/secrets/session_secret (signs dashboard sessions, docs/17)
+#                    # deploy/secrets/session_secret (signs dashboard sessions, docs/17),
+#                    # and an empty deploy/secrets/oanda_token for your OANDA token
 #   make up          # build + start (runs `make secrets` first)
+#
+# Without make: ./start.sh (macOS, Linux) or start.ps1 (Windows) — docs/18-quick-start.md.
 #
 # Only Caddy publishes ports. PostgreSQL lives on an internal network with no
 # internet access. Each process receives only the secrets it needs (broker
@@ -87,6 +90,16 @@ services:
     <<: *backend
     command: ["engine"]
     stop_grace_period: 30s   # let in-flight order handling finish
+    environment:
+      <<: *backend-env
+      # Market data for paper trading (docs/15-market-data.md). The OANDA token (FX,
+      # metals, index CFDs; read-only candle downloads) is a Docker secret: paste it
+      # into deploy/secrets/oanda_token. An empty file means "no token".
+      KT_MARKETDATA__OANDA_TOKEN_FILE: /run/secrets/oanda_token
+      KT_MARKETDATA__OANDA_ENVIRONMENT: ${KT_MARKETDATA__OANDA_ENVIRONMENT:-practice}
+      # Venues this machine must not use (e.g. blocked in your country), comma-separated.
+      KT_MARKETDATA__DISABLED_PROVIDERS: ${KT_MARKETDATA__DISABLED_PROVIDERS:-}
+    secrets: [postgres_password, oanda_token]
     networks: [data, egress]
 
   worker:
@@ -126,6 +139,8 @@ secrets:
     file: ./secrets/postgres_password
   session_secret:
     file: ./secrets/session_secret
+  oanda_token:
+    file: ./secrets/oanda_token
 
 volumes:
   pgdata:
