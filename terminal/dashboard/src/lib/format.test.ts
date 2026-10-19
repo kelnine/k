@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, between, dateTime, decimal, fixed, label, money, params, pct, qty, ratio, rMultiple, ruleDetails, seconds, shortId, toNumber, tone } from './format'
+import { ago, between, dateTime, decimal, fixed, instrumentsLabel, label, money, params, pct, qty, ratio, rMultiple, ruleDetails, seconds, shortId, toNumber, tone } from './format'
 
 describe('numbers', () => {
   it('parses decimal strings and refuses junk', () => {
@@ -94,6 +94,13 @@ describe('labels', () => {
     expect(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a527')).toBe('a7a7a527')
     expect(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a528')).not.toBe(shortId('01a13cc6-efc4-7214-b50d-b08ba7a7a527'))
     expect(shortId('6ee1b0891c03a9f2', 12)).toBe('6ee1b0891c03')
+  })
+
+  it('shortens long instrument lists to a count', () => {
+    expect(instrumentsLabel(['XAUUSD'])).toBe('XAUUSD')
+    expect(instrumentsLabel(['XAUUSD', 'EURUSD', 'BTCUSD'])).toBe('XAUUSD, EURUSD, BTCUSD')
+    expect(instrumentsLabel(['XAUUSD', 'EURUSD', 'BTCUSD', 'US30'])).toBe('4 instruments')
+    expect(instrumentsLabel([])).toBe('')
   })
 })
 

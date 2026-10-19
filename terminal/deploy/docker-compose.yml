@@ -1,9 +1,8 @@
 # K Terminal — production-style stack.
 #
-#   make secrets     # once: generates deploy/secrets/postgres_password
-#   python3 -c "import secrets; print(secrets.token_urlsafe(48))" > secrets/session_secret
-#                    # once: signs dashboard sessions (docs/17-dashboard.md)
-#   make up          # build + start
+#   make secrets     # once: generates deploy/secrets/postgres_password and
+#                    # deploy/secrets/session_secret (signs dashboard sessions, docs/17)
+#   make up          # build + start (runs `make secrets` first)
 #
 # Only Caddy publishes ports. PostgreSQL lives on an internal network with no
 # internet access. Each process receives only the secrets it needs (broker

@@ -3,7 +3,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import type { Account } from '../api/types'
-import { fixed, money, params, pct, ratio, rMultiple, tone } from '../lib/format'
+import { fixed, instrumentsLabel, money, params, pct, ratio, rMultiple, tone } from '../lib/format'
 import { DEFAULT_SORT, facets, filterAccounts, nextSort, sortAccounts, type Sort, type SortKey } from '../lib/leaderboard'
 import { navigate } from '../lib/router'
 import { instanceColor } from '../kcharts/trades'
@@ -102,8 +102,8 @@ export function Leaderboard({
                     </div>
                   </td>
                   <td className="setup">
-                    <div>
-                      {a.version?.instruments.join(', ')} · {a.version?.timeframe}
+                    <div title={a.version?.instruments.join(', ')}>
+                      {instrumentsLabel(a.version?.instruments ?? [])} · {a.version?.timeframe}
                     </div>
                     <div className="muted small mono" title={params(a.version?.params)}>
                       {params(a.version?.params)}

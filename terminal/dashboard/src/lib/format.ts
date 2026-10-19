@@ -152,6 +152,12 @@ export function params(values: Record<string, unknown> | null | undefined): stri
     .join(' ')
 }
 
+/** A short instrument list as is; a long one as a count (`XAUUSD, EURUSD` / `15 instruments`). */
+export function instrumentsLabel(instruments: readonly string[], max = 3): string {
+  if (instruments.length <= max) return instruments.join(', ')
+  return `${instruments.length} instruments`
+}
+
 /** `SESSION_CLOSE` → `Session close`. */
 export function label(code: string | null | undefined): string {
   if (!code) return '—'

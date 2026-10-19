@@ -765,7 +765,8 @@ select:focus,
   max-width: 260px;
 }
 
-.board .setup .mono {
+.board .setup > div {
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
