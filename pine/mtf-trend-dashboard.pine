@@ -1,0 +1,232 @@
+//@version=6
+indicator("MTF Trend Dashboard + FVG Zones", shorttitle = "MTF Trend", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs: trend
+// ─────────────────────────────────────────────────────────────────────────────
+grpT     = "Trend"
+method   = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = grpT,
+     tooltip = "Structure: bullish after price closes above the last swing high, bearish after it closes below the last swing low.\nEMA: bullish when the fast EMA is above the slow EMA.")
+swingLen = input.int(5, "Swing length (Structure)", minval = 1, group = grpT)
+emaFast  = input.int(9, "Fast EMA", minval = 1, group = grpT)
+emaSlow  = input.int(21, "Slow EMA", minval = 2, group = grpT)
+
+grpTF = "Timeframes"
+on1 = input.bool(true, "Row 1", inline = "t1", group = grpTF)
+tf1 = input.timeframe("1", "", inline = "t1", group = grpTF)
+on2 = input.bool(true, "Row 2", inline = "t2", group = grpTF)
+tf2 = input.timeframe("3", "", inline = "t2", group = grpTF)
+on3 = input.bool(true, "Row 3", inline = "t3", group = grpTF)
+tf3 = input.timeframe("5", "", inline = "t3", group = grpTF)
+on4 = input.bool(true, "Row 4", inline = "t4", group = grpTF)
+tf4 = input.timeframe("15", "", inline = "t4", group = grpTF)
+on5 = input.bool(true, "Row 5", inline = "t5", group = grpTF)
+tf5 = input.timeframe("60", "", inline = "t5", group = grpTF)
+on6 = input.bool(true, "Row 6", inline = "t6", group = grpTF)
+tf6 = input.timeframe("240", "", inline = "t6", group = grpTF)
+on7 = input.bool(true, "Row 7", inline = "t7", group = grpTF)
+tf7 = input.timeframe("D", "", inline = "t7", group = grpTF)
+on8 = input.bool(true, "Row 8", inline = "t8", group = grpTF)
+tf8 = input.timeframe("W", "", inline = "t8", group = grpTF)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs: table look
+// ─────────────────────────────────────────────────────────────────────────────
+grpS      = "Table"
+posIn     = input.string("Bottom Right", "Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = grpS)
+sizeIn    = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = grpS)
+showClock = input.bool(true, "Show bar close countdown", group = grpS)
+bullBg    = input.color(#E8622C, "Bullish", inline = "c1", group = grpS)
+bearBg    = input.color(#000000, "Bearish", inline = "c1", group = grpS)
+flatBg    = input.color(#555555, "No trend yet", inline = "c1", group = grpS)
+headBg    = input.color(#000000, "Header", inline = "c2", group = grpS)
+labelBg   = input.color(#3A3A3A, "Timeframe column", inline = "c2", group = grpS)
+txtC      = input.color(color.white, "Text", inline = "c3", group = grpS)
+borderC   = input.color(#6B6B6B, "Border", inline = "c3", group = grpS)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs: fair value gap zones
+// ─────────────────────────────────────────────────────────────────────────────
+grpZ       = "FVG Zones"
+showZ      = input.bool(true, "Show fair value gaps", group = grpZ)
+minAtr     = input.float(0.25, "Min gap size (x ATR 14)", minval = 0, step = 0.05, group = grpZ)
+maxZ       = input.int(10, "Max active zones", minval = 1, maxval = 100, group = grpZ)
+mitig      = input.string("Wick", "Mitigated when", options = ["Wick", "Close"], group = grpZ,
+     tooltip = "Wick: any wick through the far edge ends the zone. Close: a candle must close through it.")
+keepOld    = input.bool(false, "Keep mitigated zones on chart", group = grpZ)
+showMid    = input.bool(true, "Show 50% line", group = grpZ)
+extendBars = input.int(15, "Extend right (bars)", minval = 0, group = grpZ)
+bullZ      = input.color(color.new(#E8622C, 75), "Bullish fill", inline = "z1", group = grpZ)
+bearZ      = input.color(color.new(#1E1E1E, 45), "Bearish fill", inline = "z1", group = grpZ)
+zBorder    = input.color(color.black, "Border", inline = "z2", group = grpZ)
+midC       = input.color(color.black, "50% line", inline = "z2", group = grpZ)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trend logic (runs on each requested timeframe)
+// ─────────────────────────────────────────────────────────────────────────────
+f_structure(int len) =>
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    var float lastH = na
+    var float lastL = na
+    var int   tr    = 0
+    if not na(ph)
+        lastH := ph
+    if not na(pl)
+        lastL := pl
+    if not na(lastH) and close > lastH
+        tr    := 1
+        lastH := na
+    if not na(lastL) and close < lastL
+        tr    := -1
+        lastL := na
+    tr
+
+f_calc() =>
+    s = f_structure(swingLen)
+    e = ta.ema(close, emaFast) > ta.ema(close, emaSlow) ? 1 : -1
+    method == "Structure" ? s : e
+
+t1 = request.security(syminfo.tickerid, tf1, f_calc())
+t2 = request.security(syminfo.tickerid, tf2, f_calc())
+t3 = request.security(syminfo.tickerid, tf3, f_calc())
+t4 = request.security(syminfo.tickerid, tf4, f_calc())
+t5 = request.security(syminfo.tickerid, tf5, f_calc())
+t6 = request.security(syminfo.tickerid, tf6, f_calc())
+t7 = request.security(syminfo.tickerid, tf7, f_calc())
+t8 = request.security(syminfo.tickerid, tf8, f_calc())
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_pos(string s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+f_size(string s) =>
+    switch s
+        "Tiny"  => size.tiny
+        "Small" => size.small
+        "Large" => size.large
+        => size.normal
+
+// "60" -> "1H", "240" -> "4H", "D" -> "1D", "W" -> "1W"
+f_tfLabel(string tf) =>
+    float sec = timeframe.in_seconds(tf)
+    sec < 60 ? str.tostring(sec) + "s" :
+     sec < 3600 ? str.tostring(math.round(sec / 60)) + "m" :
+     sec < 86400 ? str.tostring(math.round(sec / 3600)) + "H" :
+     sec < 604800 ? str.tostring(math.round(sec / 86400)) + "D" :
+     sec < 2419200 ? str.tostring(math.round(sec / 604800)) + "W" :
+     str.tostring(math.round(sec / 2628003)) + "M"
+
+// time left until the current chart bar closes, e.g. "03:41"
+f_countdown() =>
+    string out = ""
+    if not na(time_close)
+        float r = math.max(0.0, (time_close - timenow) / 1000.0)
+        int h = math.floor(r / 3600)
+        int m = math.floor((r - h * 3600) / 60)
+        int s = math.floor(r - h * 3600 - m * 60)
+        out := h > 0 ? str.format("{0}:{1,number,00}:{2,number,00}", h, m, s) : str.format("{0,number,00}:{1,number,00}", m, s)
+    out
+
+// draws one row if enabled; returns the next free row
+f_row(table t, int row, bool on, string tf, int tr, string ts) =>
+    int next = row
+    if on
+        string txt = tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "—"
+        color  bg  = tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
+        table.cell(t, 0, row, f_tfLabel(tf), text_color = txtC, bgcolor = labelBg, text_size = ts)
+        table.cell(t, 1, row, txt, text_color = txtC, bgcolor = bg, text_size = ts)
+        next := row + 1
+    next
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard table
+// ─────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(f_pos(posIn), 2, 9, frame_color = borderC, frame_width = 1, border_color = borderC, border_width = 1)
+
+if barstate.islast
+    string ts = f_size(sizeIn)
+    table.clear(dash, 0, 0, 1, 8)
+    string head = syminfo.ticker + (showClock ? "   " + f_countdown() : "")
+    table.cell(dash, 0, 0, "Timeframe", text_color = txtC, bgcolor = labelBg, text_size = ts)
+    table.cell(dash, 1, 0, head, text_color = txtC, bgcolor = headBg, text_size = ts)
+    int r = 1
+    r := f_row(dash, r, on1, tf1, t1, ts)
+    r := f_row(dash, r, on2, tf2, t2, ts)
+    r := f_row(dash, r, on3, tf3, t3, ts)
+    r := f_row(dash, r, on4, tf4, t4, ts)
+    r := f_row(dash, r, on5, tf5, t5, ts)
+    r := f_row(dash, r, on6, tf6, t6, ts)
+    r := f_row(dash, r, on7, tf7, t7, ts)
+    r := f_row(dash, r, on8, tf8, t8, ts)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fair value gap zones (box + dashed 50% line, extended until mitigated)
+// ─────────────────────────────────────────────────────────────────────────────
+type Zone
+    box   bx
+    line  mid
+    float top
+    float bot
+    bool  bull
+
+var array<Zone> zones = array.new<Zone>()
+atr = ta.atr(14)
+
+f_kill(Zone z) =>
+    box.delete(z.bx)
+    line.delete(z.mid)
+
+if showZ
+    // extend live zones, retire mitigated ones
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            bool hit = z.bull ? (mitig == "Wick" ? low : close) < z.bot : (mitig == "Wick" ? high : close) > z.top
+            if hit
+                if keepOld
+                    box.set_right(z.bx, bar_index)
+                    if not na(z.mid)
+                        line.set_x2(z.mid, bar_index)
+                else
+                    f_kill(z)
+                zones.remove(i)
+            else
+                box.set_right(z.bx, bar_index + extendBars)
+                if not na(z.mid)
+                    line.set_x2(z.mid, bar_index + extendBars)
+
+    // new gaps: candle 1 high vs candle 3 low (bullish) / candle 1 low vs candle 3 high (bearish)
+    bool bullGap = low > high[2] and (low - high[2]) >= minAtr * atr
+    bool bearGap = high < low[2] and (low[2] - high) >= minAtr * atr
+    if bullGap or bearGap
+        float top = bullGap ? low : low[2]
+        float bot = bullGap ? high[2] : high
+        float m   = (top + bot) / 2
+        box  b    = box.new(bar_index - 2, top, bar_index + extendBars, bot, border_color = zBorder, border_width = 1, bgcolor = bullGap ? bullZ : bearZ)
+        line l    = showMid ? line.new(bar_index - 2, m, bar_index + extendBars, m, color = midC, style = line.style_dashed, width = 1) : na
+        zones.push(Zone.new(b, l, top, bot, bullGap))
+        if zones.size() > maxZ
+            f_kill(zones.shift())
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts: every enabled timeframe agrees
+// ─────────────────────────────────────────────────────────────────────────────
+f_agree(int dir) =>
+    (not on1 or t1 == dir) and (not on2 or t2 == dir) and (not on3 or t3 == dir) and (not on4 or t4 == dir) and
+     (not on5 or t5 == dir) and (not on6 or t6 == dir) and (not on7 or t7 == dir) and (not on8 or t8 == dir)
+
+allBull = f_agree(1)
+allBear = f_agree(-1)
+alertcondition(allBull and not allBull[1], "All timeframes bullish", "{{ticker}}: every timeframe in the dashboard is now Bullish")
+alertcondition(allBear and not allBear[1], "All timeframes bearish", "{{ticker}}: every timeframe in the dashboard is now Bearish")
