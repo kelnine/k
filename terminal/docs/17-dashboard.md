@@ -14,7 +14,7 @@ there is no endpoint that places an order or changes an account's mode.
 |---|---|---|
 | Single-page app | `terminal/dashboard` (React 18, TypeScript, Vite) | The pages; polls the API every 10 s (no WebSocket yet) |
 | Dashboard API | `kterminal.api` (`/api/v1`, `api` process) | JSON read models, sign-in, kill switches; serves no static files |
-| Edge proxy | `deploy/caddy` (Caddy) | HTTPS, security headers, the SPA's files, `/api/*` and `/health/*` to the API |
+| Edge proxy | `deploy/caddy` (Caddy) | HTTPS, security headers, the SPA's files, `/api/*` to the API (`/health/*` stays internal); listens on 127.0.0.1 unless `KT_BIND_ADDRESS` is set |
 
 Screenshots of every page are in [`terminal/dashboard/screenshots/`](../dashboard/screenshots/)
 (demo data from synthetic providers; see [the dashboard README](../dashboard/README.md)).
@@ -213,10 +213,15 @@ the bars that exist; gaps are never filled.
 runs `npm ci` and `npm run build` (type-check + Vite bundle), then
 `caddy:2-alpine` gets the Caddyfile and the bundle in `/srv/dashboard`. Build
 context is `terminal/`; `Dockerfile.dockerignore` sends only the dashboard
-sources and the Caddyfile. In the Caddyfile, `/api/*` and `/health/*` go to
-`api:8000`, the TradingView webhook path keeps its IP allow-list, and every
+sources and the Caddyfile. In the Caddyfile, `/api/*` goes to `api:8000`,
+`/health/*` answers 404 (the probes are for the container health checks only),
+the TradingView webhook path keeps its IP allow-list, and every
 other path is a file of the bundle or — for client-side routes —
 `index.html`. Hashed assets are cached for a year, `index.html` never.
+
+Compose publishes Caddy's ports on `127.0.0.1` only, so the dashboard opens on
+the computer that runs it and nowhere else. On a server with a domain, set
+`KT_PUBLIC_DOMAIN` and `KT_BIND_ADDRESS=0.0.0.0` in `terminal/.env`.
 
 CI (`.github/workflows/terminal-ci.yml`, job `dashboard`) runs `npm ci`, the
 type-check, the unit tests (vitest), the production build, builds the Caddy

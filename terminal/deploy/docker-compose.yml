@@ -7,7 +7,8 @@
 #
 # Without make: ./start.sh (macOS, Linux) or start.ps1 (Windows) — docs/18-quick-start.md.
 #
-# Only Caddy publishes ports. PostgreSQL lives on an internal network with no
+# Only Caddy publishes ports, on 127.0.0.1 unless KT_BIND_ADDRESS says otherwise.
+# PostgreSQL lives on an internal network with no
 # internet access. Each process receives only the secrets it needs (broker
 # credentials → engine only, Telegram token → worker only, from Phase 7/9).
 
@@ -23,8 +24,11 @@ x-backend: &backend
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   environment: &backend-env
-    KT_ENVIRONMENT: ${KT_ENVIRONMENT:-production}
-    KT_LOGGING__FORMAT: ${KT_LOGGING__FORMAT:-json}
+    # Fixed for this stack, not taken from .env (a .env made for running without Docker
+    # says development/console, which would switch off the production safeguards or,
+    # with console logs, stop every service). docker-compose.dev.yml overrides them.
+    KT_ENVIRONMENT: production
+    KT_LOGGING__FORMAT: json
     KT_LOGGING__LEVEL: ${KT_LOGGING__LEVEL:-INFO}
     KT_DATABASE__URL: postgresql+asyncpg://kterminal@postgres:5432/kterminal
     KT_DATABASE__PASSWORD_FILE: /run/secrets/postgres_password
@@ -115,10 +119,12 @@ services:
     restart: unless-stopped
     environment:
       KT_PUBLIC_DOMAIN: ${KT_PUBLIC_DOMAIN:-localhost}
+    # Only this computer can open the dashboard (https://localhost). On a server with
+    # a domain (KT_PUBLIC_DOMAIN), set KT_BIND_ADDRESS=0.0.0.0 in .env to publish it.
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:443:443"
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:443:443/udp"
     volumes:
       - caddy_data:/data
       - caddy_config:/config

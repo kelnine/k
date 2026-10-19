@@ -36,13 +36,13 @@
 		reverse_proxy api:8000
 	}
 
-	# The dashboard API (session cookie + CSRF token; see docs/17-dashboard.md) and
-	# the health probes.
+	# The dashboard API (session cookie + CSRF token; see docs/17-dashboard.md). The
+	# health probes stay internal (container health checks), as docs/09 requires.
 	handle /api/* {
 		reverse_proxy api:8000
 	}
 	handle /health/* {
-		reverse_proxy api:8000
+		respond 404
 	}
 
 	# The dashboard: a single-page app. A path that is not a file is a client-side

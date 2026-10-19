@@ -145,6 +145,9 @@ computer, so continue: Chrome or Edge, **Advanced → Continue to localhost**;
 Safari, **Show Details → visit this website**. Sign in with the login from
 step 4.
 
+The dashboard opens only on this computer: other devices on your network
+(or anyone on a public Wi-Fi) cannot reach it.
+
 ## What you will see
 
 | Page | What it shows |
