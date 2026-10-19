@@ -42,19 +42,27 @@ no_users_yet() {
   compose exec -T api kterminal users list </dev/null 2>/dev/null | grep -q "^no users yet"
 }
 
-# Ask for a username, then `users add` asks for the password twice. A rejected
-# password (too short, contains the username …) is simply asked again.
+# Ask for the username here (checked before anything runs in Docker), then `users add`
+# asks for the password twice. Only the password is asked again after a rejection:
+# a prompt after an interactive `docker compose exec` may read a disturbed terminal.
 create_login() {
-  local attempt username
-  for attempt in 1 2 3; do
+  local attempt username=""
+  while :; do
     echo
-    echo "Create your dashboard login (password: at least 12 characters)."
-    username=""
-    read -r -p "Username (a-z, 0-9, '.', '_', '-'): " username || true
+    echo "Create your dashboard login."
+    read -r -p "Username (3-32 characters: a letter first, then letters, digits, '.', '_' or '-'): " username || username=""
+    username=$(printf '%s' "$username" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
     if [ -z "$username" ]; then
       echo "No login created. Create one later with: bash start.sh --login"
       return 0
     fi
+    if printf '%s' "$username" | grep -Eq '^[a-z][a-z0-9_.-]{2,31}$'; then
+      break
+    fi
+    echo "That username is not allowed."
+  done
+  echo "Now choose a password of at least 12 characters (asked twice; nothing shows while you type)."
+  for attempt in 1 2 3; do
     if compose exec api kterminal users add "$username" --role ADMIN; then
       return 0
     fi
