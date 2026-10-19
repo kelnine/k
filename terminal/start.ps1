@@ -1,13 +1,17 @@
 # K Terminal: build and start everything with Docker (Windows).
 #
 # In PowerShell, from the terminal folder:
-#   powershell -ExecutionPolicy Bypass -File .\start.ps1
+#   powershell -ExecutionPolicy Bypass -File .\start.ps1           # start (or restart)
+#   powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login    # only create a dashboard login
 #
-# First run: creates secrets, builds, starts and offers to create your login.
+# First run: creates secrets, builds, starts and asks for your login.
 # Later runs: rebuild what changed and restart; data is kept.
+# Run without a keyboard (by an assistant or a scheduler), it never waits for input:
+# a missing login is created in a new PowerShell window that opens for you.
 # Stop with:  docker compose --project-directory deploy -f deploy/docker-compose.yml stop
 # Step-by-step guide: docs/18-quick-start.md. (ASCII only: Windows PowerShell 5.1
 # reads scripts without a byte-order mark in the legacy code page.)
+param([switch]$Login)
 
 # Not 'Stop': Windows PowerShell 5.1 turns redirected stderr of native commands
 # (docker) into errors, which 'Stop' would make fatal. Exit codes are checked instead.
@@ -22,6 +26,52 @@ docker info *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Docker is not running. Start Docker Desktop, wait until it says it is running, then run this again.' -ForegroundColor Red
     exit 1
+}
+
+$compose = @('compose', '--project-directory', 'deploy')
+if (Test-Path (Join-Path $PSScriptRoot '.env')) { $compose += @('--env-file', '.env') }
+$compose += @('-f', 'deploy/docker-compose.yml')
+
+function Test-Interactive {
+    if (-not [Environment]::UserInteractive) { return $false }
+    if ([Console]::IsInputRedirected) { return $false }
+    foreach ($arg in [Environment]::GetCommandLineArgs()) {
+        if ($arg -like '-noni*') { return $false }
+    }
+    return $true
+}
+
+function Test-NoUsers {
+    $users = ($null | & docker @compose exec -T api kterminal users list 2>$null) -join "`n"
+    return ($users -match '(?m)^no users yet')
+}
+
+# Ask for a username, then `users add` asks for the password twice. A rejected
+# password (too short, contains the username ...) is simply asked again.
+function New-Login {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Write-Host ''
+        Write-Host 'Create your dashboard login (password: at least 12 characters).'
+        $username = ''
+        try { $username = Read-Host "Username (a-z, 0-9, '.', '_', '-')" } catch { $username = '' }
+        if (-not $username) {
+            Write-Host 'No login created. Create one later with: powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login'
+            return
+        }
+        & docker @compose exec api kterminal users add $username --role ADMIN
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+    Write-Host 'No login created. Try again with: powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login'
+}
+
+if ($Login) {
+    $null | & docker @compose exec -T api true *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'The terminal is not running. Start it first: powershell -ExecutionPolicy Bypass -File .\start.ps1' -ForegroundColor Red
+        exit 1
+    }
+    New-Login
+    exit 0
 }
 
 # Secrets live only on this machine (deploy/secrets is never committed). Written as
@@ -46,12 +96,8 @@ if (-not (Test-Path $oanda)) {
     Write-Host 'created deploy\secrets\oanda_token (empty: paste your OANDA token into it to trade FX, gold and indices)'
 }
 
-$compose = @('compose', '--project-directory', 'deploy')
-if (Test-Path (Join-Path $PSScriptRoot '.env')) { $compose += @('--env-file', '.env') }
-$compose += @('-f', 'deploy/docker-compose.yml')
-
 Write-Host 'Building and starting (the first time takes a few minutes)...'
-& docker @compose up -d --build
+$null | & docker @compose up -d --build
 if ($LASTEXITCODE -ne 0) { Write-Host 'Starting failed (see the messages above).' -ForegroundColor Red; exit 1 }
 
 Write-Host 'Waiting for the terminal to answer...'
@@ -68,13 +114,17 @@ if (-not $ready) {
     exit 1
 }
 
-$users = ($null | & docker @compose exec -T api kterminal users list 2>$null) -join "`n"
-if ($users -match '(?m)^no users yet') {
-    Write-Host ''
-    Write-Host 'Create your dashboard login (password: at least 12 characters).'
-    $username = Read-Host "Username (a-z, 0-9, '.', '_', '-')"
-    if ($username) {
-        & docker @compose exec api kterminal users add $username --role ADMIN
+if (Test-NoUsers) {
+    if (Test-Interactive) {
+        New-Login
+    } elseif ($env:OS -eq 'Windows_NT') {
+        # No keyboard here: the person types their own username and password in a
+        # window of their own (never through whoever runs this script).
+        $shell = (Get-Process -Id $PID).Path
+        Start-Process -FilePath $shell -ArgumentList @('-NoExit', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Login')
+        Write-Host 'No dashboard login yet: a PowerShell window has opened to create it.'
+    } else {
+        Write-Host 'No dashboard login yet. In a terminal window, in this folder, run: pwsh -File ./start.ps1 -Login'
     }
 }
 

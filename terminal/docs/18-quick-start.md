@@ -18,6 +18,65 @@ running. A computer that sleeps at night pauses it; it catches up when it wakes.
 | The code | GitHub repository `kelnine/k`, branch `claude/epic-gates-fbjol7` |
 | Optional | A free OANDA practice account, for gold, silver, FX and indices (step 3) |
 
+## The easy way: let Claude on your computer do it
+
+A Claude session that runs **on your computer** can do every step below for
+you; you only approve what it asks and type your own passwords. (Claude in the
+cloud cannot reach your computer.)
+
+1. Open the **Claude desktop app**, go to **Code** and start a session on this
+   computer (not in the cloud). Pick a folder such as your Documents folder.
+2. Paste the prompt below and send it. Approve the steps it asks about.
+
+```text
+Set up K Terminal on this computer and start it. It is a paper-trading terminal
+(no real orders) from the public GitHub repository kelnine/k, branch
+claude/epic-gates-fbjol7. Work in a folder named KTerminal inside the folder of
+this session.
+
+1. Download https://github.com/kelnine/k/archive/refs/heads/claude/epic-gates-fbjol7.zip
+   and unzip it into KTerminal (the zip holds one top folder; the terminal is its
+   "terminal" subfolder). Read terminal/docs/18-quick-start.md and follow it.
+2. Check Docker with "docker info". If Docker Desktop is missing, ask me first,
+   then install it: Windows "winget install -e --id Docker.DockerDesktop"; Mac
+   "brew install --cask docker" if Homebrew is installed, otherwise the Docker.dmg
+   for my chip from docs.docker.com. Tell me when a restart is needed (I will
+   come back to this session and say "continue"). Have me open Docker Desktop,
+   accept its terms and wait for "Engine running", and tick "Start Docker Desktop
+   when you sign in" in its settings.
+3. Ask me whether I have an OANDA practice API token (for gold, silver, forex and
+   indices). If yes, make sure terminal/deploy/secrets/oanda_token exists and open
+   it in Notepad (Windows) or TextEdit (Mac) so that I paste the token myself.
+   Never ask me to paste the token into this chat and never print that file.
+4. In the terminal folder run the start script: Windows
+   "powershell -ExecutionPolicy Bypass -File .\start.ps1", Mac "bash start.sh".
+   The first build takes 5-10 minutes. If no dashboard login exists, the script
+   opens a separate window where I type my username and password myself; wait
+   until I say I am done. If no window opened, ask me to run the login command
+   the script printed, in a terminal of my own.
+5. Open https://localhost in my browser and tell me how to pass the certificate
+   warning (the certificate is made by this computer).
+6. Ask me whether this computer should stay awake while it is plugged in (paper
+   trading pauses while it sleeps); change the power setting only if I agree.
+
+If a step fails, show me the error and the fix from the guide. Do not edit the
+files of the terminal and do not run "docker compose down -v".
+```
+
+Later, to install a new version, start a session in the same folder and paste:
+
+```text
+Update K Terminal in the KTerminal folder to the latest version of branch
+claude/epic-gates-fbjol7 of github.com/kelnine/k, following "Installing a new
+version" in terminal/docs/18-quick-start.md of the new version: download the
+branch zip into a new folder, move terminal/deploy/secrets and terminal/.env (if
+present) over from the old folder, end the open paper session, start the new
+version with the start script, then delete the old folder only after the new
+one runs and I agree.
+```
+
+The rest of this page is the same setup done by hand.
+
 ## 1. Install Docker Desktop
 
 **Windows:** run the installer, keep the default (WSL 2), restart when asked.
@@ -152,6 +211,18 @@ dc run --rm engine paper end-session
 
 then run the start script again.
 
+**Installing a new version.** Your data lives in Docker, not in the folder, so
+a new version simply replaces the folder:
+
+1. Download and unzip the new version next to the old folder.
+2. Move `terminal/deploy/secrets` (and `terminal/.env`, if you made one) from
+   the old folder into the new one.
+3. In the new `terminal` folder: `dc stop engine`, then
+   `dc run --rm engine paper end-session` (new code cannot continue a session
+   that old code started; this closes its paper positions at their last price).
+4. Run the start script in the new folder. Delete the old folder once the new
+   one runs.
+
 **Start over completely** (deletes every account, trade and login):
 `dc down -v`, then the start script.
 
@@ -164,6 +235,7 @@ then run the start script again.
 | Sign-in page does not load | Wait a minute after the start script finishes; `dc ps` should show `api` as *healthy* |
 | Status *Error* on the Overview | The message says why; [16.8](16-running-paper-trading.md#168-when-something-goes-wrong) lists the causes |
 | Status *Error: cannot be resumed* after updating the code or the settings | The strategies changed, so the old session cannot continue: `dc exec engine kterminal paper end-session` starts a new one within a minute |
+| No login was created (the window was closed, or the start ran without a keyboard) | Windows `powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login`; Mac `bash start.sh --login` |
 | Forgot the password | `dc exec api kterminal users set-password NAME` |
 
 Background for the curious: how paper trading works,
