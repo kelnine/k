@@ -73,6 +73,11 @@ secrets: ## Generate deploy/secrets/* (never committed)
 		chmod 444 deploy/secrets/postgres_password; \
 		echo "created deploy/secrets/postgres_password"; \
 	else echo "deploy/secrets/postgres_password already exists"; fi
+	@if [ ! -f deploy/secrets/session_secret ]; then \
+		python3 -c "import secrets; print(secrets.token_urlsafe(48))" > deploy/secrets/session_secret; \
+		chmod 444 deploy/secrets/session_secret; \
+		echo "created deploy/secrets/session_secret"; \
+	else echo "deploy/secrets/session_secret already exists"; fi
 
 up: secrets ## Build and start the full stack
 	$(COMPOSE) up -d --build
