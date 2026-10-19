@@ -39,7 +39,7 @@ this session.
    "terminal" subfolder). Read terminal/docs/18-quick-start.md and follow it.
 2. Check Docker with "docker info". If Docker Desktop is missing, ask me first,
    then install it: Windows "winget install -e --id Docker.DockerDesktop"; Mac
-   "brew install --cask docker" if Homebrew is installed, otherwise the Docker.dmg
+   "brew install --cask docker-desktop" if Homebrew is installed, otherwise the Docker.dmg
    for my chip from docs.docker.com. Tell me when a restart is needed (I will
    come back to this session and say "continue"). Have me open Docker Desktop,
    accept its terms and wait for "Engine running", and tick "Start Docker Desktop
@@ -51,9 +51,10 @@ this session.
 4. In the terminal folder run the start script: Windows
    "powershell -ExecutionPolicy Bypass -File .\start.ps1", Mac "bash start.sh".
    The first build takes 5-10 minutes. If no dashboard login exists, the script
-   opens a separate window where I type my username and password myself; wait
-   until I say I am done. If no window opened, ask me to run the login command
-   the script printed, in a terminal of my own.
+   opens a separate window where I type my username and password myself (a Mac
+   may first ask me to allow controlling Terminal); wait until I say I am done.
+   If no window opened, ask me to run the login command the script printed, in
+   a terminal of my own.
 5. Open https://localhost in my browser and tell me how to pass the certificate
    warning (the certificate is made by this computer).
 6. Ask me whether this computer should stay awake while it is plugged in (paper
