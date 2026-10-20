@@ -62,6 +62,15 @@ eqTolAtr  = input.float(0.1, "Tolerance (× ATR)", minval = 0, step = 0.05, tool
 eqMax     = input.int(4, "Max EH / EL shown", minval = 1, maxval = 50, group = G_EQ)
 eqCol     = input.color(#ff9800, "Color", group = G_EQ)
 
+const string G_SIG = "Setups (sweep → iFVG)"
+showSig   = input.bool(true, "Show BUY / SELL setups", tooltip = "BUY: a session low or PDL is swept, then a bearish FVG closes through into a bullish iFVG within the window. SELL is the mirror image.", group = G_SIG)
+sigWindow = input.int(20, "Max bars from sweep to iFVG", minval = 1, maxval = 200, group = G_SIG)
+sigRR     = input.float(2.0, "Target (R multiple)", minval = 0.5, step = 0.5, group = G_SIG)
+sigKZ     = input.bool(false, "Only during London / NY AM / NY PM", group = G_SIG)
+showTrade = input.bool(true, "Draw entry / stop / target zones", group = G_SIG)
+buyCol    = input.color(#089981, "Buy", inline = "c1", group = G_SIG)
+sellCol   = input.color(#f23645, "Sell", inline = "c1", group = G_SIG)
+
 const string G_MA = "EMA cloud"
 showCloud = input.bool(true, "Show EMA cloud", group = G_MA)
 fastLen   = input.int(9, "Fast EMA", minval = 1, inline = "m1", group = G_MA)
@@ -158,16 +167,22 @@ float atr = ta.atr(14)
 bool bullFVG = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
 bool bearFVG = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
 
-if showFVG and (bullFVG or bearFVG)
+if bullFVG or bearFVG
     float top = bullFVG ? low : low[2]
     float btm = bullFVG ? high[2] : high
     string tag = tagSession ? sessTag : ""
-    color col = bullFVG ? fvgUpCol : fvgDnCol
+    color col = showFVG ? (bullFVG ? fvgUpCol : fvgDnCol) : color(na)
     box bx = box.new(bar_index - 2, top, bar_index, btm, border_color = color.new(col, 100), bgcolor = col,
-         text = tag + "FVG", text_size = size.tiny, text_color = color.new(color.gray, 0), text_halign = text.align_right)
+         text = showFVG ? tag + "FVG" : "", text_size = size.tiny, text_color = color.new(color.gray, 0), text_halign = text.align_right)
     gaps.push(Gap.new(bx, top, btm, bullFVG, false, tag))
     if gaps.size() > fvgMax
         box.delete(gaps.shift().bx)
+
+// Newest zone that flipped into an iFVG on this bar, used by the setups below.
+bool  newBullInv = false
+bool  newBearInv = false
+float invTop = na
+float invBtm = na
 
 if gaps.size() > 0
     for i = gaps.size() - 1 to 0
@@ -182,8 +197,14 @@ if gaps.size() > 0
                 g.inverted := true
                 g.bull := true
             if g.inverted
-                g.bx.set_bgcolor(g.bull ? ifvgBullCol : ifvgBearCol)
-                g.bx.set_text(g.tag + "iFVG")
+                if showFVG
+                    g.bx.set_bgcolor(g.bull ? ifvgBullCol : ifvgBearCol)
+                    g.bx.set_text(g.tag + "iFVG")
+                if not (newBullInv or newBearInv)
+                    newBullInv := g.bull
+                    newBearInv := not g.bull
+                    invTop := g.top
+                    invBtm := g.btm
         else
             // An iFVG is invalidated once price closes back through it.
             dead := g.bull ? close < g.btm : close > g.top
@@ -210,6 +231,101 @@ var int   rthT    = na
 if rthStart
     rthOpen := open
     rthT    := time
+
+// ─────────────────────────────── Setups: sweep → iFVG ───────────────────────────────
+// True on the first bar that trades through a level after it is set; levels are
+// ignored while their own session is still forming them.
+sweepCheck(float lvl, bool active, bool isHigh) =>
+    var bool done = false
+    if lvl != lvl[1]
+        done := false
+    bool hit = false
+    if not active and not done and not na(lvl)
+        hit := isHigh ? high > lvl : low < lvl
+        if hit
+            done := true
+    hit
+
+bool sAsiaH  = sweepCheck(asiaH, inAsia, true)
+bool sAsiaL  = sweepCheck(asiaL, inAsia, false)
+bool sLonH   = sweepCheck(lonH, inLon, true)
+bool sLonL   = sweepCheck(lonL, inLon, false)
+bool sAmH    = sweepCheck(amH, inAM, true)
+bool sAmL    = sweepCheck(amL, inAM, false)
+bool sLunchH = sweepCheck(lunchH, inLunch, true)
+bool sLunchL = sweepCheck(lunchL, inLunch, false)
+bool sPmH    = sweepCheck(pmH, inPM, true)
+bool sPmL    = sweepCheck(pmL, inPM, false)
+bool sPDH    = sweepCheck(pdh, false, true)
+bool sPDL    = sweepCheck(pdl, false, false)
+
+string lowSwept  = sPDL ? "PDL" : sAsiaL ? "ASIA.L" : sLonL ? "LON.L" : sAmL ? "AM.L" : sLunchL ? "LUNCH.L" : sPmL ? "PM.L" : ""
+string highSwept = sPDH ? "PDH" : sAsiaH ? "ASIA.H" : sLonH ? "LON.H" : sAmH ? "AM.H" : sLunchH ? "LUNCH.H" : sPmH ? "PM.H" : ""
+
+// Most recent unused sweep on each side and the extreme reached since (the stop).
+var int    slBar  = na
+var float  slExt  = na
+var string slName = ""
+var int    shBar  = na
+var float  shExt  = na
+var string shName = ""
+
+if lowSwept != ""
+    slBar  := bar_index
+    slExt  := low
+    slName := lowSwept
+else if not na(slBar)
+    slExt := math.min(slExt, low)
+if highSwept != ""
+    shBar  := bar_index
+    shExt  := high
+    shName := highSwept
+else if not na(shBar)
+    shExt := math.max(shExt, high)
+
+if not na(slBar) and bar_index - slBar > sigWindow
+    slBar := na
+if not na(shBar) and bar_index - shBar > sigWindow
+    shBar := na
+
+// Only the latest trades are kept so they don't crowd out other boxes (500 limit).
+var array<box> tradeBoxes = array.new<box>()
+
+drawTrade(float entry, float stop, float target) =>
+    int x2 = bar_index + 20
+    tradeBoxes.push(box.new(bar_index, math.max(entry, stop), x2, math.min(entry, stop), border_color = color.new(sellCol, 60), bgcolor = color.new(sellCol, 85),
+         text = "SL " + str.tostring(stop, format.mintick), text_size = size.tiny, text_color = sellCol, text_halign = text.align_right))
+    tradeBoxes.push(box.new(bar_index, math.max(entry, target), x2, math.min(entry, target), border_color = color.new(buyCol, 60), bgcolor = color.new(buyCol, 85),
+         text = "TP " + str.tostring(target, format.mintick) + " (" + str.tostring(sigRR) + "R)", text_size = size.tiny, text_color = buyCol, text_halign = text.align_right))
+    while tradeBoxes.size() > 40
+        box.delete(tradeBoxes.shift())
+
+bool kzOK = not sigKZ or inLon or inAM or inPM
+
+float buyEntry  = invTop
+float buyRisk   = buyEntry - slExt
+bool  buySig    = showSig and kzOK and newBullInv and not na(slBar) and buyRisk > 0
+float sellEntry = invBtm
+float sellRisk  = shExt - sellEntry
+bool  sellSig   = showSig and kzOK and newBearInv and not na(shBar) and sellRisk > 0
+
+if buySig
+    float target = buyEntry + sigRR * buyRisk
+    label.new(bar_index, low, "BUY\nswept " + slName, yloc = yloc.belowbar, color = buyCol, style = label.style_label_up, textcolor = color.white, size = size.small)
+    if showTrade
+        drawTrade(buyEntry, slExt, target)
+    alert(syminfo.ticker + " BUY setup: swept " + slName + " → bullish iFVG. Entry " + str.tostring(buyEntry, format.mintick)
+         + "  Stop " + str.tostring(slExt, format.mintick) + "  Target " + str.tostring(target, format.mintick), alert.freq_once_per_bar_close)
+    slBar := na
+
+if sellSig
+    float target = sellEntry - sigRR * sellRisk
+    label.new(bar_index, high, "SELL\nswept " + shName, yloc = yloc.abovebar, color = sellCol, style = label.style_label_down, textcolor = color.white, size = size.small)
+    if showTrade
+        drawTrade(sellEntry, shExt, target)
+    alert(syminfo.ticker + " SELL setup: swept " + shName + " → bearish iFVG. Entry " + str.tostring(sellEntry, format.mintick)
+         + "  Stop " + str.tostring(shExt, format.mintick) + "  Target " + str.tostring(target, format.mintick), alert.freq_once_per_bar_close)
+    shBar := na
 
 // ─────────────────────────────── NDOG / NWOG ───────────────────────────────
 var array<box> ndogs = array.new<box>()
@@ -330,3 +446,5 @@ if barstate.islast
 // ─────────────────────────────── Alerts ───────────────────────────────
 alertcondition(bullFVG, "Bullish FVG", "Bullish FVG formed on {{ticker}}")
 alertcondition(bearFVG, "Bearish FVG", "Bearish FVG formed on {{ticker}}")
+alertcondition(buySig, "BUY setup", "{{ticker}} BUY setup: sweep → bullish iFVG")
+alertcondition(sellSig, "SELL setup", "{{ticker}} SELL setup: sweep → bearish iFVG")
