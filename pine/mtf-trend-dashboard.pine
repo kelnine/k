@@ -108,18 +108,16 @@ f_calc(bool closedOnly) =>
     float outL = closedOnly ? lvl[1] : lvl
     [outT, outL]
 
-// higher timeframes need lookahead_on + [1] to read only closed candles
-f_up(string tf) =>
-    confirmed and timeframe.in_seconds(tf) > timeframe.in_seconds()
-
-[t1, l1] = request.security(syminfo.tickerid, tf1, f_calc(confirmed), lookahead = f_up(tf1) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t2, l2] = request.security(syminfo.tickerid, tf2, f_calc(confirmed), lookahead = f_up(tf2) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t3, l3] = request.security(syminfo.tickerid, tf3, f_calc(confirmed), lookahead = f_up(tf3) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t4, l4] = request.security(syminfo.tickerid, tf4, f_calc(confirmed), lookahead = f_up(tf4) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t5, l5] = request.security(syminfo.tickerid, tf5, f_calc(confirmed), lookahead = f_up(tf5) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t6, l6] = request.security(syminfo.tickerid, tf6, f_calc(confirmed), lookahead = f_up(tf6) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t7, l7] = request.security(syminfo.tickerid, tf7, f_calc(confirmed), lookahead = f_up(tf7) ? barmerge.lookahead_on : barmerge.lookahead_off)
-[t8, l8] = request.security(syminfo.tickerid, tf8, f_calc(confirmed), lookahead = f_up(tf8) ? barmerge.lookahead_on : barmerge.lookahead_off)
+// lookahead stays off; in "closed bars only" mode f_calc returns the previous candle's value,
+// which on the live bar is the last CLOSED candle of every timeframe (higher or lower)
+[t1, l1] = request.security(syminfo.tickerid, tf1, f_calc(confirmed))
+[t2, l2] = request.security(syminfo.tickerid, tf2, f_calc(confirmed))
+[t3, l3] = request.security(syminfo.tickerid, tf3, f_calc(confirmed))
+[t4, l4] = request.security(syminfo.tickerid, tf4, f_calc(confirmed))
+[t5, l5] = request.security(syminfo.tickerid, tf5, f_calc(confirmed))
+[t6, l6] = request.security(syminfo.tickerid, tf6, f_calc(confirmed))
+[t7, l7] = request.security(syminfo.tickerid, tf7, f_calc(confirmed))
+[t8, l8] = request.security(syminfo.tickerid, tf8, f_calc(confirmed))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -258,7 +256,8 @@ f_gap() =>
     [bu[1], be[1], tp[1], bt[1], time[3], a[1]]
 
 [hBu, hBe, hTp, hBt, hT, hA] = request.security(syminfo.tickerid, tfReq, f_gap(), lookahead = barmerge.lookahead_on)
-bool newHtfBar = timeframe.change(tfReq)
+// a new higher-timeframe candle started when the gap's left-edge time moves on
+bool newHtfBar = not na(hT) and hT != nz(hT[1])
 
 bool  cBull = zHtf ? newHtfBar and hBu and hTp - hBt >= minAtr * hA : low > high[2] and low - high[2] >= minAtr * atr
 bool  cBear = zHtf ? newHtfBar and hBe and hTp - hBt >= minAtr * hA : high < low[2] and low[2] - high >= minAtr * atr
