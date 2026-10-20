@@ -1,0 +1,91 @@
+# Coinbase International Exchange (INTX): USDC-settled linear perpetuals for
+# non-US clients, funding exchanged HOURLY. venue_symbol is the native INTX API
+# symbol (BTC-PERP); the Coinbase Advanced Trade API addresses the same product
+# as BTC-PERP-INTX (listing alias). Specs from the ccxt coinbase /
+# coinbaseinternational fixtures (May 2025 snapshot), confirmed by the verify
+# pass — re-sync before use.
+#
+# No INTX profile exists in costs.yaml: crypto_perp_hyperliquid is the closest
+# STRUCTURE (USDC perps, % of notional fees, hourly funding at 1/8 of the 8 h
+# baseline); INTX's own fee tiers were not researched — an assumption.
+
+venue: coinbase_intx
+
+listings:
+  - instrument: BTCUSD
+    venue_symbol: BTC-PERP
+    aliases: [BTC-PERP-INTX]
+    contract_type: PERPETUAL
+    tick_size: "0.1"            # quote_increment
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.0001"           # base_min_size
+    qty_step: "0.0001"          # base_increment
+    min_notional: "10"          # quote_min_size 10 USDC
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/coinbase.json
+    notes: >-
+      May 2025 snapshot: quote_increment 0.1, base_increment = base_min_size
+      0.0001, quote_min_size 10 USDC, max leverage 20, hourly funding. Not
+      available to US clients.
+
+  - instrument: SOLUSD
+    venue_symbol: SOL-PERP
+    aliases: [SOL-PERP-INTX]
+    contract_type: PERPETUAL
+    tick_size: "0.001"          # price_increment
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.001"
+    qty_step: "0.001"
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/coinbase.json
+    notes: >-
+      May 2025 snapshot: price_increment 0.001, base_increment = base_min_size
+      0.001, quote_min_size 10 USDC, max leverage 20, hourly funding.
+
+  # ── metals perps (24/7) ────────────────────────────────────────────────────
+  # Launched 2026-05-06 (reported); trade 24/7/365 except scheduled
+  # maintenance, hence the crypto_24x7 calendar override.
+  - instrument: XAUUSD
+    venue_symbol: GOLD-PERP
+    aliases: [GOLD-PERP-INTX]
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.01"           # placeholder (canonical tick)
+    contract_size: "1"          # research (medium, unverified): 1 troy oz per contract unit
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDC
+    trading_hours: crypto_24x7
+    cost_profile: crypto_perp_hyperliquid
+    source: https://www.kitco.com/news/article/2026-05-07/coinbase-launches-gold-perp-and-silver-perp-futures-offering-247365-metals
+    notes: >-
+      spec unverified — enable after syncing from the venue API (INTX
+      instruments: increments, contract size, funding cadence). Exists on INTX
+      (status TRADING, underlying_type COMMOD, 2026-09-24 dump); reported up to
+      25x.
+
+  - instrument: XAGUSD
+    venue_symbol: SILVER-PERP
+    aliases: [SILVER-PERP-INTX]
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.001"          # placeholder (canonical tick)
+    contract_size: "1"          # research (medium, unverified): 1 troy oz per contract unit
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDC
+    trading_hours: crypto_24x7
+    cost_profile: crypto_perp_hyperliquid
+    source: https://www.kitco.com/news/article/2026-05-07/coinbase-launches-gold-perp-and-silver-perp-futures-offering-247365-metals
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Exists on
+      INTX (status TRADING); reported up to 20x.

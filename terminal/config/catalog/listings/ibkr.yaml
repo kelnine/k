@@ -1,0 +1,51 @@
+# Interactive Brokers (TWS / IB Gateway API). Contract specs are CME's (see
+# cme.yaml).
+#
+# A futures Contract is symbol + secType FUT + exchange CME (IBKR renamed
+# GLOBEX to CME; older code uses GLOBEX) + currency USD +
+# lastTradeDateOrContractMonth YYYYMM (+ multiplier, tradingClass). The
+# symbol_format below renders "<symbol> <YYYYMM>" (MNQ 202612); the adapter
+# splits it into those Contract fields. Equivalent forms: localSymbol MNQZ6,
+# or the conId cached after the first lookup.
+#
+# Costs: IBKR's tiered commission plus pass-through fees (CME non-member
+# exchange fee ~$0.35/side micro, ~$1.38/side E-mini, plus NFA); the
+# micro-specific commission tier was not verified.
+
+venue: ibkr
+
+listings:
+  - instrument: MNQ
+    venue_symbol: MNQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "2"            # multiplier=2
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_micro_equity
+    symbol_format: "{root} {yyyy}{mm}"
+    verified_on: "2026-10-06"
+    source: https://www.interactivebrokers.com/campus/ibkr-api-page/contracts/
+    notes: >-
+      symbol=MNQ, secType=FUT, exchange=CME, currency=USD,
+      lastTradeDateOrContractMonth=202612, multiplier=2, tradingClass=MNQ,
+      localSymbol=MNQZ6.
+
+  - instrument: NQ
+    venue_symbol: NQ
+    contract_type: FUTURE
+    tick_size: "0.25"
+    contract_size: "20"           # multiplier=20
+    quantity_unit: CONTRACTS
+    min_qty: "1"
+    qty_step: "1"
+    quote_currency: USD
+    cost_profile: cme_emini_equity   # E-mini fees (see cme.yaml)
+    symbol_format: "{root} {yyyy}{mm}"
+    verified_on: "2026-10-06"
+    source: https://www.interactivebrokers.com/campus/ibkr-api-page/contracts/
+    notes: >-
+      symbol=NQ, secType=FUT, exchange=CME, multiplier=20, localSymbol=NQZ6,
+      lastTradeDateOrContractMonth=202612.

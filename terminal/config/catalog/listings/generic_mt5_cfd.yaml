@@ -1,0 +1,220 @@
+# Generic prop-firm MT5 CFD server — a TYPICAL server, not any one firm.
+#
+# These are the common VERIFIED conventions (research 2026-10-06 + verify
+# pass). A real firm/server must become its own venue with listings synced from
+# MT5 symbol_info (trade_contract_size, trade_tick_size, volume_min/step/max,
+# swap_mode, swap_long/short, swap_rollover3days) before an account trades on
+# it: contract sizes and digits genuinely differ between servers.
+#
+#   metals / FX  100 oz gold, 5,000 oz silver, 100,000-unit FX lots, 0.01 lot
+#                min/step (typical MT5 contract sizes per several symbol_info
+#                exports; research medium, confirmed by the verify pass).
+#   indices      modelled on FTMO-Demo's MT5 symbol_info export (2026-09-28):
+#                US100.cash / US30.cash / US500.cash all contract size 1 ($1 per
+#                index point per lot), 2 digits (tick 0.01), volume 0.01-1000
+#                step 0.01, swap in points (swap_mode 1), triple swap FRIDAY.
+#                Tickmill USTEC is the same (cs 1, tick 0.01). Other servers
+#                quote 0.1 (Capital.com, OANDA, BlackBull) — the verify pass
+#                rejected 0.1 as a generic default. Contract sizes of 10 (VT
+#                Markets, unverified) and 20 (NQ-mirroring ".pro" symbols)
+#                exist: sizing breaks 10x if contract size 1 is assumed there.
+#   crypto CFDs  NOT verified (1 lot = 1 BTC is only "widely reported"; SOL
+#                lots of 1, 10 or 100 all occur) -> tradable: false.
+#
+# Swap/rollover happens at server midnight = 17:00 New York on NY-close
+# servers; FX and metals triple on WEDNESDAY (T+2), index CFDs on FRIDAY
+# (FTMO, Tickmill, OANDA). Swap is quoted in different units per server —
+# points (FTMO, swap_mode 1), money per lot in the margin currency (Tickmill
+# USTEC, swap_mode 3) or an annual % (RoboMarkets) — so read swap_mode, never
+# assume one. The cost profiles named here are ASSUMPTIONS (costs.yaml).
+# Index CFDs carry dividend adjustments (cash CFDs: longs credited, shorts
+# debited) that the cost model does not include.
+#
+# Futures-based / forward CFDs (NAS100-F, USTEC.F, NAS100FT, US30-F, US500-F,
+# US500.f) expire quarterly and price in the basis — a different product, so
+# none of those names is an alias here.
+
+venue: generic_mt5_cfd
+
+listings:
+  # ── metals ─────────────────────────────────────────────────────────────────
+  - instrument: XAUUSD
+    venue_symbol: XAUUSD
+    aliases: [GOLD]
+    contract_type: CFD
+    tick_size: "0.01"          # 2 digits; some servers quote 3 (0.001)
+    contract_size: "100"       # troy oz per lot -> tick value $1.00 per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_metals
+    verified_on: "2026-10-06"
+    source: https://cdn.icmarkets.com/uploads/Commodity+Specification+Sheet.pdf
+    notes: >-
+      Typical prop MT5 gold: 100 oz per lot, 2 digits (tick value $1/lot, a
+      $1.00 move = $100/lot). Some servers quote 3 digits or offer 1 oz / 10 oz
+      variants. "Pip" is ambiguous for gold (OANDA 0.01, retail often 0.10) —
+      never derive specs from pips. Max per order often 50-100 lots (firms may
+      cap lower). Swap in points or %, triple on Wednesday. Raw-account
+      commission varies ($0-7 per lot round turn, or % of notional, e.g. FTMO
+      reportedly 0.0007 % per side — unverified).
+
+  - instrument: XAGUSD
+    venue_symbol: XAGUSD
+    aliases: [SILVER]
+    contract_type: CFD
+    tick_size: "0.001"         # 3 digits
+    contract_size: "5000"      # troy oz per lot -> tick value $5.00 per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_silver
+    verified_on: "2026-10-06"
+    source: https://www.robomarkets.de/en/market-trading/trading/specifications/card/prime-prime-ecn/XAGUSD
+    notes: >-
+      Typical prop MT5 silver: 5,000 oz per lot, 3 digits (tick value $5/lot,
+      a $0.01 move = $50/lot). Contract size differs MORE across brokers for
+      silver than gold (1,000 oz and smaller exist) — always read
+      trade_contract_size. Triple swap Wednesday.
+
+  # ── FX ─────────────────────────────────────────────────────────────────────
+  - instrument: EURUSD
+    venue_symbol: EURUSD
+    contract_type: CFD
+    tick_size: "0.00001"       # 5 digits: 1 point = 1/10 pip
+    contract_size: "100000"    # EUR per lot -> $1 per point, $10 per pip per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_fx_majors
+    verified_on: "2026-10-06"
+    source: https://www.tickmill.com/about/faq/when-are-swaps-charged-at-a-triple-rate-for-currency-pairs-and-metals
+    notes: >-
+      Standard 100k lot, 5-digit pricing. Raw-spread prop accounts typically
+      charge ~$5-7 per lot round turn (third-party figures conflict). Spreads
+      blow out around the 17:00 New York rollover and the Sunday open. Triple
+      swap Wednesday.
+
+  - instrument: GBPUSD
+    venue_symbol: GBPUSD
+    contract_type: CFD
+    tick_size: "0.00001"
+    contract_size: "100000"    # GBP per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    quote_currency: USD
+    cost_profile: cfd_fx_gbpusd
+    verified_on: "2026-10-06"
+    source: https://www.tickmill.com/about/faq/when-are-swaps-charged-at-a-triple-rate-for-currency-pairs-and-metals
+    notes: >-
+      Standard 100k lot, 5-digit pricing; spreads typically wider than EURUSD.
+      Triple swap Wednesday.
+
+  # ── US index CFDs (cash) ───────────────────────────────────────────────────
+  - instrument: NAS100
+    venue_symbol: NAS100
+    # Other names of the same cash CFD on MT5 servers (FTMO: US100.cash,
+    # IC Markets / Tickmill: USTEC).
+    aliases: [US100, USTEC, US100.cash, NAS100.cash, USTECH100, NDX100]
+    contract_type: CFD
+    tick_size: "0.01"          # 2 digits as on FTMO-Demo / Tickmill; others 0.1
+    contract_size: "1"         # $1 per index point per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    max_qty: "1000"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_nas100
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/MinnMinn/trading-decision-system/09fc901d7c796d1a64219748724bc306e5e5c6fa/data/history/costs/ftmo/symbolspec.US100.cash.json
+    notes: >-
+      Modelled on FTMO-Demo US100.cash (MT5 symbol_info export 2026-09-28):
+      contract size 1, 2 digits, volume 0.01-1000 step 0.01, swap in points,
+      triple swap Friday; recorded median spread 1.45 points. CONTRACT SIZE
+      VARIES BY BROKER (1 common; 10 and 20 exist) — read
+      SYMBOL_TRADE_CONTRACT_SIZE before sizing. Priced from NQ futures minus
+      fair value; not MNQ/NQ.
+
+  - instrument: US30
+    venue_symbol: US30
+    aliases: [US30.cash, DJ30, WS30]
+    contract_type: CFD
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    max_qty: "1000"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us30
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/MinnMinn/trading-decision-system/09fc901d7c796d1a64219748724bc306e5e5c6fa/data/history/costs/ftmo/symbolspec.US30.cash.json
+    notes: >-
+      Modelled on FTMO-Demo US30.cash (MT5 symbol_info 2026-09-28): contract
+      size 1, tick 0.01 (tick value $0.01), volume 0.01-1000 step 0.01, swap in
+      points, triple swap Friday. The verify pass CONTRADICTS the third-party
+      claim that FTMO US30.cash is 10 contracts ($10/pt); 10x/100x US30
+      variants have no verified broker example but remain possible elsewhere.
+      The Dow is price-weighted: daily ranges are hundreds of points.
+
+  - instrument: US500
+    venue_symbol: US500
+    aliases: [US500.cash, SPX500, SP500]
+    contract_type: CFD
+    tick_size: "0.01"
+    contract_size: "1"
+    quantity_unit: LOTS
+    min_qty: "0.01"
+    qty_step: "0.01"
+    max_qty: "1000"
+    quote_currency: USD
+    cost_profile: cfd_us_indices_us500
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/MinnMinn/trading-decision-system/09fc901d7c796d1a64219748724bc306e5e5c6fa/data/history/costs/ftmo/symbolspec.US500.cash.json
+    notes: >-
+      Modelled on FTMO-Demo US500.cash (MT5 symbol_info 2026-09-28): contract
+      size 1, tick 0.01, volume 0.01-1000 step 0.01, triple swap Friday;
+      recorded median spread 0.46 points. Symbol naming is especially
+      fragmented (US500, SPX500, SP500, USA500, [SP500]).
+
+  # ── crypto CFDs (unverified) ───────────────────────────────────────────────
+  # No cost profile: none in costs.yaml models a crypto CFD (commission as % of
+  # notional plus a daily swap that is often charged 7 days a week).
+  - instrument: BTCUSD
+    venue_symbol: BTCUSD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.01"          # research (low confidence): usually 2 digits
+    contract_size: "1"         # research (low confidence): 1 lot = 1 BTC
+    quantity_unit: LOTS
+    min_qty: "0.01"            # research (low confidence)
+    qty_step: "0.01"           # research (low confidence)
+    quote_currency: USD
+    source: https://fxnx.com/en/blog/btcusd-cfd-contract-specs-lot-size-margin-weekend-swap
+    notes: >-
+      spec unverified — enable after syncing from the venue API (MT5
+      symbol_info). Research (low confidence): 1 lot = 1 BTC, 2 digits, min
+      0.01; commission spread-only or ~0.0325 % of notional per side (FTMO,
+      reported); swap often charged every calendar day; some firms restrict
+      weekend holding. Also needs a crypto-CFD cost profile.
+
+  - instrument: SOLUSD
+    venue_symbol: SOLUSD
+    contract_type: CFD
+    tradable: false
+    tick_size: "0.001"         # placeholder (canonical tick) — unverified
+    contract_size: "1"         # placeholder — servers use 1, 10 or 100 SOL per lot
+    quantity_unit: LOTS
+    min_qty: "0.01"            # placeholder
+    qty_step: "0.01"           # placeholder
+    quote_currency: USD
+    source: https://propfirmmatch.com/crypto/prop-firms/ftmo
+    notes: >-
+      spec unverified — enable after syncing from the venue API (MT5
+      symbol_info). Contract size per lot is NOT standard for SOLUSD (1, 10 and
+      100 SOL per lot all occur), so every number here is a placeholder. Not
+      every prop firm offers SOLUSD.

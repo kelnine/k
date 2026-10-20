@@ -1,0 +1,149 @@
+# S12 · Wyckoff [theUltimator5] (script 6) — the chart-timeframe campaign engine (climax,
+# AR, ST, Phase B, Spring/UTAD, Phase C test, SOS/SOW, LPS/LPSY, Phase E) and its Auto
+# entry for the chosen Entry Strictness.
+# Strategy: backend/src/kterminal/strategies/wyckoff_auto (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  market entry at the next open after the qualifying bar; skipped when that open is
+#       already past the stop (or the 2R target); an entry whose stop is not below
+#       (above) the signal close is not traded (NO_TRADE)
+#   D4  script 6: ignore new entries while in a trade (meta)
+#   D5  stop 0.5 ATR(14) beyond the campaign's hard level (Spring/UTAD extreme, else the
+#       original climax/AR edge); exits only on the campaign's own structure events:
+#       invalidation, D->B demotion, Phase E failure or age > 300 bars, replacement by a
+#       new climax; variant: a fixed 2R target added
+#   D9  effort is volume on every instrument: exchange volume for MNQ and crypto, TICK
+#       volume (OANDA's count of price updates) for metals, index CFDs and FX — each
+#       variant and timeframe runs as two instances so the tick-volume runs carry
+#       "tick volume" in their name and keep their own account and metrics
+#   D10 5m, 15m and 1h, all 14 instruments (7 + 7 per variant and timeframe), one
+#       position per instrument (max_open_positions: 7)
+#   D11 Standard (the script's default) on every timeframe; Conservative, Aggressive and
+#       the 2R variant on 15m
+#   D13 script defaults (the engine's ~106 thresholds are fixed in the script)
+# No higher-timeframe override (the script's default is on): it merges up to four
+# engines into one stream; each timeframe runs as its own instance instead.
+# Warm-up: 1000 bars (the engine is path dependent); forward.warmup_days 16 covers it on
+# 5m and 15m, not on 1h (about 60 days of weekday trading) — see the README.
+# Sizing: stops at the climax/Spring extreme can be wide; an entry that cannot be sized
+# within the account's 0.5 % risk is rejected and recorded (doc 13 §13.8).
+
+- id: wyckoff_auto_standard_5m
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 5m · exchange volume (MNQ, crypto)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_5m_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 5m · tick volume (OANDA metals, indices, FX)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 5m
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, tick-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_15m
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 15m · exchange volume (MNQ, crypto)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_15m_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 15m · tick volume (OANDA metals, indices, FX)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, tick-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_1h
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 1h · exchange volume (MNQ, crypto)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 1h
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_1h_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 1h · tick volume (OANDA metals, indices, FX)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 1h
+  params: { entry_strictness: Standard }
+  tags: [pine-port, script-6, s12, main, tick-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_conservative_15m
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Conservative · 15m · exchange volume (MNQ, crypto)
+  description: Conservative entry on the LPS/LPSY only, once confidence >= 75, validation >= 60 and readiness >= 7 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Conservative }
+  tags: [pine-port, script-6, s12, variant, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_conservative_15m_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Conservative · 15m · tick volume (OANDA metals, indices, FX)
+  description: Conservative entry on the LPS/LPSY only, once confidence >= 75, validation >= 60 and readiness >= 7 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Conservative }
+  tags: [pine-port, script-6, s12, variant, tick-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_aggressive_15m
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Aggressive · 15m · exchange volume (MNQ, crypto)
+  description: Aggressive entry on any Phase C test, or the SOS/SOW when there is none, once confidence >= 55, validation >= 50 and readiness >= 5 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Aggressive }
+  tags: [pine-port, script-6, s12, variant, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_aggressive_15m_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Aggressive · 15m · tick volume (OANDA metals, indices, FX)
+  description: Aggressive entry on any Phase C test, or the SOS/SOW when there is none, once confidence >= 55, validation >= 50 and readiness >= 5 of 9; stop 0.5 ATR beyond the hard level, structure exits (D5); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Aggressive }
+  tags: [pine-port, script-6, s12, variant, tick-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_2r_15m
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 2R target · 15m · exchange volume (MNQ, crypto)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits plus a fixed 2R target (D5 variant); effort = exchange volume (D9).
+  instruments: [MNQ, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Standard, target: 2R }
+  tags: [pine-port, script-6, s12, variant, exchange-volume]
+  account: { max_open_positions: 7 }
+
+- id: wyckoff_auto_standard_2r_15m_tickvol
+  strategy: wyckoff_auto
+  name: Wyckoff Auto · Standard · 2R target · 15m · tick volume (OANDA metals, indices, FX)
+  description: Standard entry (the script's default) on the Phase C test or the LPS/LPSY once confidence >= 60, validation >= 50 and readiness >= 6 of 9; stop 0.5 ATR beyond the hard level, structure exits plus a fixed 2R target (D5 variant); effort = TICK volume (D9).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, EURUSD, GBPUSD]
+  timeframe: 15m
+  params: { entry_strictness: Standard, target: 2R }
+  tags: [pine-port, script-6, s12, variant, tick-volume]
+  account: { max_open_positions: 7 }

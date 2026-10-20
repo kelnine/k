@@ -1,0 +1,322 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=6
+indicator("NQ Price Action Toolkit", "NQ PA", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// Recreates the chart layout: FVG / iFVG zones tagged by session, session highs/lows,
+// PDH/PDL, 00:00 open, NDOG/NWOG opening gaps, a fib dealing range, equal highs/lows
+// and an EMA cloud. All times are New York.
+
+const string TZ = "America/New_York"
+
+// ─────────────────────────────── Inputs ───────────────────────────────
+const string G_FVG = "Fair Value Gaps"
+showFVG     = input.bool(true, "Show FVG / iFVG", group = G_FVG)
+fvgMinSize  = input.float(0.0, "Min gap size (points)", minval = 0, group = G_FVG)
+fvgMax      = input.int(30, "Max zones tracked", minval = 1, maxval = 200, group = G_FVG)
+keepDead    = input.bool(false, "Keep invalidated iFVGs on chart", group = G_FVG)
+tagSession  = input.bool(true, "Prefix zones with session (AM iFVG, LON iFVG…)", group = G_FVG)
+fvgUpCol    = input.color(color.new(#089981, 80), "Bullish FVG", inline = "f1", group = G_FVG)
+fvgDnCol    = input.color(color.new(#f23645, 80), "Bearish FVG", inline = "f1", group = G_FVG)
+ifvgBullCol = input.color(color.new(#4caf50, 65), "Bullish iFVG", inline = "f2", group = G_FVG)
+ifvgBearCol = input.color(color.new(#9c27b0, 65), "Bearish iFVG", inline = "f2", group = G_FVG)
+
+const string G_SES = "Sessions (NY time)"
+showSess  = input.bool(true, "Show session highs / lows", group = G_SES)
+asiaSess  = input.session("2000-0000", "Asia",   inline = "s1", group = G_SES)
+showAsia  = input.bool(true, "", inline = "s1", group = G_SES)
+lonSess   = input.session("0200-0500", "London", inline = "s2", group = G_SES)
+showLon   = input.bool(true, "", inline = "s2", group = G_SES)
+amSess    = input.session("0930-1100", "NY AM",  inline = "s3", group = G_SES)
+showAM    = input.bool(true, "", inline = "s3", group = G_SES)
+lunchSess = input.session("1200-1330", "Lunch",  inline = "s4", group = G_SES)
+showLunch = input.bool(true, "", inline = "s4", group = G_SES)
+pmSess    = input.session("1330-1600", "NY PM",  inline = "s5", group = G_SES)
+showPM    = input.bool(true, "", inline = "s5", group = G_SES)
+sessCol   = input.color(#787b86, "Level color", group = G_SES)
+
+const string G_KEY = "Key levels"
+showPD    = input.bool(true, "Previous day high / low", inline = "k1", group = G_KEY)
+pdCol     = input.color(#f23645, "", inline = "k1", group = G_KEY)
+showMid   = input.bool(true, "00:00 open", inline = "k2", group = G_KEY)
+midCol    = input.color(#5d606b, "", inline = "k2", group = G_KEY)
+showRTH   = input.bool(false, "09:30 open", inline = "k3", group = G_KEY)
+rthCol    = input.color(#ff9800, "", inline = "k3", group = G_KEY)
+
+const string G_OG = "Opening gaps"
+showNDOG  = input.bool(true, "NDOG", inline = "o1", group = G_OG)
+ndogN     = input.int(3, "count", minval = 1, maxval = 20, inline = "o1", group = G_OG)
+ndogCol   = input.color(#2962ff, "", inline = "o1", group = G_OG)
+showNWOG  = input.bool(true, "NWOG", inline = "o2", group = G_OG)
+nwogN     = input.int(3, "count", minval = 1, maxval = 20, inline = "o2", group = G_OG)
+nwogCol   = input.color(#5b9cf6, "", inline = "o2", group = G_OG)
+
+const string G_FIB = "Dealing range (fib)"
+showFib   = input.bool(true, "Show dealing range levels", group = G_FIB)
+fibLen    = input.int(20, "Swing pivot length", minval = 2, group = G_FIB)
+fibCol    = input.color(#ff9800, "Color", group = G_FIB)
+
+const string G_EQ = "Equal highs / lows"
+showEQ    = input.bool(true, "Show EH / EL", group = G_EQ)
+eqLen     = input.int(5, "Pivot length", minval = 1, group = G_EQ)
+eqTol     = input.float(2.0, "Tolerance (points)", minval = 0, group = G_EQ)
+eqCol     = input.color(#ff9800, "Color", group = G_EQ)
+
+const string G_MA = "EMA cloud"
+showCloud = input.bool(true, "Show EMA cloud", group = G_MA)
+fastLen   = input.int(9, "Fast EMA", minval = 1, inline = "m1", group = G_MA)
+slowLen   = input.int(21, "Slow EMA", minval = 1, inline = "m1", group = G_MA)
+cloudUp   = input.color(color.new(#2196f3, 80), "Bull", inline = "m2", group = G_MA)
+cloudDn   = input.color(color.new(#f23645, 75), "Bear", inline = "m2", group = G_MA)
+
+const string G_STY = "Style"
+lvlStyle  = input.string(line.style_solid, "Level line style", options = [line.style_solid, line.style_dashed, line.style_dotted], group = G_STY)
+offsetBar = input.int(15, "Right-side label offset (bars)", minval = 1, maxval = 200, group = G_STY)
+
+// ─────────────────────────────── Types & helpers ───────────────────────────────
+type Gap
+    box   bx
+    float top
+    float btm
+    bool  bull       // true = zone acts as support
+    bool  inverted
+    string tag
+
+// One horizontal level with a right-side label, created once and moved afterwards.
+type Lvl
+    line  ln
+    label lb
+
+method draw(Lvl this, int x1, float y, int x2, string txt, color col, string style) =>
+    if na(y) or na(x1)
+        line.delete(this.ln)
+        label.delete(this.lb)
+        this.ln := na
+        this.lb := na
+    else if na(this.ln)
+        this.ln := line.new(x1, y, x2, y, xloc.bar_time, extend.none, col, style, 1)
+        this.lb := label.new(x2, y, txt, xloc.bar_time, yloc.price, color.new(color.black, 100), label.style_label_left, col, size.small)
+    else
+        this.ln.set_xy1(x1, y)
+        this.ln.set_xy2(x2, y)
+        this.lb.set_xy(x2, y)
+        this.lb.set_text(txt)
+    this
+
+inSession(string sess) =>
+    timeframe.isintraday and not na(time(timeframe.period, sess + ":1234567", TZ))
+
+// Running high/low of the most recent occurrence of a session, plus the bar times they printed.
+sessHL(bool inS) =>
+    var float h  = na
+    var float l  = na
+    var int   ht = na
+    var int   lt = na
+    if inS and not inS[1]
+        h  := high
+        l  := low
+        ht := time
+        lt := time
+    else if inS
+        if high > h
+            h  := high
+            ht := time
+        if low < l
+            l  := low
+            lt := time
+    [h, l, ht, lt]
+
+int barMs = timeframe.in_seconds() * 1000
+int xRight = time + offsetBar * barMs
+
+// ─────────────────────────────── EMA cloud ───────────────────────────────
+fastMA = ta.ema(close, fastLen)
+slowMA = ta.ema(close, slowLen)
+pFast = plot(showCloud ? fastMA : na, "Fast EMA", color.new(#2196f3, 30), 1)
+pSlow = plot(showCloud ? slowMA : na, "Slow EMA", color.new(#f23645, 30), 1)
+fill(pFast, pSlow, fastMA > slowMA ? cloudUp : cloudDn, "EMA cloud")
+
+// ─────────────────────────────── Sessions ───────────────────────────────
+bool inAsia  = inSession(asiaSess)
+bool inLon   = inSession(lonSess)
+bool inAM    = inSession(amSess)
+bool inLunch = inSession(lunchSess)
+bool inPM    = inSession(pmSess)
+
+[asiaH, asiaL, asiaHt, asiaLt]     = sessHL(inAsia)
+[lonH, lonL, lonHt, lonLt]         = sessHL(inLon)
+[amH, amL, amHt, amLt]             = sessHL(inAM)
+[lunchH, lunchL, lunchHt, lunchLt] = sessHL(inLunch)
+[pmH, pmL, pmHt, pmLt]             = sessHL(inPM)
+
+string sessTag = inAsia ? "ASIA " : inLon ? "LON " : inAM ? "AM " : inLunch ? "LUNCH " : inPM ? "PM " : ""
+
+// ─────────────────────────────── FVG / iFVG ───────────────────────────────
+var array<Gap> gaps = array.new<Gap>()
+
+bool bullFVG = low > high[2] and (low - high[2]) >= fvgMinSize
+bool bearFVG = high < low[2] and (low[2] - high) >= fvgMinSize
+
+if showFVG and (bullFVG or bearFVG)
+    float top = bullFVG ? low : low[2]
+    float btm = bullFVG ? high[2] : high
+    string tag = tagSession ? sessTag : ""
+    color col = bullFVG ? fvgUpCol : fvgDnCol
+    box bx = box.new(bar_index - 2, top, bar_index, btm, border_color = color.new(col, 100), bgcolor = col,
+         text = tag + "FVG", text_size = size.tiny, text_color = color.new(color.gray, 0), text_halign = text.align_right)
+    gaps.push(Gap.new(bx, top, btm, bullFVG, false, tag))
+    if gaps.size() > fvgMax
+        box.delete(gaps.shift().bx)
+
+if gaps.size() > 0
+    for i = gaps.size() - 1 to 0
+        Gap g = gaps.get(i)
+        bool dead = false
+        if not g.inverted
+            // A close through the far side flips the gap into an inverse FVG.
+            if g.bull and close < g.btm
+                g.inverted := true
+                g.bull := false
+            else if not g.bull and close > g.top
+                g.inverted := true
+                g.bull := true
+            if g.inverted
+                g.bx.set_bgcolor(g.bull ? ifvgBullCol : ifvgBearCol)
+                g.bx.set_text(g.tag + "iFVG")
+        else
+            // An iFVG is invalidated once price closes back through it.
+            dead := g.bull ? close < g.btm : close > g.top
+        g.bx.set_right(bar_index)
+        if dead
+            if not keepDead
+                g.bx.delete()
+            gaps.remove(i)
+
+// ─────────────────────────────── Key levels ───────────────────────────────
+[pdh, pdl, pdt] = request.security(syminfo.tickerid, "D", [high[1], low[1], time[1]], lookahead = barmerge.lookahead_on)
+
+bool newNYDay = dayofmonth(time, TZ) != dayofmonth(time[1], TZ)
+var float midOpen = na
+var int   midT    = na
+if timeframe.isintraday and newNYDay
+    midOpen := open
+    midT    := time
+
+bool inRTHOpen = inSession("0930-0931")
+bool rthStart = inRTHOpen and not inRTHOpen[1]
+var float rthOpen = na
+var int   rthT    = na
+if rthStart
+    rthOpen := open
+    rthT    := time
+
+// ─────────────────────────────── NDOG / NWOG ───────────────────────────────
+var array<box> ndogs = array.new<box>()
+var array<box> nwogs = array.new<box>()
+
+float ogTop = math.max(open, close[1])
+float ogBtm = math.min(open, close[1])
+
+newOG(array<box> arr, int maxN, string name, color col, float t, float b) =>
+    string txt = name + " " + str.format_time(time, "MMM d", TZ)
+    arr.push(box.new(bar_index, t, bar_index + 1, b, border_color = col, border_width = 1, bgcolor = color.new(col, 80),
+         text = txt, text_size = size.tiny, text_color = col, text_halign = text.align_right, text_valign = text.align_bottom))
+    if arr.size() > maxN
+        box.delete(arr.shift())
+
+if timeframe.isintraday and timeframe.change("W") and showNWOG
+    newOG(nwogs, nwogN, "NWOG", nwogCol, ogTop, ogBtm)
+else if timeframe.isintraday and timeframe.change("D") and showNDOG
+    newOG(ndogs, ndogN, "NDOG", ndogCol, ogTop, ogBtm)
+
+// ─────────────────────────────── Dealing range (fib) ───────────────────────────────
+float ph = ta.pivothigh(high, fibLen, fibLen)
+float pl = ta.pivotlow(low, fibLen, fibLen)
+var float swH = na
+var float swL = na
+var int   swHt = na
+var int   swLt = na
+if not na(ph)
+    swH  := ph
+    swHt := time[fibLen]
+if not na(pl)
+    swL  := pl
+    swLt := time[fibLen]
+
+// ─────────────────────────────── Equal highs / lows ───────────────────────────────
+float eph = ta.pivothigh(high, eqLen, eqLen)
+float epl = ta.pivotlow(low, eqLen, eqLen)
+var float lastEPH = na
+var float lastEPL = na
+var int   lastEPHt = na
+var int   lastEPLt = na
+if not na(eph)
+    if showEQ and not na(lastEPH) and math.abs(eph - lastEPH) <= eqTol
+        line.new(lastEPHt, lastEPH, time[eqLen], eph, xloc.bar_time, color = eqCol, style = line.style_dashed)
+        label.new(time[eqLen], eph, "EH", xloc.bar_time, color = color.new(color.black, 100), style = label.style_label_down, textcolor = eqCol, size = size.small)
+    lastEPH  := eph
+    lastEPHt := time[eqLen]
+if not na(epl)
+    if showEQ and not na(lastEPL) and math.abs(epl - lastEPL) <= eqTol
+        line.new(lastEPLt, lastEPL, time[eqLen], epl, xloc.bar_time, color = eqCol, style = line.style_dashed)
+        label.new(time[eqLen], epl, "EL", xloc.bar_time, color = color.new(color.black, 100), style = label.style_label_up, textcolor = eqCol, size = size.small)
+    lastEPL  := epl
+    lastEPLt := time[eqLen]
+
+// ─────────────────────────────── Drawing (last bar only) ───────────────────────────────
+var Lvl lAsiaH  = Lvl.new()
+var Lvl lAsiaL  = Lvl.new()
+var Lvl lLonH   = Lvl.new()
+var Lvl lLonL   = Lvl.new()
+var Lvl lAmH    = Lvl.new()
+var Lvl lAmL    = Lvl.new()
+var Lvl lLunchH = Lvl.new()
+var Lvl lLunchL = Lvl.new()
+var Lvl lPmH    = Lvl.new()
+var Lvl lPmL    = Lvl.new()
+var Lvl lPDH    = Lvl.new()
+var Lvl lPDL    = Lvl.new()
+var Lvl lMid    = Lvl.new()
+var Lvl lRTH    = Lvl.new()
+
+var array<float>  fibR = array.from(1.111, 1.0, 0.83, 0.71, 0.5, 0.29, 0.17, 0.0, -0.111)
+var array<string> fibN = array.from("1.111 Ext", "1 High", "0.83 LV", "0.71 BR", "0.5 MB", "0.29 BR", "0.17 LV", "0 Low", "-0.111 Ext")
+var array<Lvl>    fibL = array.new<Lvl>()
+
+lvlText(string name, float y) =>
+    name + "  " + str.tostring(y, format.mintick)
+
+if barstate.islast
+    bool ss = showSess and timeframe.isintraday
+    lAsiaH.draw(ss and showAsia ? asiaHt : na, asiaH, xRight, "ASIA.H", sessCol, lvlStyle)
+    lAsiaL.draw(ss and showAsia ? asiaLt : na, asiaL, xRight, "ASIA.L", sessCol, lvlStyle)
+    lLonH.draw(ss and showLon ? lonHt : na, lonH, xRight, "LON.H", sessCol, lvlStyle)
+    lLonL.draw(ss and showLon ? lonLt : na, lonL, xRight, "LON.L", sessCol, lvlStyle)
+    lAmH.draw(ss and showAM ? amHt : na, amH, xRight, "AM.H", sessCol, lvlStyle)
+    lAmL.draw(ss and showAM ? amLt : na, amL, xRight, "AM.L", sessCol, lvlStyle)
+    lLunchH.draw(ss and showLunch ? lunchHt : na, lunchH, xRight, "LUNCH.H", sessCol, lvlStyle)
+    lLunchL.draw(ss and showLunch ? lunchLt : na, lunchL, xRight, "LUNCH.L", sessCol, lvlStyle)
+    lPmH.draw(ss and showPM ? pmHt : na, pmH, xRight, "PM.H", sessCol, lvlStyle)
+    lPmL.draw(ss and showPM ? pmLt : na, pmL, xRight, "PM.L", sessCol, lvlStyle)
+
+    lPDH.draw(showPD ? pdt : na, pdh, xRight, "PDH", pdCol, lvlStyle)
+    lPDL.draw(showPD ? pdt : na, pdl, xRight, "PDL", pdCol, lvlStyle)
+    lMid.draw(showMid ? midT : na, midOpen, xRight, "00:00 open", midCol, line.style_dotted)
+    lRTH.draw(showRTH ? rthT : na, rthOpen, xRight, "09:30 open", rthCol, line.style_dotted)
+
+    for bx in ndogs
+        bx.set_right(bar_index + offsetBar)
+    for bx in nwogs
+        bx.set_right(bar_index + offsetBar)
+
+    if fibL.size() == 0
+        for i = 0 to fibR.size() - 1
+            fibL.push(Lvl.new())
+    bool fibOk = showFib and not na(swH) and not na(swL)
+    int fibX1 = fibOk ? math.min(swHt, swLt) : na
+    for i = 0 to fibR.size() - 1
+        float y = fibOk ? swL + (swH - swL) * fibR.get(i) : na
+        fibL.get(i).draw(fibX1, y, xRight, lvlText(fibN.get(i), y), fibCol, line.style_dotted)
+
+// ─────────────────────────────── Alerts ───────────────────────────────
+alertcondition(bullFVG, "Bullish FVG", "Bullish FVG formed on {{ticker}}")
+alertcondition(bearFVG, "Bearish FVG", "Bearish FVG formed on {{ticker}}")

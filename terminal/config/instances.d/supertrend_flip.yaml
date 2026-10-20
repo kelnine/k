@@ -1,0 +1,73 @@
+# S7 · Jetstream v2 (script 10) — SuperTrend (10, 3) flip, stop and reverse.
+# Strategy: backend/src/kterminal/strategies/supertrend_flip (README there).
+#
+# Doc 13 decisions applied (defaults, the user did not answer):
+#   D3  fill at the next open; skip the entry when that open is already past the stop
+#   D4  script 10: stop and reverse on the flip
+#   D5  main: exit/reverse on the closed-candle flip, protective stop at the
+#       SuperTrend line -/+ 1 ATR(10) of the signal bar; variant: stop trailed on
+#       the line every bar (MOVE_SL, never widening)
+#   D10 5m and 15m, all 14 instruments, one Paper 50K account per variant and
+#       timeframe, one position per instrument (max_open_positions: 14)
+#   D11 all flips and strong-only (BUY+/SELL+); strong-only exits on any opposite flip
+#   D13 script defaults. The 4H HTF-filter variant is not run: session-anchored 4H
+#       bars are not available yet (doc 13 P5)
+- id: supertrend_flip_all_5m
+  strategy: supertrend_flip
+  name: SuperTrend flip · all flips · 5m
+  description: Every BUY/SELL flip; protective stop 1 ATR beyond the line (D5).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { signals: all }
+  tags: [pine-port, script-10, s7, main]
+  account: { max_open_positions: 14 }
+
+- id: supertrend_flip_all_15m
+  strategy: supertrend_flip
+  name: SuperTrend flip · all flips · 15m
+  description: Every BUY/SELL flip; protective stop 1 ATR beyond the line (D5).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { signals: all }
+  tags: [pine-port, script-10, s7, main]
+  account: { max_open_positions: 14 }
+
+- id: supertrend_flip_strong_5m
+  strategy: supertrend_flip
+  name: SuperTrend flip · strong only (BUY+/SELL+) · 5m
+  description: Enters on BUY+/SELL+ only, exits on any opposite flip; stop 1 ATR beyond the line (D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { signals: strong }
+  tags: [pine-port, script-10, s7, variant]
+  account: { max_open_positions: 14 }
+
+- id: supertrend_flip_strong_15m
+  strategy: supertrend_flip
+  name: SuperTrend flip · strong only (BUY+/SELL+) · 15m
+  description: Enters on BUY+/SELL+ only, exits on any opposite flip; stop 1 ATR beyond the line (D11).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { signals: strong }
+  tags: [pine-port, script-10, s7, variant]
+  account: { max_open_positions: 14 }
+
+- id: supertrend_flip_trail_5m
+  strategy: supertrend_flip
+  name: SuperTrend flip · stop trailed on the line · 5m
+  description: Every BUY/SELL flip; the stop starts on the line and follows it every bar (D5 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 5m
+  params: { signals: all, trail_stop: true, stop_atr_mult: 0 }
+  tags: [pine-port, script-10, s7, variant]
+  account: { max_open_positions: 14 }
+
+- id: supertrend_flip_trail_15m
+  strategy: supertrend_flip
+  name: SuperTrend flip · stop trailed on the line · 15m
+  description: Every BUY/SELL flip; the stop starts on the line and follows it every bar (D5 variant).
+  instruments: [XAUUSD, XAGUSD, NAS100, US30, US500, MNQ, EURUSD, GBPUSD, BTCUSD, SOLUSD, NEARUSD, ZECUSD, HYPEUSD, PUMPUSD]
+  timeframe: 15m
+  params: { signals: all, trail_stop: true, stop_atr_mult: 0 }
+  tags: [pine-port, script-10, s7, variant]
+  account: { max_open_positions: 14 }

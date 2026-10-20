@@ -1,0 +1,160 @@
+# K Terminal — production-style stack.
+#
+#   make secrets     # once: generates deploy/secrets/postgres_password and
+#                    # deploy/secrets/session_secret (signs dashboard sessions, docs/17),
+#                    # and an empty deploy/secrets/oanda_token for your OANDA token
+#   make up          # build + start (runs `make secrets` first)
+#
+# Without make: ./start.sh (macOS, Linux) or start.ps1 (Windows) — docs/18-quick-start.md.
+#
+# Only Caddy publishes ports, on 127.0.0.1 unless KT_BIND_ADDRESS says otherwise.
+# PostgreSQL lives on an internal network with no
+# internet access. Each process receives only the secrets it needs (broker
+# credentials → engine only, Telegram token → worker only, from Phase 7/9).
+
+name: kterminal
+
+x-backend: &backend
+  build:
+    context: ../backend
+  image: kterminal-backend:local
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  environment: &backend-env
+    # Fixed for this stack, not taken from .env (a .env made for running without Docker
+    # says development/console, which would switch off the production safeguards or,
+    # with console logs, stop every service). docker-compose.dev.yml overrides them.
+    KT_ENVIRONMENT: production
+    KT_LOGGING__FORMAT: json
+    KT_LOGGING__LEVEL: ${KT_LOGGING__LEVEL:-INFO}
+    KT_DATABASE__URL: postgresql+asyncpg://kterminal@postgres:5432/kterminal
+    KT_DATABASE__PASSWORD_FILE: /run/secrets/postgres_password
+    KT_API__TRUSTED_PROXIES: '["172.30.10.0/24"]'
+    KT_TRADING__DEFAULT_MODE: ${KT_TRADING__DEFAULT_MODE:-PAPER}
+    # LIVE stays off unless BOTH are set deliberately (see docs/09-security.md §9.3).
+    KT_TRADING__LIVE_ENABLED: ${KT_TRADING__LIVE_ENABLED:-false}
+    KT_TRADING__LIVE_ACKNOWLEDGEMENT: ${KT_TRADING__LIVE_ACKNOWLEDGEMENT:-}
+    KT_PATHS__CONFIG_DIR: /app/config
+  volumes:
+    - ../config:/app/config:ro   # catalog, sessions, costs, lab.yaml (versioned in git)
+  secrets: [postgres_password]
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kterminal
+      POSTGRES_USER: kterminal
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kterminal -d kterminal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [data]
+
+  migrate:                 # one-shot: apply database migrations, then exit
+    <<: *backend
+    command: ["db", "upgrade"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+
+  api:
+    <<: *backend
+    command: ["api"]
+    environment:
+      <<: *backend-env
+      # Dashboard sessions: signing secret (Docker secret), HTTPS-only cookies.
+      KT_AUTH__SESSION_SECRET_FILE: /run/secrets/session_secret
+      KT_AUTH__COOKIE_SECURE: "true"
+      # No sign-in while the dashboard is published on this computer only: the API
+      # refuses to start with it if KT_BIND_ADDRESS is not a loopback address, so a
+      # server must also set KT_LOCAL_NO_LOGIN=false (docs/17-dashboard.md).
+      KT_AUTH__LOCAL_NO_LOGIN: ${KT_LOCAL_NO_LOGIN:-true}
+      KT_AUTH__PUBLISHED_ADDRESS: ${KT_BIND_ADDRESS:-127.0.0.1}
+    secrets: [postgres_password, session_secret]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks: [data, edge]
+
+  engine:
+    <<: *backend
+    command: ["engine"]
+    stop_grace_period: 30s   # let in-flight order handling finish
+    environment:
+      <<: *backend-env
+      # Market data for paper trading (docs/15-market-data.md). The OANDA token (FX,
+      # metals, index CFDs; read-only candle downloads) is a Docker secret: paste it
+      # into deploy/secrets/oanda_token. An empty file means "no token".
+      KT_MARKETDATA__OANDA_TOKEN_FILE: /run/secrets/oanda_token
+      KT_MARKETDATA__OANDA_ENVIRONMENT: ${KT_MARKETDATA__OANDA_ENVIRONMENT:-practice}
+      # Venues this machine must not use (e.g. blocked in your country), comma-separated.
+      KT_MARKETDATA__DISABLED_PROVIDERS: ${KT_MARKETDATA__DISABLED_PROVIDERS:-}
+    secrets: [postgres_password, oanda_token]
+    networks: [data, egress]
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    networks: [data, egress]
+
+  caddy:                   # edge proxy; serves the dashboard built into its image
+    build:
+      context: ..
+      dockerfile: deploy/caddy/Dockerfile
+    image: kterminal-caddy:local
+    restart: unless-stopped
+    environment:
+      KT_PUBLIC_DOMAIN: ${KT_PUBLIC_DOMAIN:-localhost}
+    # Only this computer can open the dashboard (https://localhost). On a server with
+    # a domain (KT_PUBLIC_DOMAIN), set KT_BIND_ADDRESS=0.0.0.0 and KT_LOCAL_NO_LOGIN=false
+    # in .env to publish it with sign-in.
+    ports:
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:443:443"
+      - "${KT_BIND_ADDRESS:-127.0.0.1}:443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    networks: [edge]
+
+networks:
+  data:        # PostgreSQL ↔ application processes; no route to the internet
+    internal: true
+  edge:        # Caddy ↔ api (fixed subnet so the api can trust Caddy's X-Forwarded-For)
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  egress:      # outbound access for broker APIs (engine) and Telegram (worker)
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  session_secret:
+    file: ./secrets/session_secret
+  oanda_token:
+    file: ./secrets/oanda_token
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

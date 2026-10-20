@@ -1,0 +1,3199 @@
+//@version=6
+indicator("Wyckoff [theUltimator5]",overlay = true,max_labels_count = 500,max_boxes_count = 50,max_lines_count = 500,max_bars_back = 5000,dynamic_requests = true)
+
+// User inputs
+// manualOn             = input.bool(false, "Enable Draggable Schematic", group = "Manual Schematic", tooltip = "On add, click four points: left edge, right edge, top, bottom. Then drag the handles to reshape. Drag the bottom above the top to flip Accumulation into Distribution.")
+manualOn = false
+schemModeInput = input.string("Auto", "Panel Selection Mode", options = ["Auto", "Manual"], group = "Reference Schematics", tooltip = "Auto picks schematics consistent with the active structure. Manual lets you choose panels.")
+schemPanelCount = input.int(2, "Number of Panels (0 = off)", minval = 0, maxval = 2, group = "Reference Schematics")
+schem1_choice = input.string("Accumulation Schematic 1", "Panel 1 Schematic (Manual mode)", options = ["Accumulation Schematic 1", "Accumulation Schematic 2", "Distribution Schematic 1", "Distribution Schematic 2", "Reaccumulation Schematic", "Redistribution Schematic"], group = "Reference Schematics")
+schem2_choice = input.string("Distribution Schematic 1", "Panel 2 Schematic (Manual mode)", options = ["Accumulation Schematic 1", "Accumulation Schematic 2", "Distribution Schematic 1", "Distribution Schematic 2", "Reaccumulation Schematic", "Redistribution Schematic"], group = "Reference Schematics")
+schemXOffset = input.int(20, "Panel Horizontal Offset", minval = 1, group = "Reference Schematics")
+schemHeightATR = input.float(10.0, "Panel Height (x ATR)", minval = 1.0, step = 1.0, group = "Reference Schematics")
+schemCenterY = input.float(6.0, "Panel Vertical Position (x ATR)", step = 0.5, group = "Reference Schematics")
+schemGapATR = input.float(2.0, "Gap Between Panels (x ATR)", minval = 0.0, step = 0.5, group = "Reference Schematics")
+schematicLabelSizeInput = input.string("Tiny", "Schematic Label Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = "Reference Schematics")
+schemBarsPerX = input.int(4, "Panel Width", minval = 1, maxval = 12, group = "Reference Schematics")
+showActiveSchematicOverlay = input.bool(true, "Show Active Schematic Overlay", group = "Reference Schematics")
+showHistoricalSchematicOverlays = input.bool(true, "Show Historical Schematic Overlays", group = "Reference Schematics")
+enableHTFHistoricalSchematics = input.bool(false, "Enable HTF Historical Schematics", group = "Reference Schematics", tooltip = "When enabled, completed patterns from the next three higher timeframe levels may also be shown as historical schematics. HTF historical titles include their source timeframe, such as (4H).")
+historicalOverlayOffsetATR = input.float(0.10, "Historical Schematic Offset (ATR)", minval = 0.0, maxval = 10.0, step = 0.05, group = "Reference Schematics")
+historicalChartMinPhaseInput = input.string("C", "Historical Pattern Minimum Phase", options = ["A", "B", "C", "D", "E"], group = "Reference Schematics", tooltip = "Minimum phase a completed campaign must reach before it is retained as a historical pattern.")
+historicalSchematicMinPhaseInput = input.string("C", "Historical Schematic Minimum Phase", options = ["A", "B", "C", "D", "E"], group = "Reference Schematics", tooltip = "Minimum phase a retained historical campaign must reach before its offset schematic is drawn.")
+currentChartMinPhaseInput = input.string("B", "Current Chart Minimum Phase", options = ["A", "B", "C", "D", "E"], group = "Display", tooltip = "Minimum phase required before the active/current structure visuals are shown. Detection continues internally below this phase.")
+allowHTFOverride = input.bool(true, "Allow HTF to Override Current TF", group = "Display", tooltip = "When enabled, scans up to the next three higher timeframe levels and lets the valid structure in the farthest phase override the chart timeframe. Utility breaks ties within the same phase. When disabled, only the chart timeframe is used.")
+tableSizeInput = input.string("Tiny", "Table Text Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = "Display")
+tablePosInput = input.string("Top Right", "Table Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = "Display")
+showEntryPoints = input.bool(true, "Show Entry Points", group = "Display")
+entryStrictness = input.string("Standard", "Entry Strictness", options = ["Conservative", "Standard", "Aggressive"], group = "Display")
+entryLabelTriggerInput = input.string("Auto (Entry Strictness)", "Buy/Sell Label Trigger", options = ["Auto (Entry Strictness)", "Phase C Test", "SOS / SOW", "LPS / LPSY", "Phase E"], group = "Display")
+showStatusTable = input.bool(false, "Show Status Table", group = "Display")
+showDiagnosticsTable = input.bool(false, "Show Structure Diagnostics", group = "Display")
+
+// Manual draggable schematic disabled. Keep the former inputs commented for easy restoration.
+// manualLeftT  = input.time(0, "Select top left of manual Wyckoff", inline = "Top Left Anchor", group = "Schematic", confirm = true)
+// manualTopP   = input.price(0.0, "Select top left of manual Wyckoff", inline = "Top Left Anchor", group = "Schematic", confirm = true)
+// manualRightT = input.time(0, "Select bottom right of manual Wyckoff", inline = "Bottom Right Anchor", group = "Schematic", confirm = true)
+// manualBotP   = input.price(0.0, "Select bottom right of manual Wyckoff", inline = "Bottom Right Anchor", group = "Schematic", confirm = true)
+// manualBars           = input.int(100, "Initial Width (bars)", minval = 10, maxval = 2000, group = "Manual Schematic")
+// manualATRMult        = input.float(2.0, "Initial Height (x ATR)", minval = 0.25, step = 0.25, group = "Manual Schematic")
+// manualLabelSizeInput = input.string("Small", "Manual Label Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = "Manual Schematic")
+// manualShowLevels     = input.bool(true, "Show Range Levels", group = "Manual Schematic")
+manualLeftT = 0
+manualTopP = 0.0
+manualRightT = 0
+manualBotP = 0.0
+manualBars = 100
+manualATRMult = 2.0
+manualLabelSizeInput = "Small"
+manualShowLevels = true
+
+// Hard-coded settings
+// Schematic layout
+schemAtrLen = 14
+schemLabelMarginPct = 15.0
+historicalSchematicLimit = 8
+// Structure detection
+pivotLen = 4
+swingModeInput = "ATR Adaptive"
+adaptiveSwingMin = 2
+adaptiveSwingMax = 10
+adaptiveSwingVolLen = 50
+trendLen = 25
+priorTrendMaxBars = 200
+priorTrendPivotFactor = 8.0
+priorTrendStrong = 35.0
+priorTrendNeutral = 15.0
+continuationTrendLen = 200
+oppositeCycleMinBars = 25
+extremeLen = 30
+// Campaign lifecycle
+phaseAMinBars = 6
+phaseAAfterArMaxBars = 45
+phaseBIdleMaxBars = 125
+phaseCIdleMaxBars = 50
+phaseAPrematureDepartureBars = 3
+phaseAPrematureDepartureTRFrac = 0.30
+phaseAPrematureDepartureATR = 0.75
+structureInvalidationATR = 0.50
+structureInvalidationBars = 2
+phaseBDepartureBars = 3
+phaseBDepartureTRFrac = 0.35
+phaseBDepartureATR = 0.75
+phaseDFailBars = 3
+phaseEMaxBars = 300
+
+// Volume and volatility
+volLen = 50
+atrLen = 14
+climaxVolMult = 1.8
+climaxSpreadMult = 1.5
+relaxedClimaxFactor = 0.80
+prelimVolMult = 1.25
+prelimExtremeATR = 0.75
+prelimEfficiencyLookback = 10
+prelimEfficiencyRatio = 0.80
+prelimMinScore = 4
+
+// Climax confirmation
+scCloseMin = 0.35
+bcCloseMax = 0.65
+climaxMinScore = 5
+climaxAbsorptionMinBars = 3
+climaxAbsorptionMaxBars = 8
+climaxAbsorptionExtremeATR = 0.50
+climaxAbsorptionReboundATR = 0.35
+climaxAbsorptionVolFloor = 0.90
+
+// AR and Phase B
+minARATR = 2.0
+maxARBars = 30
+arMaxExtensionATR = 15.0
+boundaryTolATR = 0.75
+stMaxVolRatio = 0.90
+stMaxSpreadRatio = 0.90
+stMinScore = 4
+minPhaseBBars = 30
+minPhaseBTests = 2
+minPhaseBOppositeTests = 1
+minPhaseBTraversals = 2
+phaseBZoneFrac = 0.25
+phaseBRangeMinATR = 1.5
+phaseBRangeMaxATR = 8.0
+phaseBBadTestCooldownFactor = 2.0
+phaseBEdgeExpansionCap = 0.15
+terminalTestMinBarsAfterST = 3
+terminalTestVolRatio = 0.85
+terminalTestSpreadRatio = 0.85
+terminalTestOtherMaxRatio = 1.05
+
+// Phase C probes and tests
+excursionRecoveryBars = 3
+springMinPenATR = 0.15
+springMaxPenATR = 2.5
+springCloseMin = 0.55
+utadCloseMax = 0.45
+springEffortMaxMult = 1.50
+excursionMinScore = 3
+testTolATR = 1.25
+testMaxVolRatio = 0.80
+testMaxSpreadRatio = 0.80
+testExtremeToleranceATR = 0.15
+testMinScore = 2
+// Phase D and E
+phaseCToDMinBars = 3
+phaseDMinBars = 4
+phaseDValidationMin = 60
+phaseDDominanceFrac = 0.65
+breakATR = 0.15
+strengthVolMult = 1.15
+strengthSpreadATR = 1.15
+sosCloseMin = 0.65
+sowCloseMax = 0.35
+strengthMinScore = 3
+sosMultiBarLen = 5
+sosMultiBarATR = 2.0
+sosMultiBarEffort = 1.10
+lpsBoundaryATR = 1.50
+lpsVolMult = 1.00
+lpsSpreadATR = 1.00
+lpsMinScore = 2
+confirmBars = 3
+directAcceptanceBars = 5
+directAcceptanceConfidence = 75
+minConfidencePhaseC = 45
+minConfidencePhaseD = 55
+
+// Entries
+entryMinConfidenceConservative = 75
+entryMinConfidenceStandard = 60
+entryMinConfidenceAggressive = 55
+entryMinTestsConservative = 7
+entryMinTestsStandard = 6
+entryMinTestsAggressive = 5
+// Multi-timeframe scan
+mtfLevelsAbove = 3
+mtfLookbackExtended = 5000
+
+// Core constants
+DIR_NONE  = 0
+DIR_ACCUM = 1
+DIR_DIST  = -1
+
+TYPE_NONE    = 0
+TYPE_ACCUM   = 1
+TYPE_REACCUM = 2
+TYPE_DIST    = -1
+TYPE_REDIST  = -2
+
+REGIME_NONE     = 0
+REGIME_MARKUP   = 1
+REGIME_MARKDOWN = -1
+
+PHASE_NONE = 0
+PHASE_A    = 1
+PHASE_B    = 2
+PHASE_C    = 3
+PHASE_D    = 4
+PHASE_E    = 5
+
+f_phaseSetting(string _p) =>
+    _p == "A" ? PHASE_A : _p == "B" ? PHASE_B : _p == "C" ? PHASE_C : _p == "D" ? PHASE_D : PHASE_E
+
+historicalChartMinPhase = f_phaseSetting(historicalChartMinPhaseInput)
+historicalSchematicMinPhase = f_phaseSetting(historicalSchematicMinPhaseInput)
+currentChartMinPhase = f_phaseSetting(currentChartMinPhaseInput)
+historicalStoreMinPhase = math.min(historicalChartMinPhase, historicalSchematicMinPhase)
+
+EV_NONE      = 0
+EV_SC        = 1
+EV_BC        = 2
+EV_AR        = 3
+EV_ST        = 4
+EV_SPRING    = 5
+EV_UTAD      = 6
+EV_TEST      = 7
+EV_SOS       = 8
+EV_SOW       = 9
+EV_LPS       = 10
+EV_LPSY      = 11
+EV_CTEST_ACC = 12
+EV_CTEST_DST = 13
+EV_MARKUP    = 14
+EV_MARKDOWN  = 15
+
+TEST_NONE   = 0
+TEST_GOOD   = 1
+TEST_POOR   = 2
+TEST_FAILED = 3
+
+ENTRY_NONE     = 0
+ENTRY_TEST     = 1
+ENTRY_STRENGTH = 2
+ENTRY_LPS      = 3
+ENTRY_PHASE_E  = 4
+
+SIGNAL_AUTO     = 0
+SIGNAL_TEST     = 1
+SIGNAL_STRENGTH = 2
+SIGNAL_LPS      = 3
+SIGNAL_E        = 4
+
+BIT_PS     = 1
+BIT_SC     = 2
+BIT_BC     = 4
+BIT_AR     = 8
+BIT_ST     = 16
+BIT_SPRING = 32
+BIT_UTAD   = 64
+BIT_TEST   = 128
+BIT_SOS    = 256
+BIT_SOW    = 512
+BIT_LPS    = 1024
+BIT_LPSY   = 2048
+BIT_E      = 4096
+BIT_CTEST  = 16384
+
+RS_INVALID = 0
+RS_ABSORB  = 1
+RS_NORANGE = 2
+RS_DEPART  = 3
+RS_STALE   = 4
+RS_DEMOTE  = 5
+RS_EEND    = 6
+
+// Historical schematic snapshot
+type HistSchem
+    int typ = 0
+    int stop = 0
+    int out = 0
+    int wdir = 0
+    int phase = 0
+    int ev = 0
+    bool exc = false
+    float clT = na
+    float clP = na
+    float arT = na
+    float arP = na
+    float stT = na
+    float stP = na
+    float st1T = na
+    float st1P = na
+    float st2T = na
+    float st2P = na
+    float st3T = na
+    float st3P = na
+    float op1T = na
+    float op1P = na
+    float op2T = na
+    float op2P = na
+    float op3T = na
+    float op3P = na
+    float exT = na
+    float exP = na
+    float teT = na
+    float teP = na
+    float soT = na
+    float soP = na
+    float lpT = na
+    float lpP = na
+    float eT = na
+    float eP = na
+    float rh = na
+    float rl = na
+    float psT = na
+    float psP = na
+    float atr = na
+    float bT = na
+    float cT = na
+    float dT = na
+    float endT = na
+    int startBar = na
+    int endBar = na
+    float srcSecs = na
+
+// Confirmed entry events survive later campaign resets/reseeds.
+type EntrySignal
+    float t = na
+    float p = na
+    int dir = 0
+    int kind = 0
+    int mode = 0
+    float srcSecs = na
+    string tfLabel = ""
+    float atr = na
+
+f_addHistoricalDedup(array<HistSchem> _arr, HistSchem _h) =>
+    bool handled = false
+    if not na(_h.clT) and not na(_h.endT)
+        int nHist = array.size(_arr)
+        if nHist > 0
+            for z = 0 to nHist - 1
+                HistSchem e = array.get(_arr, z)
+                bool sameSide = e.stop == _h.stop
+                float a0 = e.clT
+                float a1 = e.endT
+                float b0 = _h.clT
+                float b1 = _h.endT
+                float ov = sameSide and not na(a0) and not na(a1) ? math.max(math.min(a1, b1) - math.max(a0, b0), 0.0) : 0.0
+                float shortSpan = sameSide and not na(a0) and not na(a1) ? math.max(math.min(a1 - a0, b1 - b0), 1.0) : 1.0
+                bool sameCampaign = sameSide and ov / shortSpan >= 0.35
+                if sameCampaign
+                    bool preferNew = _h.phase > e.phase or (_h.phase == e.phase and nz(_h.srcSecs, 0.0) > nz(e.srcSecs, 0.0))
+                    if preferNew
+                        array.set(_arr, z, _h)
+                    handled := true
+                    break
+        if not handled
+            array.push(_arr, _h)
+            if array.size(_arr) > historicalSchematicLimit
+                array.shift(_arr)
+    true
+
+// Compact storage for the first three same/opposite-edge Phase B pivots
+type PivotTriplet
+    int b1 = na
+    float t1 = na
+    float p1 = na
+    int b2 = na
+    float t2 = na
+    float p2 = na
+    int b3 = na
+    float t3 = na
+    float p3 = na
+
+// Campaign state
+type WS
+    int stopSide = 0
+    int outcome = 0
+    int phase = 0
+    int ev = 0
+    int startBar = na
+    int pivLen = na
+    float birthTrend = na
+    bool ctxBull = false
+    bool ctxBear = false
+    int climaxBar = na
+    float climaxTime = na
+    float climaxPrice = na
+    float climaxEff = na
+    float climaxSpr = na
+    float climaxATR = na
+    int climaxScore = 0
+    bool absorbed = false
+    float psTime = na
+    float psPrice = na
+    int psScore = 0
+    float origHigh = na
+    float origLow = na
+    float rangeHigh = na
+    float rangeLow = na
+    float arRunPrice = na
+    int arRunBar = na
+    float arRunTime = na
+    bool arOK = false
+    int arBar = na
+    float arTime = na
+    float arPrice = na
+    int stCount = 0
+    int stN = 0
+    float stEffSum = 0.0
+    float stSprSum = 0.0
+    float lastGoodEff = na
+    float lastGoodSpr = na
+    int stBar = na
+    float stTime = na
+    float stPrice = na
+    PivotTriplet stHist = na
+    int stScore = 0
+    float edge1 = na
+    float edge2 = na
+    float edge3 = na
+    int oppCount = 0
+    int opN = 0
+    float opEffSum = 0.0
+    float opSprSum = 0.0
+    int opLastBar = na
+    float opLastPrice = na
+    PivotTriplet opHist = na
+    int travCount = 0
+    int lastZone = 0
+    int lastZoneBar = na
+    int lastBadBar = na
+    int bStartBar = na
+    float bStartTime = na
+    float cStartTime = na
+    int cReadyBar = na
+    int dStartBar = na
+    float dStartTime = na
+    int eStartBar = na
+    float eStartTime = na
+    bool pend = false
+    int pendEdge = 0
+    int pendStartBar = na
+    int pendExtBar = na
+    float pendExt = na
+    float pendExtTime = na
+    float pendEff = na
+    float pendSpr = na
+    int pendCoolBar = na
+    int provEdge = 0
+    int provBar = na
+    float provPrice = na
+    float provTime = na
+    float provEff = na
+    float provSpr = na
+    int provScore = 0
+    bool exc = false
+    bool excTested = false
+    int excBar = na
+    float excPrice = na
+    float excTime = na
+    float excEff = na
+    float excSpr = na
+    int excScore = 0
+    float testTime = na
+    float testPrice = na
+    int testScore = 0
+    int strBar = na
+    float strTime = na
+    float strPrice = na
+    int strScore = 0
+    float lpsTime = na
+    float lpsPrice = na
+    int lpsBar = na
+    int lpsScore = 0
+
+    float entryTime = na
+    float entryPrice = na
+    int entryKind = 0
+    int outCount = 0
+    int lastEventBar = na
+    float lastEventTime = na
+    float lastEventPrice = na
+    int lastActBar = na
+    bool cfPrior = false
+    bool cfClimax = false
+    bool cfAR = false
+    bool cfST = false
+    bool cfExc = false
+    bool cfTest = false
+    bool cfStrength = false
+    bool cfLPS = false
+    bool cfAccept = false
+
+// Display helpers
+f_posFrom(string _p) =>
+    switch _p
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right"  => position.bottom_right
+        => position.top_right
+
+f_sizeFrom(string _s) =>
+    switch _s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        "Huge"   => size.huge
+        => size.tiny
+
+tableSize = f_sizeFrom(tableSizeInput)
+tablePos = f_posFrom(tablePosInput)
+schematicLabelSize = f_sizeFrom(schematicLabelSizeInput)
+
+atr = ta.atr(atrLen)
+schemAtr = ta.atr(schemAtrLen)
+
+var float chartFirstBarTime = na
+var float chartHistHigh = na
+var float chartHistLow = na
+if barstate.isfirst
+    chartFirstBarTime := time
+chartHistHigh := na(chartHistHigh) ? high : math.max(chartHistHigh, high)
+chartHistLow := na(chartHistLow) ? low : math.min(chartHistLow, low)
+
+format_timeframe_display(string _tf) =>
+    int secs = timeframe.in_seconds(_tf)
+    string out = _tf
+    if secs < 60
+        out := str.tostring(secs) + "s"
+    else if secs < 3600
+        out := str.tostring(secs / 60) + "m"
+    else if secs < 86400
+        out := str.tostring(secs / 3600) + "H"
+    else if secs < 604800
+        out := str.tostring(secs / 86400) + "D"
+    else if secs < 2419200
+        out := str.tostring(secs / 604800) + "W"
+    else
+        out := str.tostring(math.max(secs / 2629800, 1)) + "M"
+    out
+
+f_formatSecsDisplay(float _secs) =>
+    int secs = int(math.round(_secs))
+    string out = ""
+    if secs < 60
+        out := str.tostring(secs) + "s"
+    else if secs < 3600
+        out := str.tostring(int(math.round(secs / 60.0))) + "m"
+    else if secs < 86400
+        out := str.tostring(int(math.round(secs / 3600.0))) + "H"
+    else if secs < 604800
+        out := str.tostring(int(math.round(secs / 86400.0))) + "D"
+    else if secs < 2419200
+        out := str.tostring(int(math.round(secs / 604800.0))) + "W"
+    else
+        out := str.tostring(math.max(int(math.round(secs / 2629800.0)), 1)) + "M"
+    out
+
+chartTfSecs = float(timeframe.in_seconds(timeframe.period))
+chartTfLabel = format_timeframe_display(timeframe.period)
+
+// General helpers
+f_clamp(float _v, float _lo, float _hi) =>
+    math.max(_lo, math.min(_hi, _v))
+
+f_hasBit(int _mask, int _bit) =>
+    int(_mask / _bit) % 2 == 1
+
+f_addBit(int _mask, int _bit) =>
+    f_hasBit(_mask, _bit) ? _mask : _mask + _bit
+
+f_digit(int _packed, int _k) =>
+    int(_packed / math.pow(10, _k)) % 10
+
+f_priorTrendScore(int _n, int _endOff, float _atrS, float _phS, float _plS, float _smaS) =>
+    int n = math.max(_n, 2)
+    int e = math.max(_endOff, 0)
+    float cEnd = close[e]
+    float cStart = close[e + n]
+    float score = 0.0
+    if not na(cEnd) and not na(cStart)
+        float unitA = math.max(nz(_atrS[e], _atrS), syminfo.mintick)
+        float net = cEnd - cStart
+        float disp = f_clamp(net / (unitA * math.sqrt(n)), -3.0, 3.0) * 15.0
+        float path = 0.0
+        int hh = 0
+        int ll = 0
+        int lh = 0
+        int hl = 0
+        float lastPH = na
+        float lastPL = na
+        for k = n - 1 to 0
+            int o = e + k
+            path += math.abs(nz(close[o]) - nz(close[o + 1], nz(close[o])))
+            float vph = _phS[o]
+            float vpl = _plS[o]
+            if not na(vph)
+                if not na(lastPH)
+                    hh += vph > lastPH ? 1 : 0
+                    lh += vph < lastPH ? 1 : 0
+                lastPH := vph
+            if not na(vpl)
+                if not na(lastPL)
+                    hl += vpl > lastPL ? 1 : 0
+                    ll += vpl < lastPL ? 1 : 0
+                lastPL := vpl
+        float er = path > 0 ? math.abs(net) / path : 0.0
+        float erPart = (net >= 0 ? 1.0 : -1.0) * er * 25.0
+        int swings = hh + ll + lh + hl
+        float swingPart = swings > 0 ? float(hh + hl - lh - ll) / swings * 20.0 : 0.0
+        float smaEnd = _smaS[e]
+        float smaStart = _smaS[e + n]
+        float smaPart = not na(smaEnd) and not na(smaStart) ? (smaEnd > smaStart ? 10.0 : smaEnd < smaStart ? -10.0 : 0.0) : 0.0
+        score := f_clamp(disp + erPart + swingPart + smaPart, -100.0, 100.0)
+    score
+
+f_structureConfidence(bool _prior, bool _climax, bool _ar, bool _st, bool _cDone, bool _strength, bool _lps, bool _accept) =>
+    (_prior ? 10 : 0) + (_climax ? 15 : 0) + (_ar ? 10 : 0) + (_st ? 15 : 0) + (_cDone ? 15 : 0) + (_strength ? 15 : 0) + (_lps ? 10 : 0) + (_accept ? 10 : 0)
+
+f_validationScore(float _trend, bool _absorbed, float _rangeATR, int _st, int _opp, int _trav, bool _clean, float _cause, bool _terminal, bool _strength, bool _lps, bool _accept) =>
+    int v = 0
+    v += math.abs(_trend) >= priorTrendStrong ? 10 : math.abs(_trend) >= priorTrendNeutral ? 5 : 0
+    v += _absorbed ? 15 : 0
+    if _rangeATR >= phaseBRangeMinATR and _rangeATR <= phaseBRangeMaxATR
+        v += 10
+    else if _rangeATR >= phaseBRangeMinATR * 0.75 and _rangeATR <= phaseBRangeMaxATR * 1.5
+        v += 5
+    v += _st >= minPhaseBTests ? 15 : _st >= 1 ? 8 : 0
+    v += _opp >= 1 and _trav >= 2 ? 15 : _opp >= 1 or _trav >= 1 ? 8 : 0
+    v += _clean ? 10 : 0
+    v += _cause >= 3.0 ? 10 : _cause >= 1.5 ? 5 : 0
+    v += _terminal ? 10 : 0
+    v += _strength ? 3 : 0
+    v += _lps ? 2 : 0
+    math.min(v, 100)
+
+f_causeUnits(int _trav, int _bAge, int _p, float _rangeATR) =>
+    float timeUnits = float(_bAge) / math.max(float(_p) * 6.0, 1.0)
+    float widthBonus = _rangeATR >= phaseBRangeMinATR ? 0.5 : 0.0
+    timeUnits + float(_trav) * 0.5 + widthBonus
+
+f_testClass(bool _near, bool _holds, bool _closeOK, float _e, float _sp, float _cE, float _cS) =>
+    int r = TEST_NONE
+    if _near
+        if not _holds
+            r := TEST_FAILED
+        else if _closeOK and _e <= _cE * stMaxVolRatio and _sp <= _cS * stMaxSpreadRatio
+            r := TEST_GOOD
+        else
+            r := TEST_POOR
+    r
+
+f_phaseAMinBars(int _p) =>
+    math.max(phaseAMinBars, math.max(_p, 1) * 2)
+
+f_phaseBMinBars(int _p, float _rangeATR) =>
+    int p = math.max(_p, 1)
+
+    int raw = int(math.round(math.max(float(p * 6), _rangeATR * float(p) * 1.00)))
+    math.max(minPhaseBBars, math.min(raw, minPhaseBBars * 2))
+
+f_phaseCToDMinBars(int _p) =>
+    math.max(phaseCToDMinBars, int(math.max(_p, 1) / 2))
+
+f_phaseDMinBars(int _p) =>
+    math.max(phaseDMinBars, math.max(_p, 1))
+
+f_excursionRecoveryLimit(int _p) =>
+    math.max(excursionRecoveryBars, int(math.round(math.max(_p, 1) * 0.75)))
+
+f_phaseIdleLimit(int _phase, bool _hasAR, int _p) =>
+    int p = math.max(_p, 1)
+    int lim = na
+    if _phase == PHASE_A
+        lim := _hasAR ? math.max(phaseAAfterArMaxBars, p * 6) : math.max(maxARBars, p * 4)
+    else if _phase == PHASE_B
+        lim := math.max(phaseBIdleMaxBars, p * 20)
+    else if _phase == PHASE_C
+        lim := math.max(phaseCIdleMaxBars, p * 8)
+    else if _phase == PHASE_D
+        lim := math.max(phaseCIdleMaxBars * 2, p * 16)
+    lim
+
+f_phaseBCharacterImproving(int _n, float _effSum, float _sprSum, float _lastE, float _lastS) =>
+    bool ok = false
+    if _n >= 2 and not na(_lastE) and not na(_lastS)
+        float avgE = _effSum / _n
+        float avgS = _sprSum / _n
+        ok := _lastE <= avgE and _lastS <= avgS * 1.05
+    ok
+
+f_robustEdge(float _e1, float _e2, float _e3, float _orig, bool _isLow) =>
+    float med = na
+    if not na(_e1) and not na(_e2) and not na(_e3)
+        med := _e1 + _e2 + _e3 - math.max(_e1, math.max(_e2, _e3)) - math.min(_e1, math.min(_e2, _e3))
+    else if not na(_e1) and not na(_e2)
+        med := ((_e1 + _e2) / 2.0 + _orig) / 2.0
+    else if not na(_e1)
+        med := (_e1 + _orig) / 2.0
+    na(med) ? _orig : _isLow ? math.max(_orig, med) : math.min(_orig, med)
+
+f_typeFrom(int _stop, int _out, bool _bull, bool _bear) =>
+    _out == DIR_ACCUM ? (_stop == DIR_DIST or _bull ? TYPE_REACCUM : TYPE_ACCUM) :
+     _out == DIR_DIST ? (_stop == DIR_ACCUM or _bear ? TYPE_REDIST : TYPE_DIST) : TYPE_NONE
+
+// Campaign helpers
+f_setEvent(WS s, int _ev) =>
+    s.ev := _ev
+    s.lastEventBar := bar_index
+    s.lastEventTime := time
+    s.lastEventPrice := close
+    s.lastActBar := bar_index
+    true
+
+f_biasDir(WS s) =>
+    s.stopSide == DIR_ACCUM ? (s.ctxBear ? DIR_DIST : DIR_ACCUM) : s.stopSide == DIR_DIST ? (s.ctxBull ? DIR_ACCUM : DIR_DIST) : DIR_NONE
+
+f_typeWS(WS s) =>
+    int o = s.outcome != DIR_NONE ? s.outcome : f_biasDir(s)
+    s.stopSide == DIR_NONE ? TYPE_NONE : f_typeFrom(s.stopSide, o, s.ctxBull, s.ctxBear)
+
+f_rangeATRWS(WS s, float _atrNow) =>
+    not na(s.rangeHigh) and not na(s.rangeLow) ? math.abs(s.rangeHigh - s.rangeLow) / math.max(nz(s.climaxATR, _atrNow), syminfo.mintick) : 0.0
+
+f_hardLevel(WS s, int _side) =>
+    float lvl = na
+    if _side == DIR_ACCUM
+        lvl := s.exc and s.outcome == DIR_ACCUM and not na(s.excPrice) ? s.excPrice : na(s.origLow) ? s.rangeLow : math.min(s.origLow, nz(s.rangeLow, s.origLow))
+    else
+        lvl := s.exc and s.outcome == DIR_DIST and not na(s.excPrice) ? s.excPrice : na(s.origHigh) ? s.rangeHigh : math.max(s.origHigh, nz(s.rangeHigh, s.origHigh))
+    lvl
+
+f_seed(WS s, int _side, int _score, int _pLen, float _trend, bool _bull, bool _bear, float _atrNow, float _effNow, float _sprNow) =>
+    s.stopSide := _side
+    s.phase := PHASE_A
+    s.startBar := bar_index
+    s.pivLen := _pLen
+    s.birthTrend := _trend
+    s.ctxBull := _bull
+    s.ctxBear := _bear
+    s.climaxBar := bar_index
+    s.climaxTime := time
+    s.climaxPrice := _side == DIR_ACCUM ? low : high
+    s.climaxEff := _effNow
+    s.climaxSpr := _sprNow
+    s.climaxATR := _atrNow
+    s.climaxScore := _score
+    if _side == DIR_ACCUM
+        s.origLow := low
+        s.rangeLow := low
+    else
+        s.origHigh := high
+        s.rangeHigh := high
+    s.cfPrior := true
+    f_setEvent(s, _side == DIR_ACCUM ? EV_SC : EV_BC)
+
+f_freezeAR(WS s) =>
+    s.arBar := s.arRunBar
+    s.arTime := s.arRunTime
+    s.arPrice := s.arRunPrice
+    s.cfAR := true
+    if s.stopSide == DIR_ACCUM
+        s.origHigh := s.arRunPrice
+        s.rangeHigh := s.arRunPrice
+    else
+        s.origLow := s.arRunPrice
+        s.rangeLow := s.arRunPrice
+    true
+
+f_initPivotHistory(WS s) =>
+    if na(s.stHist)
+        s.stHist := PivotTriplet.new()
+    if na(s.opHist)
+        s.opHist := PivotTriplet.new()
+    true
+
+f_registerST(WS s, float _price, float _t, int _pb, float _e, float _sp, int _score) =>
+    s.stCount := s.stCount + 1
+    s.stN := s.stN + 1
+    s.stEffSum := s.stEffSum + _e
+    s.stSprSum := s.stSprSum + _sp
+    s.lastGoodEff := _e
+    s.lastGoodSpr := _sp
+    s.stBar := _pb
+    s.stTime := _t
+    s.stPrice := _price
+    f_initPivotHistory(s)
+    if na(s.stHist.t1)
+        s.stHist.b1 := _pb
+        s.stHist.t1 := _t
+        s.stHist.p1 := _price
+    else if na(s.stHist.t2) and _pb > nz(s.stHist.b1, -1)
+        s.stHist.b2 := _pb
+        s.stHist.t2 := _t
+        s.stHist.p2 := _price
+    else if na(s.stHist.t3) and _pb > nz(s.stHist.b2, nz(s.stHist.b1, -1))
+        s.stHist.b3 := _pb
+        s.stHist.t3 := _t
+        s.stHist.p3 := _price
+    s.stScore := _score
+    s.edge3 := s.edge2
+    s.edge2 := s.edge1
+    s.edge1 := _price
+    if s.stopSide == DIR_ACCUM
+        s.rangeLow := f_robustEdge(s.edge1, s.edge2, s.edge3, s.origLow, true)
+    else
+        s.rangeHigh := f_robustEdge(s.edge1, s.edge2, s.edge3, s.origHigh, false)
+    s.cfST := true
+    f_setEvent(s, EV_ST)
+
+f_registerOpp(WS s, float _price, float _t, int _pb, float _e, float _sp) =>
+    s.oppCount := s.oppCount + 1
+    s.opN := s.opN + 1
+    s.opEffSum := s.opEffSum + _e
+    s.opSprSum := s.opSprSum + _sp
+    s.opLastBar := _pb
+    s.opLastPrice := _price
+    f_initPivotHistory(s)
+    if na(s.opHist.t1)
+        s.opHist.b1 := _pb
+        s.opHist.t1 := _t
+        s.opHist.p1 := _price
+    else if na(s.opHist.t2) and _pb > nz(s.opHist.b1, -1)
+        s.opHist.b2 := _pb
+        s.opHist.t2 := _t
+        s.opHist.p2 := _price
+    else if na(s.opHist.t3) and _pb > nz(s.opHist.b2, nz(s.opHist.b1, -1))
+        s.opHist.b3 := _pb
+        s.opHist.t3 := _t
+        s.opHist.p3 := _price
+    s.lastActBar := bar_index
+    true
+
+f_clearTerminal(WS s) =>
+    s.exc := false
+    s.excTested := false
+    s.excBar := na
+    s.excPrice := na
+    s.excTime := na
+    s.excEff := na
+    s.excSpr := na
+    s.excScore := 0
+    s.testTime := na
+    s.testPrice := na
+    s.testScore := 0
+    s.cfExc := false
+    s.cfTest := false
+    s.cReadyBar := na
+    s.cStartTime := na
+    true
+
+f_excFromPend(WS s, int _score) =>
+    s.exc := true
+    s.excTested := false
+    s.excBar := s.pendExtBar
+    s.excPrice := s.pendExt
+    s.excTime := s.pendExtTime
+    s.excEff := s.pendEff
+    s.excSpr := s.pendSpr
+    s.excScore := _score
+    s.cfExc := true
+    s.outcome := s.pendEdge
+    s.cStartTime := s.pendExtTime
+    s.phase := PHASE_C
+    s.cReadyBar := int(na)
+    s.pend := false
+    s.provEdge := 0
+    f_setEvent(s, s.outcome == DIR_ACCUM ? EV_SPRING : EV_UTAD)
+
+f_adoptProv(WS s) =>
+    s.exc := true
+    s.excTested := false
+    s.excBar := s.provBar
+    s.excPrice := s.provPrice
+    s.excTime := s.provTime
+    s.excEff := s.provEff
+    s.excSpr := s.provSpr
+    s.excScore := s.provScore
+    s.cfExc := true
+    s.outcome := s.provEdge
+    s.cStartTime := s.provTime
+    s.provEdge := 0
+    true
+
+f_enterCTest(WS s, int _outc, float _t, float _price, int _score) =>
+    s.phase := PHASE_C
+    s.outcome := _outc
+    s.cStartTime := _t
+    s.cReadyBar := bar_index
+    s.testTime := _t
+    s.testPrice := _price
+    s.testScore := _score
+    s.cfTest := true
+    s.pend := false
+    f_setEvent(s, _outc == DIR_ACCUM ? EV_CTEST_ACC : EV_CTEST_DST)
+
+f_promoteD(WS s, int _outc, int _score, float _price) =>
+    s.outcome := _outc
+    s.phase := PHASE_D
+    s.dStartBar := bar_index
+    s.dStartTime := time
+    s.strBar := bar_index
+    s.strTime := time
+    s.strPrice := _price
+    s.strScore := _score
+    s.cfStrength := true
+    s.pend := false
+    s.outCount := 0
+    f_setEvent(s, _outc == DIR_ACCUM ? EV_SOS : EV_SOW)
+
+f_demoteToB(WS s) =>
+    f_clearTerminal(s)
+    s.outcome := DIR_NONE
+    s.phase := PHASE_B
+    s.strBar := na
+    s.strTime := na
+    s.strPrice := na
+    s.strScore := 0
+    s.lpsTime := na
+    s.lpsPrice := na
+    s.lpsBar := na
+    s.lpsScore := 0
+    s.dStartBar := na
+    s.dStartTime := na
+    s.cfStrength := false
+    s.cfLPS := false
+    s.provEdge := 0
+    s.pend := false
+    s.outCount := 0
+    s.lastBadBar := bar_index
+    s.lastActBar := bar_index
+    true
+
+f_confWS(WS s) =>
+    bool cDone = s.cfTest or (s.cfExc and s.cfStrength)
+    f_structureConfidence(s.cfPrior, s.cfClimax, s.cfAR, s.cfST, cDone, s.cfStrength, s.cfLPS, s.cfAccept)
+
+f_validationWS(WS s, int _p, float _trendNow, float _atrNow) =>
+    float rATR = f_rangeATRWS(s, _atrNow)
+    int bAge = not na(s.bStartBar) ? math.max(bar_index - s.bStartBar, 0) : 0
+    int badAge = na(s.lastBadBar) ? -1 : bar_index - s.lastBadBar
+    bool clean = badAge < 0 or badAge >= int(math.round(_p * phaseBBadTestCooldownFactor))
+    float cause = f_causeUnits(s.travCount, bAge, _p, rATR)
+    bool terminal = (s.cfTest and (not s.exc or s.excTested)) or (s.cfExc and s.cfStrength)
+    s.stopSide == DIR_NONE ? 0 : f_validationScore(nz(s.birthTrend, _trendNow), s.absorbed, rATR, s.stCount, s.oppCount, s.travCount, clean, cause, terminal, s.cfStrength, s.cfLPS, s.cfAccept)
+
+f_matureWS(WS s, int _p, float _atrNow) =>
+    float rATR = f_rangeATRWS(s, _atrNow)
+    int bAge = not na(s.bStartBar) ? bar_index - s.bStartBar : 0
+    int bMin = f_phaseBMinBars(_p, rATR)
+    int badAge = na(s.lastBadBar) ? -1 : bar_index - s.lastBadBar
+    bool clean = badAge < 0 or badAge >= int(math.round(_p * phaseBBadTestCooldownFactor))
+    bool opp = minPhaseBOppositeTests <= 0 or s.oppCount >= minPhaseBOppositeTests
+    bool trav = minPhaseBTraversals <= 0 or s.travCount >= minPhaseBTraversals
+    bool ch = f_phaseBCharacterImproving(s.stN, s.stEffSum, s.stSprSum, s.lastGoodEff, s.lastGoodSpr)
+    int support = (opp ? 1 : 0) + (trav ? 1 : 0) + (clean ? 1 : 0) + (ch ? 1 : 0)
+    bool sane = rATR >= phaseBRangeMinATR * 0.75 and rATR <= phaseBRangeMaxATR * 2.0
+    s.phase == PHASE_B and bAge >= bMin and s.stCount >= minPhaseBTests and sane and support >= 2
+
+f_entryReadinessWS(WS s, int _minConf, int _valFloor, float _atrNow) =>
+    bool bull = s.outcome == DIR_ACCUM
+    float distATR = na(s.rangeHigh) or na(s.rangeLow) ? 99.0 : bull ? (close - s.rangeHigh) / math.max(_atrNow, syminfo.mintick) : (s.rangeLow - close) / math.max(_atrNow, syminfo.mintick)
+    float ageBars = not na(s.lastEventTime) ? (float(time) - s.lastEventTime) / math.max(float(timeframe.in_seconds(timeframe.period)) * 1000.0, 1.0) : 999.0
+    bool terminal = (s.exc and s.excTested) or (not s.exc and s.cfTest)
+    int conf = f_confWS(s)
+    int r = 0
+    r += s.outcome != DIR_NONE ? 1 : 0
+    r += s.phase >= PHASE_C ? 1 : 0
+    r += terminal ? 1 : 0
+    r += s.cfStrength ? 1 : 0
+    r += s.cfLPS ? 1 : 0
+    r += conf >= _minConf ? 1 : 0
+    r += f_validationWS(s, nz(s.pivLen, pivotLen), s.birthTrend, _atrNow) >= _valFloor ? 1 : 0
+    r += distATR <= 2.0 ? 1 : 0
+    r += ageBars <= 50.0 ? 1 : 0
+    r
+
+// Diagnostic text
+f_row(string _n, string _cur, string _req, bool _ok) =>
+    _n + "~" + _cur + "~" + _req + "~" + (_ok ? "1" : "0")
+
+f_describe(WS s, int _p, float _atrNow, int[] _rs, int _lastWhy, int _regime) =>
+    string nx = "Searching for SC / BC"
+    array<string> rows = array.new_string()
+    int campAge = not na(s.startBar) ? bar_index - s.startBar : 0
+    float rATR = f_rangeATRWS(s, _atrNow)
+    string sideTxt = s.stopSide == DIR_ACCUM ? "SC" : "BC"
+    if s.phase > PHASE_NONE
+        array.push(rows, f_row("Campaign age", str.tostring(campAge) + " bars", "-", true))
+        array.push(rows, f_row("Swing width", str.tostring(_p) + " bars", "pre-climax", true))
+        array.push(rows, f_row("Range height", str.tostring(rATR, "#.##") + " ATR", str.tostring(phaseBRangeMinATR, "#.#") + "-" + str.tostring(phaseBRangeMaxATR, "#.#"), rATR >= phaseBRangeMinATR and rATR <= phaseBRangeMaxATR))
+    if s.phase == PHASE_A
+        float arMove = not na(s.arRunPrice) and not na(s.climaxPrice) ? math.abs(s.arRunPrice - s.climaxPrice) / math.max(_atrNow, syminfo.mintick) : 0.0
+        int aMin = f_phaseAMinBars(_p)
+        nx := not s.absorbed ? "Confirming stopping action after the " + sideTxt : not s.arOK ? "Waiting for AR (" + str.tostring(minARATR, "#.#") + " ATR counter-move)" : "Waiting for confirming ST (AR provisional)"
+        array.push(rows, f_row("Stopping action", s.absorbed ? "Confirmed" : "Pending", "Confirmed", s.absorbed))
+        array.push(rows, f_row("AR displacement", str.tostring(arMove, "#.##") + " ATR", ">= " + str.tostring(minARATR, "#.##"), s.arOK))
+        array.push(rows, f_row("Phase A age", str.tostring(campAge), ">= " + str.tostring(aMin), campAge >= aMin))
+    else if s.phase == PHASE_B
+        int bAge = not na(s.bStartBar) ? bar_index - s.bStartBar : 0
+        int bMin = f_phaseBMinBars(_p, rATR)
+        int cool = int(math.round(_p * phaseBBadTestCooldownFactor))
+        int badAge = na(s.lastBadBar) ? -1 : bar_index - s.lastBadBar
+        bool oppOK = minPhaseBOppositeTests <= 0 or s.oppCount >= minPhaseBOppositeTests
+        bool travOK = minPhaseBTraversals <= 0 or s.travCount >= minPhaseBTraversals
+        bool cleanOK = badAge < 0 or badAge >= cool
+        bool chOK = f_phaseBCharacterImproving(s.stN, s.stEffSum, s.stSprSum, s.lastGoodEff, s.lastGoodSpr)
+        int sup = (oppOK ? 1 : 0) + (travOK ? 1 : 0) + (cleanOK ? 1 : 0) + (chOK ? 1 : 0)
+        bool sane = rATR >= phaseBRangeMinATR * 0.75 and rATR <= phaseBRangeMaxATR * 2.0
+        bool testsOK = s.stCount >= minPhaseBTests
+        bool ageOK = bAge >= bMin
+        string blockers = ""
+        if not testsOK
+            blockers := blockers + "tests " + str.tostring(s.stCount) + "/" + str.tostring(minPhaseBTests) + "  "
+        if not ageOK
+            blockers := blockers + "age " + str.tostring(bAge) + "/" + str.tostring(bMin) + "  "
+        if sup < 2
+            blockers := blockers + "support " + str.tostring(sup) + "/4 (need 2)  "
+        if not sane
+            blockers := blockers + "range height out of band  "
+        string provTxt = s.provEdge == DIR_ACCUM ? " | provisional Spring on file" : s.provEdge == DIR_DIST ? " | provisional UTAD on file" : ""
+        nx := (blockers == "" ? "Cause built: watch for Spring/UTAD or a terminal test at either edge" : "Building cause: " + blockers) + provTxt
+        array.push(rows, f_row("Climax-side tests", str.tostring(s.stCount), ">= " + str.tostring(minPhaseBTests), testsOK))
+        array.push(rows, f_row("Phase B age", str.tostring(bAge), ">= " + str.tostring(bMin), ageOK))
+        array.push(rows, f_row("Opposite-edge tests", str.tostring(s.oppCount), ">= " + str.tostring(minPhaseBOppositeTests), oppOK))
+        array.push(rows, f_row("Traversals", str.tostring(s.travCount), ">= " + str.tostring(minPhaseBTraversals), travOK))
+        array.push(rows, f_row("Bad-test cooldown", badAge < 0 ? "none" : str.tostring(badAge) + " bars", ">= " + str.tostring(cool), cleanOK))
+        array.push(rows, f_row("Effort drying up", chOK ? "Yes" : "No", "support clue", chOK))
+        array.push(rows, f_row("Support clues", str.tostring(sup) + "/4", ">= 2", sup >= 2))
+    else if s.phase == PHASE_C
+        bool formal = not s.exc or s.excTested
+        string want = s.outcome == DIR_ACCUM ? "SOS" : "SOW"
+        nx := formal ? "Waiting for " + want : "Waiting for Test, or a decisive " + want
+        bool oppCyc = (_regime == REGIME_MARKDOWN and s.outcome == DIR_ACCUM) or (_regime == REGIME_MARKUP and s.outcome == DIR_DIST)
+        if oppCyc and campAge < oppositeCycleMinBars
+            nx := "Cycle reversal: building cause (" + str.tostring(campAge) + "/" + str.tostring(oppositeCycleMinBars) + ")"
+        int anchor = not na(s.cReadyBar) ? s.cReadyBar : s.excBar
+        int cAge = not na(anchor) ? bar_index - anchor : 0
+        int cMin = f_phaseCToDMinBars(_p)
+        int cVal = f_validationWS(s, _p, nz(s.birthTrend), _atrNow)
+        array.push(rows, f_row("Route", s.exc ? (s.outcome == DIR_ACCUM ? "Spring" : "UTAD") : "Terminal test", "-", true))
+        array.push(rows, f_row("Post-probe test", not s.exc ? "n/a" : s.excTested ? "Done" : "Pending", "preferred", not s.exc or s.excTested))
+        array.push(rows, f_row("Phase C development", str.tostring(cAge), ">= " + str.tostring(cMin), cAge >= cMin))
+        array.push(rows, f_row("Validation", str.tostring(cVal), ">= " + str.tostring(phaseDValidationMin), cVal >= phaseDValidationMin))
+    else if s.phase == PHASE_D
+        string lp = s.outcome == DIR_ACCUM ? "LPS" : "LPSY"
+        int dConf = f_confWS(s)
+        nx := na(s.lpsTime) ? "Waiting for " + lp : "Waiting for acceptance beyond the range"
+        array.push(rows, f_row(s.outcome == DIR_ACCUM ? "SOS" : "SOW", "Confirmed", "-", true))
+        array.push(rows, f_row(lp, na(s.lpsTime) ? "Pending" : "Confirmed", "for Phase E", not na(s.lpsTime)))
+        array.push(rows, f_row("Closes outside range", str.tostring(s.outCount), ">= " + str.tostring(confirmBars), s.outCount >= confirmBars))
+        array.push(rows, f_row("Maturity", str.tostring(dConf), ">= " + str.tostring(minConfidencePhaseD), dConf >= minConfidencePhaseD))
+    else if s.phase == PHASE_E
+        nx := s.outcome == DIR_ACCUM ? "Markup underway: range should act as support" : "Markdown underway: range should act as resistance"
+    string rsTxt = str.tostring(array.get(_rs, RS_INVALID)) + "/" + str.tostring(array.get(_rs, RS_ABSORB)) + "/" + str.tostring(array.get(_rs, RS_NORANGE)) + "/" + str.tostring(array.get(_rs, RS_DEPART)) + "/" + str.tostring(array.get(_rs, RS_STALE)) + "/" + str.tostring(array.get(_rs, RS_DEMOTE)) + "/" + str.tostring(array.get(_rs, RS_EEND))
+    string whyTxt = _lastWhy == RS_INVALID ? "Invalidated" : _lastWhy == RS_ABSORB ? "No absorption" : _lastWhy == RS_NORANGE ? "No range formed" : _lastWhy == RS_DEPART ? "Left range unconfirmed" : _lastWhy == RS_STALE ? "Stale" : _lastWhy == RS_EEND ? "Phase E ended" : "-"
+    array.push(rows, f_row("Resets inv/abs/rng/dep/stale/dem/E", rsTxt, "-", true))
+    array.push(rows, f_row("Last reset", whyTxt, "-", true))
+    [nx, array.join(rows, "|")]
+
+// Wyckoff engine
+f_engine(bool _commit) =>
+
+    // Bar measurements
+    float rawVol = nz(volume)
+    bool noVol = ta.cum(rawVol) <= 0.0
+    float spr = math.max(high - low, syminfo.mintick)
+    float eff = noVol ? spr : rawVol
+    float avgEffRaw = ta.sma(eff, volLen)
+    float avgEff = nz(avgEffRaw, eff)
+    float avgEffPrev = nz(avgEffRaw[1], avgEff)
+    float atrRaw = ta.atr(atrLen)
+    float a = nz(atrRaw, spr)
+    float aPrev = nz(atrRaw[1], a)
+    float unit = math.max(a, syminfo.mintick)
+    float cPos = (close - low) / spr
+    float relE = eff / math.max(avgEff, 1e-10)
+    float sprATR = spr / unit
+    float recentEff = ta.sma(eff, climaxAbsorptionMinBars)
+    float recentLow = ta.lowest(low, climaxAbsorptionMinBars)
+    float recentHigh = ta.highest(high, climaxAbsorptionMinBars)
+    float priorLo = ta.lowest(low, extremeLen)[1]
+    float priorHi = ta.highest(high, extremeLen)[1]
+    float effHiPrior = ta.highest(eff, extremeLen)[1]
+    bool newLow = not na(priorLo) and low <= priorLo
+    bool newHigh = not na(priorHi) and high >= priorHi
+    float aBase = ta.sma(a, adaptiveSwingVolLen)
+    float aRatio = nz(aBase) > 0.0 ? a / aBase : 1.0
+    int adaptLen = math.max(adaptiveSwingMin, math.min(adaptiveSwingMax, int(math.round(pivotLen * aRatio))))
+    int liveLen = swingModeInput == "ATR Adaptive" ? adaptLen : pivotLen
+    int preLen = nz(liveLen[3], liveLen)
+
+    var WS s = WS.new()
+    f_initPivotHistory(s)
+    var int regime = REGIME_NONE
+    var int regimeBar = na
+    var int prelimBar = na
+    var float prelimTime = na
+    var float prelimPrice = na
+    var int prelimDir = DIR_NONE
+    var int prelimScore = 0
+    var int lastPLBar = na
+    var int lastPHBar = na
+    var int[] rsCounts = array.new_int(7, 0)
+    var int lastResetWhy = -1
+
+    int pLen = s.phase != PHASE_NONE ? nz(s.pivLen, liveLen) : liveLen
+    float ph = ta.pivothigh(high, pLen, pLen)
+    float pl = ta.pivotlow(low, pLen, pLen)
+    int pivBar = bar_index - pLen
+    float pA = math.max(nz(atrRaw[pLen], a), syminfo.mintick)
+    float pEff = nz(eff[pLen], eff)
+    float pSpr = math.max(nz(high[pLen], high) - nz(low[pLen], low), syminfo.mintick)
+    float pCPos = (nz(close[pLen], close) - nz(low[pLen], low)) / pSpr
+    float pAvgEff = nz(avgEffRaw[pLen], avgEff)
+    float pTime = float(nz(time[pLen], time))
+
+    float longSma = ta.sma(close, continuationTrendLen)
+    int trendBars = math.max(trendLen, math.min(priorTrendMaxBars, int(math.round(liveLen * priorTrendPivotFactor))))
+    int trendEnd = math.max(2, math.min(8, int(math.round(liveLen * 0.75))))
+    float trendScore = f_priorTrendScore(trendBars, trendEnd, a, ph, pl, longSma)
+    bool downTrend = trendScore <= -priorTrendNeutral
+    bool upTrend = trendScore >= priorTrendNeutral
+    bool strongTrend = math.abs(trendScore) >= priorTrendStrong
+    bool longBull = nz(close[1]) > nz(longSma[1]) and nz(longSma[1]) > nz(longSma[20])
+    bool longBear = not na(longSma[20]) and nz(close[1]) < nz(longSma[1]) and nz(longSma[1]) < nz(longSma[20])
+
+    float effort2 = math.max(relE, 0.01) * math.max(sprATR, 0.01)
+    float dnEffc = math.max(nz(close[1], close) - close, 0.0) / unit / effort2
+    float upEffc = math.max(close - nz(close[1], close), 0.0) / unit / effort2
+    float dnBase = ta.sma(dnEffc, prelimEfficiencyLookback)[1]
+    float upBase = ta.sma(upEffc, prelimEfficiencyLookback)[1]
+    bool dnAbsorb = not na(dnBase) and dnEffc <= dnBase * prelimEfficiencyRatio
+    bool upAbsorb = not na(upBase) and upEffc <= upBase * prelimEfficiencyRatio
+    bool nearRecentLow = not na(priorLo) and low <= priorLo + a * prelimExtremeATR
+    bool nearRecentHigh = not na(priorHi) and high >= priorHi - a * prelimExtremeATR
+
+    float hiCInv = ta.highest(close, structureInvalidationBars)
+    float loCInv = ta.lowest(close, structureInvalidationBars)
+    float hiCDep = ta.highest(close, phaseBDepartureBars)
+    float loCDep = ta.lowest(close, phaseBDepartureBars)
+    float hiCA = ta.highest(close, phaseAPrematureDepartureBars)
+    float loCA = ta.lowest(close, phaseAPrematureDepartureBars)
+    float hiCConf = ta.highest(close, confirmBars)
+    float loCConf = ta.lowest(close, confirmBars)
+    float hiCDir = ta.highest(close, directAcceptanceBars)
+    float loCDir = ta.lowest(close, directAcceptanceBars)
+    float hiCFail = ta.highest(close, phaseDFailBars)
+    float loCFail = ta.lowest(close, phaseDFailBars)
+    float mbLow = ta.lowest(low, sosMultiBarLen)
+    float mbHigh = ta.highest(high, sosMultiBarLen)
+    float mbEffRatio = math.sum(eff, sosMultiBarLen) / math.max(avgEff * sosMultiBarLen, 1e-10)
+    bool mbSOS = (close - mbLow) / unit >= sosMultiBarATR and mbEffRatio >= sosMultiBarEffort and cPos >= 0.50
+    bool mbSOW = (mbHigh - close) / unit >= sosMultiBarATR and mbEffRatio >= sosMultiBarEffort and cPos <= 0.50
+    float res3Up = math.max(close - nz(close[3], close), 0.0) / unit
+    float res3Dn = math.max(nz(close[3], close) - close, 0.0) / unit
+    int sosScore = (relE >= strengthVolMult ? 1 : 0) + (sprATR >= strengthSpreadATR ? 1 : 0) + (cPos >= sosCloseMin ? 1 : 0) + (close > open and close - open >= a * 0.50 ? 1 : 0)
+    int sowScore = (relE >= strengthVolMult ? 1 : 0) + (sprATR >= strengthSpreadATR ? 1 : 0) + (cPos <= sowCloseMax ? 1 : 0) + (close < open and open - close >= a * 0.50 ? 1 : 0)
+    float close1 = nz(close[1], close)
+    float close2 = nz(close[2], close)
+    int ctxBars = math.max(priorTrendMaxBars, continuationTrendLen) * 2
+    int sig = 0
+
+    if _commit
+
+        int p0 = nz(s.pivLen, liveLen)
+        bool rk0 = not na(s.rangeHigh) and not na(s.rangeLow)
+        float rH0 = s.rangeHigh
+        float rL0 = s.rangeLow
+        float rHt0 = rk0 ? math.max(rH0 - rL0, syminfo.mintick) : na
+        float rMid0 = rk0 ? (rH0 + rL0) / 2.0 : na
+        float rATR0 = f_rangeATRWS(s, a)
+        bool probeOpen = s.pend and bar_index - s.pendStartBar <= f_excursionRecoveryLimit(p0)
+        int bAge0 = not na(s.bStartBar) ? bar_index - s.bStartBar : 0
+        int bMin0 = f_phaseBMinBars(p0, rATR0)
+        int structAge = not na(s.startBar) ? bar_index - s.startBar : 0
+        bool ageOKBull = regime != REGIME_MARKDOWN or structAge >= oppositeCycleMinBars
+        bool ageOKBear = regime != REGIME_MARKUP or structAge >= oppositeCycleMinBars
+        float hardBull0 = f_hardLevel(s, DIR_ACCUM)
+        float hardBear0 = f_hardLevel(s, DIR_DIST)
+        int resetWhy = -1
+
+        // Retire structures that no longer fit
+        if s.phase == PHASE_A
+            int aClimaxAge = bar_index - s.climaxBar
+            bool aInvAcc = s.stopSide == DIR_ACCUM and hiCInv < s.climaxPrice - a * structureInvalidationATR
+            bool aInvDst = s.stopSide == DIR_DIST and loCInv > s.climaxPrice + a * structureInvalidationATR
+            bool aAbsorbExp = not s.absorbed and aClimaxAge > climaxAbsorptionMaxBars
+            bool aNoAR = not s.arOK and aClimaxAge > maxARBars
+            bool aOverExt = s.arOK and not na(s.arRunPrice) and math.abs(s.arRunPrice - s.climaxPrice) / math.max(nz(s.climaxATR, a), syminfo.mintick) > arMaxExtensionATR
+            float aBuf = rk0 ? math.max(rHt0 * phaseAPrematureDepartureTRFrac, a * phaseAPrematureDepartureATR) : na
+            bool aDepart = aClimaxAge > maxARBars and rk0 and ((s.stopSide == DIR_ACCUM and loCA > rH0 + aBuf) or (s.stopSide == DIR_DIST and hiCA < rL0 - aBuf))
+            if aInvAcc or aInvDst
+                resetWhy := RS_INVALID
+            else if aAbsorbExp
+                resetWhy := RS_ABSORB
+            else if aNoAR or aOverExt or aDepart
+                resetWhy := RS_NORANGE
+
+        if s.phase == PHASE_C and not probeOpen and resetWhy < 0
+            bool cBullDead = s.outcome == DIR_ACCUM and not na(hardBull0) and hiCInv < hardBull0 - a * structureInvalidationATR
+            bool cBearDead = s.outcome == DIR_DIST and not na(hardBear0) and loCInv > hardBear0 + a * structureInvalidationATR
+            if cBullDead
+                resetWhy := RS_INVALID
+            else if cBearDead
+                resetWhy := RS_INVALID
+
+        if s.phase == PHASE_D and rk0 and resetWhy < 0
+            if s.outcome == DIR_ACCUM
+                if not na(hardBull0) and hiCInv < hardBull0 - a * structureInvalidationATR
+                    resetWhy := RS_INVALID
+                else if hiCFail < rMid0
+                    f_demoteToB(s)
+                    array.set(rsCounts, RS_DEMOTE, array.get(rsCounts, RS_DEMOTE) + 1)
+            else if s.outcome == DIR_DIST
+                if not na(hardBear0) and loCInv > hardBear0 + a * structureInvalidationATR
+                    resetWhy := RS_INVALID
+                else if loCFail > rMid0
+                    f_demoteToB(s)
+                    array.set(rsCounts, RS_DEMOTE, array.get(rsCounts, RS_DEMOTE) + 1)
+
+        if s.phase == PHASE_E and rk0 and resetWhy < 0
+            bool eFail = s.outcome == DIR_ACCUM ? hiCFail < rMid0 : loCFail > rMid0
+            bool eOld = phaseEMaxBars > 0 and not na(s.eStartBar) and bar_index - s.eStartBar > phaseEMaxBars
+            if eFail or eOld
+                resetWhy := RS_EEND
+
+        int idleLim = f_phaseIdleLimit(s.phase, s.arOK, p0)
+        if resetWhy < 0 and not probeOpen and not na(idleLim) and not na(s.lastActBar) and bar_index - s.lastActBar > idleLim
+            resetWhy := RS_STALE
+
+        if resetWhy >= 0
+            array.set(rsCounts, resetWhy, array.get(rsCounts, resetWhy) + 1)
+            lastResetWhy := resetWhy
+            s := WS.new()
+            f_initPivotHistory(s)
+
+        // Track preliminary support/supply and seed new climaxes
+        if s.phase == PHASE_NONE or s.phase == PHASE_E
+            int psSc = (downTrend ? 1 : 0) + (nearRecentLow ? 1 : 0) + (relE >= prelimVolMult ? 1 : 0) + (sprATR >= 0.80 ? 1 : 0) + (cPos >= 0.45 ? 1 : 0) + (dnAbsorb ? 1 : 0)
+            int psySc = (upTrend ? 1 : 0) + (nearRecentHigh ? 1 : 0) + (relE >= prelimVolMult ? 1 : 0) + (sprATR >= 0.80 ? 1 : 0) + (cPos <= 0.55 ? 1 : 0) + (upAbsorb ? 1 : 0)
+            bool psStale = na(prelimBar) or bar_index - prelimBar > extremeLen
+            if downTrend and nearRecentLow and relE >= prelimVolMult and psSc >= prelimMinScore and (prelimDir != DIR_ACCUM or psStale or psSc >= prelimScore)
+                prelimBar := bar_index
+                prelimTime := time
+                prelimPrice := low
+                prelimDir := DIR_ACCUM
+                prelimScore := psSc
+            else if upTrend and nearRecentHigh and relE >= prelimVolMult and psySc >= prelimMinScore and (prelimDir != DIR_DIST or psStale or psySc >= prelimScore)
+                prelimBar := bar_index
+                prelimTime := time
+                prelimPrice := high
+                prelimDir := DIR_DIST
+                prelimScore := psySc
+
+        float relaxK = strongTrend ? relaxedClimaxFactor : 1.0
+        bool volHit = eff >= avgEffPrev * climaxVolMult * relaxK
+        bool sprHit = spr >= aPrev * climaxSpreadMult * relaxK
+        bool exceptional = (not na(effHiPrior) and eff >= effHiPrior) or spr >= aPrev * climaxSpreadMult * 1.5
+        int scSc = (downTrend ? 1 : 0) + (newLow ? 1 : 0) + (volHit ? 1 : 0) + (sprHit ? 1 : 0) + (cPos >= scCloseMin ? 1 : 0) + (exceptional ? 1 : 0)
+        int bcSc = (upTrend ? 1 : 0) + (newHigh ? 1 : 0) + (volHit ? 1 : 0) + (sprHit ? 1 : 0) + (cPos <= bcCloseMax ? 1 : 0) + (exceptional ? 1 : 0)
+        bool seedOpen = s.phase == PHASE_NONE or s.phase == PHASE_E
+        bool canSC = seedOpen or (s.phase == PHASE_A and s.stopSide == DIR_ACCUM and low < s.climaxPrice)
+        bool canBC = seedOpen or (s.phase == PHASE_A and s.stopSide == DIR_DIST and high > s.climaxPrice)
+        bool isSC = canSC and downTrend and newLow and volHit and sprHit and scSc >= climaxMinScore
+        bool isBC = canBC and upTrend and newHigh and volHit and sprHit and bcSc >= climaxMinScore
+        if isSC != isBC
+            int seedSide = isSC ? DIR_ACCUM : DIR_DIST
+            bool recentMarkup = regime == REGIME_MARKUP and not na(regimeBar) and bar_index - regimeBar <= ctxBars
+            bool recentMarkdown = regime == REGIME_MARKDOWN and not na(regimeBar) and bar_index - regimeBar <= ctxBars
+            s := WS.new()
+            f_initPivotHistory(s)
+            f_seed(s, seedSide, isSC ? scSc : bcSc, preLen, trendScore, recentMarkup or longBull, recentMarkdown or longBear, a, eff, spr)
+            if prelimDir == seedSide and not na(prelimBar) and prelimBar < bar_index and bar_index - prelimBar <= extremeLen
+                s.psTime := prelimTime
+                s.psPrice := prelimPrice
+                s.psScore := prelimScore
+
+        // Confirm stopping action and build the AR
+        if s.phase == PHASE_A and not s.absorbed and not na(s.climaxBar)
+            int absAge = bar_index - s.climaxBar
+            if absAge >= climaxAbsorptionMinBars and absAge <= climaxAbsorptionMaxBars
+                bool effortOK = recentEff >= avgEff * climaxAbsorptionVolFloor
+                bool accAbs = s.stopSide == DIR_ACCUM and recentLow >= s.climaxPrice - s.climaxATR * climaxAbsorptionExtremeATR and close >= s.climaxPrice + s.climaxATR * climaxAbsorptionReboundATR
+                bool dstAbs = s.stopSide == DIR_DIST and recentHigh <= s.climaxPrice + s.climaxATR * climaxAbsorptionExtremeATR and close <= s.climaxPrice - s.climaxATR * climaxAbsorptionReboundATR
+                if effortOK and (accAbs or dstAbs)
+                    s.absorbed := true
+                    s.cfClimax := true
+                    s.lastActBar := bar_index
+                    sig := f_addBit(sig, s.stopSide == DIR_ACCUM ? BIT_SC : BIT_BC)
+                    if not na(s.psTime)
+                        sig := f_addBit(sig, BIT_PS)
+
+        if s.phase == PHASE_A and na(s.arBar) and not na(s.climaxBar) and bar_index > s.climaxBar and bar_index - s.climaxBar <= maxARBars
+            if s.stopSide == DIR_ACCUM
+                if na(s.arRunPrice) or high > s.arRunPrice
+                    s.arRunPrice := high
+                    s.arRunBar := bar_index
+                    s.arRunTime := time
+                s.arOK := s.arOK or s.arRunPrice - s.climaxPrice >= a * minARATR
+            else
+                if na(s.arRunPrice) or low < s.arRunPrice
+                    s.arRunPrice := low
+                    s.arRunBar := bar_index
+                    s.arRunTime := time
+                s.arOK := s.arOK or s.climaxPrice - s.arRunPrice >= a * minARATR
+        if s.phase == PHASE_A and s.arOK and s.absorbed and na(s.arBar)
+            if s.stopSide == DIR_ACCUM
+                s.rangeHigh := s.arRunPrice
+                s.origHigh := s.arRunPrice
+            else
+                s.rangeLow := s.arRunPrice
+                s.origLow := s.arRunPrice
+
+        int p1 = nz(s.pivLen, liveLen)
+        bool rk1 = not na(s.rangeHigh) and not na(s.rangeLow)
+        float rH1 = s.rangeHigh
+        float rL1 = s.rangeLow
+        float origHt1 = rk1 ? math.max(nz(s.origHigh, rH1) - nz(s.origLow, rL1), syminfo.mintick) : na
+        bool mature1 = f_matureWS(s, p1, a)
+        bool newPL = not na(pl) and (na(lastPLBar) or pivBar > lastPLBar)
+        bool newPH = not na(ph) and (na(lastPHBar) or pivBar > lastPHBar)
+        if newPL
+            lastPLBar := pivBar
+        if newPH
+            lastPHBar := pivBar
+        bool plUsed = false
+        bool phUsed = false
+
+        if newPL and s.phase == PHASE_B and mature1 and rk1
+            bool loRefST = s.stopSide == DIR_ACCUM
+            int tRefN = loRefST ? s.stN : s.opN
+            int tRefBar = loRefST ? s.stBar : s.opLastBar
+            float tRefPrice = loRefST ? s.stPrice : s.opLastPrice
+            if tRefN > 0 and not na(tRefBar)
+                float tRefEff = (loRefST ? s.stEffSum : s.opEffSum) / tRefN
+                float tRefSpr = (loRefST ? s.stSprSum : s.opSprSum) / tRefN
+                bool tLater = pivBar >= tRefBar + terminalTestMinBarsAfterST
+                bool tNear = pl <= rL1 + pA * testTolATR
+                bool tHolds = pl >= math.min(nz(s.origLow, rL1), rL1) - pA * testExtremeToleranceATR
+                bool tHigher = na(tRefPrice) or pl >= tRefPrice - pA * testExtremeToleranceATR
+                bool tqV = pEff <= tRefEff * terminalTestVolRatio
+                bool tqS = pSpr <= tRefSpr * terminalTestSpreadRatio
+                bool tnV = pEff <= tRefEff * terminalTestOtherMaxRatio
+                bool tnS = pSpr <= tRefSpr * terminalTestOtherMaxRatio
+                int tSc = (tqV ? 1 : 0) + (tqS ? 1 : 0) + (pCPos >= 0.50 ? 1 : 0)
+                if tLater and tNear and tHolds and tHigher and ((tqV and tnS) or (tqS and tnV)) and tSc >= testMinScore
+                    f_enterCTest(s, DIR_ACCUM, pTime, pl, tSc)
+                    sig := f_addBit(sig, BIT_CTEST)
+                    plUsed := true
+        if newPH and s.phase == PHASE_B and mature1 and rk1
+            bool hiRefST = s.stopSide == DIR_DIST
+            int uRefN = hiRefST ? s.stN : s.opN
+            int uRefBar = hiRefST ? s.stBar : s.opLastBar
+            float uRefPrice = hiRefST ? s.stPrice : s.opLastPrice
+            if uRefN > 0 and not na(uRefBar)
+                float uRefEff = (hiRefST ? s.stEffSum : s.opEffSum) / uRefN
+                float uRefSpr = (hiRefST ? s.stSprSum : s.opSprSum) / uRefN
+                bool uLater = pivBar >= uRefBar + terminalTestMinBarsAfterST
+                bool uNear = ph >= rH1 - pA * testTolATR
+                bool uHolds = ph <= math.max(nz(s.origHigh, rH1), rH1) + pA * testExtremeToleranceATR
+                bool uLower = na(uRefPrice) or ph <= uRefPrice + pA * testExtremeToleranceATR
+                bool uqV = pEff <= uRefEff * terminalTestVolRatio
+                bool uqS = pSpr <= uRefSpr * terminalTestSpreadRatio
+                bool unV = pEff <= uRefEff * terminalTestOtherMaxRatio
+                bool unS = pSpr <= uRefSpr * terminalTestOtherMaxRatio
+                int uSc = (uqV ? 1 : 0) + (uqS ? 1 : 0) + (pCPos <= 0.50 ? 1 : 0)
+                if uLater and uNear and uHolds and uLower and ((uqV and unS) or (uqS and unV)) and uSc >= testMinScore
+                    f_enterCTest(s, DIR_DIST, pTime, ph, uSc)
+                    sig := f_addBit(sig, BIT_CTEST)
+                    phUsed := true
+
+        if newPL and not plUsed and s.phase == PHASE_A and s.stopSide == DIR_ACCUM and s.absorbed and s.arOK and not na(s.arRunBar) and pivBar > s.arRunBar
+            float aZoneTop = s.origLow + (s.arRunPrice - s.origLow) * phaseBZoneFrac
+            bool aNearL = math.abs(pl - s.origLow) <= pA * boundaryTolATR or pl <= aZoneTop
+            bool aHoldsL = pl >= s.origLow - pA * boundaryTolATR
+            bool aCloseL = pCPos >= 0.45
+            int aTcL = f_testClass(aNearL, aHoldsL, aCloseL, pEff, pSpr, s.climaxEff, s.climaxSpr)
+            int aScL = (aNearL ? 1 : 0) + (pEff <= s.climaxEff * stMaxVolRatio ? 1 : 0) + (pSpr <= s.climaxSpr * stMaxSpreadRatio ? 1 : 0) + (aHoldsL ? 1 : 0) + (aCloseL ? 1 : 0) + 1
+            bool aAgeL = pivBar - s.startBar >= f_phaseAMinBars(p1)
+            bool aSpaceL = pivBar - s.arRunBar >= math.max(2, p1)
+            if aNearL
+                s.lastActBar := bar_index
+            if aTcL == TEST_GOOD and aScL >= stMinScore and aAgeL and aSpaceL
+                f_freezeAR(s)
+                f_registerST(s, pl, pTime, pivBar, pEff, pSpr, aScL)
+                s.phase := PHASE_B
+                s.bStartBar := pivBar
+                s.bStartTime := pTime
+                sig := f_addBit(sig, BIT_AR)
+                sig := f_addBit(sig, BIT_ST)
+                plUsed := true
+        if newPH and not phUsed and s.phase == PHASE_A and s.stopSide == DIR_DIST and s.absorbed and s.arOK and not na(s.arRunBar) and pivBar > s.arRunBar
+            float aZoneBot = s.origHigh - (s.origHigh - s.arRunPrice) * phaseBZoneFrac
+            bool aNearH = math.abs(ph - s.origHigh) <= pA * boundaryTolATR or ph >= aZoneBot
+            bool aHoldsH = ph <= s.origHigh + pA * boundaryTolATR
+            bool aCloseH = pCPos <= 0.55
+            int aTcH = f_testClass(aNearH, aHoldsH, aCloseH, pEff, pSpr, s.climaxEff, s.climaxSpr)
+            int aScH = (aNearH ? 1 : 0) + (pEff <= s.climaxEff * stMaxVolRatio ? 1 : 0) + (pSpr <= s.climaxSpr * stMaxSpreadRatio ? 1 : 0) + (aHoldsH ? 1 : 0) + (aCloseH ? 1 : 0) + 1
+            bool aAgeH = pivBar - s.startBar >= f_phaseAMinBars(p1)
+            bool aSpaceH = pivBar - s.arRunBar >= math.max(2, p1)
+            if aNearH
+                s.lastActBar := bar_index
+            if aTcH == TEST_GOOD and aScH >= stMinScore and aAgeH and aSpaceH
+                f_freezeAR(s)
+                f_registerST(s, ph, pTime, pivBar, pEff, pSpr, aScH)
+                s.phase := PHASE_B
+                s.bStartBar := pivBar
+                s.bStartTime := pTime
+                sig := f_addBit(sig, BIT_AR)
+                sig := f_addBit(sig, BIT_ST)
+                phUsed := true
+
+        rk1 := not na(s.rangeHigh) and not na(s.rangeLow)
+        if newPL and not plUsed and s.phase == PHASE_B and rk1 and pivBar > s.bStartBar
+            float bHt = math.max(s.rangeHigh - s.rangeLow, syminfo.mintick)
+            if s.stopSide == DIR_ACCUM
+                bool bNear = math.abs(pl - s.rangeLow) <= pA * boundaryTolATR or math.abs(pl - s.origLow) <= pA * boundaryTolATR or pl <= s.rangeLow + bHt * phaseBZoneFrac
+                bool bHolds = pl >= s.origLow - pA * boundaryTolATR
+                bool bClose = pCPos >= 0.45
+                int bTc = f_testClass(bNear, bHolds, bClose, pEff, pSpr, s.climaxEff, s.climaxSpr)
+                int bSc = (bNear ? 1 : 0) + (pEff <= s.climaxEff * stMaxVolRatio ? 1 : 0) + (pSpr <= s.climaxSpr * stMaxSpreadRatio ? 1 : 0) + (bHolds ? 1 : 0) + (bClose ? 1 : 0) + 1
+                bool bIsProv = s.provEdge == DIR_ACCUM and not na(s.provBar) and math.abs(pivBar - s.provBar) <= p1
+                if bNear
+                    s.lastActBar := bar_index
+                if bTc == TEST_FAILED and not bIsProv
+                    s.lastBadBar := pivBar
+                else if bTc == TEST_GOOD and bSc >= stMinScore
+                    f_registerST(s, pl, pTime, pivBar, pEff, pSpr, bSc)
+                    sig := f_addBit(sig, BIT_ST)
+            else
+                if pl < s.rangeLow and pl >= nz(s.origLow, s.rangeLow) - origHt1 * phaseBEdgeExpansionCap
+                    s.rangeLow := pl
+                float oHtL = math.max(s.rangeHigh - s.rangeLow, syminfo.mintick)
+                bool oNearL = pl <= s.rangeLow + pA * boundaryTolATR or pl <= s.rangeLow + oHtL * phaseBZoneFrac
+                bool oInsideL = pl >= nz(s.origLow, s.rangeLow) - origHt1 * phaseBEdgeExpansionCap
+                bool oCtrlL = pEff <= s.climaxEff * 1.20 and pSpr <= s.climaxSpr * 1.20
+                if oNearL and oInsideL and oCtrlL and (na(s.opLastBar) or pivBar > s.opLastBar)
+                    f_registerOpp(s, pl, pTime, pivBar, pEff, pSpr)
+        if newPH and not phUsed and s.phase == PHASE_B and rk1 and pivBar > s.bStartBar
+            float bHtH = math.max(s.rangeHigh - s.rangeLow, syminfo.mintick)
+            if s.stopSide == DIR_DIST
+                bool hNear = math.abs(ph - s.rangeHigh) <= pA * boundaryTolATR or math.abs(ph - s.origHigh) <= pA * boundaryTolATR or ph >= s.rangeHigh - bHtH * phaseBZoneFrac
+                bool hHolds = ph <= s.origHigh + pA * boundaryTolATR
+                bool hClose = pCPos <= 0.55
+                int hTc = f_testClass(hNear, hHolds, hClose, pEff, pSpr, s.climaxEff, s.climaxSpr)
+                int hSc = (hNear ? 1 : 0) + (pEff <= s.climaxEff * stMaxVolRatio ? 1 : 0) + (pSpr <= s.climaxSpr * stMaxSpreadRatio ? 1 : 0) + (hHolds ? 1 : 0) + (hClose ? 1 : 0) + 1
+                bool hIsProv = s.provEdge == DIR_DIST and not na(s.provBar) and math.abs(pivBar - s.provBar) <= p1
+                if hNear
+                    s.lastActBar := bar_index
+                if hTc == TEST_FAILED and not hIsProv
+                    s.lastBadBar := pivBar
+                else if hTc == TEST_GOOD and hSc >= stMinScore
+                    f_registerST(s, ph, pTime, pivBar, pEff, pSpr, hSc)
+                    sig := f_addBit(sig, BIT_ST)
+            else
+                if ph > s.rangeHigh and ph <= nz(s.origHigh, s.rangeHigh) + origHt1 * phaseBEdgeExpansionCap
+                    s.rangeHigh := ph
+                float oHtH = math.max(s.rangeHigh - s.rangeLow, syminfo.mintick)
+                bool oNearH = ph >= s.rangeHigh - pA * boundaryTolATR or ph >= s.rangeHigh - oHtH * phaseBZoneFrac
+                bool oInsideH = ph <= nz(s.origHigh, s.rangeHigh) + origHt1 * phaseBEdgeExpansionCap
+                bool oCtrlH = pEff <= s.climaxEff * 1.20 and pSpr <= s.climaxSpr * 1.20
+                if oNearH and oInsideH and oCtrlH and (na(s.opLastBar) or pivBar > s.opLastBar)
+                    f_registerOpp(s, ph, pTime, pivBar, pEff, pSpr)
+
+        // Build and score the trading range
+        if s.phase == PHASE_B and not na(s.rangeHigh) and not na(s.rangeLow)
+            float tvHt = math.max(s.rangeHigh - s.rangeLow, syminfo.mintick)
+            bool loZoneP = newPL and pl <= s.rangeLow + tvHt * phaseBZoneFrac
+            bool hiZoneP = newPH and ph >= s.rangeHigh - tvHt * phaseBZoneFrac
+            int zoneNow = loZoneP != hiZoneP ? (loZoneP ? -1 : 1) : 0
+            if zoneNow != 0 and (na(s.lastZoneBar) or pivBar > s.lastZoneBar)
+                if s.lastZone != 0 and zoneNow != s.lastZone
+                    s.travCount := s.travCount + 1
+                    s.lastActBar := bar_index
+                s.lastZone := zoneNow
+                s.lastZoneBar := pivBar
+
+        if newPL and s.phase == PHASE_C and s.outcome == DIR_ACCUM and s.exc and not s.excTested and pivBar > s.excBar and not na(s.rangeLow)
+            bool xNearL = pl <= s.rangeLow + pA * testTolATR
+            bool xKeepL = pl >= s.excPrice - pA * testExtremeToleranceATR
+            int xScL = (pEff <= s.excEff * testMaxVolRatio ? 1 : 0) + (pSpr <= s.excSpr * testMaxSpreadRatio ? 1 : 0) + (pCPos >= 0.50 ? 1 : 0)
+            if xNearL and xKeepL and xScL >= testMinScore
+                s.excTested := true
+                s.cReadyBar := bar_index
+                s.testTime := pTime
+                s.testPrice := pl
+                s.testScore := xScL
+                s.cfTest := true
+                f_setEvent(s, EV_TEST)
+                sig := f_addBit(sig, BIT_TEST)
+        if newPH and s.phase == PHASE_C and s.outcome == DIR_DIST and s.exc and not s.excTested and pivBar > s.excBar and not na(s.rangeHigh)
+            bool xNearH = ph >= s.rangeHigh - pA * testTolATR
+            bool xKeepH = ph <= s.excPrice + pA * testExtremeToleranceATR
+            int xScH = (pEff <= s.excEff * testMaxVolRatio ? 1 : 0) + (pSpr <= s.excSpr * testMaxSpreadRatio ? 1 : 0) + (pCPos <= 0.50 ? 1 : 0)
+            if xNearH and xKeepH and xScH >= testMinScore
+                s.excTested := true
+                s.cReadyBar := bar_index
+                s.testTime := pTime
+                s.testPrice := ph
+                s.testScore := xScH
+                s.cfTest := true
+                f_setEvent(s, EV_TEST)
+                sig := f_addBit(sig, BIT_TEST)
+
+        if newPL and s.phase == PHASE_D and s.outcome == DIR_ACCUM and not na(s.strBar) and pivBar > s.strBar and not na(s.rangeHigh)
+            float lHard = f_hardLevel(s, DIR_ACCUM)
+            bool lSide = not na(lHard) and pl > lHard - pA * testExtremeToleranceATR
+            bool lCreek = pl >= s.rangeHigh - pA * lpsBoundaryATR
+            int lSc = (pEff <= pAvgEff * lpsVolMult ? 1 : 0) + (pSpr <= pA * lpsSpreadATR ? 1 : 0) + (pCPos >= 0.45 ? 1 : 0)
+            if lSide and lCreek and lSc >= lpsMinScore
+                s.lpsTime := pTime
+                s.lpsPrice := pl
+                s.lpsBar := bar_index
+                s.lpsScore := lSc
+                s.cfLPS := true
+                f_setEvent(s, EV_LPS)
+                sig := f_addBit(sig, BIT_LPS)
+        if newPH and s.phase == PHASE_D and s.outcome == DIR_DIST and not na(s.strBar) and pivBar > s.strBar and not na(s.rangeLow)
+            float yHard = f_hardLevel(s, DIR_DIST)
+            bool ySide = not na(yHard) and ph < yHard + pA * testExtremeToleranceATR
+            bool yIce = ph <= s.rangeLow + pA * lpsBoundaryATR
+            int ySc = (pEff <= pAvgEff * lpsVolMult ? 1 : 0) + (pSpr <= pA * lpsSpreadATR ? 1 : 0) + (pCPos <= 0.55 ? 1 : 0)
+            if ySide and yIce and ySc >= lpsMinScore
+                s.lpsTime := pTime
+                s.lpsPrice := ph
+                s.lpsBar := bar_index
+                s.lpsScore := ySc
+                s.cfLPS := true
+                f_setEvent(s, EV_LPSY)
+                sig := f_addBit(sig, BIT_LPSY)
+
+        int p2 = nz(s.pivLen, liveLen)
+        bool rk2 = not na(s.rangeHigh) and not na(s.rangeLow)
+        float rH2 = s.rangeHigh
+        float rL2 = s.rangeLow
+        int recLimit2 = f_excursionRecoveryLimit(p2)
+        bool mature2 = f_matureWS(s, p2, a)
+        int bAge2 = not na(s.bStartBar) ? bar_index - s.bStartBar : 0
+        // Evaluate Spring, UTAD and terminal tests
+        bool probeB = s.phase == PHASE_B and s.stCount >= 1 and bAge2 >= math.max(3, p2 * 2)
+        bool probeCLo = s.phase == PHASE_C and s.outcome == DIR_ACCUM and not s.exc
+        bool probeCHi = s.phase == PHASE_C and s.outcome == DIR_DIST and not s.exc
+        if rk2 and not s.pend and (na(s.pendCoolBar) or bar_index > s.pendCoolBar)
+            float penLo = rL2 - low
+            float penHi = high - rH2
+            bool okLo = (probeB or probeCLo) and penLo >= a * springMinPenATR and penLo <= a * springMaxPenATR
+            bool okHi = (probeB or probeCHi) and penHi >= a * springMinPenATR and penHi <= a * springMaxPenATR
+            if okLo != okHi
+                s.pend := true
+                s.pendEdge := okLo ? DIR_ACCUM : DIR_DIST
+                s.pendStartBar := bar_index
+                s.pendExtBar := bar_index
+                s.pendExt := okLo ? low : high
+                s.pendExtTime := time
+                s.pendEff := eff
+                s.pendSpr := spr
+        if s.pend and rk2 and (s.phase == PHASE_B or s.phase == PHASE_C)
+            if s.pendEdge == DIR_ACCUM and low < s.pendExt
+                s.pendExt := low
+                s.pendExtBar := bar_index
+                s.pendExtTime := time
+                s.pendEff := math.max(nz(s.pendEff), eff)
+                s.pendSpr := math.max(nz(s.pendSpr), spr)
+            else if s.pendEdge == DIR_DIST and high > s.pendExt
+                s.pendExt := high
+                s.pendExtBar := bar_index
+                s.pendExtTime := time
+                s.pendEff := math.max(nz(s.pendEff), eff)
+                s.pendSpr := math.max(nz(s.pendSpr), spr)
+            int recAge = bar_index - s.pendStartBar
+            bool recovered = s.pendEdge == DIR_ACCUM ? close > rL2 : close < rH2
+            float depth = s.pendEdge == DIR_ACCUM ? rL2 - s.pendExt : s.pendExt - rH2
+            bool depthOK = depth >= a * springMinPenATR and depth <= a * springMaxPenATR
+            int recSc = s.pendEdge == DIR_ACCUM ? (cPos >= springCloseMin ? 1 : 0) + (eff <= avgEff * springEffortMaxMult ? 1 : 0) + (close > open ? 1 : 0) + (spr >= a * 0.50 ? 1 : 0) : (cPos <= utadCloseMax ? 1 : 0) + (eff <= avgEff * springEffortMaxMult ? 1 : 0) + (close < open ? 1 : 0) + (spr >= a * 0.50 ? 1 : 0)
+            if recovered and depthOK and recAge <= recLimit2 and recSc >= excursionMinScore
+                int probeEdge = s.pendEdge
+                if s.phase == PHASE_B and not mature2
+
+                    s.provEdge := probeEdge
+                    s.provBar := s.pendExtBar
+                    s.provPrice := s.pendExt
+                    s.provTime := s.pendExtTime
+                    s.provEff := s.pendEff
+                    s.provSpr := s.pendSpr
+                    s.provScore := recSc
+                    s.lastActBar := bar_index
+                    s.pend := false
+                else
+                    if s.phase == PHASE_C
+                        f_clearTerminal(s)
+                    f_excFromPend(s, recSc)
+                    sig := f_addBit(sig, probeEdge == DIR_ACCUM ? BIT_SPRING : BIT_UTAD)
+            else if recAge > recLimit2 or not depthOK and depth > a * springMaxPenATR
+                if s.phase == PHASE_B
+                    s.lastBadBar := bar_index
+                s.pend := false
+                s.pendCoolBar := bar_index + p2
+
+        if s.phase == PHASE_C and s.exc and not s.excTested and rk2
+            if s.outcome == DIR_ACCUM and low < s.excPrice and low >= rL2 - a * springMaxPenATR
+                s.excPrice := low
+                s.excBar := bar_index
+                s.excTime := time
+                s.excEff := math.max(nz(s.excEff), eff)
+                s.excSpr := math.max(nz(s.excSpr), spr)
+            else if s.outcome == DIR_DIST and high > s.excPrice and high <= rH2 + a * springMaxPenATR
+                s.excPrice := high
+                s.excBar := bar_index
+                s.excTime := time
+                s.excEff := math.max(nz(s.excEff), eff)
+                s.excSpr := math.max(nz(s.excSpr), spr)
+
+        // Look for SOS or SOW and promote to Phase D
+        if s.phase == PHASE_C and rk2 and not s.pend
+            int cMinD = f_phaseCToDMinBars(p2)
+            bool cFormal = not s.exc or s.excTested
+            int cAnchor = not na(s.cReadyBar) ? s.cReadyBar : s.excBar
+            bool cAgeReady = not na(cAnchor) and bar_index - cAnchor >= cMinD
+            int cVal = f_validationWS(s, p2, trendScore, a)
+            int cValD = cFormal ? cVal : math.min(100, cVal + 13)
+            int cConf = f_confWS(s)
+            int cConfD = cFormal ? cConf : math.min(100, cConf + 30)
+            float cHt = math.max(rH2 - rL2, syminfo.mintick)
+            if cAgeReady and cValD >= phaseDValidationMin and cConfD >= minConfidencePhaseC
+                if s.outcome == DIR_ACCUM and ageOKBull
+                    float domUp = rL2 + cHt * phaseDDominanceFrac
+                    bool brkUp = close > rH2 + a * breakATR
+                    bool domOKUp = brkUp or (cFormal ? close >= domUp and close1 >= domUp : close >= domUp and close1 >= domUp and close2 >= domUp)
+                    int reqUp = cFormal ? strengthMinScore : math.max(2, strengthMinScore - 1)
+                    bool qUp = sosScore >= reqUp or mbSOS or (not cFormal and res3Up >= 1.0)
+                    if domOKUp and qUp
+                        f_promoteD(s, DIR_ACCUM, sosScore, high)
+                        sig := f_addBit(sig, BIT_SOS)
+                else if s.outcome == DIR_DIST and ageOKBear
+                    float domDn = rH2 - cHt * phaseDDominanceFrac
+                    bool brkDn = close < rL2 - a * breakATR
+                    bool domOKDn = brkDn or (cFormal ? close <= domDn and close1 <= domDn : close <= domDn and close1 <= domDn and close2 <= domDn)
+                    int reqDn = cFormal ? strengthMinScore : math.max(2, strengthMinScore - 1)
+                    bool qDn = sowScore >= reqDn or mbSOW or (not cFormal and res3Dn >= 1.0)
+                    if domOKDn and qDn
+                        f_promoteD(s, DIR_DIST, sowScore, low)
+                        sig := f_addBit(sig, BIT_SOW)
+
+        int resetLate = -1
+        if s.phase == PHASE_B and rk2 and not s.pend
+            float dHt = math.max(rH2 - rL2, syminfo.mintick)
+            float dBuf = math.max(dHt * phaseBDepartureTRFrac, a * phaseBDepartureATR)
+            bool upAcc = close > rH2 + a * breakATR and close1 > rH2 + a * breakATR
+            bool dnAcc = close < rL2 - a * breakATR and close1 < rL2 - a * breakATR
+            bool upSus = loCDep > rH2 + dBuf
+            bool dnSus = hiCDep < rL2 - dBuf
+            bool upGo = (upAcc and (sosScore >= strengthMinScore or mbSOS)) or upSus
+            bool dnGo = (dnAcc and (sowScore >= strengthMinScore or mbSOW)) or dnSus
+            int provLimit = f_phaseIdleLimit(PHASE_C, true, p2)
+            if upGo and not dnGo
+                bool upProv = s.provEdge == DIR_ACCUM and not na(s.provBar) and bar_index - s.provBar <= provLimit
+                if ageOKBull and upProv and mature2
+                    f_adoptProv(s)
+                    f_promoteD(s, DIR_ACCUM, sosScore, high)
+                    sig := f_addBit(sig, BIT_SPRING)
+                    sig := f_addBit(sig, BIT_SOS)
+                else if upSus and not upProv
+                    resetLate := RS_DEPART
+            else if dnGo and not upGo
+                bool dnProv = s.provEdge == DIR_DIST and not na(s.provBar) and bar_index - s.provBar <= provLimit
+                if ageOKBear and dnProv and mature2
+                    f_adoptProv(s)
+                    f_promoteD(s, DIR_DIST, sowScore, low)
+                    sig := f_addBit(sig, BIT_UTAD)
+                    sig := f_addBit(sig, BIT_SOW)
+                else if dnSus and not dnProv
+                    resetLate := RS_DEPART
+        if resetLate >= 0
+            array.set(rsCounts, resetLate, array.get(rsCounts, resetLate) + 1)
+            lastResetWhy := resetLate
+            s := WS.new()
+            f_initPivotHistory(s)
+
+        if s.phase == PHASE_D and s.outcome == DIR_ACCUM and s.ev == EV_LPS and not na(s.rangeHigh)
+            if close > s.rangeHigh + a * breakATR and relE >= strengthVolMult and cPos >= sosCloseMin
+                s.strBar := bar_index
+                s.strTime := time
+                s.strPrice := high
+                s.strScore := sosScore
+                f_setEvent(s, EV_SOS)
+                sig := f_addBit(sig, BIT_SOS)
+        if s.phase == PHASE_D and s.outcome == DIR_DIST and s.ev == EV_LPSY and not na(s.rangeLow)
+            if close < s.rangeLow - a * breakATR and relE >= strengthVolMult and cPos <= sowCloseMax
+                s.strBar := bar_index
+                s.strTime := time
+                s.strPrice := low
+                s.strScore := sowScore
+                f_setEvent(s, EV_SOW)
+                sig := f_addBit(sig, BIT_SOW)
+
+        // Confirm acceptance into Phase E
+        if s.phase == PHASE_D and not na(s.rangeHigh) and not na(s.rangeLow)
+            int eConf = f_confWS(s)
+            int dAge = not na(s.dStartBar) ? bar_index - s.dStartBar : 0
+            int dMin = f_phaseDMinBars(nz(s.pivLen, liveLen))
+            if s.outcome == DIR_ACCUM
+                s.outCount := close > s.rangeHigh ? s.outCount + 1 : 0
+                bool eOppOKU = regime != REGIME_MARKDOWN or s.cfLPS
+                bool eStdU = s.cfLPS and not na(s.lpsBar) and bar_index - s.lpsBar >= confirmBars and dAge >= dMin and loCConf > s.rangeHigh and eConf >= minConfidencePhaseD
+                bool eDirU = not s.cfLPS and dAge >= math.max(dMin, directAcceptanceBars) and loCDir > s.rangeHigh and eConf >= directAcceptanceConfidence
+                if (eStdU or eDirU) and eOppOKU
+                    s.cfAccept := true
+                    s.phase := PHASE_E
+                    s.eStartBar := bar_index
+                    s.eStartTime := time
+                    regime := REGIME_MARKUP
+                    regimeBar := bar_index
+                    f_setEvent(s, EV_MARKUP)
+                    sig := f_addBit(sig, BIT_E)
+            else if s.outcome == DIR_DIST
+                s.outCount := close < s.rangeLow ? s.outCount + 1 : 0
+                bool eOppOKD = regime != REGIME_MARKUP or s.cfLPS
+                bool eStdD = s.cfLPS and not na(s.lpsBar) and bar_index - s.lpsBar >= confirmBars and dAge >= dMin and hiCConf < s.rangeLow and eConf >= minConfidencePhaseD
+                bool eDirD = not s.cfLPS and dAge >= math.max(dMin, directAcceptanceBars) and hiCDir < s.rangeLow and eConf >= directAcceptanceConfidence
+                if (eStdD or eDirD) and eOppOKD
+                    s.cfAccept := true
+                    s.phase := PHASE_E
+                    s.eStartBar := bar_index
+                    s.eStartTime := time
+                    regime := REGIME_MARKDOWN
+                    regimeBar := bar_index
+                    f_setEvent(s, EV_MARKDOWN)
+                    sig := f_addBit(sig, BIT_E)
+
+    if _commit and na(s.entryTime) and s.outcome != DIR_NONE
+        int eMinConf = entryStrictness == "Conservative" ? entryMinConfidenceConservative : entryStrictness == "Standard" ? entryMinConfidenceStandard : entryMinConfidenceAggressive
+        int eMinTests = entryStrictness == "Conservative" ? entryMinTestsConservative : entryStrictness == "Standard" ? entryMinTestsStandard : entryMinTestsAggressive
+        int eValFloor = entryStrictness == "Conservative" ? phaseDValidationMin : math.max(45, phaseDValidationMin - 10)
+        int eVal = f_validationWS(s, nz(s.pivLen, liveLen), trendScore, a)
+        int eReady = f_entryReadinessWS(s, eMinConf, eValFloor, a)
+        bool eQuality = f_confWS(s) >= eMinConf and eVal >= eValFloor and eReady >= eMinTests
+        bool testBit = f_hasBit(sig, BIT_TEST) or f_hasBit(sig, BIT_CTEST)
+        bool strengthBit = f_hasBit(sig, BIT_SOS) or f_hasBit(sig, BIT_SOW)
+        bool lpsBit = f_hasBit(sig, BIT_LPS) or f_hasBit(sig, BIT_LPSY)
+        bool aggressiveTestTrig = entryStrictness == "Aggressive" and testBit and eQuality
+        bool aggressiveStrengthFallback = entryStrictness == "Aggressive" and strengthBit and eQuality and na(s.testTime)
+        bool standardTestTrig = entryStrictness == "Standard" and testBit and eQuality and s.testScore >= testMinScore
+        bool standardLpsFallback = entryStrictness == "Standard" and lpsBit and eQuality
+        bool conservativeLpsTrig = entryStrictness == "Conservative" and lpsBit and eQuality
+        if aggressiveTestTrig or aggressiveStrengthFallback or standardTestTrig or standardLpsFallback or conservativeLpsTrig
+            s.entryTime := time
+            s.entryPrice := close
+            s.entryKind := (standardLpsFallback or conservativeLpsTrig) ? ENTRY_LPS : (aggressiveStrengthFallback ? ENTRY_STRENGTH : ENTRY_TEST)
+
+    int oP = nz(s.pivLen, liveLen)
+    int outConf = s.stopSide == DIR_NONE ? 0 : f_confWS(s)
+    int outVal = f_validationWS(s, oP, trendScore, a)
+    int outType = f_typeWS(s)
+    int outWDir = s.outcome != DIR_NONE ? s.outcome : f_biasDir(s)
+    int outBAge = not na(s.bStartBar) ? bar_index - s.bStartBar : 0
+    bool outBVis = s.phase != PHASE_B or (outBAge >= math.max(2, int(math.round(float(oP) * 0.50))) and s.stCount >= 1)
+    int outScores = s.climaxScore + s.stScore * 10 + s.excScore * 100 + s.testScore * 1000 + s.strScore * 10000 + s.lpsScore * 100000
+    string outNext = ""
+    string outDbg = ""
+    if barstate.islast
+        [dNext, dRows] = f_describe(s, oP, a, rsCounts, lastResetWhy, regime)
+        outNext := dNext
+        outDbg := dRows
+    // Return the current campaign snapshot
+    [s.stopSide, s.outcome, outWDir, outType, s.phase, s.ev, outConf, outVal, s.rangeHigh, s.rangeLow, s.climaxTime, s.climaxPrice, s.bStartTime, s.cStartTime, s.dStartTime, s.eStartTime, s.exc, s.excTested, s.lastEventTime, s.lastEventPrice, s.arTime, s.arPrice, s.stTime, s.stPrice, s.stHist.t1, s.stHist.p1, s.stHist.t2, s.stHist.p2, s.stHist.t3, s.stHist.p3, s.opHist.t1, s.opHist.p1, s.opHist.t2, s.opHist.p2, s.opHist.t3, s.opHist.p3, s.excTime, s.excPrice, s.testTime, s.testPrice, s.strTime, s.strPrice, s.lpsTime, s.lpsPrice, s.entryTime, s.entryPrice, s.entryKind, a, sig, s.psTime, s.psPrice, outScores, outBVis, outNext, outDbg]
+
+// Stable HTF snapshot: run the engine in the requested timeframe, then expose only
+// the prior fully closed source-timeframe bar so lower-TF charts use the same confirmed HTF state.
+f_engineHTF() =>
+    [hStop, hOut, hWDir, hType, hPhase, hEvent, hConf, hVal, hRH, hRL, hClT, hClP, hBT, hCT, hDT, hET, hExc, hTested, hLastT, hLastP, hArT, hArP, hStT, hStP, hSt1T, hSt1P, hSt2T, hSt2P, hSt3T, hSt3P, hOp1T, hOp1P, hOp2T, hOp2P, hOp3T, hOp3P, hExT, hExP, hTeT, hTeP, hSoT, hSoP, hLpT, hLpP, hEntryT, hEntryP, hEntryKind, hATR, hMask, hPsT, hPsP, hScores, hBVis, hNext, hDbg] = f_engine(true)
+    [hStop[1], hOut[1], hWDir[1], hType[1], hPhase[1], hEvent[1], hConf[1], hVal[1], hRH[1], hRL[1], hClT[1], hClP[1], hBT[1], hCT[1], hDT[1], hET[1], hExc[1], hTested[1], hLastT[1], hLastP[1], hArT[1], hArP[1], hStT[1], hStP[1], hSt1T[1], hSt1P[1], hSt2T[1], hSt2P[1], hSt3T[1], hSt3P[1], hOp1T[1], hOp1P[1], hOp2T[1], hOp2P[1], hOp3T[1], hOp3P[1], hExT[1], hExP[1], hTeT[1], hTeP[1], hSoT[1], hSoP[1], hLpT[1], hLpP[1], hEntryT[1], hEntryP[1], hEntryKind[1], hATR[1], hMask[1], hPsT[1], hPsP[1], hScores[1], hBVis[1], hNext[1], hDbg[1]]
+
+var array<EntrySignal> confirmedEntrySignals = array.new<EntrySignal>()
+var array<label> confirmedEntryLabels = array.new<label>()
+
+f_storeConfirmedEntry(float _t, float _p, int _dir, int _kind, int _mode, float _srcSecs, string _tfLabel, float _atr) =>
+    bool added = false
+    if not na(_t) and not na(_p) and _dir != DIR_NONE and _kind != ENTRY_NONE
+        bool exists = false
+        int n = array.size(confirmedEntrySignals)
+        if n > 0
+            for i = 0 to n - 1
+                EntrySignal e = array.get(confirmedEntrySignals, i)
+                bool sameTime = e.t == _t
+                bool sameTf = math.abs(nz(e.srcSecs, 0.0) - nz(_srcSecs, 0.0)) < 0.5
+                if sameTime and sameTf and e.dir == _dir and e.kind == _kind and e.mode == _mode
+                    exists := true
+                    break
+        if not exists
+            array.push(confirmedEntrySignals, EntrySignal.new(_t, _p, _dir, _kind, _mode, _srcSecs, _tfLabel, _atr))
+            added := true
+    added
+
+
+// Chart-timeframe result
+[cStop, cOut, cWDir, cType, cPhase, cEvent, cConf, cVal, cRH, cRL, cClT, cClP, cBT, cCT, cDT, cET, cExc, cTested, cLastT, cLastP, cArT, cArP, cStT, cStP, cSt1T, cSt1P, cSt2T, cSt2P, cSt3T, cSt3P, cOp1T, cOp1P, cOp2T, cOp2P, cOp3T, cOp3P, cExT, cExP, cTeT, cTeP, cSoT, cSoP, cLpT, cLpP, cEntryT, cEntryP, cEntryKind, cATR, cMask, cPsT, cPsP, cScores, cBVis, cNext, cDbg] = f_engine(barstate.isconfirmed)
+
+// A chart-timeframe entry is a historical event once the engine confirms it.
+f_storeConfirmedEntry(cEntryT, cEntryP, cOut, cEntryKind, SIGNAL_AUTO, chartTfSecs, chartTfLabel, cATR)
+
+// Keep completed chart-timeframe patterns for optional historical overlays
+var array<HistSchem> histSchems = array.new<HistSchem>()
+var array<HistSchem> htfHistSchems = array.new<HistSchem>()
+var array<HistSchem> histRenderQueue = array.new<HistSchem>()
+var array<HistSchem> htfHistRenderQueue = array.new<HistSchem>()
+var float trackedHistClimax = na
+var int trackedHistMaxPhase = PHASE_NONE
+var int trackedHistStartBar = na
+var HistSchem trackedHist = HistSchem.new()
+
+if barstate.isconfirmed
+    bool histCampaignChanged = not na(trackedHistClimax) and (na(cClT) or cClT != trackedHistClimax)
+    if histCampaignChanged
+        trackedHist.endT := float(time)
+        trackedHist.endBar := math.max(bar_index - 1, nz(trackedHist.startBar, bar_index - 1))
+        if trackedHistMaxPhase >= historicalStoreMinPhase and not na(trackedHist.clT)
+            f_addHistoricalDedup(histSchems, trackedHist)
+            array.push(histRenderQueue, trackedHist)
+        trackedHistClimax := na
+        trackedHistMaxPhase := PHASE_NONE
+        trackedHistStartBar := na
+        trackedHist := HistSchem.new()
+
+    if not na(cClT)
+        if na(trackedHistClimax) or cClT != trackedHistClimax
+            trackedHistClimax := cClT
+            trackedHistMaxPhase := PHASE_NONE
+            trackedHistStartBar := bar_index
+        if cPhase >= trackedHistMaxPhase
+            trackedHistMaxPhase := math.max(trackedHistMaxPhase, cPhase)
+            trackedHist := HistSchem.new(cType, cStop, cOut, cWDir, cPhase, cEvent, cExc, cClT, cClP, cArT, cArP, cStT, cStP, cSt1T, cSt1P, cSt2T, cSt2P, cSt3T, cSt3P, cOp1T, cOp1P, cOp2T, cOp2P, cOp3T, cOp3P, cExT, cExP, cTeT, cTeP, cSoT, cSoP, cLpT, cLpP, cET, cLastP, cRH, cRL, cPsT, cPsP, cATR, cBT, cCT, cDT, na, trackedHistStartBar, na, chartTfSecs)
+
+// Multi-timeframe selection
+f_mtfUtility(int _val, int _phase, float _hi, float _lo, float _lastT, float _secs, bool _isChart) =>
+    float h = not na(_hi) and not na(_lo) ? math.max(math.abs(_hi - _lo), syminfo.mintick) : na
+    float d = na(h) ? 0.0 : close > _hi ? (close - _hi) / h : close < _lo ? (_lo - close) / h : 0.0
+    float ageBars = not na(_lastT) ? math.max((float(time) - _lastT) / (math.max(_secs, 1.0) * 1000.0), 0.0) : 0.0
+    float u = float(_val) + float(_phase) * 4.0 - math.min(d * 12.0, 36.0) - math.min(math.max(ageBars - 20.0, 0.0) * 0.35, 25.0) + (_isChart ? 5.0 : 0.0)
+    _phase == PHASE_E ? u - 10.0 : u
+
+efStop = cStop
+efOut = cOut
+efWDir = cWDir
+efType = cType
+efPhase = cPhase
+efEvent = cEvent
+efConf = cConf
+efVal = cVal
+efRH = cRH
+efRL = cRL
+efClT = cClT
+efClP = cClP
+efBT = cBT
+efCT = cCT
+efDT = cDT
+efET = cET
+efExc = cExc
+efTested = cTested
+efLastT = cLastT
+efLastP = cLastP
+efArT = cArT
+efArP = cArP
+efStT = cStT
+efStP = cStP
+efSt1T = cSt1T
+efSt1P = cSt1P
+efSt2T = cSt2T
+efSt2P = cSt2P
+efSt3T = cSt3T
+efSt3P = cSt3P
+efOp1T = cOp1T
+efOp1P = cOp1P
+efOp2T = cOp2T
+efOp2P = cOp2P
+efOp3T = cOp3T
+efOp3P = cOp3P
+efExT = cExT
+efExP = cExP
+efTeT = cTeT
+efTeP = cTeP
+efSoT = cSoT
+efSoP = cSoP
+efLpT = cLpT
+efLpP = cLpP
+efEntryT = cEntryT
+efEntryP = cEntryP
+efEntryKind = cEntryKind
+efATR = cATR
+efPsT = cPsT
+efPsP = cPsP
+efScores = cScores
+efNext = cNext
+efDbg = cDbg
+efLabel = chartTfLabel
+efSecs = chartTfSecs
+efUtil = cPhase > PHASE_NONE and cStop != DIR_NONE ? f_mtfUtility(cVal, cPhase, cRH, cRL, cLastT, chartTfSecs, true) : -1000.0
+
+var string[] scanTfs = array.from("1", "3", "5", "15", "30", "60", "120", "240", "D", "W", "M")
+var array<HistSchem> mtfHistTracked = array.new<HistSchem>()
+var array<float> mtfHistClimax = array.new_float()
+var array<int> mtfHistMaxPhase = array.new_int()
+var array<int> mtfHistStartBar = array.new_int()
+if barstate.isfirst
+    for i = 0 to array.size(scanTfs) - 1
+        array.push(mtfHistTracked, HistSchem.new())
+        array.push(mtfHistClimax, na)
+        array.push(mtfHistMaxPhase, PHASE_NONE)
+        array.push(mtfHistStartBar, na)
+
+int scannedHigherTfs = 0
+if allowHTFOverride or enableHTFHistoricalSchematics
+    for i = 0 to array.size(scanTfs) - 1
+        string tf = array.get(scanTfs, i)
+        float tfSecs = float(timeframe.in_seconds(tf))
+        if tfSecs > chartTfSecs and scannedHigherTfs < mtfLevelsAbove
+            scannedHigherTfs += 1
+            [mStop, mOut, mWDir, mType, mPhase, mEvent, mConf, mVal, mRH, mRL, mClT, mClP, mBT, mCT, mDT, mET, mExc, mTested, mLastT, mLastP, mArT, mArP, mStT, mStP, mSt1T, mSt1P, mSt2T, mSt2P, mSt3T, mSt3P, mOp1T, mOp1P, mOp2T, mOp2P, mOp3T, mOp3P, mExT, mExP, mTeT, mTeP, mSoT, mSoP, mLpT, mLpP, mEntryT, mEntryP, mEntryKind, mATR, mMask, mPsT, mPsP, mScores, mBVis, mNext, mDbg] = request.security(syminfo.tickerid, tf, f_engineHTF(), lookahead = barmerge.lookahead_on, calc_bars_count = mtfLookbackExtended)
+
+            if enableHTFHistoricalSchematics
+                float prevMClT = array.get(mtfHistClimax, i)
+                int prevMMax = array.get(mtfHistMaxPhase, i)
+                int prevMStartBar = array.get(mtfHistStartBar, i)
+                HistSchem prevMHist = array.get(mtfHistTracked, i)
+                bool mtfCampaignChanged = not na(prevMClT) and (na(mClT) or mClT != prevMClT)
+                if mtfCampaignChanged
+                    prevMHist.endT := not na(mClT) ? mClT : float(time)
+                    prevMHist.endBar := math.max(bar_index - 1, nz(prevMHist.startBar, bar_index - 1))
+                    if prevMMax >= historicalStoreMinPhase and not na(prevMHist.clT)
+                        f_addHistoricalDedup(htfHistSchems, prevMHist)
+                        array.push(htfHistRenderQueue, prevMHist)
+                    prevMClT := na
+                    prevMMax := PHASE_NONE
+                    prevMStartBar := na
+                    prevMHist := HistSchem.new()
+                if not na(mClT)
+                    if na(prevMClT) or mClT != prevMClT
+                        prevMClT := mClT
+                        prevMMax := PHASE_NONE
+                        prevMStartBar := bar_index
+                    if mPhase >= prevMMax
+                        prevMMax := math.max(prevMMax, mPhase)
+                        prevMHist := HistSchem.new(mType, mStop, mOut, mWDir, mPhase, mEvent, mExc, mClT, mClP, mArT, mArP, mStT, mStP, mSt1T, mSt1P, mSt2T, mSt2P, mSt3T, mSt3P, mOp1T, mOp1P, mOp2T, mOp2P, mOp3T, mOp3P, mExT, mExP, mTeT, mTeP, mSoT, mSoP, mLpT, mLpP, mET, mLastP, mRH, mRL, mPsT, mPsP, mATR, mBT, mCT, mDT, na, prevMStartBar, na, tfSecs)
+                array.set(mtfHistClimax, i, prevMClT)
+                array.set(mtfHistMaxPhase, i, prevMMax)
+                array.set(mtfHistStartBar, i, prevMStartBar)
+                array.set(mtfHistTracked, i, prevMHist)
+
+            if allowHTFOverride and mStop != DIR_NONE and mPhase > PHASE_NONE
+                float mUtil = f_mtfUtility(mVal, mPhase, mRH, mRL, mLastT, tfSecs, false)
+                if mPhase > efPhase or (mPhase == efPhase and mUtil > efUtil)
+                    efStop := mStop
+                    efOut := mOut
+                    efWDir := mWDir
+                    efType := mType
+                    efPhase := mPhase
+                    efEvent := mEvent
+                    efConf := mConf
+                    efVal := mVal
+                    efRH := mRH
+                    efRL := mRL
+                    efClT := mClT
+                    efClP := mClP
+                    efBT := mBT
+                    efCT := mCT
+                    efDT := mDT
+                    efET := mET
+                    efExc := mExc
+                    efTested := mTested
+                    efLastT := mLastT
+                    efLastP := mLastP
+                    efArT := mArT
+                    efArP := mArP
+                    efStT := mStT
+                    efStP := mStP
+                    efSt1T := mSt1T
+                    efSt1P := mSt1P
+                    efSt2T := mSt2T
+                    efSt2P := mSt2P
+                    efSt3T := mSt3T
+                    efSt3P := mSt3P
+                    efOp1T := mOp1T
+                    efOp1P := mOp1P
+                    efOp2T := mOp2T
+                    efOp2P := mOp2P
+                    efOp3T := mOp3T
+                    efOp3P := mOp3P
+                    efExT := mExT
+                    efExP := mExP
+                    efTeT := mTeT
+                    efTeP := mTeP
+                    efSoT := mSoT
+                    efSoP := mSoP
+                    efLpT := mLpT
+                    efLpP := mLpP
+                    efEntryT := mEntryT
+                    efEntryP := mEntryP
+                    efEntryKind := mEntryKind
+                    efATR := mATR
+                    efPsT := mPsT
+                    efPsP := mPsP
+                    efScores := mScores
+                    efNext := mNext
+                    efDbg := mDbg
+                    efLabel := format_timeframe_display(tf)
+                    efSecs := tfSecs
+                    efUtil := mUtil
+mtfActive = efLabel != chartTfLabel and efPhase > PHASE_NONE and efStop != DIR_NONE
+if mtfActive
+    f_storeConfirmedEntry(efEntryT, efEntryP, efOut, efEntryKind, SIGNAL_AUTO, efSecs, efLabel, efATR)
+
+// Event labels and tooltips
+f_explain(string _k) =>
+    switch _k
+        "PS"     => "Preliminary Support: first meaningful buying into a decline. Not yet a stop."
+        "PSY"    => "Preliminary Supply: first meaningful selling into an advance. Not yet a stop."
+        "SC"     => "Selling Climax: high-effort, wide-spread capitulation that stops the downtrend. Phase A begins."
+        "BC"     => "Buying Climax: high-effort, wide-spread exhaustion that stops the uptrend. Phase A begins."
+        "AR"     => "Automatic Rally/Reaction: the reflex move after the climax. Fixed retroactively at its extreme when the ST confirms. It defines the other side of the range."
+        "ST"     => "Secondary Test: revisit of the climax area on lower effort and spread. Confirms the stop; Phase B follows."
+        "Spring" => "Spring: brief break below support that is quickly reclaimed. Bullish Phase C test of remaining supply."
+        "UTAD"   => "Upthrust After Distribution: brief break above resistance that fails back into the range. Bearish Phase C test of demand."
+        "Test"   => "Test: low-effort retest of the Spring/UTAD area that holds the extreme."
+        "CTest"  => "Terminal test: quiet retest of an edge without an excursion (no-Spring / no-UTAD variant of Phase C)."
+        "SOS"    => "Sign of Strength: strong advance across the range (single bar or multi-bar). Phase D."
+        "SOW"    => "Sign of Weakness: strong decline across the range (single bar or multi-bar). Phase D."
+        "LPS"    => "Last Point of Support: quiet pullback that holds near the broken resistance (creek). Classic long location."
+        "LPSY"   => "Last Point of Supply: weak rally that fails near broken support (ice). Classic short location."
+        "E"      => "Phase E: price accepted outside the range. Trend (markup/markdown) underway."
+        => ""
+
+f_tip(string _k) =>
+    f_explain(_k)
+
+f_ev(string _name, int _score, int _max) =>
+    _score > 0 ? _name + " " + str.tostring(_score) + "/" + str.tostring(_max) : _name
+
+var label[] activeLabels = array.new_label()
+var float[] activeLabelTimes = array.new_float()
+var float[] activeLabelYs = array.new_float()
+
+f_reserveLabel(float _t, float _p) =>
+    if not na(_t) and not na(_p)
+        array.push(activeLabelTimes, _t)
+        array.push(activeLabelYs, _p)
+    true
+
+f_activeLabel(float _t, float _p, string _txt, string _tipKey, bool _above, color _col) =>
+    if not na(_t) and not na(_p) and _t >= nz(chartFirstBarTime, _t)
+        float step = math.max(nz(efATR, atr), syminfo.mintick) * 0.40
+        float y = _p + (_above ? step * 0.35 : -step * 0.35)
+        float timeTol = math.max(efSecs, chartTfSecs) * 1000.0 * 0.75
+        if array.size(activeLabelTimes) > 0
+            for pass = 0 to 7
+                bool hit = false
+                for j = 0 to array.size(activeLabelTimes) - 1
+                    float ut = array.get(activeLabelTimes, j)
+                    float uy = array.get(activeLabelYs, j)
+                    if math.abs(_t - ut) <= timeTol and math.abs(y - uy) < step * 1.15
+                        hit := true
+                if hit
+                    y += _above ? step : -step
+        array.push(activeLabelTimes, _t)
+        array.push(activeLabelYs, y)
+        array.push(activeLabels, label.new(int(_t), y, _txt, xloc = xloc.bar_time,
+             style = _above ? label.style_label_down : label.style_label_up,
+             color = color.new(_col, 10), textcolor = color.white, size = size.small, tooltip = f_tip(_tipKey)))
+    true
+
+if barstate.islast
+    if array.size(activeLabels) > 0
+        for i = 0 to array.size(activeLabels) - 1
+            label.delete(array.get(activeLabels, i))
+        array.clear(activeLabels)
+    array.clear(activeLabelTimes)
+    array.clear(activeLabelYs)
+
+// Trading range box
+var box trBox = na
+if barstate.islast
+    if efPhase >= currentChartMinPhase and not na(efRH) and not na(efRL) and not na(efClT)
+        color rangeCol = efOut == DIR_NONE ? color.blue : efWDir == DIR_ACCUM ? color.green : color.red
+        float rangeLeft = math.max(efClT, nz(chartFirstBarTime, efClT))
+        if na(trBox)
+            trBox := box.new(int(rangeLeft), efRH, time, efRL, xloc = xloc.bar_time, border_color = rangeCol, bgcolor = color.new(rangeCol, 97))
+        else
+            box.set_lefttop(trBox, int(rangeLeft), efRH)
+            box.set_rightbottom(trBox, time, efRL)
+            box.set_border_color(trBox, rangeCol)
+            box.set_bgcolor(trBox, color.new(rangeCol, 97))
+    else if not na(trBox)
+        box.delete(trBox)
+        trBox := na
+
+// Phase shading
+f_phaseColor(int _phase, int _wdir) =>
+    bool bull = _wdir == DIR_ACCUM
+    _phase == PHASE_B ? (bull ? color.rgb(30, 205, 205) : color.rgb(170, 90, 220)) :
+     _phase == PHASE_C ? (bull ? color.rgb(175, 205, 45) : color.rgb(235, 105, 55)) :
+     _phase == PHASE_D ? (bull ? color.rgb(120, 210, 75) : color.rgb(215, 70, 145)) :
+     (bull ? color.rgb(30, 165, 145) : color.rgb(185, 55, 75))
+
+f_phaseTransp(int _phase) =>
+    _phase == PHASE_B ? 94 : _phase == PHASE_C ? 91 : _phase == PHASE_D ? 90 : 88
+
+f_phaseLetter(int _phase) =>
+    _phase == PHASE_B ? "B" : _phase == PHASE_C ? "C" : _phase == PHASE_D ? "D" : "E"
+
+bool phaseBgOn = cBVis and cPhase >= historicalChartMinPhase and cPhase >= PHASE_B
+color phaseBgColor = phaseBgOn ? color.new(f_phaseColor(cPhase, cWDir), f_phaseTransp(cPhase)) : na
+bgcolor(phaseBgColor, title = "Wyckoff phase background")
+
+var label[] phaseHistoryLabels = array.new_label()
+
+f_phaseStartLabel(label[] _labels, float _t0, int _phase, int _wdir, float _labelY) =>
+    if not na(_t0) and _phase >= PHASE_B and _t0 >= nz(chartFirstBarTime, _t0)
+        color pc = f_phaseColor(_phase, _wdir)
+        array.push(_labels, label.new(int(_t0), _labelY, f_phaseLetter(_phase), xloc = xloc.bar_time,
+             style = label.style_label_down,
+             color = color.new(pc, _phase == PHASE_B ? 25 : _phase == PHASE_E ? 15 : 20),
+             textcolor = color.white, size = size.tiny))
+    true
+
+f_drawCampaignPhaseLabels(label[] _labels, int _maxPhase, int _wdir, float _bT, float _cT, float _dT, float _eT, float _labelY) =>
+    if _maxPhase >= PHASE_B and not na(_bT)
+        f_phaseStartLabel(_labels, _bT, PHASE_B, _wdir, _labelY)
+    if _maxPhase >= PHASE_C and not na(_cT)
+        f_phaseStartLabel(_labels, _cT, PHASE_C, _wdir, _labelY)
+    if _maxPhase >= PHASE_D and not na(_dT)
+        f_phaseStartLabel(_labels, _dT, PHASE_D, _wdir, _labelY)
+    if _maxPhase >= PHASE_E and not na(_eT)
+        f_phaseStartLabel(_labels, _eT, PHASE_E, _wdir, _labelY)
+    true
+
+if barstate.islast
+    if array.size(phaseHistoryLabels) > 0
+        for i = 0 to array.size(phaseHistoryLabels) - 1
+            label.delete(array.get(phaseHistoryLabels, i))
+        array.clear(phaseHistoryLabels)
+
+    if array.size(histSchems) > 0
+        for i = 0 to array.size(histSchems) - 1
+            HistSchem hPhase = array.get(histSchems, i)
+            if hPhase.phase >= historicalChartMinPhase
+                float hLabelY = nz(hPhase.rh, high) + math.max(nz(hPhase.atr, atr), syminfo.mintick) * 0.35
+                f_drawCampaignPhaseLabels(phaseHistoryLabels, hPhase.phase, hPhase.wdir, hPhase.bT, hPhase.cT, hPhase.dT, hPhase.eT, hLabelY)
+
+    if cPhase >= currentChartMinPhase and cBVis and not na(cBT)
+        float liveLabelY = nz(cRH, high) + math.max(nz(cATR, atr), syminfo.mintick) * 0.35
+        f_drawCampaignPhaseLabels(phaseHistoryLabels, cPhase, cWDir, cBT, cCT, cDT, cET, liveLabelY)
+
+// Entry marker
+f_entryKindName(int _k) =>
+    _k == ENTRY_TEST ? "Phase C Test" : _k == ENTRY_STRENGTH ? "SOS/SOW" : _k == ENTRY_LPS ? "LPS/LPSY" : _k == ENTRY_PHASE_E ? "Phase E" : "Entry"
+
+f_entrySignalModeVisible(EntrySignal _e) =>
+    bool permanentEntry = _e.mode == SIGNAL_AUTO
+    bool selectedReference = entryLabelTriggerInput == "Phase C Test" ? _e.mode == SIGNAL_TEST :
+     entryLabelTriggerInput == "SOS / SOW" ? _e.mode == SIGNAL_STRENGTH :
+     entryLabelTriggerInput == "LPS / LPSY" ? _e.mode == SIGNAL_LPS :
+     entryLabelTriggerInput == "Phase E" ? _e.mode == SIGNAL_E : false
+    permanentEntry or selectedReference
+
+f_entrySignalName(EntrySignal _e) =>
+    _e.mode == SIGNAL_TEST ? "Phase C Test" :
+     _e.mode == SIGNAL_STRENGTH ? (_e.dir == DIR_ACCUM ? "SOS" : "SOW") :
+     _e.mode == SIGNAL_LPS ? (_e.dir == DIR_ACCUM ? "LPS" : "LPSY") :
+     _e.mode == SIGNAL_E ? "Phase E" : f_entryKindName(_e.kind)
+
+f_entrySignalY(EntrySignal _e) =>
+    bool eLong = _e.dir == DIR_ACCUM
+    float ePad = math.max(nz(_e.atr, atr), syminfo.mintick) * 1.15
+    _e.p + (eLong ? -ePad : ePad)
+
+f_reserveConfirmedEntryHistory() =>
+    if showEntryPoints and array.size(confirmedEntrySignals) > 0
+        for i = 0 to array.size(confirmedEntrySignals) - 1
+            EntrySignal e = array.get(confirmedEntrySignals, i)
+            if f_entrySignalModeVisible(e) and not na(e.t) and e.t >= nz(chartFirstBarTime, e.t)
+                f_reserveLabel(e.t, f_entrySignalY(e))
+    true
+
+f_drawConfirmedEntryHistory() =>
+    if array.size(confirmedEntryLabels) > 0
+        for i = 0 to array.size(confirmedEntryLabels) - 1
+            label.delete(array.get(confirmedEntryLabels, i))
+        array.clear(confirmedEntryLabels)
+    if showEntryPoints and array.size(confirmedEntrySignals) > 0
+        for i = 0 to array.size(confirmedEntrySignals) - 1
+            EntrySignal e = array.get(confirmedEntrySignals, i)
+            if f_entrySignalModeVisible(e) and not na(e.t) and not na(e.p) and e.dir != DIR_NONE and e.kind != ENTRY_NONE and e.t >= nz(chartFirstBarTime, e.t)
+                bool eLong = e.dir == DIR_ACCUM
+                bool isHtf = not na(e.srcSecs) and e.srcSecs > chartTfSecs + 0.5
+                string tfPre = isHtf and e.tfLabel != "" ? e.tfLabel + ": " : ""
+                string txt = tfPre + (eLong ? "LONG ENTRY\n" : "SHORT ENTRY\n") + f_entrySignalName(e)
+                string tipTxt = "Confirmed Wyckoff signal. This marker remains plotted even if the live campaign later resets, demotes, or reseeds."
+                array.push(confirmedEntryLabels, label.new(int(e.t), f_entrySignalY(e), txt,
+                     xloc = xloc.bar_time, style = eLong ? label.style_label_up : label.style_label_down,
+                     color = eLong ? color.new(color.green, 5) : color.new(color.red, 5), textcolor = color.white, size = size.small,
+                     tooltip = tipTxt))
+    true
+
+f_entryDisplayValues(string _choice, int _out, float _entryT, float _entryP, int _entryKind, float _teT, float _teP, float _soT, float _soP, float _lpT, float _lpP, float _eT, float _eP) =>
+    float t = na
+    float p = na
+    string k = ""
+    if _choice == "Auto (Entry Strictness)"
+        t := _entryT
+        p := _entryP
+        k := _entryKind != ENTRY_NONE ? f_entryKindName(_entryKind) : ""
+    else if _choice == "Phase C Test"
+        t := _teT
+        p := _teP
+        k := "Phase C Test"
+    else if _choice == "SOS / SOW"
+        t := _soT
+        p := _soP
+        k := _out == DIR_ACCUM ? "SOS" : _out == DIR_DIST ? "SOW" : ""
+    else if _choice == "LPS / LPSY"
+        t := _lpT
+        p := _lpP
+        k := _out == DIR_ACCUM ? "LPS" : _out == DIR_DIST ? "LPSY" : ""
+    else if _choice == "Phase E"
+        t := _eT
+        p := _eP
+        k := "Phase E"
+    [t, p, k]
+
+[cDispEntryT, cDispEntryP, cDispEntryName] = f_entryDisplayValues(entryLabelTriggerInput, cOut, cEntryT, cEntryP, cEntryKind, cTeT, cTeP, cSoT, cSoP, cLpT, cLpP, cET, cLastP)
+
+// Preserve every user-selectable confirmed signal class independently of the live campaign.
+if cOut != DIR_NONE
+    f_storeConfirmedEntry(cTeT, cTeP, cOut, ENTRY_TEST, SIGNAL_TEST, chartTfSecs, chartTfLabel, cATR)
+    f_storeConfirmedEntry(cSoT, cSoP, cOut, ENTRY_STRENGTH, SIGNAL_STRENGTH, chartTfSecs, chartTfLabel, cATR)
+    f_storeConfirmedEntry(cLpT, cLpP, cOut, ENTRY_LPS, SIGNAL_LPS, chartTfSecs, chartTfLabel, cATR)
+    f_storeConfirmedEntry(cET, cLastP, cOut, ENTRY_PHASE_E, SIGNAL_E, chartTfSecs, chartTfLabel, cATR)
+
+bool rawChartEntryQualifiedNow = not na(cEntryT) and int(cEntryT) == time and cEntryKind != ENTRY_NONE
+bool chartLongEntryNow = rawChartEntryQualifiedNow and cOut == DIR_ACCUM
+bool chartShortEntryNow = rawChartEntryQualifiedNow and cOut == DIR_DIST
+
+[efDispEntryT, efDispEntryP, efDispEntryName] = f_entryDisplayValues(entryLabelTriggerInput, efOut, efEntryT, efEntryP, efEntryKind, efTeT, efTeP, efSoT, efSoP, efLpT, efLpP, efET, efLastP)
+if mtfActive and efOut != DIR_NONE
+    f_storeConfirmedEntry(efTeT, efTeP, efOut, ENTRY_TEST, SIGNAL_TEST, efSecs, efLabel, efATR)
+    f_storeConfirmedEntry(efSoT, efSoP, efOut, ENTRY_STRENGTH, SIGNAL_STRENGTH, efSecs, efLabel, efATR)
+    f_storeConfirmedEntry(efLpT, efLpP, efOut, ENTRY_LPS, SIGNAL_LPS, efSecs, efLabel, efATR)
+    f_storeConfirmedEntry(efET, efLastP, efOut, ENTRY_PHASE_E, SIGNAL_E, efSecs, efLabel, efATR)
+var label selectedEntryLabel = na
+
+f_selectedEntryY() =>
+    bool eLong = efOut == DIR_ACCUM
+    float ePad = math.max(nz(efATR, atr), syminfo.mintick) * 1.15
+    efDispEntryP + (eLong ? -ePad : ePad)
+
+f_drawSelectedEntryLabel() =>
+    label out = na
+    if showEntryPoints and not na(efDispEntryT) and not na(efDispEntryP) and efDispEntryName != "" and efOut != DIR_NONE and efDispEntryT >= nz(chartFirstBarTime, efDispEntryT)
+        bool eLong = efOut == DIR_ACCUM
+        float eY = f_selectedEntryY()
+        string tfPre = mtfActive ? efLabel + ": " : ""
+        string tipTxt = entryLabelTriggerInput == "Auto (Entry Strictness)" ? (mtfActive ? "Stored MTF Wyckoff entry at the bar the selected timeframe actually qualified." : "Stored Wyckoff entry on the bar the configured policy actually qualified. Phase E is confirmation, not the normal initial-entry trigger.") : (mtfActive ? "MTF visual entry label pinned to the selected Wyckoff event trigger." : "Visual entry label pinned to the selected Wyckoff event trigger.")
+        out := label.new(int(efDispEntryT), eY, tfPre + (eLong ? "LONG ENTRY\n" : "SHORT ENTRY\n") + efDispEntryName,
+             xloc = xloc.bar_time, style = eLong ? label.style_label_up : label.style_label_down,
+             color = eLong ? color.new(color.green, 5) : color.new(color.red, 5), textcolor = color.white, size = size.small,
+             tooltip = tipTxt)
+    out
+
+// Status table
+f_phaseName(int _p) =>
+    _p == PHASE_A ? "A - Stopping action" : _p == PHASE_B ? "B - Building cause" : _p == PHASE_C ? "C - Test" : _p == PHASE_D ? "D - Trend within range" : _p == PHASE_E ? "E - Trend out of range" : "None"
+
+f_eventName(int _e, int _out) =>
+    _e == EV_SC ? "SC" : _e == EV_BC ? "BC" : _e == EV_AR ? "AR" : _e == EV_ST ? "ST" : _e == EV_SPRING ? "Spring" : _e == EV_UTAD ? "UTAD" : _e == EV_TEST ? "Test" : _e == EV_SOS ? "SOS" : _e == EV_SOW ? "SOW" : _e == EV_LPS ? "LPS" : _e == EV_LPSY ? "LPSY" : _e == EV_CTEST_ACC ? "Terminal test (support)" : _e == EV_CTEST_DST ? "Terminal test (resistance)" : _e == EV_MARKUP ? "Markup" : _e == EV_MARKDOWN ? "Markdown" : "-"
+
+var table statusTable = table.new(tablePos, 2, 10, border_width = 1)
+if barstate.islast
+    table.clear(statusTable, 0, 0, 1, 9)
+    if showStatusTable
+        table.set_position(statusTable, tablePos)
+        string typeName = efType == TYPE_REACCUM ? "REACCUMULATION" : efType == TYPE_REDIST ? "REDISTRIBUTION" : efType == TYPE_ACCUM ? "ACCUMULATION" : efType == TYPE_DIST ? "DISTRIBUTION" : "SEARCHING"
+        string structTxt = efPhase > PHASE_NONE and efOut == DIR_NONE ? typeName + " (bias)" : efPhase > PHASE_NONE ? typeName : "SEARCHING"
+        string originTxt = efStop == DIR_ACCUM ? "Downtrend halted (SC)" : efStop == DIR_DIST ? "Uptrend halted (BC)" : "-"
+        bool bullish = efWDir == DIR_ACCUM
+        color typeCol = efPhase == PHASE_NONE ? color.gray : efOut == DIR_NONE ? color.blue : bullish ? color.green : color.red
+        string entryNote = efOut == DIR_NONE ? "" : not na(efEntryT) and efEntryKind != ENTRY_NONE ? " | entry: " + f_entryKindName(efEntryKind) : " | entry pending (" + entryStrictness + ")"
+        color hdr = color.new(color.black, 20)
+        color cellBg = color.new(color.black, 45)
+        table.cell(statusTable, 0, 0, "Structure", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 0, structTxt, text_color = color.white, bgcolor = color.new(typeCol, 20), text_size = tableSize)
+        table.cell(statusTable, 0, 1, "Range origin", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 1, originTxt, text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 2, "Phase", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 2, f_phaseName(efPhase), text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 3, "Last event", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 3, f_eventName(efEvent, efOut), text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 4, "Next", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 4, (efNext == "" ? "Searching for SC / BC" : efNext) + entryNote, text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 5, "Maturity", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 5, str.tostring(efConf) + "/100", text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 6, "Validation", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 6, str.tostring(efVal) + "/100", text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 7, "Range", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 7, na(efRH) or na(efRL) ? "-" : str.tostring(efRL, format.mintick) + " - " + str.tostring(efRH, format.mintick), text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+        table.cell(statusTable, 0, 8, "Selected TF", text_color = color.white, bgcolor = hdr, text_size = tableSize)
+        table.cell(statusTable, 1, 8, efLabel + (mtfActive ? " (MTF)" : " (chart)"), text_color = color.white, bgcolor = cellBg, text_size = tableSize)
+
+// Structure diagnostics
+var table dbgTable = table.new(position.bottom_right, 4, 20, border_width = 1)
+if barstate.islast
+    table.clear(dbgTable, 0, 0, 3, 19)
+    if showDiagnosticsTable
+        color dHdr = color.new(color.black, 20)
+        table.cell(dbgTable, 0, 0, "Diagnostics " + efLabel, text_color = color.white, bgcolor = dHdr, text_size = tableSize)
+        table.cell(dbgTable, 1, 0, "Current", text_color = color.white, bgcolor = dHdr, text_size = tableSize)
+        table.cell(dbgTable, 2, 0, "Needed", text_color = color.white, bgcolor = dHdr, text_size = tableSize)
+        table.cell(dbgTable, 3, 0, "OK", text_color = color.white, bgcolor = dHdr, text_size = tableSize)
+        if efDbg != ""
+            array<string> dRowsArr = str.split(efDbg, "|")
+            int nRows = math.min(array.size(dRowsArr), 19)
+            if nRows > 0
+                for i = 0 to nRows - 1
+                    array<string> parts = str.split(array.get(dRowsArr, i), "~")
+                    if array.size(parts) >= 4
+                        bool rowOK = array.get(parts, 3) == "1"
+                        color rowBg = rowOK ? color.new(color.green, 70) : color.new(color.red, 60)
+                        table.cell(dbgTable, 0, i + 1, array.get(parts, 0), text_color = color.white, bgcolor = color.new(color.black, 45), text_size = tableSize, text_halign = text.align_left)
+                        table.cell(dbgTable, 1, i + 1, array.get(parts, 1), text_color = color.white, bgcolor = color.new(color.black, 45), text_size = tableSize)
+                        table.cell(dbgTable, 2, i + 1, array.get(parts, 2), text_color = color.white, bgcolor = color.new(color.black, 45), text_size = tableSize)
+                        table.cell(dbgTable, 3, i + 1, rowOK ? "Yes" : "No", text_color = color.white, bgcolor = rowBg, text_size = tableSize)
+
+
+// Reference schematics
+f_getSchematic(string _c) =>
+    array<float> ys = array.new_float()
+    array<string> lb = array.new_string()
+    array<float> bd = array.new_float()
+    if _c == "Accumulation Schematic 1"
+        ys := array.from(95.0, 70.0, 78.0, 20.0, 55.0, 25.0, 50.0, 30.0, 57.0, 28.0, 50.0, 32.0, 8.0, 40.0, 24.0, 58.0, 45.0, 68.0, 56.0, 85.0, 78.0, 100.0)
+        lb := array.from(".", "PS", ".", "SC", "AR", "ST", ".", "ST B", "UA", "ST B", ".", ".", "SPRING", ".", "TEST", "SOS", "LPS", ".", "BU/LPS", "SOS", ".", ".")
+        bd := array.from(5.5, 11.5, 14.5, 18.5)
+    else if _c == "Accumulation Schematic 2"
+        ys := array.from(95.0, 70.0, 78.0, 20.0, 55.0, 25.0, 50.0, 30.0, 57.0, 32.0, 50.0, 30.0, 58.0, 46.0, 68.0, 57.0, 85.0, 78.0, 100.0)
+        lb := array.from(".", "PS", ".", "SC", "AR", "ST", ".", "ST B", "UA", "ST B", ".", "LPS", "SOS", "LPS", ".", "BU/LPS", "SOS", ".", ".")
+        bd := array.from(5.5, 10.5, 11.5, 15.5)
+    else if _c == "Distribution Schematic 1"
+        ys := array.from(5.0, 30.0, 22.0, 80.0, 45.0, 75.0, 50.0, 70.0, 43.0, 72.0, 50.0, 68.0, 92.0, 60.0, 76.0, 42.0, 55.0, 32.0, 44.0, 15.0, 22.0, 0.0)
+        lb := array.from(".", "PSY", ".", "BC", "AR", "ST", ".", "ST B", "mSOW", "ST B", ".", ".", "UTAD", ".", "TEST", "SOW", "LPSY", ".", "LPSY", "SOW", ".", ".")
+        bd := array.from(5.5, 11.5, 14.5, 18.5)
+    else if _c == "Distribution Schematic 2"
+        ys := array.from(5.0, 30.0, 22.0, 80.0, 45.0, 75.0, 50.0, 70.0, 43.0, 68.0, 50.0, 70.0, 42.0, 54.0, 32.0, 43.0, 15.0, 22.0, 0.0)
+        lb := array.from(".", "PSY", ".", "BC", "AR", "ST", ".", "ST B", "mSOW", "ST B", ".", "LPSY", "SOW", "LPSY", ".", "LPSY", "SOW", ".", ".")
+        bd := array.from(5.5, 10.5, 11.5, 15.5)
+    else if _c == "Reaccumulation Schematic"
+        ys := array.from(5.0, 40.0, 32.0, 70.0, 45.0, 66.0, 48.0, 64.0, 42.0, 62.0, 47.0, 30.0, 44.0, 38.0, 74.0, 64.0, 84.0, 74.0, 95.0, 90.0, 100.0)
+        lb := array.from(".", "PSY", ".", "BC", "AR", "ST", ".", "ST B", "mSOW", "ST B", ".", "SPRING", ".", "TEST", "SOS", "LPS", ".", "BU/LPS", ".", ".", ".")
+        bd := array.from(5.5, 10.5, 13.5, 17.5)
+    else
+        ys := array.from(95.0, 60.0, 68.0, 30.0, 55.0, 34.0, 52.0, 36.0, 58.0, 38.0, 53.0, 70.0, 56.0, 62.0, 26.0, 36.0, 16.0, 26.0, 5.0, 10.0, 0.0)
+        lb := array.from(".", "PS", ".", "SC", "AR", "ST", ".", "ST B", "UA", "ST B", ".", "UTAD", ".", "TEST", "SOW", "LPSY", ".", "LPSY", ".", ".", ".")
+        bd := array.from(5.5, 10.5, 13.5, 17.5)
+    [ys, lb, bd]
+
+f_schemType(string _c) =>
+    _c == "Accumulation Schematic 1" or _c == "Accumulation Schematic 2" ? TYPE_ACCUM : _c == "Distribution Schematic 1" or _c == "Distribution Schematic 2" ? TYPE_DIST : _c == "Reaccumulation Schematic" ? TYPE_REACCUM : TYPE_REDIST
+
+f_overlayChoice(int _typ, bool _exc, int _stop) =>
+    _typ == TYPE_ACCUM ? (_exc ? "Accumulation Schematic 1" : "Accumulation Schematic 2") :
+     _typ == TYPE_DIST ? (_exc ? "Distribution Schematic 1" : "Distribution Schematic 2") :
+     _typ == TYPE_REACCUM ? (_stop == DIR_DIST ? "Reaccumulation Schematic" : _exc ? "Accumulation Schematic 1" : "Accumulation Schematic 2") :
+     _typ == TYPE_REDIST ? (_stop == DIR_ACCUM ? "Redistribution Schematic" : _exc ? "Distribution Schematic 1" : "Distribution Schematic 2") : ""
+
+f_lblMatches(string _l, int _ev) =>
+    _ev == EV_SC ? _l == "SC" : _ev == EV_BC ? _l == "BC" : _ev == EV_AR ? _l == "AR" : _ev == EV_ST ? (_l == "ST" or _l == "ST B") :
+     _ev == EV_SPRING ? _l == "SPRING" : _ev == EV_UTAD ? _l == "UTAD" : _ev == EV_TEST ? _l == "TEST" : _ev == EV_SOS ? _l == "SOS" :
+     _ev == EV_SOW ? _l == "SOW" : _ev == EV_LPS ? (_l == "LPS" or _l == "BU/LPS") : _ev == EV_LPSY ? _l == "LPSY" :
+     _ev == EV_CTEST_ACC ? _l == "LPS" : _ev == EV_CTEST_DST ? _l == "LPSY" : false
+
+f_findFirst(array<string> _lb, int _ev, float _lo, float _hi) =>
+    int r = na
+    int n = array.size(_lb)
+    if n > 0
+        for i = 0 to n - 1
+            if na(r) and i >= _lo and i <= _hi and f_lblMatches(array.get(_lb, i), _ev)
+                r := i
+    r
+
+f_findLabel(array<string> _lb, string _txt, float _lo, float _hi) =>
+    int r = na
+    int n = array.size(_lb)
+    if n > 0
+        for i = 0 to n - 1
+            if na(r) and i >= _lo and i <= _hi and array.get(_lb, i) == _txt
+                r := i
+    r
+
+f_phaseLo(array<float> _bd, int _phase) =>
+    _phase <= PHASE_A ? 0.0 : array.get(_bd, math.min(_phase - 2, 3))
+
+f_phaseHi(array<float> _bd, int _phase, int _n) =>
+    _phase >= PHASE_E ? float(_n - 1) : array.get(_bd, math.max(_phase - 1, 0))
+
+f_glowX(array<string> _lb, array<float> _bd, int _phase, int _ev, int _n) =>
+    float lo = f_phaseLo(_bd, _phase)
+    float hi = f_phaseHi(_bd, _phase, _n)
+    int fx = f_findFirst(_lb, _ev, lo, hi)
+    na(fx) ? int(math.ceil(lo)) : fx
+
+f_schemProgress(string _c, int _stop, bool _exc, float _arT, float _st1T, float _st2T, float _st3T, float _op1T, float _op2T, float _op3T, float _exT, float _teT, float _strT, float _lpT, float _eT) =>
+    [ysP, lblP, bdsP] = f_getSchematic(_c)
+    int nP = array.size(ysP)
+    bool bullP = _c == "Accumulation Schematic 1" or _c == "Accumulation Schematic 2" or _c == "Reaccumulation Schematic"
+    int iClP = f_findFirst(lblP, _stop == DIR_ACCUM ? EV_SC : EV_BC, 0.0, float(nP - 1))
+    int iARP = f_findFirst(lblP, EV_AR, 0.0, float(nP - 1))
+    float b0P = array.get(bdsP, 0)
+    float b1P = array.get(bdsP, 1)
+    float b2P = array.get(bdsP, 2)
+    float b3P = array.get(bdsP, 3)
+    int iSTP = f_findFirst(lblP, EV_ST, float(iARP), b0P)
+    int iSTB1P = f_findLabel(lblP, "ST B", na(iSTP) ? float(iARP) : float(iSTP + 1), b2P)
+    int iOppP = f_findLabel(lblP, _stop == DIR_ACCUM ? "UA" : "mSOW", na(iSTB1P) ? (na(iSTP) ? float(iARP) : float(iSTP + 1)) : float(iSTB1P + 1), b2P)
+    int iSTB2P = f_findLabel(lblP, "ST B", na(iOppP) ? (na(iSTB1P) ? float(iARP) : float(iSTB1P + 1)) : float(iOppP + 1), b2P)
+    int iExcP = _exc ? f_findFirst(lblP, bullP ? EV_SPRING : EV_UTAD, b0P, b2P) : int(na)
+    int iTeP = _exc ? f_findFirst(lblP, EV_TEST, na(iExcP) ? b1P : float(iExcP), b2P) : f_findFirst(lblP, bullP ? EV_CTEST_ACC : EV_CTEST_DST, b1P, b2P)
+    int iStrP = f_findFirst(lblP, bullP ? EV_SOS : EV_SOW, b1P, float(nP - 1))
+    int iLpP = f_findFirst(lblP, bullP ? EV_LPS : EV_LPSY, na(iStrP) ? b2P : float(iStrP + 1), float(nP - 1))
+    int iEP = int(math.ceil(b3P))
+    int gxP = not na(iClP) ? iClP : 0
+    if not na(_arT) and not na(iARP)
+        gxP := math.max(gxP, iARP)
+    if not na(_st1T) and not na(iSTP)
+        gxP := math.max(gxP, iSTP)
+    if not na(_st2T) and not na(iSTB1P)
+        gxP := math.max(gxP, iSTB1P)
+    float oppTUseP = not na(_op1T) and (na(_st2T) or _op1T > _st2T) ? _op1T : not na(_op2T) and (na(_st2T) or _op2T > _st2T) ? _op2T : _op3T
+    if not na(oppTUseP) and not na(iOppP)
+        gxP := math.max(gxP, iOppP)
+    if not na(_st3T) and (na(oppTUseP) or _st3T > oppTUseP) and not na(iSTB2P)
+        gxP := math.max(gxP, iSTB2P)
+    if not na(_exT) and not na(iExcP)
+        gxP := math.max(gxP, iExcP)
+    if not na(_teT) and not na(iTeP)
+        gxP := math.max(gxP, iTeP)
+    if not na(_strT) and not na(iStrP)
+        gxP := math.max(gxP, iStrP)
+    if not na(_lpT) and not na(iLpP)
+        gxP := math.max(gxP, iLpP)
+    if not na(_eT)
+        gxP := math.max(gxP, iEP)
+    gxP
+
+f_schemY(float _top, float _bot, float _y) =>
+    float m = schemLabelMarginPct / 100.0
+    _bot + (_top - _bot) * (m + (1.0 - 2.0 * m) * _y / 100.0)
+
+f_panelAnchorVisible(float _t, float _p) =>
+    not na(_t) and not na(_p) and _t >= nz(chartFirstBarTime, _t)
+
+f_panelEventConfirmed(string _label) =>
+    bool bullStop = efStop == DIR_ACCUM
+    bool bullOut = efWDir == DIR_ACCUM
+    bool hasOutcome = efOut != DIR_NONE
+    switch _label
+        "PS"     => bullStop and f_panelAnchorVisible(efPsT, efPsP)
+        "PSY"    => not bullStop and f_panelAnchorVisible(efPsT, efPsP)
+        "SC"     => bullStop and f_panelAnchorVisible(efClT, efClP)
+        "BC"     => not bullStop and f_panelAnchorVisible(efClT, efClP)
+        "AR"     => f_panelAnchorVisible(efArT, efArP)
+        "ST"     => f_panelAnchorVisible(efStT, efStP)
+        "SPRING" => hasOutcome and bullOut and f_panelAnchorVisible(efExT, efExP)
+        "UTAD"   => hasOutcome and not bullOut and f_panelAnchorVisible(efExT, efExP)
+        "TEST"   => hasOutcome and f_panelAnchorVisible(efTeT, efTeP)
+        "SOS"    => hasOutcome and bullOut and f_panelAnchorVisible(efSoT, efSoP)
+        "SOW"    => hasOutcome and not bullOut and f_panelAnchorVisible(efSoT, efSoP)
+        "LPS"    => hasOutcome and bullOut and f_panelAnchorVisible(efLpT, efLpP)
+        "LPSY"   => hasOutcome and not bullOut and f_panelAnchorVisible(efLpT, efLpP)
+        => false
+
+// Draw chart event labels from the exact same confirmation state used by the side panel.
+// This is called at the end of the script so these labels stay above boxes/panels/overlays.
+f_drawConfirmedEventLabels() =>
+    if efStop != DIR_NONE and efPhase >= currentChartMinPhase
+        bool bullStop = efStop == DIR_ACCUM
+        bool bullOut = efWDir == DIR_ACCUM
+        color stopCol = bullStop ? color.teal : color.maroon
+        color outCol = efOut == DIR_NONE ? color.gray : bullOut ? color.green : color.red
+        string pre = mtfActive ? efLabel + " " : ""
+        string psKey = bullStop ? "PS" : "PSY"
+        string clKey = bullStop ? "SC" : "BC"
+        if f_panelEventConfirmed(psKey)
+            f_activeLabel(efPsT, efPsP, pre + psKey, psKey, not bullStop, stopCol)
+        if f_panelEventConfirmed(clKey)
+            f_activeLabel(efClT, efClP, pre + f_ev(clKey, f_digit(efScores, 0), 6), clKey, not bullStop, stopCol)
+        if f_panelEventConfirmed("AR")
+            f_activeLabel(efArT, efArP, pre + "AR", "AR", bullStop, color.gray)
+        if f_panelEventConfirmed("ST")
+            f_activeLabel(efStT, efStP, pre + f_ev("ST", f_digit(efScores, 1), 6), "ST", not bullStop, color.blue)
+        if efOut != DIR_NONE
+            string exKey = bullOut ? "SPRING" : "UTAD"
+            if f_panelEventConfirmed(exKey)
+                f_activeLabel(efExT, efExP, pre + f_ev(bullOut ? "Spring" : "UTAD", f_digit(efScores, 2), 4), bullOut ? "Spring" : "UTAD", not bullOut, outCol)
+            if f_panelEventConfirmed("TEST")
+                f_activeLabel(efTeT, efTeP, pre + f_ev(efExc ? "Test" : "C-Test", f_digit(efScores, 3), 3), efExc ? "Test" : "CTest", not bullOut, outCol)
+            string strKey = bullOut ? "SOS" : "SOW"
+            if f_panelEventConfirmed(strKey)
+                f_activeLabel(efSoT, efSoP, pre + f_ev(strKey, f_digit(efScores, 4), 4), strKey, bullOut, outCol)
+            string lpKey = bullOut ? "LPS" : "LPSY"
+            if f_panelEventConfirmed(lpKey)
+                f_activeLabel(efLpT, efLpP, pre + f_ev(lpKey, f_digit(efScores, 5), 3), lpKey, not bullOut, outCol)
+    true
+
+f_renderSchematic(line[] _ln, label[] _lbs, box[] _bx, string _c, float _top, float _bot, int _left, int _curType, int _curPhase, int _curEv, int _progressX) =>
+    [ys, lbls, bds] = f_getSchematic(_c)
+    int n = array.size(ys)
+    int sType = f_schemType(_c)
+    bool matched = _curType != TYPE_NONE and _curPhase > PHASE_NONE and sType == _curType
+    color glowCol = sType > 0 ? color.lime : color.fuchsia
+    int gx = matched ? (_progressX >= 0 ? _progressX : f_glowX(lbls, bds, _curPhase, _curEv, n)) : -1
+    int right = _left + (n - 1) * schemBarsPerX
+    array.push(_bx, box.new(_left - 2, _top, right + 2, _bot, border_color = color.new(color.gray, 60), bgcolor = color.new(color.gray, 92)))
+    array.push(_lbs, label.new(_left, _top, _c, style = label.style_label_lower_left,
+         color = color.new(color.black, 100), textcolor = matched ? glowCol : color.gray, size = schematicLabelSize))
+    if n > 1
+        for i = 0 to n - 2
+            float y1 = f_schemY(_top, _bot, array.get(ys, i))
+            float y2 = f_schemY(_top, _bot, array.get(ys, i + 1))
+            bool lit = matched and i + 1 <= gx
+            array.push(_ln, line.new(_left + i * schemBarsPerX, y1, _left + (i + 1) * schemBarsPerX, y2,
+                 color = lit ? glowCol : color.new(color.gray, 30), width = lit ? 2 : 1))
+        for i = 0 to n - 1
+            string t = array.get(lbls, i)
+            if t != "."
+                float yv = array.get(ys, i)
+                float prevY = i > 0 ? array.get(ys, i - 1) : yv
+                float nextY = i < n - 1 ? array.get(ys, i + 1) : yv
+                bool isLow = yv <= prevY and yv <= nextY
+                bool eventConfirmed = matched and f_panelEventConfirmed(t)
+                array.push(_lbs, label.new(_left + i * schemBarsPerX, f_schemY(_top, _bot, yv), t,
+                     style = isLow ? label.style_label_up : label.style_label_down, color = color.new(color.black, 100),
+                     textcolor = eventConfirmed ? glowCol : color.gray, size = schematicLabelSize))
+    for k = 0 to array.size(bds) - 1
+        int dx = _left + int(math.round(array.get(bds, k) * schemBarsPerX))
+        array.push(_ln, line.new(dx, _top, dx, _bot, color = color.new(color.gray, 50), style = line.style_dotted))
+    for k = 0 to 4
+        float lo = k == 0 ? 0.0 : array.get(bds, k - 1)
+        float hi = k == 4 ? float(n - 1) : array.get(bds, k)
+        int cx = _left + int(math.round((lo + hi) / 2.0 * schemBarsPerX))
+        array.push(_lbs, label.new(cx, _bot, str.substring("ABCDE", k, k + 1), style = label.style_label_up,
+             color = color.new(color.black, 100), textcolor = matched and _curPhase == k + 1 ? glowCol : color.gray, size = size.tiny))
+    if matched and gx >= 0 and gx < n
+        array.push(_lbs, label.new(_left + gx * schemBarsPerX, f_schemY(_top, _bot, array.get(ys, gx)), "",
+             style = label.style_circle, color = glowCol, size = size.tiny, tooltip = "Where the live structure sits on this schematic"))
+    true
+
+f_autoSchematics(int _stop, int _out, int _typ, bool _noExcTest) =>
+    string p = "Accumulation Schematic 1"
+    string q = "Distribution Schematic 1"
+    if _stop != DIR_NONE
+        if _out == DIR_NONE
+            p := _stop == DIR_ACCUM ? "Accumulation Schematic 1" : "Distribution Schematic 1"
+            q := _stop == DIR_ACCUM ? "Redistribution Schematic" : "Reaccumulation Schematic"
+        else if _typ == TYPE_ACCUM
+            p := _noExcTest ? "Accumulation Schematic 2" : "Accumulation Schematic 1"
+            q := _noExcTest ? "Accumulation Schematic 1" : "Accumulation Schematic 2"
+        else if _typ == TYPE_DIST
+            p := _noExcTest ? "Distribution Schematic 2" : "Distribution Schematic 1"
+            q := _noExcTest ? "Distribution Schematic 1" : "Distribution Schematic 2"
+        else if _typ == TYPE_REACCUM
+            p := "Reaccumulation Schematic"
+            q := _noExcTest ? "Accumulation Schematic 2" : "Accumulation Schematic 1"
+        else if _typ == TYPE_REDIST
+            p := "Redistribution Schematic"
+            q := _noExcTest ? "Distribution Schematic 2" : "Distribution Schematic 1"
+    [p, q]
+
+// Schematic mapping helpers
+f_anchor(array<float> _ax, array<float> _at, array<float> _ap, int _idx, float _t, float _p) =>
+    if not na(_idx) and not na(_t) and not na(_p)
+        int sz = array.size(_ax)
+        if sz == 0
+            array.push(_ax, float(_idx))
+            array.push(_at, _t)
+            array.push(_ap, _p)
+        else if _idx > array.get(_ax, sz - 1) and _t > array.get(_at, sz - 1)
+            array.push(_ax, float(_idx))
+            array.push(_at, _t)
+            array.push(_ap, _p)
+    true
+
+overlayMinPointBars = 2.0
+overlayEnvelopeATR = 2.0
+overlayPivotRetention = 0.15
+overlayMinFitFraction = 0.65
+historicalCollisionPadATR = 0.15
+
+f_mapTime(array<float> _ax, array<float> _at, float _x, float _rate) =>
+    int sz = array.size(_ax)
+    float t = na
+    if sz >= 2
+        if _x <= array.get(_ax, 0)
+            t := array.get(_at, 0) - (array.get(_ax, 0) - _x) * _rate
+        else if _x >= array.get(_ax, sz - 1)
+            t := array.get(_at, sz - 1) + (_x - array.get(_ax, sz - 1)) * _rate
+        else
+            for k = 0 to sz - 2
+                float x0 = array.get(_ax, k)
+                float x1 = array.get(_ax, k + 1)
+                if na(t) and _x >= x0 and _x <= x1
+                    float t0 = array.get(_at, k)
+                    float t1 = array.get(_at, k + 1)
+                    t := t0 + (t1 - t0) * (_x - x0) / math.max(x1 - x0, 1e-9)
+    t
+
+f_timeToBarIndex(float _t) =>
+    int out = na
+    if not na(_t)
+        int lim = math.min(bar_index, 4999)
+        for off = 0 to lim
+            float tt = float(time[off])
+            if tt <= _t
+                out := bar_index - off
+                break
+    out
+
+f_mapOverlayPriceConstrained(array<float> _ys, float _x, int _iCl, float _clP, float _scale, float _slope) =>
+    int xi = int(math.round(_x))
+    float y = array.get(_ys, xi)
+    float yCl = array.get(_ys, _iCl)
+    _clP + (y - yCl) * _scale + (_x - float(_iCl)) * _slope
+
+// Schematic overlay
+f_renderOverlay(line[] _ol, label[] _olb, array<float> _placedT0, array<float> _placedT1, array<float> _placedLo, array<float> _placedHi, string _c, int _stop, int _wdir, bool _exc, float _psT, float _psP, float _clT, float _clP, float _arT, float _arP, float _stT, float _stP, float _st1T, float _st1P, float _st2T, float _st2P, float _st3T, float _st3P, float _op1T, float _op1P, float _op2T, float _op2P, float _op3T, float _op3P, float _exT, float _exP, float _teT, float _teP, float _dT, float _strP, float _lpT, float _lpP, float _eT, float _eP, float _rh, float _rl, float _atr, int _histPhase, int _histEv, float _histEndT, int _histStartBar, int _histEndBar, float _histSrcSecs, bool _projectFuture, bool _historical) =>
+    [ys, lbls, bds] = f_getSchematic(_c)
+    int n = array.size(ys)
+    bool bull = _c == "Accumulation Schematic 1" or _c == "Accumulation Schematic 2" or _c == "Reaccumulation Schematic"
+    int iCl = f_findFirst(lbls, _stop == DIR_ACCUM ? EV_SC : EV_BC, 0.0, float(n - 1))
+    int iAR = f_findFirst(lbls, EV_AR, 0.0, float(n - 1))
+    if not na(iCl) and not na(iAR) and not na(_clT) and not na(_arT) and not na(_clP) and not na(_arP)
+        float b0 = array.get(bds, 0)
+        float b1 = array.get(bds, 1)
+        float b2 = array.get(bds, 2)
+        float b3 = array.get(bds, 3)
+        int iST = f_findFirst(lbls, EV_ST, float(iAR), b0)
+        int iSTB1 = f_findLabel(lbls, "ST B", na(iST) ? float(iAR) : float(iST + 1), b2)
+        int iOpp = f_findLabel(lbls, _stop == DIR_ACCUM ? "UA" : "mSOW", na(iSTB1) ? (na(iST) ? float(iAR) : float(iST + 1)) : float(iSTB1 + 1), b2)
+        int iSTB2 = f_findLabel(lbls, "ST B", na(iOpp) ? (na(iSTB1) ? float(iAR) : float(iSTB1 + 1)) : float(iOpp + 1), b2)
+        int iExc = _exc ? f_findFirst(lbls, bull ? EV_SPRING : EV_UTAD, b0, b2) : int(na)
+        int iTe = _exc ? f_findFirst(lbls, EV_TEST, na(iExc) ? b1 : float(iExc), b2) : f_findFirst(lbls, bull ? EV_CTEST_ACC : EV_CTEST_DST, b1, b2)
+        int iStr = f_findFirst(lbls, bull ? EV_SOS : EV_SOW, b1, float(n - 1))
+        int iLp = f_findFirst(lbls, bull ? EV_LPS : EV_LPSY, na(iStr) ? b2 : float(iStr + 1), float(n - 1))
+        int iE = int(math.ceil(b3))
+        array<float> ax = array.new_float()
+        array<float> at = array.new_float()
+        array<float> ap = array.new_float()
+        float st1TUse = na(_st1T) ? _stT : _st1T
+        float st1PUse = na(_st1P) ? _stP : _st1P
+        int iPS = f_findLabel(lbls, _stop == DIR_ACCUM ? "PS" : "PSY", 0.0, float(iCl))
+        if not na(_psT) and not na(_psP) and not na(iPS) and _psT < _clT
+            f_anchor(ax, at, ap, iPS, _psT, _psP)
+        f_anchor(ax, at, ap, iCl, _clT, _clP)
+        f_anchor(ax, at, ap, iAR, _arT, _arP)
+        f_anchor(ax, at, ap, iST, st1TUse, st1PUse)
+        f_anchor(ax, at, ap, iSTB1, _st2T, _st2P)
+        float oppTUse = not na(_op1T) and (na(_st2T) or _op1T > _st2T) ? _op1T : not na(_op2T) and (na(_st2T) or _op2T > _st2T) ? _op2T : _op3T
+        float oppPUse = oppTUse == _op1T ? _op1P : oppTUse == _op2T ? _op2P : _op3P
+        f_anchor(ax, at, ap, iOpp, oppTUse, oppPUse)
+        f_anchor(ax, at, ap, iSTB2, _st3T, _st3P)
+        f_anchor(ax, at, ap, iExc, _exT, _exP)
+        f_anchor(ax, at, ap, iTe, _teT, _teP)
+        f_anchor(ax, at, ap, iStr, _dT, _strP)
+        f_anchor(ax, at, ap, iLp, _lpT, _lpP)
+        f_anchor(ax, at, ap, iE, _eT, _eP)
+        int sz = array.size(ax)
+        if sz >= 2
+            float barMs = math.max(chartTfSecs * 1000.0, 1.0)
+            array<float> avt = array.new_float()
+            array<float> avb = array.new_float()
+            array.push(avt, array.get(at, 0))
+            int firstMappedBar = f_timeToBarIndex(array.get(at, 0))
+            if _historical
+                array.push(avb, na(firstMappedBar) ? na : float(firstMappedBar))
+            else
+                array.push(avb, float(na(firstMappedBar) ? bar_index : firstMappedBar))
+            for k = 1 to sz - 1
+                float prevVT = array.get(avt, k - 1)
+                float minT = prevVT + (array.get(ax, k) - array.get(ax, k - 1)) * overlayMinPointBars * barMs
+                array.push(avt, math.max(array.get(at, k), minT))
+                int mappedBar = f_timeToBarIndex(array.get(at, k))
+                float prevVB = array.get(avb, k - 1)
+                if _historical
+                    array.push(avb, na(mappedBar) ? na : float(mappedBar))
+                else
+                    float minB = prevVB + (array.get(ax, k) - array.get(ax, k - 1)) * overlayMinPointBars
+                    array.push(avb, math.max(float(na(mappedBar) ? int(math.round(prevVB)) : mappedBar), minB))
+
+            float lastDX = math.max(array.get(ax, sz - 1) - array.get(ax, sz - 2), 1e-9)
+            float lastDT = array.get(avt, sz - 1) - array.get(avt, sz - 2)
+            float rate = math.max(lastDT / lastDX, overlayMinPointBars * barMs)
+            float lastDB = array.get(avb, sz - 1) - array.get(avb, sz - 2)
+            float rateBars = math.max(lastDB / lastDX, overlayMinPointBars)
+            int lastConfIdx = int(math.round(array.get(ax, sz - 1)))
+            float lastX = float(lastConfIdx)
+            float refT = array.get(at, sz - 1)
+            float refP = array.get(ap, sz - 1)
+            float yRef = array.get(ys, lastConfIdx)
+
+            float schemYSpan = math.max(array.max(ys) - array.min(ys), 1.0)
+            float overlayRangeHeight = not na(_rh) and not na(_rl) ? math.abs(_rh - _rl) : math.abs(_arP - _clP)
+            float baseScale = math.max(overlayRangeHeight, syminfo.mintick) / schemYSpan
+            // The active future path is calibrated to the schematic's actual trading-range anchors,
+            // not the full incoming-trend-through-Phase-E height. This preserves canonical geometry.
+            float canonicalRangeYSpan = math.max(math.abs(array.get(ys, iCl) - array.get(ys, iAR)), 1.0)
+            float activeFutureScale = math.max(overlayRangeHeight, syminfo.mintick) / canonicalRangeYSpan
+
+            float scaleNum = 0.0
+            float scaleDen = 0.0
+            for m = 0 to sz - 1
+                int idxM = int(math.round(array.get(ax, m)))
+                float dyM = math.abs(array.get(ys, idxM) - yRef)
+                float dpM = math.abs(array.get(ap, m) - refP)
+                if idxM != lastConfIdx and dyM > 1e-9 and dpM > 0.0
+                    float w = dyM
+                    scaleNum += w * dpM / dyM
+                    scaleDen += w
+            float fitScale = scaleDen > 0.0 ? scaleNum / scaleDen : baseScale
+            fitScale := math.max(baseScale * 0.35, math.min(baseScale * 1.75, fitScale))
+
+            float slopeLo = -1e20
+            float slopeHi = 1e20
+            float keepFrac = math.max(0.0, math.min(overlayPivotRetention, 0.95))
+            for j = 0 to n - 2
+                float dy = array.get(ys, j + 1) - array.get(ys, j)
+                if dy > 0.0
+                    slopeLo := math.max(slopeLo, -(1.0 - keepFrac) * dy * fitScale)
+                else if dy < 0.0
+                    slopeHi := math.min(slopeHi, (1.0 - keepFrac) * math.abs(dy) * fitScale)
+
+            float slopeNum = 0.0
+            float slopeDen = 0.0
+            for m = 0 to sz - 1
+                int idxM = int(math.round(array.get(ax, m)))
+                float dxM = float(idxM - lastConfIdx)
+                if idxM != lastConfIdx and math.abs(dxM) > 1e-9
+                    float basePM = refP + (array.get(ys, idxM) - yRef) * fitScale
+                    float residM = array.get(ap, m) - basePM
+                    slopeNum += dxM * residM
+                    slopeDen += dxM * dxM
+            float desiredSlope = slopeDen > 0.0 ? slopeNum / slopeDen : 0.0
+
+            float atrNow = math.max(nz(_atr, overlayRangeHeight * 0.25), syminfo.mintick)
+            float incomingMin = atrNow * 0.25
+            if iCl > 0
+                float yStart0 = array.get(ys, 0)
+                if _stop == DIR_ACCUM
+                    float incomingMaxSlope = (refP + (yStart0 - yRef) * fitScale - (_clP + incomingMin)) / -math.max(float(lastConfIdx), 1.0)
+                    slopeHi := math.min(slopeHi, incomingMaxSlope)
+                else if _stop == DIR_DIST
+                    float incomingMinSlope = (refP + (yStart0 - yRef) * fitScale - (_clP - incomingMin)) / -math.max(float(lastConfIdx), 1.0)
+                    slopeLo := math.max(slopeLo, incomingMinSlope)
+
+            float histSlope = slopeLo <= slopeHi ? math.max(slopeLo, math.min(slopeHi, desiredSlope)) : 0.0
+
+            float envBaseHi = not na(_rh) and not na(_rl) ? math.max(_rh, _rl) : math.max(_clP, _arP)
+            float envBaseLo = not na(_rh) and not na(_rl) ? math.min(_rh, _rl) : math.min(_clP, _arP)
+            float envHi = math.max(envBaseHi + overlayEnvelopeATR * atrNow, refP)
+            float envLo = math.min(envBaseLo - overlayEnvelopeATR * atrNow, refP)
+            float fit = 1.0
+            // Fit only the confirmed schematic portion. Future C/D/E geometry must not compress
+            // its own projection; once the live anchors establish scale, keep that scale forward.
+            int fitEndIdx = math.max(0, math.min(lastConfIdx, n - 1))
+            for j = 0 to fitEndIdx
+                float rawP = refP + (array.get(ys, j) - yRef) * fitScale + (float(j - lastConfIdx)) * histSlope
+                float dev = rawP - refP
+                if dev > 0.0
+                    fit := math.min(fit, math.max((envHi - refP) / dev, 0.0))
+                else if dev < 0.0
+                    fit := math.min(fit, math.max((refP - envLo) / -dev, 0.0))
+            float appliedFit = _histPhase >= PHASE_E ? 1.0 : math.max(math.min(fit, 1.0), overlayMinFitFraction)
+            float rangeScale = fitScale * appliedFit
+            float finalHistSlope = histSlope * appliedFit
+
+            if _historical
+                int histStartBar = _histStartBar
+                int histEndBar = _histEndBar
+                if na(histStartBar)
+                    histStartBar := f_timeToBarIndex(array.get(at, 0))
+                if na(histEndBar)
+                    int mappedHistEnd = f_timeToBarIndex(_histEndT)
+                    histEndBar := na(mappedHistEnd) ? na : mappedHistEnd - 1
+                bool histWindowValid = not na(histStartBar) and not na(histEndBar) and histStartBar >= 0 and histEndBar >= histStartBar and histEndBar <= bar_index
+                // Historical drawings are created when the campaign closes, so age from the current last bar is irrelevant.
+                // Keep only a width guard for unusually long single campaigns because xloc.bar_index has a finite backward drawing range.
+                bool histSpanSafe = histWindowValid and histEndBar - histStartBar <= 9500
+                if histSpanSafe
+                    float fullSpanBars = math.max(float(histEndBar - histStartBar), 1.0)
+                    float histRateBars = fullSpanBars / math.max(float(n - 1), 1.0)
+                    float histScale = math.max(baseScale, fitScale * overlayMinFitFraction)
+                    float yMin = array.min(ys)
+                    float yMax = array.max(ys)
+                    float periodHi = na
+                    float periodLo = na
+                    int spanBars = math.max(histEndBar - histStartBar + 1, 1)
+                    int endAgo = math.max(bar_index - histEndBar, 0)
+                    if endAgo <= 4999
+                        int scanBars = math.min(spanBars, 5000 - endAgo)
+                        for b = 0 to scanBars - 1
+                            int idx = endAgo + b
+                            if idx >= 0 and idx <= 4999
+                                periodHi := na(periodHi) ? high[idx] : math.max(periodHi, high[idx])
+                                periodLo := na(periodLo) ? low[idx] : math.min(periodLo, low[idx])
+                    float matchedHi = nz(periodHi, envBaseHi)
+                    float matchedLo = nz(periodLo, envBaseLo)
+                    float histHeight = (yMax - yMin) * histScale
+                    float baseLow = bull ? matchedHi + historicalOverlayOffsetATR * atrNow : matchedLo - historicalOverlayOffsetATR * atrNow - histHeight
+                    float histX0 = float(histStartBar)
+                    float histX1 = float(histEndBar)
+                    float collisionPad = historicalCollisionPadATR * atrNow
+                    if array.size(_placedT0) > 0
+                        for z = 0 to array.size(_placedT0) - 1
+                            float pT0 = array.get(_placedT0, z)
+                            float pT1 = array.get(_placedT1, z)
+                            float pLo = array.get(_placedLo, z)
+                            float pHi = array.get(_placedHi, z)
+                            bool timeHit = histX1 >= pT0 and histX0 <= pT1
+                            float curLo = baseLow
+                            float curHi = baseLow + histHeight
+                            bool priceHit = curHi + collisionPad >= pLo and curLo - collisionPad <= pHi
+                            if timeHit and priceHit
+                                baseLow := bull ? pHi + collisionPad : pLo - collisionPad - histHeight
+                    array.push(_placedT0, histX0)
+                    array.push(_placedT1, histX1)
+                    array.push(_placedLo, baseLow)
+                    array.push(_placedHi, baseLow + histHeight)
+                    int phaseProgressIdx = f_glowX(lbls, bds, _histPhase, _histEv, n)
+                    int histProgressIdx = math.max(lastConfIdx, nz(phaseProgressIdx, lastConfIdx))
+                    histProgressIdx := math.max(0, math.min(histProgressIdx, n - 1))
+                    color reachedCol = bull ? color.new(color.lime, 35) : color.new(color.fuchsia, 35)
+                    color remainCol = color.new(color.gray, 20)
+                    for i = 0 to n - 2
+                        int xA = int(math.round(histX0 + float(i) * histRateBars))
+                        int xB = int(math.round(histX0 + float(i + 1) * histRateBars))
+                        float pA1 = baseLow + (array.get(ys, i) - yMin) * histScale
+                        float pB1 = baseLow + (array.get(ys, i + 1) - yMin) * histScale
+                        color segCol = i < histProgressIdx ? reachedCol : remainCol
+                        array.push(_ol, line.new(xA, pA1, xB, pB1, xloc = xloc.bar_index, color = segCol, style = line.style_solid, width = 1))
+                    int histMidX = int(math.round(histX0 + fullSpanBars * 0.50))
+                    float histTop = baseLow + (yMax - yMin) * histScale
+                    float histLabelY = bull ? histTop + atrNow * 0.20 : baseLow - atrNow * 0.20
+                    string histTfSuffix = not na(_histSrcSecs) and _histSrcSecs > chartTfSecs + 0.5 ? " (" + f_formatSecsDisplay(_histSrcSecs) + ")" : ""
+                    array.push(_olb, label.new(histMidX, histLabelY, _c + histTfSuffix, xloc = xloc.bar_index, style = label.style_none, textcolor = reachedCol, size = schematicLabelSize))
+                    if histProgressIdx < n - 1
+                        int xX = int(math.round(histX0 + float(histProgressIdx) * histRateBars))
+                        float xP = baseLow + (array.get(ys, histProgressIdx) - yMin) * histScale
+                        array.push(_olb, label.new(xX, xP, "X", xloc = xloc.bar_index, style = label.style_none, textcolor = color.new(color.red, 0), size = schematicLabelSize))
+            else
+                // Confirmed active overlay uses chart trading-bar coordinates, including when an HTF structure wins.
+                // This removes overnight/weekend kinks while keeping the real event prices as vertical anchors.
+                color liveCol = bull ? color.new(color.lime, 5) : color.new(color.fuchsia, 5)
+                if sz > 1
+                    for k = 1 to sz - 1
+                        float bar0f = array.get(avb, k - 1)
+                        float bar1f = array.get(avb, k)
+                        float p0 = array.get(ap, k - 1)
+                        float p1 = array.get(ap, k)
+                        if not na(bar0f) and not na(bar1f)
+                            int x0 = int(math.round(bar0f))
+                            int x1 = int(math.round(bar1f))
+                            if x0 >= bar_index - 9999 and x1 <= bar_index + 500
+                                array.push(_ol, line.new(x0, p0, x1, p1, xloc = xloc.bar_index,
+                                     color = liveCol, style = line.style_solid, width = 1))
+
+                // Only the unfinished future path is schematic-projected; use trading bars so overnight/weekend gaps do not compress it.
+                if _projectFuture and lastConfIdx < n - 1
+                    float lastAnchorP = array.get(ap, sz - 1)
+                    int futureStartBar = int(math.round(array.get(avb, sz - 1)))
+                    int futureLimitBar = bar_index + 490
+                    float remainingFutureUnits = math.max(float(n - 1 - lastConfIdx), 1.0)
+                    float availableFutureBars = float(futureLimitBar - futureStartBar)
+                    if availableFutureBars >= remainingFutureUnits * overlayMinPointBars
+                        float futureRateBars = math.max(overlayMinPointBars, math.min(rateBars, availableFutureBars / remainingFutureUnits))
+                        for i = lastConfIdx to n - 2
+                            int xA = futureStartBar + int(math.round(float(i - lastConfIdx) * futureRateBars))
+                            int xB = futureStartBar + int(math.round(float(i + 1 - lastConfIdx) * futureRateBars))
+                            float pA1 = lastAnchorP + (array.get(ys, i) - yRef) * activeFutureScale
+                            float pB1 = lastAnchorP + (array.get(ys, i + 1) - yRef) * activeFutureScale
+                            array.push(_ol, line.new(xA, pA1, xB, pB1, xloc = xloc.bar_index,
+                                 color = color.new(color.gray, 20), style = line.style_solid, width = 1))
+    true
+
+// Keep side panels clear of the projected overlay
+schemCollisionPadATR = 0.20
+
+f_panelEscape(line[] _lines, string _choice, float _baseY) =>
+    [pys, plbls, pbounds] = f_getSchematic(_choice)
+    float barMs = math.max(chartTfSecs * 1000.0, 1.0)
+    int xLeftTime = int(time + schemXOffset * barMs)
+    int xRightTime = int(xLeftTime + math.round(math.max(array.size(pys) - 1, 1) * schemBarsPerX) * barMs)
+    int xLeftBar = bar_index + schemXOffset
+    int xRightBar = xLeftBar + int(math.round(math.max(array.size(pys) - 1, 1) * schemBarsPerX))
+    bool hit = false
+    float envLo = na
+    float envHi = na
+    if array.size(_lines) > 0
+        for i = 0 to array.size(_lines) - 1
+            line ln = array.get(_lines, i)
+            int x1 = line.get_x1(ln)
+            int x2 = line.get_x2(ln)
+            int segLo = math.min(x1, x2)
+            int segHi = math.max(x1, x2)
+            bool lineUsesTime = math.abs(float(x1)) > 10000000000.0 or math.abs(float(x2)) > 10000000000.0
+            int cmpLeft = lineUsesTime ? xLeftTime : xLeftBar
+            int cmpRight = lineUsesTime ? xRightTime : xRightBar
+            if segHi >= cmpLeft and segLo <= cmpRight
+                float y1 = line.get_y1(ln)
+                float y2 = line.get_y2(ln)
+                int xa = math.max(segLo, cmpLeft)
+                int xb = math.min(segHi, cmpRight)
+                float ya = x2 != x1 ? y1 + float(xa - x1) / float(x2 - x1) * (y2 - y1) : y1
+                float yb = x2 != x1 ? y1 + float(xb - x1) / float(x2 - x1) * (y2 - y1) : y2
+                envLo := na(envLo) ? math.min(ya, yb) : math.min(envLo, math.min(ya, yb))
+                envHi := na(envHi) ? math.max(ya, yb) : math.max(envHi, math.max(ya, yb))
+                hit := true
+    float halfP = schemHeightATR * schemAtr / 2.0
+    float padP = schemCollisionPadATR * schemAtr
+    float centerP = close + _baseY * schemAtr
+    float panelLo = centerP - halfP
+    float panelHi = centerP + halfP
+    bool overlap = hit and panelHi > envLo - padP and panelLo < envHi + padP
+    float upATR = overlap ? math.max(0.0, (envHi + padP - panelLo) / schemAtr) : 0.0
+    float downATR = overlap ? math.max(0.0, (panelHi - (envLo - padP)) / schemAtr) : 0.0
+    [overlap, upATR, downATR]
+
+// Draw and refresh schematic panels
+var line[] schemLines = array.new_line()
+var label[] schemLabels = array.new_label()
+var box[] schemBoxes = array.new_box()
+var line[] overlayLines = array.new_line()
+var label[] overlayLabels = array.new_label()
+var line[] historicalOverlayLines = array.new_line()
+var label[] historicalOverlayLabels = array.new_label()
+var int[] historicalLineGroupCounts = array.new_int()
+var int[] historicalLabelGroupCounts = array.new_int()
+var float[] historicalPlacedT0 = array.new_float()
+var float[] historicalPlacedT1 = array.new_float()
+var float[] historicalPlacedLo = array.new_float()
+var float[] historicalPlacedHi = array.new_float()
+
+// HTF historical drawings have their own retention pool so they can never evict chart-timeframe history.
+var line[] htfHistoricalOverlayLines = array.new_line()
+var label[] htfHistoricalOverlayLabels = array.new_label()
+var int[] htfHistoricalLineGroupCounts = array.new_int()
+var int[] htfHistoricalLabelGroupCounts = array.new_int()
+var float[] htfHistoricalPlacedT0 = array.new_float()
+var float[] htfHistoricalPlacedT1 = array.new_float()
+var float[] htfHistoricalPlacedLo = array.new_float()
+var float[] htfHistoricalPlacedHi = array.new_float()
+
+f_pruneHistoricalGroups(line[] _lines, label[] _labels, int[] _lineCounts, int[] _labelCounts, float[] _t0, float[] _t1, float[] _lo, float[] _hi) =>
+    while array.size(_lineCounts) > historicalSchematicLimit
+        int lc = array.shift(_lineCounts)
+        int bc = array.shift(_labelCounts)
+        if lc > 0
+            for q = 0 to lc - 1
+                if array.size(_lines) > 0
+                    line.delete(array.shift(_lines))
+        if bc > 0
+            for q = 0 to bc - 1
+                if array.size(_labels) > 0
+                    label.delete(array.shift(_labels))
+        if array.size(_t0) > 0
+            array.shift(_t0)
+        if array.size(_t1) > 0
+            array.shift(_t1)
+        if array.size(_lo) > 0
+            array.shift(_lo)
+        if array.size(_hi) > 0
+            array.shift(_hi)
+    true
+
+f_renderHistoricalSnapshot(HistSchem _h, line[] _lines, label[] _labels, int[] _lineCounts, int[] _labelCounts, float[] _t0, float[] _t1, float[] _lo, float[] _hi) =>
+    string histChoice = f_overlayChoice(_h.typ, _h.exc, _h.stop)
+    if histChoice != "" and _h.phase >= historicalSchematicMinPhase
+        int linesBefore = array.size(_lines)
+        int labelsBefore = array.size(_labels)
+        f_renderOverlay(_lines, _labels, _t0, _t1, _lo, _hi, histChoice, _h.stop, _h.wdir, _h.exc, _h.psT, _h.psP, _h.clT, _h.clP, _h.arT, _h.arP, _h.stT, _h.stP, _h.st1T, _h.st1P, _h.st2T, _h.st2P, _h.st3T, _h.st3P, _h.op1T, _h.op1P, _h.op2T, _h.op2P, _h.op3T, _h.op3P, _h.exT, _h.exP, _h.teT, _h.teP, _h.soT, _h.soP, _h.lpT, _h.lpP, _h.eT, _h.eP, _h.rh, _h.rl, _h.atr, _h.phase, _h.ev, _h.endT, _h.startBar, _h.endBar, _h.srcSecs, false, true)
+        int addedLines = array.size(_lines) - linesBefore
+        int addedLabels = array.size(_labels) - labelsBefore
+        if addedLines > 0 or addedLabels > 0
+            array.push(_lineCounts, math.max(addedLines, 0))
+            array.push(_labelCounts, math.max(addedLabels, 0))
+            f_pruneHistoricalGroups(_lines, _labels, _lineCounts, _labelCounts, _t0, _t1, _lo, _hi)
+    true
+
+// Render completed campaigns on the bar where they close. Objects then persist as the chart advances,
+// so old history is not reconstructed from the final bar and is not suppressed by its age.
+if array.size(histRenderQueue) > 0
+    for i = 0 to array.size(histRenderQueue) - 1
+        HistSchem h = array.get(histRenderQueue, i)
+        if showHistoricalSchematicOverlays
+            f_renderHistoricalSnapshot(h, historicalOverlayLines, historicalOverlayLabels, historicalLineGroupCounts, historicalLabelGroupCounts, historicalPlacedT0, historicalPlacedT1, historicalPlacedLo, historicalPlacedHi)
+    array.clear(histRenderQueue)
+
+if array.size(htfHistRenderQueue) > 0
+    for i = 0 to array.size(htfHistRenderQueue) - 1
+        HistSchem h = array.get(htfHistRenderQueue, i)
+        if showHistoricalSchematicOverlays and enableHTFHistoricalSchematics
+            f_renderHistoricalSnapshot(h, htfHistoricalOverlayLines, htfHistoricalOverlayLabels, htfHistoricalLineGroupCounts, htfHistoricalLabelGroupCounts, htfHistoricalPlacedT0, htfHistoricalPlacedT1, htfHistoricalPlacedLo, htfHistoricalPlacedHi)
+    array.clear(htfHistRenderQueue)
+
+if barstate.islast
+    if array.size(schemLines) > 0
+        for i = 0 to array.size(schemLines) - 1
+            line.delete(array.get(schemLines, i))
+        array.clear(schemLines)
+    if array.size(schemLabels) > 0
+        for i = 0 to array.size(schemLabels) - 1
+            label.delete(array.get(schemLabels, i))
+        array.clear(schemLabels)
+    if array.size(schemBoxes) > 0
+        for i = 0 to array.size(schemBoxes) - 1
+            box.delete(array.get(schemBoxes, i))
+        array.clear(schemBoxes)
+    if array.size(overlayLines) > 0
+        for i = 0 to array.size(overlayLines) - 1
+            line.delete(array.get(overlayLines, i))
+        array.clear(overlayLines)
+    if array.size(overlayLabels) > 0
+        for i = 0 to array.size(overlayLabels) - 1
+            label.delete(array.get(overlayLabels, i))
+        array.clear(overlayLabels)
+
+    bool noExcTest = efOut != DIR_NONE and not efExc and not na(efTeT)
+    string choice1 = schem1_choice
+    string choice2 = schem2_choice
+    if schemModeInput == "Auto"
+        [autoP, autoQ] = f_autoSchematics(efStop, efOut, efType, noExcTest)
+        choice1 := autoP
+        choice2 := autoQ
+
+    if showActiveSchematicOverlay and efPhase >= currentChartMinPhase and efStop != DIR_NONE
+        string ovChoice = f_overlayChoice(efType, efExc, efStop)
+        if ovChoice != ""
+            f_renderOverlay(overlayLines, overlayLabels, historicalPlacedT0, historicalPlacedT1, historicalPlacedLo, historicalPlacedHi, ovChoice, efStop, efWDir, efExc, efPsT, efPsP, efClT, efClP, efArT, efArP, efStT, efStP, efSt1T, efSt1P, efSt2T, efSt2P, efSt3T, efSt3P, efOp1T, efOp1P, efOp2T, efOp2P, efOp3T, efOp3P, efExT, efExP, efTeT, efTeP, efSoT, efSoP, efLpT, efLpP, efET, efLastP, efRH, efRL, efATR, efPhase, efEvent, na, na, na, na, true, false)
+
+    int efProgressX = efType != TYPE_NONE and efPhase >= currentChartMinPhase ? f_schemProgress(f_overlayChoice(efType, efExc, efStop), efStop, efExc, efArT, efSt1T, efSt2T, efSt3T, efOp1T, efOp2T, efOp3T, efExT, efTeT, efSoT, efLpT, efET) : -1
+
+    if schemPanelCount > 0 and not na(schemAtr)
+        float panelH = schemHeightATR * schemAtr
+        int panelLeft = bar_index + schemXOffset
+        bool active1 = efType != TYPE_NONE and efPhase >= currentChartMinPhase and f_schemType(choice1) == efType
+        bool active2 = schemPanelCount == 2 and efType != TYPE_NONE and efPhase >= currentChartMinPhase and f_schemType(choice2) == efType
+        string activeChoice = active1 ? choice1 : active2 ? choice2 : ""
+        if activeChoice != ""
+            float activeY = schemCenterY
+            [activeHit, activeUp, activeDn] = f_panelEscape(overlayLines, activeChoice, activeY)
+            if activeHit
+                activeY += activeUp <= activeDn ? activeUp : -activeDn
+            float activeMid = close + activeY * schemAtr
+            f_renderSchematic(schemLines, schemLabels, schemBoxes, activeChoice, activeMid + panelH / 2.0, activeMid - panelH / 2.0, panelLeft, efType, efPhase, efEvent, efProgressX)
+        else
+            float slot = schemPanelCount == 2 ? (schemHeightATR + schemGapATR) / 2.0 : 0.0
+            float p1Base = schemPanelCount == 2 ? schemCenterY + slot : schemCenterY
+            float p2Base = schemCenterY - slot
+            float p1Y = p1Base
+            float p2Y = p2Base
+            [p1Hit, p1Up, p1Dn] = f_panelEscape(overlayLines, choice1, p1Base)
+            [p2HitRaw, p2Up, p2Dn] = f_panelEscape(overlayLines, choice2, p2Base)
+            bool p2Hit = schemPanelCount == 2 and p2HitRaw
+            if schemPanelCount == 1 and p1Hit
+                p1Y += p1Up <= p1Dn ? p1Up : -p1Dn
+            else if schemPanelCount == 2
+                if p1Hit and p2Hit
+                    p1Y += p1Up
+                    p2Y -= p2Dn
+                else if p1Hit
+                    p1Y += p1Up <= p1Dn ? p1Up : -p1Dn
+                else if p2Hit
+                    p2Y += p2Up <= p2Dn ? p2Up : -p2Dn
+            float p1Mid = close + p1Y * schemAtr
+            float p2Mid = close + p2Y * schemAtr
+            if schemPanelCount == 1
+                f_renderSchematic(schemLines, schemLabels, schemBoxes, choice1, p1Mid + panelH / 2.0, p1Mid - panelH / 2.0, panelLeft, efType, efPhase, efEvent, f_schemType(choice1) == efType ? efProgressX : -1)
+            else
+                f_renderSchematic(schemLines, schemLabels, schemBoxes, choice1, p1Mid + panelH / 2.0, p1Mid - panelH / 2.0, panelLeft, efType, efPhase, efEvent, f_schemType(choice1) == efType ? efProgressX : -1)
+                f_renderSchematic(schemLines, schemLabels, schemBoxes, choice2, p2Mid + panelH / 2.0, p2Mid - panelH / 2.0, panelLeft, efType, efPhase, efEvent, f_schemType(choice2) == efType ? efProgressX : -1)
+
+
+// Manual draggable Wyckoff schematic
+manualLabelSize = f_sizeFrom(manualLabelSizeInput)
+
+MAN_BORDER = color.rgb(150, 70, 235)
+MAN_TEXT   = color.rgb(225, 225, 232)
+MAN_LEVEL  = color.rgb(210, 210, 218)
+
+f_manSegColor(int _s) =>
+    _s <= 1 ? color.rgb(228, 228, 235) :
+     _s == 2 ? color.rgb(0, 200, 225) :
+     _s == 3 ? color.rgb(45, 210, 120) :
+     _s == 4 ? color.rgb(250, 190, 60) : color.rgb(245, 85, 85)
+
+f_manLabels(bool _dist) =>
+    _dist ?
+     array.from("", "", "", "", "PSY", "", "", "BC", "", "AR", "ST", "", "", "", "", "", "", "", "", "", "", "", "UTAD", "", "", "", "LPSY", "", "LPSY", "", "UT/LPSY", "SOW", "", "") :
+     array.from("", "", "", "", "PS", "", "", "SC", "", "AR", "ST", "", "", "", "", "", "", "", "", "", "", "", "Spring", "", "", "", "LPS", "", "LPS", "", "BU/LPS", "SOS", "", "")
+
+var line[]  manLines  = array.new_line()
+var label[] manLabels = array.new_label()
+var box[]   manBoxes  = array.new_box()
+
+if barstate.islast
+    if array.size(manLines) > 0
+        for i = 0 to array.size(manLines) - 1
+            line.delete(array.get(manLines, i))
+        array.clear(manLines)
+    if array.size(manLabels) > 0
+        for i = 0 to array.size(manLabels) - 1
+            label.delete(array.get(manLabels, i))
+        array.clear(manLabels)
+    if array.size(manBoxes) > 0
+        for i = 0 to array.size(manBoxes) - 1
+            box.delete(array.get(manBoxes, i))
+        array.clear(manBoxes)
+
+    if false // Manual schematic disabled
+        int   manBB   = math.min(manualBars, bar_index)
+        float manAutoL = float(time[manBB])
+        float manAutoR = float(time)
+        float manAutoT = close + manualATRMult * atr
+        float manAutoB = close - manualATRMult * atr
+
+        float aLT = manualLeftT  <= 0   ? manAutoL : float(manualLeftT)
+        float aRT = manualRightT <= 0   ? manAutoR : float(manualRightT)
+        float aTP = manualTopP   <= 0.0 ? manAutoT : manualTopP
+        float aBP = manualBotP   <= 0.0 ? manAutoB : manualBotP
+
+        bool  manDist = aBP > aTP
+        float yTop = math.max(aTP, aBP)
+        float yBot = math.min(aTP, aBP)
+        float xL   = math.min(aLT, aRT)
+        float xR   = math.max(aLT, aRT)
+
+        if xR > xL and yTop > yBot
+            float span = xR - xL
+            float hgt  = yTop - yBot
+
+            array<float>  mxs = array.from(0.000, 0.025, 0.045, 0.070, 0.090, 0.115, 0.132, 0.150, 0.185, 0.215, 0.245, 0.275, 0.305, 0.335, 0.365, 0.395, 0.425, 0.455, 0.485, 0.515, 0.545, 0.575, 0.605, 0.635, 0.660, 0.700, 0.730, 0.775, 0.810, 0.850, 0.880, 0.930, 0.965, 1.000)
+            array<float>  mys = array.from(0.97,  0.78,  0.86,  0.62,  0.72,  0.48,  0.56,  0.08,  0.34,  0.52,  0.20,  0.44,  0.26,  0.47,  0.22,  0.45,  0.24,  0.43,  0.21,  0.40,  0.23,  0.38,  0.00,  0.28,  0.12,  0.46,  0.30,  0.62,  0.48,  0.78,  0.66,  0.90,  0.82,  1.00)
+            array<int>    mseg = array.from(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5)
+            array<string> mlb  = f_manLabels(manDist)
+            array<float>  mlev = array.from(0.52, 0.44, 0.08, 0.00)
+            int n = array.size(mxs)
+
+            array.push(manBoxes, box.new(int(xL), yTop, int(xR), yBot, xloc = xloc.bar_time, border_color = color.new(MAN_BORDER, 20), border_width = 1, bgcolor = color.new(MAN_BORDER, 93)))
+
+            if manualShowLevels
+                for k = 0 to array.size(mlev) - 1
+                    float lv = manDist ? 1.0 - array.get(mlev, k) : array.get(mlev, k)
+                    float lp = yBot + hgt * lv
+                    array.push(manLines, line.new(int(xL + span * 0.150), lp, int(xR), lp, xloc = xloc.bar_time, color = color.new(MAN_LEVEL, 45), width = 1))
+
+            array.push(manLines, line.new(int(xL + span * 0.150), yTop, int(xL + span * 0.150), yBot, xloc = xloc.bar_time, color = color.new(MAN_BORDER, 35), width = 1))
+
+            for i = 0 to n - 2
+                float y1 = yBot + hgt * (manDist ? 1.0 - array.get(mys, i)     : array.get(mys, i))
+                float y2 = yBot + hgt * (manDist ? 1.0 - array.get(mys, i + 1) : array.get(mys, i + 1))
+                array.push(manLines, line.new(int(xL + span * array.get(mxs, i)), y1, int(xL + span * array.get(mxs, i + 1)), y2, xloc = xloc.bar_time, color = f_manSegColor(array.get(mseg, i + 1)), width = 2))
+
+            for i = 0 to n - 1
+                string t = array.get(mlb, i)
+                if t != ""
+                    float yv    = array.get(mys, i)
+                    float prevY = i > 0     ? array.get(mys, i - 1) : yv
+                    float nextY = i < n - 1 ? array.get(mys, i + 1) : yv
+                    bool  isLow = yv <= prevY and yv <= nextY
+                    bool  below = manDist ? not isLow : isLow
+                    float yp = yBot + hgt * (manDist ? 1.0 - yv : yv) + hgt * (below ? -0.045 : 0.045)
+                    array.push(manLabels, label.new(int(xL + span * array.get(mxs, i)), yp, t, xloc = xloc.bar_time, style = label.style_none, textcolor = MAN_TEXT, size = manualLabelSize))
+
+            array.push(manLabels, label.new(int(xL), yTop, manDist ? "DISTRIBUTION" : "ACCUMULATION", xloc = xloc.bar_time, style = label.style_label_lower_left, color = color.new(color.black, 100), textcolor = color.new(MAN_BORDER, 0), size = manualLabelSize))
+
+if barstate.islast
+    if not na(selectedEntryLabel)
+        label.delete(selectedEntryLabel)
+        selectedEntryLabel := na
+    f_reserveConfirmedEntryHistory()
+    f_drawConfirmedEventLabels()
+    f_drawConfirmedEntryHistory()
+
+
+// Alerts
+alertcondition(f_hasBit(cMask, BIT_SC) or f_hasBit(cMask, BIT_BC), "Wyckoff: climax confirmed", "Wyckoff: SC/BC confirmed - Phase A started")
+alertcondition(f_hasBit(cMask, BIT_ST) and f_hasBit(cMask, BIT_AR), "Wyckoff: Phase B started", "Wyckoff: AR fixed and ST confirmed - Phase B started")
+alertcondition(f_hasBit(cMask, BIT_SPRING), "Wyckoff: Spring", "Wyckoff: Spring confirmed")
+alertcondition(f_hasBit(cMask, BIT_UTAD), "Wyckoff: UTAD", "Wyckoff: UTAD confirmed")
+alertcondition(f_hasBit(cMask, BIT_TEST) or f_hasBit(cMask, BIT_CTEST), "Wyckoff: Phase C test", "Wyckoff: Phase C test confirmed")
+alertcondition(f_hasBit(cMask, BIT_SOS), "Wyckoff: SOS", "Wyckoff: Sign of Strength - Phase D (bullish)")
+alertcondition(f_hasBit(cMask, BIT_SOW), "Wyckoff: SOW", "Wyckoff: Sign of Weakness - Phase D (bearish)")
+alertcondition(f_hasBit(cMask, BIT_LPS), "Wyckoff: LPS", "Wyckoff: Last Point of Support")
+alertcondition(f_hasBit(cMask, BIT_LPSY), "Wyckoff: LPSY", "Wyckoff: Last Point of Supply")
+alertcondition(f_hasBit(cMask, BIT_E), "Wyckoff: Phase E", "Wyckoff: price accepted outside the range - Phase E")
+alertcondition(chartLongEntryNow, "Wyckoff: long entry", "Wyckoff: long entry qualified")
+alertcondition(chartShortEntryNow, "Wyckoff: short entry", "Wyckoff: short entry qualified")

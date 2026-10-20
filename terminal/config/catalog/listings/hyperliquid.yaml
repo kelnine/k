@@ -1,0 +1,210 @@
+# Hyperliquid perpetuals: USDC-margined, quantity in base units, minimum order
+# value $10 notional (a reduce-only order that exactly closes is exempt).
+# Specs from POST /info {"type": "meta"} (main dex) and {"type": "meta",
+# "dex": "xyz"} (trade.xyz HIP-3 markets).
+#
+# TICK: Hyperliquid has NO fixed tick. A price may have at most 5 significant
+# figures and at most (6 − szDecimals) decimals; integer prices are always
+# valid. tick_size below is the EFFECTIVE tick at the price level noted on
+# each row — an adapter must apply the rule to the live price (e.g. SOL ticks
+# 0.001 at $10-99.99 but 0.01 at $100-999.99). qty_step = 10^-szDecimals.
+#
+# Verified rows: BTC, SOL, HYPE from the ccxt static snapshot of meta
+# (szDecimals) and recorded fills; xyz:* rows from live xyz meta dumps
+# (2026-10-02 / 2026-10-06) supplied by the verify pass.
+#
+# Costs (crypto_perp_hyperliquid, ASSUMPTION): tier-0 main-dex fees 0.015 %
+# maker / 0.045 % taker; funding hourly at 1/8 of the 8 h baseline.
+# trade.xyz HIP-3 markets differ: standard HIP-3 fees are 2x core (0.03 % /
+# 0.09 %), growth-mode markets ~90 % lower (~0.003 % / 0.009 %), and funding is
+# scaled by 0.5 — see each row. Margin modes (isolated-only on some xyz
+# markets) are not modelled.
+
+venue: hyperliquid
+
+listings:
+  # ── main-dex crypto perps ──────────────────────────────────────────────────
+  - instrument: BTCUSD
+    venue_symbol: BTC
+    contract_type: PERPETUAL
+    tick_size: "1"              # effective tick at BTC >= $10,000 (integers always valid)
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.00001"
+    qty_step: "0.00001"         # szDecimals 5
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/hyperliquid.json
+    notes: >-
+      Perp asset index 0, szDecimals 5, maxLeverage 40 in the snapshot. Price
+      rule gives a $1 effective tick at BTC >= $10,000. On-chain venue: no KYC
+      broker relationship — check permissibility.
+
+  - instrument: SOLUSD
+    venue_symbol: SOL
+    contract_type: PERPETUAL
+    tick_size: "0.001"          # effective tick at $10-99.99 (0.01 at $100-999.99)
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.01"
+    qty_step: "0.01"            # szDecimals 2
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/hyperliquid.json
+    notes: >-
+      Perp asset index 5, szDecimals 2, maxLeverage 20 in the snapshot (price
+      precision 0.001 at an oracle price ~$80.76). ABOVE $100 the effective
+      tick is 0.01 — the adapter must apply the 5-significant-figure rule.
+
+  - instrument: HYPEUSD
+    venue_symbol: HYPE
+    contract_type: PERPETUAL
+    tick_size: "0.001"          # effective tick at $10-99.99 (0.01 at $100-999.99)
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "0.01"
+    qty_step: "0.01"            # szDecimals 2
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://raw.githubusercontent.com/ccxt/ccxt/master/ts/src/test/static/markets/hyperliquid.json
+    notes: >-
+      Main-dex perp, asset index 159, szDecimals 2 (recorded fills sz 0.73,
+      5.2, 1.0), maxLeverage 10 in the snapshot; price precision 0.001 at
+      markPx 72.698. Always target the main-dex 'HYPE' perp, not HIP-3 dexes
+      quoted in other stables. HYPE spot (HYPE/USDC, '@<index>') is a
+      different product.
+
+  - instrument: NEARUSD
+    venue_symbol: NEAR
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.00001"        # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    source: https://docs.chainstack.com/docs/hyperliquid-order-precision
+    notes: >-
+      spec unverified — enable after syncing from the venue API (meta:
+      szDecimals; the tick follows the 5-significant-figure rule).
+
+  - instrument: ZECUSD
+    venue_symbol: ZEC
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0001"         # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    source: https://docs.chainstack.com/docs/hyperliquid-order-precision
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Existence of
+      the ZEC perp is from training knowledge (low confidence).
+
+  - instrument: PUMPUSD
+    venue_symbol: PUMP
+    contract_type: PERPETUAL
+    tradable: false
+    tick_size: "0.0000001"      # placeholder
+    contract_size: "1"
+    quantity_unit: BASE_UNITS
+    min_qty: "1"                # placeholder
+    qty_step: "1"               # placeholder
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    source: https://docs.chainstack.com/docs/hyperliquid-order-precision
+    notes: >-
+      spec unverified — enable after syncing from the venue API. Confirm in
+      meta whether the name is PUMP or kPUMP (1000x, as kPEPE/kBONK) — a k
+      prefix changes the contract size 1000x. Hyperliquid SPOT trades the
+      Unit-bridged token as UPUMP (not this listing).
+
+  # ── trade.xyz HIP-3 markets (dex 'xyz') ────────────────────────────────────
+  # Coin names carry the 'xyz:' prefix. Sessions: external session Sun 18:00
+  # -> Fri 17:00 New York for metals (Sun 17:00 for FX), daily maintenance
+  # 17:00-18:00 New York Mon-Thu, plus CME holiday closures (internal pricing
+  # covers weekends) — the instruments' metals_otc / fx_otc calendars apply.
+  - instrument: XAUUSD
+    venue_symbol: "xyz:GOLD"
+    contract_type: PERPETUAL
+    tick_size: "0.1"            # effective tick at ~$4,186 (5 significant figures)
+    contract_size: "1"          # 1 troy oz per 1.0 size unit
+    quantity_unit: BASE_UNITS
+    min_qty: "0.0001"
+    qty_step: "0.0001"          # szDecimals 4
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://docs.trade.xyz/xyz-perps-specification
+    notes: >-
+      Live xyz meta: szDecimals 4, maxLeverage 25, NO growth mode (gold is
+      excluded), so real fees are standard HIP-3 = 2x core (~0.03 % / 0.09 %):
+      the cost profile UNDERSTATES them by half. Funding hourly, 0.5x scaling,
+      cap +/-4 %/h. Oracle Pyth XAU/USD; OI cap $500m; docs say Normal
+      Isolated margin.
+
+  - instrument: XAGUSD
+    venue_symbol: "xyz:SILVER"
+    contract_type: PERPETUAL
+    tick_size: "0.001"          # effective tick at ~$61
+    contract_size: "1"          # 1 troy oz per 1.0 size unit
+    quantity_unit: BASE_UNITS
+    min_qty: "0.01"
+    qty_step: "0.01"            # szDecimals 2
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://docs.trade.xyz/xyz-perps-specification
+    notes: >-
+      Live xyz meta: szDecimals 2, maxLeverage 25, growth mode enabled (tier-0
+      ~0.003 % / 0.009 % — the cost profile overstates fees). OI cap $300m;
+      Normal Isolated margin. Funding hourly, 0.5x scaling.
+
+  - instrument: EURUSD
+    venue_symbol: "xyz:EUR"
+    contract_type: PERPETUAL
+    tick_size: "0.0001"         # effective tick at ~1.136: 1 pip, 10x coarser than a 5-digit CFD
+    contract_size: "1"          # 1 EUR notional per 1.0 size unit
+    quantity_unit: BASE_UNITS
+    min_qty: "0.1"
+    qty_step: "0.1"             # szDecimals 1
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://docs.trade.xyz/xyz-perps-specification
+    notes: >-
+      Live xyz meta: szDecimals 1, onlyIsolated (Strict Isolated: margin cannot
+      be withdrawn), growth mode enabled. Max 50x, OI cap $25m, discovery
+      bound +/-2 %. External session Sun 17:00 -> Fri 17:00 New York.
+
+  - instrument: GBPUSD
+    venue_symbol: "xyz:GBP"
+    contract_type: PERPETUAL
+    tick_size: "0.0001"         # effective tick at ~1.328
+    contract_size: "1"          # 1 GBP notional per 1.0 size unit
+    quantity_unit: BASE_UNITS
+    min_qty: "1"
+    qty_step: "1"               # szDecimals 0
+    min_notional: "10"
+    quote_currency: USDC
+    cost_profile: crypto_perp_hyperliquid
+    verified_on: "2026-10-06"
+    source: https://defillama.com/rwa/asset/xyz%3AGBP
+    notes: >-
+      Live xyz meta (2026-10-02/06): szDecimals 0, maxLeverage 50, onlyIsolated,
+      growth mode enabled (fee-scale change 2026-05-16). Not yet on trade.xyz's
+      Aug-2026 spec page: read its OI cap from perpDexs at runtime.

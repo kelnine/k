@@ -1,0 +1,18 @@
+# Local development overrides: expose PostgreSQL and the API on localhost only,
+# human-readable logs. Usage: make dev-up (or make dev-db for PostgreSQL alone).
+services:
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]
+  api:
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      KT_ENVIRONMENT: development
+      KT_LOGGING__FORMAT: console
+  engine:
+    environment:
+      KT_ENVIRONMENT: development
+      KT_LOGGING__FORMAT: console
+  worker:
+    environment:
+      KT_ENVIRONMENT: development
+      KT_LOGGING__FORMAT: console

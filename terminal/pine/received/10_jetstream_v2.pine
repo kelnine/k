@@ -1,0 +1,359 @@
+//@version=6
+//
+// Jetstream — free, fully auditable alternative to paid "signal + money-flow
+// wave" packs, in a single indicator. Built only from public techniques:
+// ATR SuperTrend, LazyBear's WaveTrend, candle-body money flow and relative
+// volume. The oscillator lives in this pane; the trend trail, EMA ribbon and
+// signals are pushed onto the price chart with force_overlay — one
+// "Add to chart" gives you both.
+//
+// What's inside
+//   PRICE CHART : SuperTrend trail · EMA ribbon · BUY/SELL on trend flips ·
+//                 STRONG BUY+/SELL+ when momentum agrees · take-profit
+//                 diamonds · supply & demand zones · optional HTF confirmation
+//   THIS PANE   : one shared WaveTrend core with two skins —
+//                 "Jetstream" : nested rainbow waves + money-flow area
+//                 "VolMom"    : gradient momentum mountain + volume heatmap
+//                 plus WT cross dots, automatic divergences and a dashboard
+//   ALERTS      : every signal above is wired to alertcondition()
+//
+// VolMom skin adapted (with thanks) from a user-provided open-source
+// Volume + Momentum WaveTrend study; rebuilt from the same public techniques.
+indicator("Jetstream v2", "JET v2", overlay = false, precision = 2, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// ================================================================ INPUTS
+grpT   = "Trend"
+atrLen = input.int(10, "ATR Length", minval = 1, group = grpT)
+mult   = input.float(3.0, "ATR Multiplier", minval = 0.1, step = 0.1, group = grpT)
+
+grpF   = "Trend Filter"
+useHTF = input.bool(false, "Confirm with higher timeframe", group = grpF, tooltip = "Only show BUY when the higher-timeframe SuperTrend is also up (and SELL when it is down). Note: the HTF value updates as its bar forms.")
+htfTF  = input.timeframe("240", "Higher timeframe", group = grpF)
+
+grpR    = "EMA Ribbon"
+showRib = input.bool(true, "Show ribbon", group = grpR)
+fastLen = input.int(21, "Fast EMA", minval = 1, group = grpR)
+slowLen = input.int(55, "Slow EMA", minval = 1, group = grpR)
+
+grpS       = "Signals"
+showSig    = input.bool(true, "Show signals", group = grpS)
+sigStyle   = input.string("Labels", "Style", options = ["Labels", "Triangles", "Compact"], group = grpS)
+showTP     = input.bool(true, "Take-profit diamonds", group = grpS, tooltip = "WT cross against the trend while stretched past the OB/OS level — a 'consider trimming' hint, not an exit signal.")
+barColMode = input.string("Off", "Colour bars by", options = ["Off", "Trend", "Momentum"], group = grpS)
+
+grpO     = "Oscillator"
+oscStyle = input.string("VolMom", "Oscillator style", options = ["Jetstream", "VolMom"], group = grpO)
+
+grpW   = "WaveTrend"
+src    = input.source(hlc3, "Source", group = grpW)
+n1     = input.int(10, "Channel Length", minval = 1, group = grpW)
+n2     = input.int(21, "Average Length", minval = 1, group = grpW)
+sigLen = input.int(4,  "Signal SMA",     minval = 1, group = grpW)
+
+grpL = "Levels"
+ob   = input.int(60,  "Overbought", group = grpL)
+os   = input.int(-60, "Oversold",   group = grpL)
+
+grpRB  = "Rainbow (Jetstream)"
+layers = input.int(6, "Layers", minval = 1, maxval = 6, group = grpRB)
+
+grpMF  = "Money Flow (Jetstream)"
+showMF = input.bool(true, "Show money-flow area", group = grpMF)
+mfLen  = input.int(60, "MF Length", minval = 1, group = grpMF)
+mfMult = input.float(150.0, "MF Scale", minval = 1, group = grpMF)
+
+grpV       = "Volume (VolMom)"
+maLen      = input.int(20, "Volume MA Length", minval = 1, group = grpV)
+spikeMult  = input.float(2.0, "Spike  (× MA)", minval = 1.0, step = 0.1, group = grpV)
+highMult   = input.float(1.3, "High   (× MA)", minval = 1.0, step = 0.1, group = grpV)
+lowMult    = input.float(0.5, "Low    (× MA)", minval = 0.0, step = 0.1, group = grpV)
+showMom    = input.bool(true, "Momentum mountain", group = grpV)
+showRibbon = input.bool(true, "Momentum ribbon", group = grpV)
+showVol    = input.bool(true, "Volume heatmap", group = grpV)
+showLabels = input.bool(true, "Bull/Bear labels", group = grpV)
+
+grpDiv  = "Divergences"
+showDiv = input.bool(true, "Show WT divergences", group = grpDiv)
+divLb   = input.int(5, "Pivot lookback", minval = 2, group = grpDiv)
+
+grpSD  = "Supply & Demand"
+showSD = input.bool(true, "Show zones", group = grpSD)
+sdLen  = input.int(10, "Pivot length", minval = 2, group = grpSD, tooltip = "Zones form at confirmed swing highs (supply) and swing lows (demand), so they appear this many bars after the pivot.")
+sdMax  = input.int(6, "Max zones per side", minval = 1, maxval = 20, group = grpSD)
+
+grpTS    = "Trend Scanner"
+showScan = input.bool(true, "Show trend scanner", group = grpTS)
+scanMode = input.string("Methods", "Mode", options = ["Methods", "Timeframes"], group = grpTS, tooltip = "Methods: SuperTrend / EMA Ribbon / Momentum / MACD on this chart. Timeframes: SuperTrend direction on the four timeframes below.")
+scanPos  = input.string("Bottom Right", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpTS)
+scanTf1  = input.timeframe("5",   "Timeframe 1", group = grpTS)
+scanTf2  = input.timeframe("15",  "Timeframe 2", group = grpTS)
+scanTf3  = input.timeframe("60",  "Timeframe 3", group = grpTS)
+scanTf4  = input.timeframe("240", "Timeframe 4", group = grpTS)
+
+grpD      = "Dashboard"
+showTable = input.bool(true, "Show dashboard", group = grpD)
+tablePos  = input.string("Top Right", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpD)
+
+// ================================================================ PALETTE
+teal  = color.new(#26a69a, 0)
+red   = color.new(#ef5350, 0)
+hmLow = #2962ff
+hmMid = #26c6da
+hmWrm = #ffea00
+hmHot = #ff1744
+cMute = #9aa7b2
+
+momGrad(float v) =>
+    v >= ob * 0.5 ? color.from_gradient(v, ob * 0.5, ob, hmWrm, hmHot) :
+     v >= 0       ? color.from_gradient(v, 0, ob * 0.5, hmMid, hmWrm) :
+     color.from_gradient(v, os, 0, hmLow, hmMid)
+
+bsTxt(bool b) => b ? "▲ BULL" : "▼ BEAR"
+
+posOf(string s) =>
+    s == "Top Right" ? position.top_right :
+     s == "Top Left" ? position.top_left :
+     s == "Bottom Right" ? position.bottom_right :
+     position.bottom_left
+
+// ================================================================ CORE CALCS
+// --- SuperTrend (chart timeframe + optional higher timeframe)
+[st, dir] = ta.supertrend(mult, atrLen)
+upTrend   = dir < 0
+[htfSt, htfDir] = request.security(syminfo.tickerid, htfTF, ta.supertrend(mult, atrLen), lookahead = barmerge.lookahead_off)
+htfUp  = htfDir < 0
+buyOK  = not useHTF or htfUp
+sellOK = not useHTF or not htfUp
+
+// --- Multi-timeframe scan (Trend Scanner "Timeframes" mode)
+[sTf1, dTf1] = request.security(syminfo.tickerid, scanTf1, ta.supertrend(mult, atrLen), lookahead = barmerge.lookahead_off)
+[sTf2, dTf2] = request.security(syminfo.tickerid, scanTf2, ta.supertrend(mult, atrLen), lookahead = barmerge.lookahead_off)
+[sTf3, dTf3] = request.security(syminfo.tickerid, scanTf3, ta.supertrend(mult, atrLen), lookahead = barmerge.lookahead_off)
+[sTf4, dTf4] = request.security(syminfo.tickerid, scanTf4, ta.supertrend(mult, atrLen), lookahead = barmerge.lookahead_off)
+tf1Bull  = dTf1 < 0
+tf2Bull  = dTf2 < 0
+tf3Bull  = dTf3 < 0
+tf4Bull  = dTf4 < 0
+mtfScore = (tf1Bull ? 1 : 0) + (tf2Bull ? 1 : 0) + (tf3Bull ? 1 : 0) + (tf4Bull ? 1 : 0)
+
+// --- EMA ribbon
+fast = ta.ema(close, fastLen)
+slow = ta.ema(close, slowLen)
+
+// --- MACD (trend-scan row)
+[macdLine, macdSig, macdHist] = ta.macd(close, 12, 26, 9)
+
+// --- WaveTrend (shared by both oscillator skins)
+esa = ta.ema(src, n1)
+de  = ta.ema(math.abs(src - esa), n1)
+ci  = de != 0 ? (src - esa) / (0.015 * de) : 0
+wt1 = ta.ema(ci, n2)
+wt2 = ta.sma(wt1, sigLen)
+wtCrossUp   = ta.crossover(wt1, wt2)
+wtCrossDown = ta.crossunder(wt1, wt2)
+
+// --- Candle-body money flow
+rng = high - low
+mf  = ta.sma((rng != 0 ? (close - open) / rng : 0) * mfMult, mfLen)
+
+// --- Relative volume
+volMA = ta.sma(volume, maLen)
+rv    = na(volume) or volMA == 0 ? 1.0 : volume / volMA
+volState = rv >= spikeMult ? "Spike" : rv >= highMult ? "High" : rv <= lowMult ? "Low" : "Normal"
+heatCol  = rv >= spikeMult ? hmHot : rv >= highMult ? hmWrm : rv <= lowMult ? color.new(hmLow, 40) : color.new(hmMid, 40)
+
+// --- Signals
+flip  = ta.change(dir)
+tBuy  = flip < 0 and buyOK
+tSell = flip > 0 and sellOK
+strongBuy  = tBuy and wt1 < 0    // trend flips up while momentum is still washed out
+strongSell = tSell and wt1 > 0   // trend flips down while momentum is still stretched
+tpLong  = upTrend and wtCrossDown and wt1 > ob
+tpShort = not upTrend and wtCrossUp and wt1 < os
+
+// --- Trend scan (dashboard)
+ribBull  = fast > slow
+momBull  = wt1 > wt2
+macdBull = macdHist > 0
+score    = (upTrend ? 1 : 0) + (ribBull ? 1 : 0) + (momBull ? 1 : 0) + (macdBull ? 1 : 0)
+
+// ================================================================ PRICE CHART (force_overlay)
+plot(upTrend ? st : na, "Up trail",   color = teal, linewidth = 2, style = plot.style_linebr, force_overlay = true)
+plot(upTrend ? na : st, "Down trail", color = red,  linewidth = 2, style = plot.style_linebr, force_overlay = true)
+
+pf = plot(showRib ? fast : na, "Fast EMA", color = color.new(#78c8ff, 30), force_overlay = true)
+ps = plot(showRib ? slow : na, "Slow EMA", color = color.new(#ffaa5a, 30), force_overlay = true)
+fill(pf, ps, color = fast > slow ? color.new(#26a69a, 88) : color.new(#ef5350, 88), title = "Ribbon")
+
+labels  = sigStyle == "Labels"
+tris    = sigStyle == "Triangles"
+compact = sigStyle == "Compact"
+plotshape(showSig and tBuy  and not strongBuy  and labels, "Buy label",         style = shape.labelup,      location = location.belowbar, color = teal,                     text = "BUY",   textcolor = color.white, size = size.small,  force_overlay = true)
+plotshape(showSig and strongBuy                and labels, "Strong buy label",  style = shape.labelup,      location = location.belowbar, color = color.new(#00e676, 0),    text = "BUY+",  textcolor = color.black, size = size.normal, force_overlay = true)
+plotshape(showSig and tSell and not strongSell and labels, "Sell label",        style = shape.labeldown,    location = location.abovebar, color = red,                      text = "SELL",  textcolor = color.white, size = size.small,  force_overlay = true)
+plotshape(showSig and strongSell               and labels, "Strong sell label", style = shape.labeldown,    location = location.abovebar, color = color.new(#ff1744, 0),    text = "SELL+", textcolor = color.white, size = size.normal, force_overlay = true)
+plotshape(showSig and tBuy  and tris,                      "Buy tri",           style = shape.triangleup,   location = location.belowbar, color = teal, size = size.tiny,   force_overlay = true)
+plotshape(showSig and tSell and tris,                      "Sell tri",          style = shape.triangledown, location = location.abovebar, color = red,  size = size.tiny,   force_overlay = true)
+plotshape(showSig and tBuy  and compact,                   "Buy B",             style = shape.labelup,      location = location.belowbar, color = teal, text = "B", textcolor = color.white, size = size.tiny, force_overlay = true)
+plotshape(showSig and tSell and compact,                   "Sell S",            style = shape.labeldown,    location = location.abovebar, color = red,  text = "S", textcolor = color.white, size = size.tiny, force_overlay = true)
+plotshape(showTP and tpLong,                               "TP long",           style = shape.diamond,      location = location.abovebar, color = color.new(hmWrm, 0), size = size.tiny, force_overlay = true)
+plotshape(showTP and tpShort,                              "TP short",          style = shape.diamond,      location = location.belowbar, color = color.new(hmWrm, 0), size = size.tiny, force_overlay = true)
+
+barcolor(barColMode == "Trend" ? (upTrend ? teal : red) : barColMode == "Momentum" ? momGrad(wt1) : na)
+
+// ---- Supply & demand zones: swing-pivot based, extend right, removed once broken
+var array<box> supBx = array.new<box>()
+var array<box> demBx = array.new<box>()
+sdPh = ta.pivothigh(high, sdLen, sdLen)
+sdPl = ta.pivotlow(low, sdLen, sdLen)
+
+if showSD and not na(sdPh)
+    array.push(supBx, box.new(bar_index - sdLen, high[sdLen], bar_index, math.max(open[sdLen], close[sdLen]), extend = extend.right, bgcolor = color.new(#ef5350, 88), border_color = color.new(#ef5350, 65), text = "SUPPLY", text_color = color.new(#ef5350, 35), text_size = size.tiny, text_halign = text.align_right, force_overlay = true))
+    if array.size(supBx) > sdMax
+        box.delete(array.shift(supBx))
+if showSD and not na(sdPl)
+    array.push(demBx, box.new(bar_index - sdLen, math.min(open[sdLen], close[sdLen]), bar_index, low[sdLen], extend = extend.right, bgcolor = color.new(#26a69a, 88), border_color = color.new(#26a69a, 65), text = "DEMAND", text_color = color.new(#26a69a, 35), text_size = size.tiny, text_halign = text.align_right, force_overlay = true))
+    if array.size(demBx) > sdMax
+        box.delete(array.shift(demBx))
+if showSD and barstate.isconfirmed
+    if array.size(supBx) > 0
+        for i = array.size(supBx) - 1 to 0
+            if close > box.get_top(array.get(supBx, i))
+                box.delete(array.get(supBx, i))
+                array.remove(supBx, i)
+    if array.size(demBx) > 0
+        for i = array.size(demBx) - 1 to 0
+            if close < box.get_bottom(array.get(demBx, i))
+                box.delete(array.get(demBx, i))
+                array.remove(demBx, i)
+
+// ================================================================ OSCILLATOR PANE
+isJet = oscStyle == "Jetstream"
+isVM  = oscStyle == "VolMom"
+
+hOB = hline(ob, "Overbought", color = color.new(cMute, 60), linestyle = hline.style_dotted)
+hOS = hline(os, "Oversold",   color = color.new(cMute, 60), linestyle = hline.style_dotted)
+hline(0, "Zero", color = color.new(cMute, 75), linestyle = hline.style_dashed)
+fill(hOB, hOS, color = color.new(#787b86, 95), title = "Range")
+
+// ---- Jetstream skin: money flow behind, rainbow waves on top
+plot(isJet and showMF ? mf : na, "Money flow", style = plot.style_area, color = mf > 0 ? color.new(#00e676, 65) : color.new(#ff1744, 65))
+
+rb(int k) => isJet and layers >= k ? wt1 * (1.0 - (k - 1) * 0.13) : na
+plot(rb(1), "Wave 1", style = plot.style_area, color = color.new(#2962ff, 30))
+plot(rb(2), "Wave 2", style = plot.style_area, color = color.new(#00bcd4, 30))
+plot(rb(3), "Wave 3", style = plot.style_area, color = color.new(#00e676, 30))
+plot(rb(4), "Wave 4", style = plot.style_area, color = color.new(#ffea00, 30))
+plot(rb(5), "Wave 5", style = plot.style_area, color = color.new(#ff9100, 30))
+plot(rb(6), "Wave 6", style = plot.style_area, color = color.new(#ff1744, 30))
+plot(isJet ? wt2 : na, "WT signal", color = color.new(#e0e0e0, 55), linewidth = 1)
+plot(isJet and (wtCrossUp or wtCrossDown) ? wt2 : na, "WT cross", style = plot.style_circles, color = wtCrossUp ? teal : red, linewidth = 3)
+
+// ---- VolMom skin: gradient mountain + ribbon + volume heatmap
+plot(isVM and showMom ? wt1 : na, "Momentum mountain", style = plot.style_area, color = color.new(momGrad(wt1), 40))
+pw1 = plot(isVM and showRibbon ? wt1 : na, "WT1", color = momGrad(wt1), linewidth = 2)
+pw2 = plot(isVM and showRibbon ? wt2 : na, "WT2", color = color.new(cMute, 25))
+fill(pw1, pw2, color = wt1 > wt2 ? color.new(hmMid, 75) : color.new(hmHot, 75), title = "Momentum ribbon")
+plot(isVM and showVol ? -120 + math.min(rv, 3.0) * 10 : na, "Volume heatmap", style = plot.style_columns, histbase = -120, color = color.new(heatCol, 25))
+
+if isVM and showLabels and barstate.isconfirmed
+    if wtCrossUp and wt2 <= os
+        label.new(bar_index, wt2, "Bull", style = label.style_label_up, color = color.new(hmMid, 20), textcolor = color.black, size = size.small)
+    if wtCrossDown and wt2 >= ob
+        label.new(bar_index, wt2, "Bear", style = label.style_label_down, color = color.new(hmHot, 20), textcolor = color.white, size = size.small)
+
+// ================================================================ DIVERGENCES (on WT signal line)
+pl = ta.pivotlow(wt2, divLb, divLb)
+ph = ta.pivothigh(wt2, divLb, divLb)
+
+var float plWt    = na
+var float plPrice = na
+var int   plBar   = na
+bullDiv = false
+if not na(pl)
+    wtP = wt2[divLb]
+    prP = low[divLb]
+    if not na(plWt) and prP < plPrice and wtP > plWt and plWt < 0
+        bullDiv := true
+        if showDiv
+            line.new(plBar, plWt, bar_index - divLb, wtP, color = teal, width = 2)
+            label.new(bar_index - divLb, wtP, "Bull div", style = label.style_label_up, color = color.new(teal, 25), textcolor = color.white, size = size.tiny)
+    plWt    := wtP
+    plPrice := prP
+    plBar   := bar_index - divLb
+
+var float phWt    = na
+var float phPrice = na
+var int   phBar   = na
+bearDiv = false
+if not na(ph)
+    wtP = wt2[divLb]
+    prP = high[divLb]
+    if not na(phWt) and prP > phPrice and wtP < phWt and phWt > 0
+        bearDiv := true
+        if showDiv
+            line.new(phBar, phWt, bar_index - divLb, wtP, color = red, width = 2)
+            label.new(bar_index - divLb, wtP, "Bear div", style = label.style_label_down, color = color.new(red, 25), textcolor = color.white, size = size.tiny)
+    phWt    := wtP
+    phPrice := prP
+    phBar   := bar_index - divLb
+
+// ================================================================ DASHBOARD
+// ---- Signal panel (dashboard)
+var table dash = showTable ? table.new(posOf(tablePos), 2, 7, bgcolor = color.new(#0b1220, 15), border_width = 1, border_color = color.new(#0b1220, 15)) : na
+if showTable and barstate.islast
+    up      = color.new(#26a69a, 0)
+    dn      = color.new(#ef5350, 0)
+    wtTxt   = str.tostring(wt1, "#.#") + (wt1 >= ob ? "  OB" : wt1 <= os ? "  OS" : "")
+    biasTxt = (score >= 3 ? "BULLISH" : score <= 1 ? "BEARISH" : "MIXED") + "  " + str.tostring(score) + "/4"
+    biasCol = score >= 3 ? up : score <= 1 ? dn : color.new(hmWrm, 0)
+    table.cell(dash, 0, 0, "JETSTREAM v2 ✓", text_color = color.white, bgcolor = color.new(#1a2332, 0), text_size = size.small)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    table.cell(dash, 0, 1, "Bias",       text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 1, biasTxt, text_color = biasCol, text_size = size.small)
+    table.cell(dash, 0, 2, "WaveTrend",  text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 2, wtTxt, text_color = momGrad(wt1), text_size = size.small)
+    table.cell(dash, 0, 3, "Mom State",  text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 3, wt1 >= 0 ? "Bull zone" : "Bear zone", text_color = wt1 >= 0 ? up : dn, text_size = size.small)
+    table.cell(dash, 0, 4, "Money flow", text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 4, mf > 0 ? "In (+)" : "Out (-)", text_color = mf > 0 ? up : dn, text_size = size.small)
+    table.cell(dash, 0, 5, "Volume",     text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 5, volState + "  ×" + str.tostring(rv, "#.##"), text_color = rv >= highMult ? color.new(hmWrm, 0) : cMute, text_size = size.small)
+    table.cell(dash, 0, 6, "HTF (" + htfTF + ")", text_color = cMute, text_size = size.small)
+    table.cell(dash, 1, 6, useHTF ? (htfUp ? "Up" : "Down") : "Off", text_color = not useHTF ? cMute : htfUp ? up : dn, text_size = size.small)
+
+// ---- Trend scanner (switchable: Methods vs Timeframes) — drawn on the PRICE panel
+mIsTf     = scanMode == "Timeframes"
+scanScore = mIsTf ? mtfScore : score
+var table scan = showScan ? table.new(posOf(scanPos), 2, 6, bgcolor = color.new(#0b1220, 15), border_width = 1, border_color = color.new(#0b1220, 15), force_overlay = true) : na
+if showScan and barstate.islast
+    up    = color.new(#26a69a, 0)
+    dn    = color.new(#ef5350, 0)
+    stTxt = scanScore == 4 ? "STRONG BULL" : scanScore == 3 ? "BULLISH" : scanScore == 1 ? "BEARISH" : scanScore == 0 ? "STRONG BEAR" : "MIXED"
+    stCol = scanScore >= 3 ? up : scanScore <= 1 ? dn : color.new(hmWrm, 0)
+    b1 = mIsTf ? tf1Bull : upTrend
+    b2 = mIsTf ? tf2Bull : ribBull
+    b3 = mIsTf ? tf3Bull : momBull
+    b4 = mIsTf ? tf4Bull : macdBull
+    table.cell(scan, 0, 0, mIsTf ? "TREND · MTF" : "TREND SCAN", text_color = color.white, bgcolor = color.new(#1a2332, 0), text_size = size.small)
+    table.cell(scan, 1, 0, stTxt, text_color = stCol, bgcolor = color.new(#1a2332, 0), text_size = size.small)
+    table.cell(scan, 0, 1, mIsTf ? scanTf1 : "SuperTrend", text_color = cMute, text_size = size.small)
+    table.cell(scan, 1, 1, bsTxt(b1), text_color = b1 ? up : dn, text_size = size.small)
+    table.cell(scan, 0, 2, mIsTf ? scanTf2 : "EMA Ribbon", text_color = cMute, text_size = size.small)
+    table.cell(scan, 1, 2, bsTxt(b2), text_color = b2 ? up : dn, text_size = size.small)
+    table.cell(scan, 0, 3, mIsTf ? scanTf3 : "Momentum",   text_color = cMute, text_size = size.small)
+    table.cell(scan, 1, 3, bsTxt(b3), text_color = b3 ? up : dn, text_size = size.small)
+    table.cell(scan, 0, 4, mIsTf ? scanTf4 : "MACD",       text_color = cMute, text_size = size.small)
+    table.cell(scan, 1, 4, bsTxt(b4), text_color = b4 ? up : dn, text_size = size.small)
+    table.cell(scan, 0, 5, "Score", text_color = cMute, text_size = size.small)
+    table.cell(scan, 1, 5, str.tostring(scanScore) + "/4 bull", text_color = stCol, text_size = size.small)
+
+// ================================================================ ALERTS
+alertcondition(tBuy,       "Buy",               "Jetstream {{ticker}} {{interval}}: BUY — trend flipped up")
+alertcondition(tSell,      "Sell",              "Jetstream {{ticker}} {{interval}}: SELL — trend flipped down")
+alertcondition(strongBuy,  "Strong buy",        "Jetstream {{ticker}} {{interval}}: STRONG BUY — trend flip with momentum washed out")
+alertcondition(strongSell, "Strong sell",       "Jetstream {{ticker}} {{interval}}: STRONG SELL — trend flip with momentum stretched")
+alertcondition(tpLong,     "Take profit long",  "Jetstream {{ticker}} {{interval}}: momentum rolling over in overbought — consider trimming longs")
+alertcondition(tpShort,    "Take profit short", "Jetstream {{ticker}} {{interval}}: momentum turning up in oversold — consider trimming shorts")
+alertcondition(bullDiv,    "Bullish divergence", "Jetstream {{ticker}} {{interval}}: bullish WaveTrend divergence")
+alertcondition(bearDiv,    "Bearish divergence", "Jetstream {{ticker}} {{interval}}: bearish WaveTrend divergence")

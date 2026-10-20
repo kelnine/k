@@ -1,0 +1,239 @@
+# Venues — docs/11-instruments-sessions-costs.md §11.1.
+#
+# A venue is WHERE data, signals or orders go: an exchange, a broker, a
+# prop-firm platform server, a data feed / signal source, or the internal
+# simulator. Each venue's contract specifications live in
+# catalog/listings/<venue id>.yaml (one file per venue).
+#
+# Seeded 2026-10-06 from the instrument research and its independent verify
+# pass (corrections from the verify pass override the research). Primary
+# exchange/broker sites were blocked during research; values were confirmed
+# from verbatim API captures mirrored on GitHub (ccxt fixtures, MT5
+# symbol_info exports, OANDA v20 dumps, Bybit/OKX/Hyperliquid captures).
+#
+# Field notes
+#   kind      EXCHANGE | BROKER | PROP_FIRM | DATA_FEED | SIGNAL_SOURCE | SIMULATOR
+#   platform  the connectivity platform behind the venue (one adapter per platform)
+#   timezone  server / statement time zone (IANA). Informational today: nothing
+#             in the money or session maths reads it — trading hours come from
+#             sessions.yaml calendars, which name their own zones.
+#   symbol_suffixes
+#             broker suffixes stripped when RESOLVING a symbol received from
+#             this venue (XAUUSD.r -> XAUUSD). Matching is case-insensitive and
+#             only strips a suffix if what remains is a known symbol at the
+#             venue. Do NOT add ".cash" (part of index names like US100.cash —
+#             those are listing aliases) or ".f"/"-F"/"FT" (futures-based CFDs
+#             with an expiry: a different product that must not resolve to the
+#             cash CFD). ".sim" (FTMO US rolling simulated contracts) is also
+#             left out: that is one firm's product and belongs to that firm's venue.
+
+venues:
+  # ── data / signals ─────────────────────────────────────────────────────────
+  # Symbols carry an EXCHANGE: prefix and perpetuals a .P suffix; the resolver
+  # strips both automatically. Every tradingview listing is data-only.
+  - id: tradingview
+    name: TradingView
+    kind: SIGNAL_SOURCE
+    platform: TRADINGVIEW
+    timezone: UTC
+    description: TradingView charts, Pine alerts and webhooks — data and signals only, never an execution venue.
+
+  # ── prop-firm CFD servers (generic) ────────────────────────────────────────
+  # ASSUMPTION: these two venues model a TYPICAL prop-firm CFD server using the
+  # most common VERIFIED contract conventions (100 oz gold, 5,000 oz silver,
+  # 100,000-unit FX lots; on MT5, index CFDs at contract size 1 and 2 digits as
+  # on FTMO-Demo's 2026-09-28 symbol_info export). Every real firm/server
+  # (FTMO-Server, a The5ers TradeLocker server, …) becomes its OWN venue with
+  # its own listings, synced from the platform's symbol specification
+  # (MT5 symbol_info / TradeLocker instrument details) and verified before an
+  # account trades on it.
+  #
+  # Server time: most prop/retail MT5 servers run "New York close" time (UTC+2
+  # in winter, UTC+3 while the US is on DST) so server midnight = 17:00 New York
+  # all year (FTMO-Demo was UTC+3 in Sept 2026). Servers that switch on EU dates
+  # are an hour off for 2-3 weeks in March (2026: Mar 8-29; 2027: Mar 14-28)
+  # and exactly 1 week in Oct/Nov (2026-10-25 to 2026-11-01), so the adapter
+  # must detect the actual offset. No IANA zone
+  # expresses the NY-close rule; UTC here = statements are normalised to UTC.
+  #
+  # Suffixes: common account-type suffixes from the research (.r, .raw, .pro,
+  # -ECN, m, +, .x). Broker naming varies — add a real server's suffixes to
+  # that server's own venue. Caveat: at some brokers an index symbol with
+  # ".pro" (e.g. TMS "US100.pro") is a futures-mirroring CFD at $20 per point
+  # with an expiry, not the $1 cash CFD; it still resolves to NAS100 here, so
+  # a real server's listing must carry its own synced contract size.
+  - id: generic_mt5_cfd
+    name: Generic prop-firm MT5 CFD server
+    kind: PROP_FIRM
+    platform: MT5
+    timezone: UTC
+    symbol_suffixes: [".r", ".raw", ".pro", ".ecn", "-ecn", ".x", "m", "+"]
+    description: >-
+      Models a TYPICAL prop-firm MT5 CFD server (raw-spread account, NY-close
+      server time) with common verified specs; each real firm/server becomes its
+      own venue with its own verified specs synced from MT5 symbol_info.
+
+  # TradeLocker orders reference a numeric tradableInstrumentId plus INFO/TRADE
+  # routeIds from /trade/accounts/{accountId}/instruments; the venue symbols here
+  # are display names. Contract size is the instrument's lotSize.
+  - id: generic_tradelocker_cfd
+    name: Generic prop-firm TradeLocker CFD server
+    kind: PROP_FIRM
+    platform: TRADELOCKER
+    timezone: UTC
+    symbol_suffixes: [".r", ".raw", ".pro", ".ecn", "-ecn", ".x", "m", "+"]
+    description: >-
+      Models a TYPICAL prop-firm TradeLocker CFD server; each real firm/server
+      becomes its own venue with its own verified specs synced from the
+      TradeLocker instrument details.
+
+  # ── brokers ────────────────────────────────────────────────────────────────
+  # Quantities are UNITS (1 oz, 1 EUR, $1 per index point per unit), not lots.
+  # Financing is booked as DAILY_FINANCING (index weighting from
+  # financingDaysOfWeek: Friday x3 for indices) and index dividends as
+  # DIVIDEND_ADJUSTMENT. Index CFDs are not offered to US (OANDA Corporation)
+  # clients; US metals are unleveraged.
+  - id: oanda
+    name: OANDA (v20 REST API)
+    kind: BROKER
+    platform: OANDA_V20
+    timezone: UTC
+    description: OANDA v20 broker accounts (CFDs and spot FX/metals), sized in units rather than lots.
+
+  # ── futures ────────────────────────────────────────────────────────────────
+  - id: cme
+    name: CME Globex
+    kind: EXCHANGE
+    platform: CME_GLOBEX
+    timezone: America/Chicago
+    description: >-
+      CME Group Globex — the exchange-defined contract specs, the reference
+      listing for any CME futures account (dated symbols like MNQZ6).
+
+  # Contract names are root + month code + 1-digit year (MNQZ6; REST
+  # contract/find?name=MNQZ6); orders and positions carry a numeric contractId.
+  - id: tradovate
+    name: Tradovate
+    kind: BROKER
+    platform: TRADOVATE
+    timezone: America/Chicago
+    description: Tradovate futures broker/platform, also the platform behind many futures prop firms.
+
+  # Symbol = root + month code + 1-digit year with the exchange in a separate
+  # field (MNQZ6, exchange CME; third-party platforms show MNQZ6.CME).
+  - id: rithmic
+    name: Rithmic
+    kind: BROKER
+    platform: RITHMIC
+    timezone: America/Chicago
+    description: Rithmic order routing and data, used by FCMs and futures prop firms (Apex, Bulenox, …).
+
+  # Contracts are addressed by contractId CON.F.US.<root>.<month><2-digit year>
+  # (name MNQZ6, symbolId F.US.<root>); some roots differ from CME (NQ is ENQ).
+  # Endpoints POST /api/Contract/search and /api/Contract/searchById.
+  - id: projectx
+    name: ProjectX Gateway
+    kind: PROP_FIRM
+    platform: PROJECTX
+    timezone: America/Chicago
+    description: ProjectX Gateway API behind TopstepX and other futures prop firms; commissions are per firm.
+
+  # Futures are requested as symbol + secType FUT + exchange CME (formerly
+  # GLOBEX) + lastTradeDateOrContractMonth (YYYYMM); localSymbol is MNQZ6 and
+  # conId can be cached after the first lookup.
+  - id: ibkr
+    name: Interactive Brokers
+    kind: BROKER
+    platform: INTERACTIVE_BROKERS
+    timezone: UTC
+    description: Interactive Brokers via the TWS / IB Gateway API.
+
+  # ── crypto ─────────────────────────────────────────────────────────────────
+  # Filters from GET /api/v3/exchangeInfo: PRICE_FILTER, LOT_SIZE, NOTIONAL
+  # (minNotional applies to market orders too).
+  - id: binance_spot
+    name: Binance Spot
+    kind: EXCHANGE
+    platform: BINANCE
+    timezone: UTC
+    description: Binance spot order books (api.binance.com), quoted mostly in USDT.
+
+  # USDT-margined, quantity in base units. Funding interval is per symbol:
+  # /fapi/v1/fundingInfo lists only symbols with an adjusted cap/floor/interval;
+  # a symbol ABSENT from it is on the default 8 h schedule (00/08/16 UTC).
+  # TradFi perps (XAUUSDT, XAGUSDT; contractType TRADIFI_PERPETUAL) need a
+  # separate agreement.
+  - id: binance_usdm
+    name: Binance USD-M Futures
+    kind: EXCHANGE
+    platform: BINANCE
+    timezone: UTC
+    description: Binance USDⓈ-M perpetual futures (fapi.binance.com), USDT-margined and sized in base units.
+
+  # category=linear; specs and fundingInterval (minutes) from
+  # /v5/market/instruments-info. Since late 2025 the funding frequency is
+  # dynamic per symbol (8 h → 4/2/1 h when the rate is capped).
+  - id: bybit_linear
+    name: Bybit USDT Perpetuals (linear)
+    kind: EXCHANGE
+    platform: BYBIT
+    timezone: UTC
+    description: Bybit v5 linear USDT perpetuals, sized in base units.
+
+  # Orders are sized in CONTRACTS of ctVal base units each (BTC 0.01, XAU
+  # 0.001, ADA 100, DOGE 1000 …): contract_size = ctVal, and sizing without the
+  # venue's ctVal is wrong by orders of magnitude. Specs from
+  # /api/v5/public/instruments?instType=SWAP.
+  - id: okx_swap
+    name: OKX Perpetual Swaps
+    kind: EXCHANGE
+    platform: OKX
+    timezone: UTC
+    description: OKX USDT-margined perpetual swaps, sized in contracts of ctVal base units.
+
+  # Main-dex perps: USDC collateral, hourly funding, minimum order value $10.
+  # No fixed tick: prices allow at most 5 significant figures and (6 −
+  # szDecimals) decimals, integer prices always valid — listing ticks here are
+  # the effective tick at the price level noted on each listing. Symbols with
+  # an 'xyz:' prefix are trade.xyz HIP-3 markets (dex 'xyz'; query meta with
+  # dex='xyz') with their own fees (2x core, growth-mode discounts), funding
+  # scaling (0.5x), isolated margin and sessions.
+  - id: hyperliquid
+    name: Hyperliquid
+    kind: EXCHANGE
+    platform: HYPERLIQUID
+    timezone: UTC
+    description: Hyperliquid on-chain perpetuals (USDC-margined, hourly funding), including trade.xyz HIP-3 markets.
+
+  # Order books quoted in true USD (BTC-USD; BTC-USDC is an alias of the same
+  # book). Fees are tiered by 30-day volume and far higher at the entry tier
+  # (about 0.60 % maker / 1.20 % taker) than exchange base tiers, so no
+  # existing cost profile fits and every coinbase listing is data/resolution
+  # only (tradable: false) until a coinbase_spot profile exists.
+  - id: coinbase
+    name: Coinbase Advanced (spot)
+    kind: EXCHANGE
+    platform: COINBASE
+    timezone: UTC
+    description: Coinbase Advanced Trade spot order books quoted in USD.
+
+  # Native INTX API symbols are BTC-PERP; the Coinbase Advanced Trade API
+  # addresses the same products as BTC-PERP-INTX (listing aliases). Not
+  # available to US clients.
+  - id: coinbase_intx
+    name: Coinbase International Exchange (perpetuals)
+    kind: EXCHANGE
+    platform: COINBASE
+    timezone: UTC
+    description: Coinbase International Exchange (INTX) USDC-settled perpetuals with hourly funding, for non-US clients.
+
+  # ── simulation ─────────────────────────────────────────────────────────────
+  - id: lab_sim
+    name: Strategy-lab generic simulator
+    kind: SIMULATOR
+    platform: INTERNAL
+    timezone: UTC
+    description: >-
+      Internal simulator listings with explicit, conservative GENERIC specs for
+      instruments that have no verified tradable listing at any real venue yet —
+      not any exchange's contract.

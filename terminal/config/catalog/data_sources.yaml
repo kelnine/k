@@ -1,0 +1,178 @@
+# Data sources — docs/15-market-data.md.
+#
+# Where the terminal itself fetches each canonical instrument's closed 1-minute
+# bars: live polling for paper trading, history for warm-up and backtests
+# (`kterminal data sources`, `kterminal data fetch`). It is not part of the
+# catalog document or its fingerprint; it is validated against the catalog on
+# every load. Every bar records its provider in Bar.source.
+#
+# The primary sources match the TradingView feeds named in the venue profile
+# lab_default's `data` comments (venue_profiles.yaml), so bars fetched here are
+# the same series a TradingView chart of that symbol shows (OANDA: see the
+# price-component note below).
+#
+#   provider      binance_usdm | binance_spot | bybit_linear | coinbase |
+#                 hyperliquid | oanda | csv
+#   symbol        the provider's own symbol; where the catalog has a listing
+#                 of this instrument at that venue, it must be the listing's
+#                 venue_symbol
+#   volume        exchange (traded quantity) | tick (number of price updates
+#                 in the minute) | none — what Bar.volume means for the source
+#   note          why this source, and anything a user of its bars must know
+#   alternatives  other sources, tried in order when the provider above is
+#                 disabled on this host (KT_MARKETDATA__DISABLED_PROVIDERS, e.g.
+#                 Binance and Bybit where they geo-block the host's country)
+#                 or not configured (no OANDA token, no KT_MARKETDATA__CSV_DIR).
+#                 An alternative is a DIFFERENT market (spot vs perpetual, USD
+#                 vs USDT, another venue's order book): its bars are close to,
+#                 never identical with, the primary's. To switch for good, swap
+#                 it with the primary here.
+#
+# Prices are exact decimals as the venue reports them; missing minutes are not
+# filled in; only closed bars are ever returned.
+
+data_sources:
+  # ── OANDA (needs KT_MARKETDATA__OANDA_TOKEN; practice tokens are free) ─────
+  # Mid prices (price=M): an account's fills add the spread from its cost
+  # profile to the mid, so bid or ask candles would count half the spread
+  # twice. TradingView's OANDA charts may plot a different price component
+  # (unverified); a parity run must compare like with like. Volume is OANDA's
+  # tick count, not traded size: volume-driven logic on these instruments runs
+  # on tick volume and is labelled as such (doc 13, D9).
+  XAUUSD:
+    provider: oanda
+    symbol: XAU_USD
+    volume: tick
+    note: Spot gold CFD feed behind TradingView OANDA:XAUUSD; mid prices, tick volume.
+  XAGUSD:
+    provider: oanda
+    symbol: XAG_USD
+    volume: tick
+    note: Spot silver CFD feed behind TradingView OANDA:XAGUSD; mid prices, tick volume.
+  NAS100:
+    provider: oanda
+    symbol: NAS100_USD
+    volume: tick
+    note: >-
+      Nasdaq-100 cash CFD behind TradingView OANDA:NAS100USD; mid prices, tick
+      volume. OANDA quotes 0.1 index points (the catalog tick is 0.01).
+  US30:
+    provider: oanda
+    symbol: US30_USD
+    volume: tick
+    note: Dow Jones cash CFD behind TradingView OANDA:US30USD; mid prices, tick volume.
+  US500:
+    provider: oanda
+    symbol: SPX500_USD
+    volume: tick
+    note: S&P 500 cash CFD behind TradingView OANDA:SPX500USD; mid prices, tick volume.
+  EURUSD:
+    provider: oanda
+    symbol: EUR_USD
+    volume: tick
+    note: Spot EUR/USD behind TradingView OANDA:EURUSD; mid prices, tick volume.
+  GBPUSD:
+    provider: oanda
+    symbol: GBP_USD
+    volume: tick
+    note: Spot GBP/USD behind TradingView OANDA:GBPUSD; mid prices, tick volume.
+
+  # ── crypto (public endpoints, no key) ──────────────────────────────────────
+  BTCUSD:
+    provider: binance_usdm
+    symbol: BTCUSDT
+    volume: exchange
+    note: >-
+      Binance USD-M perpetual = the lab_default execution venue and TradingView
+      BINANCE:BTCUSDT.P. Volume in BTC. Binance is unavailable in some
+      countries (HTTP 451, e.g. the US).
+    alternatives:
+      - provider: coinbase
+        symbol: BTC-USD
+        volume: exchange
+        note: USD spot on Coinbase, for hosts where Binance is unavailable (no funding basis).
+      - provider: hyperliquid
+        symbol: BTC
+        volume: exchange
+        note: USDC perpetual; only the most recent 5,000 1m candles are available.
+  NEARUSD:
+    provider: binance_usdm
+    symbol: NEARUSDT
+    volume: exchange
+    note: Binance USD-M perpetual = TradingView BINANCE:NEARUSDT.P. Volume in NEAR.
+    alternatives:
+      - provider: coinbase
+        symbol: NEAR-USD
+        volume: exchange
+        note: USD spot on Coinbase, for hosts where Binance is unavailable.
+  SOLUSD:
+    provider: bybit_linear
+    symbol: SOLUSDT
+    volume: exchange
+    note: >-
+      Bybit linear perpetual = the lab_default execution venue and TradingView
+      BYBIT:SOLUSDT.P. Volume in SOL. Bybit is unavailable in some countries
+      (HTTP 403, e.g. the US).
+    alternatives:
+      - provider: binance_usdm
+        symbol: SOLUSDT
+        volume: exchange
+        note: Binance USD-M perpetual (also unavailable in the US).
+      - provider: coinbase
+        symbol: SOL-USD
+        volume: exchange
+        note: USD spot on Coinbase.
+  ZECUSD:
+    provider: coinbase
+    symbol: ZEC-USD
+    volume: exchange
+    note: >-
+      Coinbase USD spot = TradingView COINBASE:ZECUSD. Volume in ZEC; thin
+      minutes without trades have no candle.
+    alternatives:
+      - provider: binance_usdm
+        symbol: ZECUSDT
+        volume: exchange
+        note: Binance USD-M perpetual (USDT, funding basis).
+  HYPEUSD:
+    provider: hyperliquid
+    symbol: HYPE
+    volume: exchange
+    note: >-
+      Hyperliquid main-dex perpetual = the lab_default execution venue and
+      TradingView HYPERLIQUID:HYPEUSDC.P (symbol form unverified). Volume in
+      HYPE. Only the most recent 5,000 1m candles (about 3.5 days) are
+      available: enough to poll live, not to backfill long history.
+    alternatives:
+      - provider: binance_usdm
+        symbol: HYPEUSDT
+        volume: exchange
+        note: Binance USD-M perpetual (USDT), with full history.
+  PUMPUSD:
+    provider: binance_spot
+    symbol: PUMPUSDT
+    volume: exchange
+    note: Binance spot = TradingView BINANCE:PUMPUSDT. Volume in PUMP.
+    alternatives:
+      - provider: bybit_linear
+        symbol: PUMPFUNUSDT
+        volume: exchange
+        note: Bybit linear perpetual (Bybit calls the pump.fun token PUMPFUN).
+
+  # ── CME futures: no free 1m API ────────────────────────────────────────────
+  # Imported files only (KT_MARKETDATA__CSV_DIR/<INSTRUMENT>.csv), e.g.
+  # TradingView exports of the continuous front-month series until a paid CME
+  # vendor is chosen (doc 13, D1). Exchange volume in contracts.
+  MNQ:
+    provider: csv
+    symbol: CME_MINI:MNQ1!
+    volume: exchange
+    note: >-
+      TradingView CME_MINI:MNQ1! exports (continuous front month; the roll must
+      match MNQ1!). Live paper trading sees new bars only when the file is
+      replaced with a newer export.
+  NQ:
+    provider: csv
+    symbol: CME_MINI:NQ1!
+    volume: exchange
+    note: TradingView CME_MINI:NQ1! exports, as MNQ.
