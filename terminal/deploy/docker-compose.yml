@@ -81,6 +81,11 @@ services:
       # Dashboard sessions: signing secret (Docker secret), HTTPS-only cookies.
       KT_AUTH__SESSION_SECRET_FILE: /run/secrets/session_secret
       KT_AUTH__COOKIE_SECURE: "true"
+      # No sign-in while the dashboard is published on this computer only: the API
+      # refuses to start with it if KT_BIND_ADDRESS is not a loopback address, so a
+      # server must also set KT_LOCAL_NO_LOGIN=false (docs/17-dashboard.md).
+      KT_AUTH__LOCAL_NO_LOGIN: ${KT_LOCAL_NO_LOGIN:-true}
+      KT_AUTH__PUBLISHED_ADDRESS: ${KT_BIND_ADDRESS:-127.0.0.1}
     secrets: [postgres_password, session_secret]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
@@ -120,7 +125,8 @@ services:
     environment:
       KT_PUBLIC_DOMAIN: ${KT_PUBLIC_DOMAIN:-localhost}
     # Only this computer can open the dashboard (https://localhost). On a server with
-    # a domain (KT_PUBLIC_DOMAIN), set KT_BIND_ADDRESS=0.0.0.0 in .env to publish it.
+    # a domain (KT_PUBLIC_DOMAIN), set KT_BIND_ADDRESS=0.0.0.0 and KT_LOCAL_NO_LOGIN=false
+    # in .env to publish it with sign-in.
     ports:
       - "${KT_BIND_ADDRESS:-127.0.0.1}:80:80"
       - "${KT_BIND_ADDRESS:-127.0.0.1}:443:443"

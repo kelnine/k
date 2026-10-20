@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ApiError, currentSession, login as apiLogin, logout as apiLogout, setUnauthorizedHandler } from './api/client'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ApiError, authOptions, currentSession, localSignIn, login as apiLogin, logout as apiLogout, setUnauthorizedHandler } from './api/client'
 import type { Role, Session } from './api/types'
 
 interface AuthState {
@@ -17,13 +17,48 @@ const RANK: Record<Role, number> = { VIEWER: 0, OPERATOR: 1, ADMIN: 2 }
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(true)
+  // A dashboard without sign-in (KT_AUTH__LOCAL_NO_LOGIN): an ended or expired
+  // session is simply opened again instead of showing the sign-in page.
+  const noLogin = useRef(false)
+  // One local sign-in at a time: parallel ones would leave a cookie and a CSRF
+  // token from different sessions.
+  const reopening = useRef<Promise<void> | null>(null)
 
   useEffect(() => {
-    setUnauthorizedHandler(() => setSession(null))
-    currentSession()
-      .then(setSession)
+    const reopen = () => {
+      if (!noLogin.current) {
+        setSession(null)
+        return
+      }
+      reopening.current ??= localSignIn()
+        .then(setSession)
+        .catch(() => setSession(null))
+        .finally(() => {
+          reopening.current = null
+        })
+    }
+    setUnauthorizedHandler(reopen)
+
+    const start = async (): Promise<Session | null> => {
+      try {
+        return await currentSession()
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 401)) {
+          console.warn('session check failed', err)
+          return null
+        }
+      }
+      const options = await authOptions()
+      noLogin.current = options.local_no_login
+      return options.local_no_login ? await localSignIn() : null
+    }
+    start()
+      .then((opened) => {
+        if (opened?.local) noLogin.current = true
+        setSession(opened)
+      })
       .catch((err: unknown) => {
-        if (!(err instanceof ApiError && err.status === 401)) console.warn('session check failed', err)
+        console.warn('sign-in check failed', err)
         setSession(null)
       })
       .finally(() => setChecking(false))

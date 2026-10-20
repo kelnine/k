@@ -68,6 +68,9 @@ function KillSwitchDialog({
   const [closePositions, setClosePositions] = useState(false)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const { session } = useAuth()
+  // Without sign-in there is no password: the release with a reason is the confirmation.
+  const askPassword = !activate && !session?.local
   const [busy, setBusy] = useState(false)
 
   const submit = async (event: FormEvent) => {
@@ -81,7 +84,7 @@ function KillSwitchDialog({
         active: activate,
         reason,
         close_positions: activate && closePositions,
-        ...(activate ? {} : { password }),
+        ...(askPassword ? { password } : {}),
       })
       onDone()
     } catch (err) {
@@ -98,7 +101,9 @@ function KillSwitchDialog({
         <p className="muted">
           {activate
             ? 'The forward runtime reads kill switches at every batch: no new entries are opened for this scope from the next batch on.'
-            : 'Releasing lets the strategies open new trades again. Confirm with your password.'}
+            : askPassword
+              ? 'Releasing lets the strategies open new trades again. Confirm with your password.'
+              : 'Releasing lets the strategies open new trades again.'}
         </p>
         <label className="field">
           <span>Reason</span>
@@ -110,7 +115,7 @@ function KillSwitchDialog({
             Also close open positions
           </label>
         )}
-        {!activate && (
+        {askPassword && (
           <label className="field">
             <span>Your password</span>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />

@@ -15,6 +15,8 @@ from kterminal.observability.logging import get_logger
 
 SESSION_COOKIE = "kt_session"
 CSRF_HEADER = "X-CSRF-Token"
+# The built-in user of a dashboard without sign-in (KT_AUTH__LOCAL_NO_LOGIN).
+LOCAL_USERNAME = "local"
 
 _log = get_logger(__name__)
 
@@ -45,6 +47,10 @@ class AuthService:
             max_failures_per_ip=settings.max_failed_logins_per_ip,
             window=timedelta(minutes=settings.lockout_minutes),
         )
+
+    def is_local(self, user: User) -> bool:
+        """The built-in user of a dashboard without sign-in (only while that mode is on)."""
+        return self.settings.local_no_login and user.username == LOCAL_USERNAME
 
     def set_session_cookie(self, response: Response, token: str, claims: SessionClaims) -> None:
         # Max-Age, not Expires: relative to the browser's clock, so clock skew cannot

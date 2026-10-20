@@ -25,16 +25,22 @@ With the Docker stack ([16](16-running-paper-trading.md), `deploy/docker-compose
 
 ```bash
 cd terminal
-make secrets                                   # deploy/secrets/postgres_password
-python3 -c "import secrets; print(secrets.token_urlsafe(48))" > deploy/secrets/session_secret
-chmod 444 deploy/secrets/session_secret
-make up                                        # builds the API image and the Caddy image (with the dashboard)
+make up          # secrets, then the API image and the Caddy image (with the dashboard)
+                 # (or start.sh / start.ps1: docs/18-quick-start.md)
+```
+
+Then open `https://localhost/` (Caddy's local CA). The Docker stack publishes
+the dashboard on this computer only and opens it **without sign-in**
+([17.3](#173-sign-in-and-sessions)). On a server, with
+`KT_BIND_ADDRESS=0.0.0.0`, `KT_PUBLIC_DOMAIN` and `KT_LOCAL_NO_LOGIN=false` in
+`terminal/.env`, create a user and sign in:
+
+```bash
 docker compose --project-directory deploy -f deploy/docker-compose.yml \
   exec api kterminal users add ada --role ADMIN   # asks for the password twice
 ```
 
-Then open `https://<KT_PUBLIC_DOMAIN>/` (`https://localhost/` with the
-default, using Caddy's local CA) and sign in. Until a forward session runs the
+Until a forward session runs the
 overview says **No forward session yet**; it turns green when the runtime
 (`kterminal paper start`, or the `engine` service) writes its first status.
 
@@ -74,6 +80,22 @@ not contain the user name.
 
 ## 17.3 Sign-in and sessions
 
+**Without sign-in (this computer only).** `KT_AUTH__LOCAL_NO_LOGIN=true` (the
+Docker stack's default, `KT_LOCAL_NO_LOGIN` in `terminal/.env`) opens the
+dashboard without a login: the page asks `GET /api/v1/auth/options`, then
+`POST /api/v1/auth/local` opens an ordinary session for the built-in user
+`local` (ADMIN, created on first use with a random password nobody knows), so
+cookies, CSRF tokens, roles and the audit log work as below, and an expired
+session is simply opened again. It is accepted only while the dashboard is
+published on a loopback address: the API refuses to start when
+`KT_AUTH__PUBLISHED_ADDRESS` (compose passes `KT_BIND_ADDRESS`, default
+`127.0.0.1`) is anything else, and `/auth/local` answers only requests
+addressed to `localhost` or a loopback address (`403 LOCAL_ONLY` otherwise; a
+DNS-rebound name gets nothing). Anyone who can use this computer's browser can
+use the dashboard: what it guards is paper trading, never real money or the
+OANDA token (which the dashboard never shows). Password users still work
+alongside; `kterminal users list` starts with `sign-in: off` in this mode.
+
 * **Password check:** argon2id (argon2-cffi's RFC 9106 parameters). An unknown
   user name costs the same time as a wrong password. Hashes made with older
   parameters are re-hashed at the next successful sign-in.
@@ -102,7 +124,8 @@ not contain the user name.
   but every restart signs everyone out.
 * **Errors** have one shape: `{"status": "error", "code": "...", "message": "...", "correlation_id": "..."}`
   (`NOT_AUTHENTICATED` 401, `INVALID_CREDENTIALS` 401, `LOGIN_LOCKED` 429,
-  `CSRF_TOKEN_INVALID` 403, `FORBIDDEN` 403, `REAUTH_REQUIRED` 403, `NOT_FOUND` 404).
+  `CSRF_TOKEN_INVALID` 403, `FORBIDDEN` 403, `REAUTH_REQUIRED` 403, `LOCAL_ONLY` 403,
+  `NOT_FOUND` 404).
   Every API response is `Cache-Control: no-store`.
 
 Caddy adds HSTS, `X-Content-Type-Options`, `X-Frame-Options: DENY`,
@@ -158,7 +181,9 @@ has (drawdowns are computed with window functions in PostgreSQL).
 Operators and admins use the *Halt* buttons: **Halt all trading** (global), per
 account, per strategy instance. Activating needs a reason (3–500 characters)
 and may close the covered positions; releasing a switch re-enables trading, so
-it needs the operator's password again. The change goes through the same code
+it needs the operator's password again (the built-in `local` user of a
+dashboard without sign-in has none: its explicit release with a reason is the
+confirmation). The change goes through the same code
 as `kterminal killswitch on/off` (`kterminal.db.repositories.kill_switches`):
 the `kill_switches` row and a `killswitch.activate` / `killswitch.deactivate`
 audit entry (actor `user:<user id>`) in one transaction. The runtime reads the

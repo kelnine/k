@@ -38,8 +38,8 @@ compose() {
   fi
 }
 
-no_users_yet() {
-  compose exec -T api kterminal users list </dev/null 2>/dev/null | grep -q "^no users yet"
+users_list() {
+  compose exec -T api kterminal users list </dev/null 2>/dev/null || true
 }
 
 # Ask for the username here (checked before anything runs in Docker), then `users add`
@@ -116,7 +116,10 @@ if [ -z "$ready" ]; then
   exit 1
 fi
 
-if no_users_yet; then
+users=$(users_list)
+if grep -q "^sign-in: off" <<<"$users"; then
+  echo "No login needed: the dashboard opens directly on this computer."
+elif grep -q "^no users yet" <<<"$users"; then
   if [ -t 0 ]; then
     create_login
   else

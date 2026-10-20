@@ -1109,9 +1109,18 @@ def users_add(
 @users_app.command("list")
 def users_list() -> None:
     """Every dashboard user with role and state."""
+    from kterminal.api.auth.service import LOCAL_USERNAME
+    from kterminal.api.auth.settings import load_auth_settings
     from kterminal.api.auth.users import list_users
 
+    no_login = load_auth_settings().local_no_login
+    if no_login:
+        # The start scripts look for this line: no login has to be created.
+        typer.echo("sign-in: off — the dashboard opens without a login on this computer")
     users = _run_users(list_users)
+    if not no_login and users and all(user.username == LOCAL_USERNAME for user in users):
+        # The built-in user signs in only without sign-in: nobody can sign in now.
+        typer.echo("no users yet — create one with: kterminal users add NAME --role ADMIN")
     if not users:
         typer.echo("no users yet — create one with: kterminal users add NAME --role ADMIN")
         return

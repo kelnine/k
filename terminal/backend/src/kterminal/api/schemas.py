@@ -45,6 +45,14 @@ class SessionOut(ApiModel):
     user: UserOut
     csrf_token: str
     expires_at: datetime
+    # The built-in user of a dashboard without sign-in (KT_AUTH__LOCAL_NO_LOGIN).
+    local: bool = False
+
+
+class AuthOptionsOut(ApiModel):
+    """How this dashboard signs people in (asked before anyone is signed in)."""
+
+    local_no_login: bool
 
 
 # ── forward runtime status (system_state 'paper.runtime') ────────────────────

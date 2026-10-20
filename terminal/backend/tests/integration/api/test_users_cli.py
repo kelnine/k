@@ -75,3 +75,45 @@ def test_duplicates_weak_passwords_and_bad_input_are_refused(cli: CliRunner) -> 
     unknown = cli.invoke(app, ["users", "disable", "nobody"])
     assert unknown.exit_code == 1
     assert "no user 'nobody'" in unknown.output
+
+
+def test_list_says_when_the_dashboard_needs_no_login(
+    cli: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert "sign-in: off" not in cli.invoke(app, ["users", "list"]).output
+    monkeypatch.setenv("KT_AUTH__LOCAL_NO_LOGIN", "true")
+    monkeypatch.setenv("KT_AUTH__PUBLISHED_ADDRESS", "127.0.0.1")
+    listing = cli.invoke(app, ["users", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert listing.output.startswith("sign-in: off")
+
+
+def test_the_built_in_local_user_does_not_count_once_sign_in_is_back(
+    cli: CliRunner, demo: DemoData, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from kterminal.api.auth import users
+
+    local = users.User(
+        id=uuid4(),
+        username="local",
+        role=Role.ADMIN,
+        disabled=False,
+        password_hash="$argon2id$unusable",
+        created_at=datetime(2026, 10, 20, tzinfo=UTC),
+    )
+
+    async def only_local(_session: object) -> list[users.User]:
+        return [local]
+
+    monkeypatch.setattr(users, "list_users", only_local)
+    listing = cli.invoke(app, ["users", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert listing.output.startswith("no users yet")  # the start scripts offer a login
+    monkeypatch.setenv("KT_AUTH__LOCAL_NO_LOGIN", "true")
+    monkeypatch.setenv("KT_AUTH__PUBLISHED_ADDRESS", "127.0.0.1")
+    listing = cli.invoke(app, ["users", "list"])
+    assert listing.output.startswith("sign-in: off")
+    assert "no users yet" not in listing.output

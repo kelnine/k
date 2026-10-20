@@ -45,6 +45,11 @@
   request size limits; JSON-only APIs.
 * Dashboard auth: argon2id passwords, TOTP 2FA, `HttpOnly; Secure;
   SameSite=Strict` session cookies, CSRF tokens, login rate-limiting/lockout.
+  Exception for a single person's paper-trading computer: without sign-in
+  (`KT_AUTH__LOCAL_NO_LOGIN`), allowed only while the dashboard is published on
+  a loopback address and only for requests addressed to localhost
+  ([17.3](17-dashboard.md#173-sign-in-and-sessions)); a dashboard reachable
+  from anywhere else always requires sign-in.
 * RBAC: `VIEWER` (read), `OPERATOR` (kill switch, pause strategies),
   `ADMIN` (risk profiles, accounts, LIVE enablement, users).
 * Sensitive actions require re-authentication with TOTP within the last 5

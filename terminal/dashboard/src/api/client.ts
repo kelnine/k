@@ -1,7 +1,7 @@
 // The one place that talks to the API: same-origin fetch with the session cookie,
 // the CSRF token on state-changing requests, and a global "signed out" signal on 401.
 
-import type { Session } from './types'
+import type { AuthOptions, Session } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -79,6 +79,18 @@ export const api = {
 
 export async function login(username: string, password: string): Promise<Session> {
   const session = await api.post<Session>('/auth/login', { username, password })
+  setCsrfToken(session.csrf_token)
+  return session
+}
+
+/** How this dashboard signs people in (asked before anyone is signed in). */
+export async function authOptions(): Promise<AuthOptions> {
+  return api.get<AuthOptions>('/auth/options')
+}
+
+/** A dashboard without sign-in: a session for the built-in local user. */
+export async function localSignIn(): Promise<Session> {
+  const session = await api.post<Session>('/auth/local')
   setCsrfToken(session.csrf_token)
   return session
 }

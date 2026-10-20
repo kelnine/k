@@ -41,9 +41,8 @@ function Test-Interactive {
     return $true
 }
 
-function Test-NoUsers {
-    $users = ($null | & docker @compose exec -T api kterminal users list 2>$null) -join "`n"
-    return ($users -match '(?m)^no users yet')
+function Get-UsersList {
+    return (($null | & docker @compose exec -T api kterminal users list 2>$null) -join "`n")
 }
 
 # Ask for the username here (checked before anything runs in Docker), then `users add`
@@ -121,7 +120,10 @@ if (-not $ready) {
     exit 1
 }
 
-if (Test-NoUsers) {
+$users = Get-UsersList
+if ($users -match '(?m)^sign-in: off') {
+    Write-Host 'No login needed: the dashboard opens directly on this computer.'
+} elseif ($users -match '(?m)^no users yet') {
     if (Test-Interactive) {
         New-Login
     } elseif ($env:OS -eq 'Windows_NT') {

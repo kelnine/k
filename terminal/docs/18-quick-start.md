@@ -21,8 +21,8 @@ running. A computer that sleeps at night pauses it; it catches up when it wakes.
 ## The easy way: let Claude on your computer do it
 
 A Claude session that runs **on your computer** can do every step below for
-you; you only approve what it asks and type your own passwords. (Claude in the
-cloud cannot reach your computer.)
+you; you only approve what it asks. (Claude in the cloud cannot reach your
+computer.)
 
 1. Open the **Claude desktop app**, go to **Code** and start a session on this
    computer (not in the cloud). Pick a folder such as your Documents folder.
@@ -50,11 +50,8 @@ this session.
    Never ask me to paste the token into this chat and never print that file.
 4. In the terminal folder run the start script: Windows
    "powershell -ExecutionPolicy Bypass -File .\start.ps1", Mac "bash start.sh".
-   The first build takes 5-10 minutes. If no dashboard login exists, the script
-   opens a separate window where I type my username and password myself (a Mac
-   may first ask me to allow controlling Terminal); wait until I say I am done.
-   If no window opened, ask me to run the login command the script printed, in
-   a terminal of my own.
+   The first build takes 5-10 minutes. The dashboard needs no login: it opens
+   directly, on this computer only.
 5. Open https://localhost in my browser and tell me how to pass the certificate
    warning (the certificate is made by this computer).
 6. Ask me whether this computer should stay awake while it is plugged in (paper
@@ -133,21 +130,21 @@ folder onto the window, press Enter, then:
 bash start.sh
 ```
 
-The first start downloads and builds everything: about 5–10 minutes. At the
-end it asks for a **username and password** (12 characters or more): that is
-your dashboard login. Run the same command again any time to restart the
-terminal; your data is kept.
+The first start downloads and builds everything: about 5–10 minutes. There is
+no login to create: the dashboard opens directly, and only on this computer.
+Run the same command again any time to restart the terminal; your data is kept.
 
 ## 5. Open the terminal
 
 Go to **https://localhost** in your browser. The first time, the browser warns
 that the connection is not private. The certificate was made by your own
 computer, so continue: Chrome or Edge, **Advanced → Continue to localhost**;
-Safari, **Show Details → visit this website**. Sign in with the login from
-step 4.
+Safari, **Show Details → visit this website**. The dashboard opens without a
+login.
 
 The dashboard opens only on this computer: other devices on your network
-(or anyone on a public Wi-Fi) cannot reach it.
+(or anyone on a public Wi-Fi) cannot reach it. That is also why it needs no
+login; anyone using this computer's browser can open it.
 
 ## What you will see
 
@@ -192,7 +189,7 @@ Mac). `dc` below stands for
 | See what the engine is doing | `dc logs --tail=50 engine` |
 | Paper status in text | `dc exec engine kterminal paper status` |
 | Which markets have prices | `dc exec engine kterminal data sources` |
-| Add another login | `dc exec api kterminal users add NAME --role VIEWER` (or `OPERATOR`, `ADMIN`) |
+| Ask for a login after all | put `KT_LOCAL_NO_LOGIN=false` in `terminal/.env` and run the start script: it asks you to create one |
 
 **Crypto exchange blocked where you live** (Binance is not available in the
 US, for example): create a file `terminal/.env` containing
@@ -236,11 +233,12 @@ a new version simply replaces the folder:
 |---|---|
 | *Docker is not running* | Open Docker Desktop and wait for *Engine running* |
 | Port 80 or 443 already in use | Another web server runs on this computer; stop it, or ask for help changing the ports |
-| Sign-in page does not load | Wait a minute after the start script finishes; `dc ps` should show `api` as *healthy* |
+| The dashboard does not load | Wait a minute after the start script finishes; `dc ps` should show `api` as *healthy* |
+| A sign-in page appears although you want none | This terminal is an older version: install the new one (*Installing a new version* above) |
 | Status *Error* on the Overview | The message says why; [16.8](16-running-paper-trading.md#168-when-something-goes-wrong) lists the causes |
 | Status *Error: cannot be resumed* after updating the code or the settings | The strategies changed, so the old session cannot continue: `dc exec engine kterminal paper end-session` starts a new one within a minute |
-| No login was created (the window was closed, or the start ran without a keyboard) | Windows `powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login`; Mac `bash start.sh --login` |
-| Forgot the password | `dc exec api kterminal users set-password NAME` |
+| With logins on: no login was created | Windows `powershell -ExecutionPolicy Bypass -File .\start.ps1 -Login`; Mac `bash start.sh --login` |
+| With logins on: forgot the password | `dc exec api kterminal users set-password NAME` |
 
 Background for the curious: how paper trading works,
 [16](16-running-paper-trading.md); the dashboard,

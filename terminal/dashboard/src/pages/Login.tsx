@@ -45,7 +45,7 @@ export function Login() {
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
         <p className="muted small">
-          No account yet? On the server: <code>kterminal users add NAME --role ADMIN</code>
+          No login yet? In the terminal folder run <code>bash start.sh --login</code> (Mac) or <code>.\start.ps1 -Login</code> (Windows).
         </p>
       </form>
     </div>

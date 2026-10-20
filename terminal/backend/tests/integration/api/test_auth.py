@@ -113,7 +113,8 @@ def test_a_successful_sign_in_resets_the_failure_count(
 
 
 def test_every_dashboard_route_requires_a_session(client: TestClient) -> None:
-    public = {f"{API_PREFIX}/auth/login"}
+    # sign-in itself, how to sign in, and the no-login sign-in (404 unless switched on)
+    public = {f"{API_PREFIX}/auth/{name}" for name in ("login", "options", "local")}
     placeholders = {
         "{account_id}": "00000000-0000-0000-0000-000000000000",
         "{trade_id}": "00000000-0000-0000-0000-000000000000",

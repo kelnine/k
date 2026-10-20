@@ -8,12 +8,20 @@ settings: environment variables, the ``.env`` file, and Docker secrets through
 generates a random secret at start-up: that is secure, but every session ends
 when the process restarts and several API replicas would not accept each
 other's cookies, so production deployments should set it.
+
+``local_no_login`` opens the dashboard without a sign-in for a single person on
+their own computer: every visitor becomes the built-in ``local`` user. It is
+refused unless ``published_address`` (where the dashboard's port is published,
+``KT_BIND_ADDRESS`` in the Docker stack) is a loopback address, so a dashboard
+reachable from other machines always asks for a password.
 """
 
+import ipaddress
 import os
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AUTH_ENV_PREFIX = "KT_AUTH__"
@@ -43,6 +51,9 @@ class AuthSettings(BaseSettings):
     # Failed sign-ins from one client address within ``lockout_minutes`` (any usernames).
     max_failed_logins_per_ip: int = Field(default=30, ge=1, le=10_000)
     password_min_length: int = Field(default=12, ge=8, le=128)
+    # No sign-in on this computer (see the module docstring); needs a loopback address.
+    local_no_login: bool = False
+    published_address: str | None = None
 
     @field_validator("session_secret")
     @classmethod
@@ -50,6 +61,30 @@ class AuthSettings(BaseSettings):
         if value is not None and len(value.get_secret_value().strip()) < MIN_SECRET_LENGTH:
             raise ValueError(f"session_secret must be at least {MIN_SECRET_LENGTH} characters")
         return value
+
+    @model_validator(mode="after")
+    def _no_login_only_on_this_computer(self) -> Self:
+        if self.local_no_login and not is_loopback(self.published_address):
+            raise ValueError(
+                "local_no_login (no sign-in) is allowed only for a dashboard published on this"
+                " computer alone: KT_AUTH__PUBLISHED_ADDRESS must be a loopback address such as"
+                " 127.0.0.1 (Docker: KT_BIND_ADDRESS). Turn it off (KT_LOCAL_NO_LOGIN=false) to"
+                " publish the dashboard more widely."
+            )
+        return self
+
+
+def is_loopback(address: str | None) -> bool:
+    """True for ``localhost`` and loopback IP addresses (``127.0.0.1``, ``::1``, ``[::1]``)."""
+    if address is None:
+        return False
+    text = address.strip().lower().removeprefix("[").removesuffix("]")
+    if text == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        return False
 
 
 def load_auth_settings(*, env_file: str | Path | None = ".env") -> AuthSettings:

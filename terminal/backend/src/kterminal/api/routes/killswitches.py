@@ -7,7 +7,9 @@ log in one transaction. The forward runtime reads the table before every
 minute (docs/12 §12.7). Activating is always allowed and needs no confirmation
 (a risk-reducing action); releasing a switch re-enables trading, so it needs
 the operator's password again (docs/09 §9.2: re-authentication for sensitive
-actions; TOTP joins it once 2FA exists).
+actions; TOTP joins it once 2FA exists). The built-in ``local`` user of a
+dashboard without sign-in has no password, so for it the explicit release with a
+reason is the confirmation.
 """
 
 import asyncio
@@ -54,7 +56,7 @@ async def set_switch(
     clock: ClockDep,
 ) -> KillSwitchOut:
     scope_id = await _validated_scope_id(session, body.scope, body.scope_id)
-    if not body.active:
+    if not body.active and not auth.is_local(principal.user):
         password = body.password.get_secret_value() if body.password else ""
         confirmed = bool(password) and await asyncio.to_thread(
             auth.passwords.verify, principal.user.password_hash, password

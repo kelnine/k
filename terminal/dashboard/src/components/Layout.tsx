@@ -76,9 +76,11 @@ export function Layout({ children }: { children: ReactNode }) {
           <div className="user">
             <span className="user-name">{session.user.username}</span>
             <span className="user-role">{session.user.role.toLowerCase()}</span>
-            <button className="btn small ghost" onClick={() => void signOut()}>
-              Sign out
-            </button>
+            {!session.local && (
+              <button className="btn small ghost" onClick={() => void signOut()}>
+                Sign out
+              </button>
+            )}
           </div>
         )}
       </header>

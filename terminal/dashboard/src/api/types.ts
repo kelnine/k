@@ -25,6 +25,12 @@ export interface Session {
   user: User
   csrf_token: string
   expires_at: Iso
+  /** The built-in user of a dashboard without sign-in (KT_AUTH__LOCAL_NO_LOGIN). */
+  local?: boolean
+}
+
+export interface AuthOptions {
+  local_no_login: boolean
 }
 
 // system_state['paper.runtime'] as the forward runtime writes it (docs/12 §12.7).
