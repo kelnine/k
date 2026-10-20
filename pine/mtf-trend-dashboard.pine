@@ -4,12 +4,14 @@ indicator("MTF Trend Dashboard + FVG Zones", shorttitle = "MTF Trend", overlay =
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs: trend
 // ─────────────────────────────────────────────────────────────────────────────
-grpT     = "Trend"
-method   = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = grpT,
+grpT      = "Trend"
+method    = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = grpT,
      tooltip = "Structure: bullish after price closes above the last swing high, bearish after it closes below the last swing low.\nEMA: bullish when the fast EMA is above the slow EMA.")
-swingLen = input.int(5, "Swing length (Structure)", minval = 1, group = grpT)
-emaFast  = input.int(9, "Fast EMA", minval = 1, group = grpT)
-emaSlow  = input.int(21, "Slow EMA", minval = 2, group = grpT)
+swingLen  = input.int(5, "Swing length (Structure)", minval = 1, group = grpT)
+emaFast   = input.int(9, "Fast EMA", minval = 1, group = grpT)
+emaSlow   = input.int(21, "Slow EMA", minval = 2, group = grpT)
+confirmed = input.bool(false, "Closed bars only (no flicker)", group = grpT,
+     tooltip = "On: each row only changes when that timeframe's candle closes, so it never flips back and forth mid-candle. Off: rows update live.")
 
 grpTF = "Timeframes"
 on1 = input.bool(true, "Row 1", inline = "t1", group = grpTF)
@@ -32,38 +34,52 @@ tf8 = input.timeframe("W", "", inline = "t8", group = grpTF)
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs: table look
 // ─────────────────────────────────────────────────────────────────────────────
-grpS      = "Table"
-posIn     = input.string("Bottom Right", "Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = grpS)
-sizeIn    = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = grpS)
-showClock = input.bool(true, "Show bar close countdown", group = grpS)
-bullBg    = input.color(#E8622C, "Bullish", inline = "c1", group = grpS)
-bearBg    = input.color(#000000, "Bearish", inline = "c1", group = grpS)
-flatBg    = input.color(#555555, "No trend yet", inline = "c1", group = grpS)
-headBg    = input.color(#000000, "Header", inline = "c2", group = grpS)
-labelBg   = input.color(#3A3A3A, "Timeframe column", inline = "c2", group = grpS)
-txtC      = input.color(color.white, "Text", inline = "c3", group = grpS)
-borderC   = input.color(#6B6B6B, "Border", inline = "c3", group = grpS)
+grpS       = "Table"
+posIn      = input.string("Bottom Right", "Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = grpS)
+sizeIn     = input.string("Normal", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = grpS)
+labelStyle = input.string("Words", "Labels", options = ["Words", "Short", "Arrows"], group = grpS,
+     tooltip = "Words: Bullish / Bearish. Short: Bull / Bear. Arrows: ▲ / ▼ (narrowest, good on phones).")
+showClock  = input.bool(true, "Show bar close countdown", group = grpS)
+showBias   = input.bool(true, "Show overall bias row", group = grpS)
+showLvl    = input.bool(false, "Show flip level column", group = grpS,
+     tooltip = "Structure mode only: the price that would flip each timeframe the other way (last swing low for a bullish row, last swing high for a bearish row).")
+bullBg     = input.color(#E8622C, "Bullish", inline = "c1", group = grpS)
+bearBg     = input.color(#000000, "Bearish", inline = "c1", group = grpS)
+flatBg     = input.color(#555555, "No trend yet", inline = "c1", group = grpS)
+headBg     = input.color(#000000, "Header", inline = "c2", group = grpS)
+labelBg    = input.color(#3A3A3A, "Timeframe column", inline = "c2", group = grpS)
+curBg      = input.color(#6A6A6A, "Chart timeframe row", inline = "c2", group = grpS)
+txtC       = input.color(color.white, "Text", inline = "c3", group = grpS)
+borderC    = input.color(#6B6B6B, "Border", inline = "c3", group = grpS)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs: fair value gap zones
 // ─────────────────────────────────────────────────────────────────────────────
 grpZ       = "FVG Zones"
 showZ      = input.bool(true, "Show fair value gaps", group = grpZ)
+fvgTfIn    = input.timeframe("", "FVG timeframe", group = grpZ,
+     tooltip = "Blank = chart timeframe. Pick a higher one (e.g. 1 hour) to draw that timeframe's gaps on a lower chart. Lower than the chart is ignored.")
 minAtr     = input.float(0.25, "Min gap size (x ATR 14)", minval = 0, step = 0.05, group = grpZ)
-maxZ       = input.int(10, "Max active zones", minval = 1, maxval = 100, group = grpZ)
-mitig      = input.string("Wick", "Mitigated when", options = ["Wick", "Close"], group = grpZ,
-     tooltip = "Wick: any wick through the far edge ends the zone. Close: a candle must close through it.")
-keepOld    = input.bool(false, "Keep mitigated zones on chart", group = grpZ)
+maxPerSide = input.int(5, "Max zones per side", minval = 1, maxval = 50, group = grpZ)
+mitig      = input.string("Wick", "Zone ends when", options = ["Wick", "Close", "50%"], group = grpZ,
+     tooltip = "Wick: a wick goes fully through it. Close: a candle closes through it. 50%: price reaches its middle.")
+shrinkZ    = input.bool(true, "Shrink as price fills it", group = grpZ,
+     tooltip = "When price wicks into a zone without ending it, cut the zone down to the part that is still unfilled.")
+mergeZ     = input.bool(true, "Merge overlapping gaps", group = grpZ)
+keepOld    = input.bool(false, "Keep ended zones on chart", group = grpZ)
 showMid    = input.bool(true, "Show 50% line", group = grpZ)
+showTag    = input.bool(true, "Label higher-timeframe zones", group = grpZ)
 extendBars = input.int(15, "Extend right (bars)", minval = 0, group = grpZ)
 bullZ      = input.color(color.new(#E8622C, 75), "Bullish fill", inline = "z1", group = grpZ)
 bearZ      = input.color(color.new(#1E1E1E, 45), "Bearish fill", inline = "z1", group = grpZ)
 zBorder    = input.color(color.black, "Border", inline = "z2", group = grpZ)
 midC       = input.color(color.black, "50% line", inline = "z2", group = grpZ)
+zTextC     = input.color(color.new(color.white, 30), "Label", inline = "z2", group = grpZ)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Trend logic (runs on each requested timeframe)
 // ─────────────────────────────────────────────────────────────────────────────
+// returns [trend, flip level]; trend: 1 bullish, -1 bearish, 0 not decided yet
 f_structure(int len) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
@@ -80,21 +96,30 @@ f_structure(int len) =>
     if not na(lastL) and close < lastL
         tr    := -1
         lastL := na
-    tr
+    float lvl = tr == 1 ? lastL : tr == -1 ? lastH : na
+    [tr, lvl]
 
-f_calc() =>
-    s = f_structure(swingLen)
-    e = ta.ema(close, emaFast) > ta.ema(close, emaSlow) ? 1 : -1
-    method == "Structure" ? s : e
+f_calc(bool closedOnly) =>
+    [s, lv] = f_structure(swingLen)
+    int   e    = ta.ema(close, emaFast) > ta.ema(close, emaSlow) ? 1 : -1
+    int   tr   = method == "Structure" ? s : e
+    float lvl  = method == "Structure" ? lv : na
+    int   outT = closedOnly ? tr[1] : tr
+    float outL = closedOnly ? lvl[1] : lvl
+    [outT, outL]
 
-t1 = request.security(syminfo.tickerid, tf1, f_calc())
-t2 = request.security(syminfo.tickerid, tf2, f_calc())
-t3 = request.security(syminfo.tickerid, tf3, f_calc())
-t4 = request.security(syminfo.tickerid, tf4, f_calc())
-t5 = request.security(syminfo.tickerid, tf5, f_calc())
-t6 = request.security(syminfo.tickerid, tf6, f_calc())
-t7 = request.security(syminfo.tickerid, tf7, f_calc())
-t8 = request.security(syminfo.tickerid, tf8, f_calc())
+// higher timeframes need lookahead_on + [1] to read only closed candles
+f_up(string tf) =>
+    confirmed and timeframe.in_seconds(tf) > timeframe.in_seconds()
+
+[t1, l1] = request.security(syminfo.tickerid, tf1, f_calc(confirmed), lookahead = f_up(tf1) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t2, l2] = request.security(syminfo.tickerid, tf2, f_calc(confirmed), lookahead = f_up(tf2) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t3, l3] = request.security(syminfo.tickerid, tf3, f_calc(confirmed), lookahead = f_up(tf3) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t4, l4] = request.security(syminfo.tickerid, tf4, f_calc(confirmed), lookahead = f_up(tf4) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t5, l5] = request.security(syminfo.tickerid, tf5, f_calc(confirmed), lookahead = f_up(tf5) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t6, l6] = request.security(syminfo.tickerid, tf6, f_calc(confirmed), lookahead = f_up(tf6) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t7, l7] = request.security(syminfo.tickerid, tf7, f_calc(confirmed), lookahead = f_up(tf7) ? barmerge.lookahead_on : barmerge.lookahead_off)
+[t8, l8] = request.security(syminfo.tickerid, tf8, f_calc(confirmed), lookahead = f_up(tf8) ? barmerge.lookahead_on : barmerge.lookahead_off)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -138,40 +163,68 @@ f_countdown() =>
         out := h > 0 ? str.format("{0}:{1,number,00}:{2,number,00}", h, m, s) : str.format("{0,number,00}:{1,number,00}", m, s)
     out
 
+f_word(int tr) =>
+    switch labelStyle
+        "Short"  => tr == 1 ? "Bull" : tr == -1 ? "Bear" : "—"
+        "Arrows" => tr == 1 ? "▲" : tr == -1 ? "▼" : "—"
+        => tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "—"
+
+f_bg(int tr) =>
+    tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
+
 // draws one row if enabled; returns the next free row
-f_row(table t, int row, bool on, string tf, int tr, string ts) =>
+f_row(table t, int row, bool on, string tf, int tr, float lv, string ts) =>
     int next = row
     if on
-        string txt = tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "—"
-        color  bg  = tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
-        table.cell(t, 0, row, f_tfLabel(tf), text_color = txtC, bgcolor = labelBg, text_size = ts)
-        table.cell(t, 1, row, txt, text_color = txtC, bgcolor = bg, text_size = ts)
+        bool isChart = timeframe.in_seconds(tf) == timeframe.in_seconds()
+        table.cell(t, 0, row, f_tfLabel(tf), text_color = txtC, bgcolor = isChart ? curBg : labelBg, text_size = ts)
+        table.cell(t, 1, row, f_word(tr), text_color = txtC, bgcolor = f_bg(tr), text_size = ts)
+        if showLvl
+            table.cell(t, 2, row, na(lv) ? "—" : str.tostring(lv, format.mintick), text_color = txtC, bgcolor = labelBg, text_size = ts)
         next := row + 1
     next
+
+f_n(bool on, int t, int dir) =>
+    on and t == dir ? 1 : 0
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard table
 // ─────────────────────────────────────────────────────────────────────────────
-var table dash = table.new(f_pos(posIn), 2, 9, frame_color = borderC, frame_width = 1, border_color = borderC, border_width = 1)
+var table dash = table.new(f_pos(posIn), showLvl ? 3 : 2, 10, frame_color = borderC, frame_width = 1, border_color = borderC, border_width = 1)
+
+bullN = f_n(on1, t1, 1) + f_n(on2, t2, 1) + f_n(on3, t3, 1) + f_n(on4, t4, 1) + f_n(on5, t5, 1) + f_n(on6, t6, 1) + f_n(on7, t7, 1) + f_n(on8, t8, 1)
+bearN = f_n(on1, t1, -1) + f_n(on2, t2, -1) + f_n(on3, t3, -1) + f_n(on4, t4, -1) + f_n(on5, t5, -1) + f_n(on6, t6, -1) + f_n(on7, t7, -1) + f_n(on8, t8, -1)
+rowsN = (on1 ? 1 : 0) + (on2 ? 1 : 0) + (on3 ? 1 : 0) + (on4 ? 1 : 0) + (on5 ? 1 : 0) + (on6 ? 1 : 0) + (on7 ? 1 : 0) + (on8 ? 1 : 0)
 
 if barstate.islast
-    string ts = f_size(sizeIn)
-    table.clear(dash, 0, 0, 1, 8)
+    string ts   = f_size(sizeIn)
+    int    lastCol = showLvl ? 2 : 1
+    table.clear(dash, 0, 0, lastCol, 9)
     string head = syminfo.ticker + (showClock ? "   " + f_countdown() : "")
     table.cell(dash, 0, 0, "Timeframe", text_color = txtC, bgcolor = labelBg, text_size = ts)
     table.cell(dash, 1, 0, head, text_color = txtC, bgcolor = headBg, text_size = ts)
+    if showLvl
+        table.cell(dash, 2, 0, "Flip at", text_color = txtC, bgcolor = headBg, text_size = ts)
     int r = 1
-    r := f_row(dash, r, on1, tf1, t1, ts)
-    r := f_row(dash, r, on2, tf2, t2, ts)
-    r := f_row(dash, r, on3, tf3, t3, ts)
-    r := f_row(dash, r, on4, tf4, t4, ts)
-    r := f_row(dash, r, on5, tf5, t5, ts)
-    r := f_row(dash, r, on6, tf6, t6, ts)
-    r := f_row(dash, r, on7, tf7, t7, ts)
-    r := f_row(dash, r, on8, tf8, t8, ts)
+    r := f_row(dash, r, on1, tf1, t1, l1, ts)
+    r := f_row(dash, r, on2, tf2, t2, l2, ts)
+    r := f_row(dash, r, on3, tf3, t3, l3, ts)
+    r := f_row(dash, r, on4, tf4, t4, l4, ts)
+    r := f_row(dash, r, on5, tf5, t5, l5, ts)
+    r := f_row(dash, r, on6, tf6, t6, l6, ts)
+    r := f_row(dash, r, on7, tf7, t7, l7, ts)
+    r := f_row(dash, r, on8, tf8, t8, l8, ts)
+    if showBias and rowsN > 0
+        int    dir   = bullN > bearN ? 1 : bearN > bullN ? -1 : 0
+        string count = str.tostring(math.max(bullN, bearN)) + "/" + str.tostring(rowsN)
+        string word  = dir == 0 ? "Mixed" : f_word(dir)
+        table.cell(dash, 0, r, "Bias", text_color = txtC, bgcolor = headBg, text_size = ts)
+        table.cell(dash, 1, r, word + " " + count, text_color = txtC, bgcolor = f_bg(dir), text_size = ts)
+        if showLvl
+            table.cell(dash, 2, r, "", bgcolor = headBg, text_size = ts)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fair value gap zones (box + dashed 50% line, extended until mitigated)
+// Fair value gap zones (box + dashed 50% line, extended until they end)
 // ─────────────────────────────────────────────────────────────────────────────
 type Zone
     box   bx
@@ -179,48 +232,123 @@ type Zone
     float top
     float bot
     bool  bull
+    bool  touched = false
 
-var array<Zone> zones = array.new<Zone>()
+var array<Zone> bullZones = array.new<Zone>()
+var array<Zone> bearZones = array.new<Zone>()
+
 atr = ta.atr(14)
+
+// which timeframe the gaps come from (never lower than the chart)
+string tfZ   = fvgTfIn == "" ? timeframe.period : fvgTfIn
+bool   zHtf  = timeframe.in_seconds(tfZ) > timeframe.in_seconds()
+string tfReq = zHtf ? tfZ : timeframe.period
+
+// gap that completed on the last CLOSED candle of the requested timeframe
+f_gap() =>
+    a = ta.atr(14)
+    bool  bu = low > high[2]
+    bool  be = high < low[2]
+    float tp = bu ? low : low[2]
+    float bt = bu ? high[2] : high
+    [bu[1], be[1], tp[1], bt[1], time[3], a[1]]
+
+[hBu, hBe, hTp, hBt, hT, hA] = request.security(syminfo.tickerid, tfReq, f_gap(), lookahead = barmerge.lookahead_on)
+bool newHtfBar = timeframe.change(tfReq)
+
+bool  cBull = zHtf ? newHtfBar and hBu and hTp - hBt >= minAtr * hA : low > high[2] and low - high[2] >= minAtr * atr
+bool  cBear = zHtf ? newHtfBar and hBe and hTp - hBt >= minAtr * hA : high < low[2] and low[2] - high >= minAtr * atr
+float cTop  = zHtf ? hTp : cBull ? low : low[2]
+float cBot  = zHtf ? hBt : cBull ? high[2] : high
+int   cT    = zHtf ? hT : time[2]
+
+int    extMs = extendBars * timeframe.in_seconds() * 1000
+string zTag  = showTag and zHtf ? f_tfLabel(tfZ) + " FVG" : ""
 
 f_kill(Zone z) =>
     box.delete(z.bx)
-    line.delete(z.mid)
+    if not na(z.mid)
+        line.delete(z.mid)
 
-if showZ
-    // extend live zones, retire mitigated ones
-    if zones.size() > 0
-        for i = zones.size() - 1 to 0
-            Zone z = zones.get(i)
-            bool hit = z.bull ? (mitig == "Wick" ? low : close) < z.bot : (mitig == "Wick" ? high : close) > z.top
-            if hit
+f_setMid(Zone z) =>
+    if not na(z.mid)
+        float m = (z.top + z.bot) / 2
+        line.set_y1(z.mid, m)
+        line.set_y2(z.mid, m)
+
+// extend live zones, shrink partly filled ones, retire ended ones.
+// returns true the first time price touches any zone in the list
+f_update(array<Zone> zs, int right) =>
+    bool firstTouch = false
+    if zs.size() > 0
+        for i = zs.size() - 1 to 0
+            Zone z = zs.get(i)
+            bool inZone = z.bull ? low <= z.top : high >= z.bot
+            if inZone and not z.touched
+                z.touched  := true
+                firstTouch := true
+            float m    = (z.top + z.bot) / 2
+            bool  done = switch mitig
+                "Close" => z.bull ? close < z.bot : close > z.top
+                "50%"   => z.bull ? low <= m : high >= m
+                => z.bull ? low < z.bot : high > z.top
+            if done
                 if keepOld
-                    box.set_right(z.bx, bar_index)
+                    box.set_right(z.bx, time)
                     if not na(z.mid)
-                        line.set_x2(z.mid, bar_index)
+                        line.set_x2(z.mid, time)
                 else
                     f_kill(z)
-                zones.remove(i)
+                zs.remove(i)
             else
-                box.set_right(z.bx, bar_index + extendBars)
+                if shrinkZ and inZone
+                    if z.bull
+                        z.top := math.max(low, z.bot)
+                        box.set_top(z.bx, z.top)
+                    else
+                        z.bot := math.min(high, z.top)
+                        box.set_bottom(z.bx, z.bot)
+                    f_setMid(z)
+                box.set_right(z.bx, right)
                 if not na(z.mid)
-                    line.set_x2(z.mid, bar_index + extendBars)
+                    line.set_x2(z.mid, right)
+    firstTouch
 
-    // new gaps: candle 1 high vs candle 3 low (bullish) / candle 1 low vs candle 3 high (bearish)
-    bool bullGap = low > high[2] and (low - high[2]) >= minAtr * atr
-    bool bearGap = high < low[2] and (low[2] - high) >= minAtr * atr
-    if bullGap or bearGap
-        float top = bullGap ? low : low[2]
-        float bot = bullGap ? high[2] : high
-        float m   = (top + bot) / 2
-        box  b    = box.new(bar_index - 2, top, bar_index + extendBars, bot, border_color = zBorder, border_width = 1, bgcolor = bullGap ? bullZ : bearZ)
-        line l    = showMid ? line.new(bar_index - 2, m, bar_index + extendBars, m, color = midC, style = line.style_dashed, width = 1) : na
-        zones.push(Zone.new(b, l, top, bot, bullGap))
-        if zones.size() > maxZ
-            f_kill(zones.shift())
+// add a new gap, or grow the newest zone on that side if they overlap
+f_add(array<Zone> zs, bool bull, float top, float bot, int left, int right, float tol) =>
+    bool merged = false
+    if mergeZ and zs.size() > 0
+        Zone last = zs.last()
+        if bot <= last.top + tol and top >= last.bot - tol
+            last.top := math.max(last.top, top)
+            last.bot := math.min(last.bot, bot)
+            box.set_top(last.bx, last.top)
+            box.set_bottom(last.bx, last.bot)
+            f_setMid(last)
+            merged := true
+    if not merged
+        float m = (top + bot) / 2
+        box  b = box.new(left, top, right, bot, xloc = xloc.bar_time, border_color = zBorder, border_width = 1, bgcolor = bull ? bullZ : bearZ,
+             text = zTag, text_size = size.tiny, text_color = zTextC, text_halign = text.align_right, text_valign = text.align_center)
+        line l = showMid ? line.new(left, m, right, m, xloc = xloc.bar_time, color = midC, style = line.style_dashed, width = 1) : na
+        zs.push(Zone.new(b, l, top, bot, bull))
+        if zs.size() > maxPerSide
+            f_kill(zs.shift())
+
+bool touchBull = false
+bool touchBear = false
+if showZ
+    int right = time + extMs
+    touchBull := f_update(bullZones, right)
+    touchBear := f_update(bearZones, right)
+    float tol = 0.1 * (zHtf ? hA : atr)
+    if cBull
+        f_add(bullZones, true, cTop, cBot, cT, right, tol)
+    if cBear
+        f_add(bearZones, false, cTop, cBot, cT, right, tol)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Alerts: every enabled timeframe agrees
+// Alerts
 // ─────────────────────────────────────────────────────────────────────────────
 f_agree(int dir) =>
     (not on1 or t1 == dir) and (not on2 or t2 == dir) and (not on3 or t3 == dir) and (not on4 or t4 == dir) and
@@ -230,3 +358,15 @@ allBull = f_agree(1)
 allBear = f_agree(-1)
 alertcondition(allBull and not allBull[1], "All timeframes bullish", "{{ticker}}: every timeframe in the dashboard is now Bullish")
 alertcondition(allBear and not allBear[1], "All timeframes bearish", "{{ticker}}: every timeframe in the dashboard is now Bearish")
+alertcondition(touchBull, "Price tapped bullish FVG", "{{ticker}}: price reached a bullish fair value gap")
+alertcondition(touchBear, "Price tapped bearish FVG", "{{ticker}}: price reached a bearish fair value gap")
+
+// one alert for any row that flips (set the alert to "Any alert() function call")
+f_flip(bool on, string tf, int t) =>
+    bool flipped = on and t != 0 and not na(t) and not na(t[1]) and t != t[1]
+    flipped ? f_tfLabel(tf) + " → " + (t == 1 ? "Bullish" : "Bearish") + "  " : ""
+
+flipMsg = f_flip(on1, tf1, t1) + f_flip(on2, tf2, t2) + f_flip(on3, tf3, t3) + f_flip(on4, tf4, t4) +
+     f_flip(on5, tf5, t5) + f_flip(on6, tf6, t6) + f_flip(on7, tf7, t7) + f_flip(on8, tf8, t8)
+if flipMsg != ""
+    alert(syminfo.ticker + " trend flip: " + flipMsg, alert.freq_once_per_bar_close)
