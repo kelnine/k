@@ -146,10 +146,10 @@ f_size(string s) =>
 f_tfLabel(string tf) =>
     float sec = timeframe.in_seconds(tf)
     sec < 60 ? str.tostring(sec) + "s" :
-     sec < 3600 ? str.tostring(math.round(sec / 60)) + "m" :
+     sec < 3600 or (sec < 86400 and sec % 3600 != 0) ? str.tostring(math.round(sec / 60)) + "m" :
      sec < 86400 ? str.tostring(math.round(sec / 3600)) + "H" :
      sec < 604800 ? str.tostring(math.round(sec / 86400)) + "D" :
-     sec < 2419200 ? str.tostring(math.round(sec / 604800)) + "W" :
+     sec < 2419200 or sec % 604800 == 0 ? str.tostring(math.round(sec / 604800)) + "W" :
      str.tostring(math.round(sec / 2628003)) + "M"
 
 // time left until the current chart bar closes, e.g. "03:41"
@@ -233,9 +233,13 @@ type Zone
     float bot
     bool  bull
     bool  touched = false
+    float half    = na
 
 var array<Zone> bullZones = array.new<Zone>()
 var array<Zone> bearZones = array.new<Zone>()
+// ended zones kept on the chart (capped at 400 so live zones are never auto-deleted)
+var array<box>  oldBx     = array.new<box>()
+var array<line> oldLn     = array.new<line>()
 
 atr = ta.atr(14)
 
@@ -270,9 +274,10 @@ f_kill(Zone z) =>
     if not na(z.mid)
         line.delete(z.mid)
 
+// the dashed line marks the level that ends the zone in 50% mode, otherwise the middle of what is left
 f_setMid(Zone z) =>
     if not na(z.mid)
-        float m = (z.top + z.bot) / 2
+        float m = mitig == "50%" ? z.half : (z.top + z.bot) / 2
         line.set_y1(z.mid, m)
         line.set_y2(z.mid, m)
 
@@ -287,26 +292,31 @@ f_update(array<Zone> zs, int right) =>
             if inZone and not z.touched
                 z.touched  := true
                 firstTouch := true
-            float m    = (z.top + z.bot) / 2
             bool  done = switch mitig
                 "Close" => z.bull ? close < z.bot : close > z.top
-                "50%"   => z.bull ? low <= m : high >= m
+                "50%"   => z.bull ? low <= z.half : high >= z.half
                 => z.bull ? low < z.bot : high > z.top
             if done
                 if keepOld
                     box.set_right(z.bx, time)
+                    oldBx.push(z.bx)
                     if not na(z.mid)
                         line.set_x2(z.mid, time)
+                        oldLn.push(z.mid)
+                    if oldBx.size() > 400
+                        box.delete(oldBx.shift())
+                    if oldLn.size() > 400
+                        line.delete(oldLn.shift())
                 else
                     f_kill(z)
                 zs.remove(i)
             else
                 if shrinkZ and inZone
                     if z.bull
-                        z.top := math.max(low, z.bot)
+                        z.top := math.max(mitig == "Close" ? math.min(close, z.top) : low, z.bot)
                         box.set_top(z.bx, z.top)
                     else
-                        z.bot := math.min(high, z.top)
+                        z.bot := math.min(mitig == "Close" ? math.max(close, z.bot) : high, z.top)
                         box.set_bottom(z.bx, z.bot)
                     f_setMid(z)
                 box.set_right(z.bx, right)
@@ -322,6 +332,7 @@ f_add(array<Zone> zs, bool bull, float top, float bot, int left, int right, floa
         if bot <= last.top + tol and top >= last.bot - tol
             last.top := math.max(last.top, top)
             last.bot := math.min(last.bot, bot)
+            last.half := (last.top + last.bot) / 2
             box.set_top(last.bx, last.top)
             box.set_bottom(last.bx, last.bot)
             f_setMid(last)
@@ -331,20 +342,26 @@ f_add(array<Zone> zs, bool bull, float top, float bot, int left, int right, floa
         box  b = box.new(left, top, right, bot, xloc = xloc.bar_time, border_color = zBorder, border_width = 1, bgcolor = bull ? bullZ : bearZ,
              text = zTag, text_size = size.tiny, text_color = zTextC, text_halign = text.align_right, text_valign = text.align_center)
         line l = showMid ? line.new(left, m, right, m, xloc = xloc.bar_time, color = midC, style = line.style_dashed, width = 1) : na
-        zs.push(Zone.new(b, l, top, bot, bull))
+        zs.push(Zone.new(b, l, top, bot, bull, false, m))
         if zs.size() > maxPerSide
             f_kill(zs.shift())
 
 bool touchBull = false
 bool touchBear = false
 if showZ
-    int right = time + extMs
+    int   right = time + extMs
+    float tol   = 0.1 * (zHtf ? hA : atr)
+    // higher-timeframe gaps appear on a later chart bar, so check them on that same bar
+    if zHtf and cBull
+        f_add(bullZones, true, cTop, cBot, cT, right, tol)
+    if zHtf and cBear
+        f_add(bearZones, false, cTop, cBot, cT, right, tol)
     touchBull := f_update(bullZones, right)
     touchBear := f_update(bearZones, right)
-    float tol = 0.1 * (zHtf ? hA : atr)
-    if cBull
+    // chart-timeframe gaps form on this bar, so they start being checked next bar
+    if not zHtf and cBull
         f_add(bullZones, true, cTop, cBot, cT, right, tol)
-    if cBear
+    if not zHtf and cBear
         f_add(bearZones, false, cTop, cBot, cT, right, tol)
 
 // ─────────────────────────────────────────────────────────────────────────────
