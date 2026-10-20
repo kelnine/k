@@ -1,0 +1,260 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=6
+strategy("NQ Sweep → iFVG Strategy", "NQ Sweep iFVG", overlay = true,
+     initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.62, slippage = 1,
+     max_labels_count = 500)
+
+// Backtests the setup from the "NQ Price Action Toolkit" indicator:
+//   1. price sweeps a session high/low (Asia, London, NY AM, Lunch, NY PM) or PDH/PDL,
+//   2. within N bars an FVG in the opposite direction is closed through and becomes an iFVG,
+//   3. enter on a retest of the iFVG edge (or at market), stop beyond the sweep, target at R multiple.
+// All times are New York. Defaults are for MNQ ($0.62 commission per contract per side).
+
+const string TZ = "America/New_York"
+
+// ─────────────────────────────── Inputs ───────────────────────────────
+const string G_SET = "Setup"
+fvgMinAtr = input.float(0.3, "Min gap size (× ATR)", minval = 0, step = 0.05, group = G_SET)
+fvgMax    = input.int(10, "Max FVGs tracked", minval = 1, maxval = 200, group = G_SET)
+sigWindow = input.int(20, "Max bars from sweep to iFVG", minval = 1, maxval = 200, group = G_SET)
+useSessLv = input.bool(true, "Use session highs / lows as sweep levels", group = G_SET)
+usePD     = input.bool(true, "Use PDH / PDL as sweep levels", group = G_SET)
+
+const string G_TRD = "Trade management"
+dirMode   = input.string("Both", "Direction", options = ["Both", "Long only", "Short only"], group = G_TRD)
+entryMode = input.string("Retest", "Entry", options = ["Retest", "Market"], tooltip = "Retest: limit order at the iFVG edge, cancelled if not filled in time or if the stop trades first. Market: enter at the next bar's open.", group = G_TRD)
+fillBars  = input.int(10, "Retest: cancel after (bars)", minval = 1, maxval = 200, group = G_TRD)
+rr        = input.float(2.0, "Target (R multiple)", minval = 0.5, step = 0.25, group = G_TRD)
+stopBuf   = input.int(2, "Stop buffer (ticks)", minval = 0, group = G_TRD)
+maxPerDay = input.int(2, "Max trades per day", minval = 1, maxval = 50, group = G_TRD)
+
+const string G_TIME = "Time filters (NY)"
+useKZ     = input.bool(true, "Only take signals in these windows", group = G_TIME)
+lonSess   = input.session("0200-0500", "London", group = G_TIME)
+amSess    = input.session("0930-1100", "NY AM", group = G_TIME)
+pmSess    = input.session("1330-1600", "NY PM", group = G_TIME)
+useEOD    = input.bool(true, "Flatten at", inline = "eod", group = G_TIME)
+eodSess   = input.session("1655-1800", "", inline = "eod", group = G_TIME)
+maxTfMin  = input.int(15, "Max chart timeframe (minutes)", minval = 1, group = G_TIME)
+
+const string G_LVL = "Level sessions (NY)"
+asiaSess  = input.session("2000-0000", "Asia", group = G_LVL)
+lunchSess = input.session("1200-1330", "Lunch", group = G_LVL)
+
+// ─────────────────────────────── Helpers ───────────────────────────────
+inSession(string sess) =>
+    timeframe.isintraday and not na(time(timeframe.period, sess + ":1234567", TZ))
+
+sessHL(bool inS) =>
+    var float h = na
+    var float l = na
+    if inS and not inS[1]
+        h := high
+        l := low
+    else if inS
+        h := math.max(h, high)
+        l := math.min(l, low)
+    [h, l]
+
+// True on the first bar that trades through a level after it is set; levels are
+// ignored while their own session is still forming them.
+sweepCheck(float lvl, bool active, bool isHigh) =>
+    var bool done = false
+    if lvl != lvl[1]
+        done := false
+    bool hit = false
+    if not active and not done and not na(lvl)
+        hit := isHigh ? high > lvl : low < lvl
+        if hit
+            done := true
+    hit
+
+bool tfOK = timeframe.isintraday and timeframe.in_seconds() <= maxTfMin * 60
+
+// ─────────────────────────────── Levels & sweeps ───────────────────────────────
+bool inAsia  = inSession(asiaSess)
+bool inLon   = inSession(lonSess)
+bool inAM    = inSession(amSess)
+bool inLunch = inSession(lunchSess)
+bool inPM    = inSession(pmSess)
+
+[asiaH, asiaL]   = sessHL(inAsia)
+[lonH, lonL]     = sessHL(inLon)
+[amH, amL]       = sessHL(inAM)
+[lunchH, lunchL] = sessHL(inLunch)
+[pmH, pmL]       = sessHL(inPM)
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+bool sAsiaH  = sweepCheck(asiaH, inAsia, true)
+bool sAsiaL  = sweepCheck(asiaL, inAsia, false)
+bool sLonH   = sweepCheck(lonH, inLon, true)
+bool sLonL   = sweepCheck(lonL, inLon, false)
+bool sAmH    = sweepCheck(amH, inAM, true)
+bool sAmL    = sweepCheck(amL, inAM, false)
+bool sLunchH = sweepCheck(lunchH, inLunch, true)
+bool sLunchL = sweepCheck(lunchL, inLunch, false)
+bool sPmH    = sweepCheck(pmH, inPM, true)
+bool sPmL    = sweepCheck(pmL, inPM, false)
+bool sPDH    = sweepCheck(pdh, false, true)
+bool sPDL    = sweepCheck(pdl, false, false)
+
+string lowSwept  = usePD and sPDL ? "PDL" : not useSessLv ? "" : sAsiaL ? "ASIA.L" : sLonL ? "LON.L" : sAmL ? "AM.L" : sLunchL ? "LUNCH.L" : sPmL ? "PM.L" : ""
+string highSwept = usePD and sPDH ? "PDH" : not useSessLv ? "" : sAsiaH ? "ASIA.H" : sLonH ? "LON.H" : sAmH ? "AM.H" : sLunchH ? "LUNCH.H" : sPmH ? "PM.H" : ""
+
+var int    slBar  = na
+var float  slExt  = na
+var string slName = ""
+var int    shBar  = na
+var float  shExt  = na
+var string shName = ""
+
+if lowSwept != ""
+    slBar  := bar_index
+    slExt  := low
+    slName := lowSwept
+else if not na(slBar)
+    slExt := math.min(slExt, low)
+if highSwept != ""
+    shBar  := bar_index
+    shExt  := high
+    shName := highSwept
+else if not na(shBar)
+    shExt := math.max(shExt, high)
+
+if not na(slBar) and bar_index - slBar > sigWindow
+    slBar := na
+if not na(shBar) and bar_index - shBar > sigWindow
+    shBar := na
+
+// ─────────────────────────────── FVG → iFVG ───────────────────────────────
+type Gap
+    float top
+    float btm
+    bool  bull
+    bool  inverted
+
+var array<Gap> gaps = array.new<Gap>()
+float atr = ta.atr(14)
+bool bullFVG = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
+bool bearFVG = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
+
+if bullFVG or bearFVG
+    gaps.push(Gap.new(bullFVG ? low : low[2], bullFVG ? high[2] : high, bullFVG, false))
+    if gaps.size() > fvgMax
+        gaps.shift()
+
+bool  newBullInv = false
+bool  newBearInv = false
+float invTop = na
+float invBtm = na
+
+if gaps.size() > 0
+    for i = gaps.size() - 1 to 0
+        Gap g = gaps.get(i)
+        bool dead = false
+        if not g.inverted
+            if g.bull and close < g.btm
+                g.inverted := true
+                g.bull := false
+            else if not g.bull and close > g.top
+                g.inverted := true
+                g.bull := true
+            if g.inverted and not (newBullInv or newBearInv)
+                newBullInv := g.bull
+                newBearInv := not g.bull
+                invTop := g.top
+                invBtm := g.btm
+        else
+            dead := g.bull ? close < g.btm : close > g.top
+        if dead
+            gaps.remove(i)
+
+// ─────────────────────────────── Orders ───────────────────────────────
+float buf = stopBuf * syminfo.mintick
+bool  isFlat = strategy.position_size == 0
+
+// Trades opened today (trading day), counted on fills.
+var int tradesToday = 0
+int totalTrades = strategy.closedtrades + strategy.opentrades
+if timeframe.change("D")
+    tradesToday := 0
+if totalTrades > nz(totalTrades[1])
+    tradesToday += 1
+
+// Pending retest orders: cancel when stale or when the stop trades before the fill.
+var string pendId   = ""
+var int    pendBar  = na
+var float  pendStop = na
+if pendId != ""
+    if not isFlat
+        pendId := ""
+    else
+        bool stale   = bar_index - pendBar > fillBars
+        bool invalid = pendId == "Long" ? low <= pendStop : high >= pendStop
+        if stale or invalid
+            strategy.cancel(pendId)
+            pendId := ""
+
+bool inEOD = useEOD and inSession(eodSess)
+if inEOD
+    strategy.close_all(comment = "EOD")
+    if pendId != ""
+        strategy.cancel(pendId)
+        pendId := ""
+
+bool kzOK   = not useKZ or inLon or inAM or inPM
+bool canNew = tfOK and kzOK and not inEOD and isFlat and tradesToday < maxPerDay
+
+float longEntry  = entryMode == "Retest" ? invTop : close
+float longStop   = slExt - buf
+float longRisk   = longEntry - longStop
+float shortEntry = entryMode == "Retest" ? invBtm : close
+float shortStop  = shExt + buf
+float shortRisk  = shortStop - shortEntry
+
+bool buySig  = canNew and dirMode != "Short only" and newBullInv and not na(slBar) and longRisk > 0
+bool sellSig = canNew and dirMode != "Long only" and newBearInv and not na(shBar) and shortRisk > 0 and not buySig
+
+var float actStop   = na
+var float actTarget = na
+
+placeOrder(string id, bool isLong, float entry, float stop, float risk) =>
+    float target = isLong ? entry + rr * risk : entry - rr * risk
+    if entryMode == "Retest"
+        strategy.entry(id, isLong ? strategy.long : strategy.short, limit = entry)
+    else
+        strategy.entry(id, isLong ? strategy.long : strategy.short)
+    strategy.exit(id + " exit", id, stop = stop, limit = target)
+    target
+
+if buySig
+    if pendId == "Short"
+        strategy.cancel("Short")
+    actTarget := placeOrder("Long", true, longEntry, longStop, longRisk)
+    actStop   := longStop
+    pendId    := entryMode == "Retest" ? "Long" : ""
+    pendBar   := bar_index
+    pendStop  := longStop
+    label.new(bar_index, low, "BUY\nswept " + slName, yloc = yloc.belowbar, color = #089981, style = label.style_label_up, textcolor = color.white, size = size.small)
+    slBar := na
+
+if sellSig
+    if pendId == "Long"
+        strategy.cancel("Long")
+    actTarget := placeOrder("Short", false, shortEntry, shortStop, shortRisk)
+    actStop   := shortStop
+    pendId    := entryMode == "Retest" ? "Short" : ""
+    pendBar   := bar_index
+    pendStop  := shortStop
+    label.new(bar_index, high, "SELL\nswept " + shName, yloc = yloc.abovebar, color = #f23645, style = label.style_label_down, textcolor = color.white, size = size.small)
+    shBar := na
+
+bool showLv = strategy.position_size != 0 or pendId != ""
+plot(showLv ? actStop : na, "Stop", #f23645, 1, plot.style_linebr)
+plot(showLv ? actTarget : na, "Target", #089981, 1, plot.style_linebr)
+
+// ─────────────────────────────── Notice ───────────────────────────────
+if barstate.islast and not tfOK
+    var table t = table.new(position.top_right, 1, 1)
+    t.cell(0, 0, "Strategy only trades on intraday charts ≤ " + str.tostring(maxTfMin) + "m", bgcolor = color.new(#f23645, 20), text_color = color.white)
