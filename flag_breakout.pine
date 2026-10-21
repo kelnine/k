@@ -19,6 +19,9 @@ maxFlag  = input.int(12, "Max flag bars", minval = 2, maxval = 30, group = grpF)
 maxRetr  = input.float(0.5, "Max flag retrace of pole", minval = 0.1, maxval = 1.0, step = 0.05, group = grpF)
 holdSlow = input.bool(true, "Flag must hold the slow EMA", group = grpF)
 cooldown = input.int(5, "Min bars between signals", minval = 0, group = grpF)
+stopBuf  = input.float(0.25, "Stop buffer beyond flag (x ATR)", minval = 0, step = 0.05, group = grpF)
+minRR    = input.float(1.0, "Min reward:risk to show signal", minval = 0, step = 0.1, group = grpF)
+maxRR    = input.float(5.0, "Max reward:risk (caps target)", minval = 0.5, step = 0.5, group = grpF)
 
 grpS     = "Session"
 sessStr  = input.session("0930-1600", "Session (New York time)", group = grpS)
@@ -102,17 +105,28 @@ sessOK  = not onlySess or inSess
 var int lastSig = na
 canFire = na(lastSig) or bar_index - lastSig > cooldown
 
-bullSig = barstate.isconfirmed and bFound and trendUp and sessOK and canFire
-bearSig = barstate.isconfirmed and sFound and trendDn and sessOK and canFire and not bullSig
+// Stops: other side of the flag plus a small ATR buffer
+bullStop = bLo - stopBuf * atrV
+bearStop = sHi + stopBuf * atrV
+bullRisk = close - bullStop
+bearRisk = bearStop - close
+
+// Targets: session high/low first, measured move if already through it,
+// capped at maxRR so a tiny stop can't produce a silly 9R target
+float prevHi = sessHi[1]
+float prevLo = sessLo[1]
+bullRaw = not na(prevHi) and prevHi > close ? prevHi : close + bPole
+bearRaw = not na(prevLo) and prevLo < close ? prevLo : close - sPole
+bullTgt = math.min(bullRaw, close + maxRR * bullRisk)
+bearTgt = math.max(bearRaw, close - maxRR * bearRisk)
+bullRR  = bullRisk > 0 ? (bullTgt - close) / bullRisk : 0.0
+bearRR  = bearRisk > 0 ? (close - bearTgt) / bearRisk : 0.0
+
+bullSig = barstate.isconfirmed and bFound and trendUp and sessOK and canFire and bullRR >= minRR
+bearSig = barstate.isconfirmed and sFound and trendDn and sessOK and canFire and bearRR >= minRR and not bullSig
 
 if bullSig or bearSig
     lastSig := bar_index
-
-// Targets: session high/low first, measured move if already through it
-float prevHi = sessHi[1]
-float prevLo = sessLo[1]
-bullTgt = not na(prevHi) and prevHi > close ? prevHi : close + bPole
-bearTgt = not na(prevLo) and prevLo < close ? prevLo : close - sPole
 
 // ───── Drawing ─────
 plot(emaF, "EMA Fast", color = color.new(color.aqua, 0), linewidth = 1)
@@ -122,21 +136,19 @@ plot(showSess and inSess ? sessHi : na, "Session High", color = color.new(color.
 plot(showSess and inSess ? sessLo : na, "Session Low", color = color.new(color.red, 40), style = plot.style_linebr)
 
 if bullSig
-    float risk = close - bLo
-    string rr  = risk > 0 ? str.tostring((bullTgt - close) / risk, "#.#") + "R" : "-"
-    label.new(bar_index, low, "BULL FLAG\n" + rr, yloc = yloc.belowbar, style = label.style_label_up, color = color.new(color.green, 0), textcolor = color.white, size = size.small)
+    string tip = "Entry " + str.tostring(close, format.mintick) + "\nStop " + str.tostring(bullStop, format.mintick) + "\nTarget " + str.tostring(bullTgt, format.mintick)
+    label.new(bar_index, low, "BULL " + str.tostring(bullRR, "#.#") + "R", yloc = yloc.belowbar, style = label.style_label_up, color = color.new(color.green, 15), textcolor = color.white, size = size.tiny, tooltip = tip)
     if showLevels
         line.new(bar_index, close, bar_index + levelBars, close, color = color.gray)
-        line.new(bar_index, bLo, bar_index + levelBars, bLo, color = color.red, style = line.style_dashed)
+        line.new(bar_index, bullStop, bar_index + levelBars, bullStop, color = color.red, style = line.style_dashed)
         line.new(bar_index, bullTgt, bar_index + levelBars, bullTgt, color = color.green, style = line.style_dashed)
 
 if bearSig
-    float risk = sHi - close
-    string rr  = risk > 0 ? str.tostring((close - bearTgt) / risk, "#.#") + "R" : "-"
-    label.new(bar_index, high, "BEAR FLAG\n" + rr, yloc = yloc.abovebar, style = label.style_label_down, color = color.new(color.red, 0), textcolor = color.white, size = size.small)
+    string tip = "Entry " + str.tostring(close, format.mintick) + "\nStop " + str.tostring(bearStop, format.mintick) + "\nTarget " + str.tostring(bearTgt, format.mintick)
+    label.new(bar_index, high, "BEAR " + str.tostring(bearRR, "#.#") + "R", yloc = yloc.abovebar, style = label.style_label_down, color = color.new(color.red, 15), textcolor = color.white, size = size.tiny, tooltip = tip)
     if showLevels
         line.new(bar_index, close, bar_index + levelBars, close, color = color.gray)
-        line.new(bar_index, sHi, bar_index + levelBars, sHi, color = color.red, style = line.style_dashed)
+        line.new(bar_index, bearStop, bar_index + levelBars, bearStop, color = color.red, style = line.style_dashed)
         line.new(bar_index, bearTgt, bar_index + levelBars, bearTgt, color = color.green, style = line.style_dashed)
 
 // ───── Alerts ─────
