@@ -1,0 +1,144 @@
+//@version=6
+// Bull/bear flag breakouts with 9/21 EMA + VWAP trend filter.
+// Built for NQ/MNQ on the 5-minute chart. Targets session high/low,
+// falls back to a measured move (pole height) if price is already past it.
+indicator("Flag Breakouts (EMA 9/21 + VWAP)", shorttitle = "Flag BO", overlay = true, max_bars_back = 200, max_lines_count = 300, max_labels_count = 300)
+
+// ───── Inputs ─────
+grpT     = "Trend"
+fastLen  = input.int(9, "Fast EMA", minval = 1, group = grpT)
+slowLen  = input.int(21, "Slow EMA", minval = 1, group = grpT)
+useVwap  = input.bool(true, "Require price on correct side of VWAP", group = grpT)
+
+grpF     = "Flag detection"
+minPole  = input.int(2, "Min pole bars", minval = 2, maxval = 20, group = grpF)
+maxPole  = input.int(8, "Max pole bars", minval = 2, maxval = 20, group = grpF)
+poleAtr  = input.float(2.0, "Min pole size (x ATR)", minval = 0.1, step = 0.1, group = grpF)
+minFlag  = input.int(3, "Min flag bars", minval = 2, maxval = 30, group = grpF)
+maxFlag  = input.int(12, "Max flag bars", minval = 2, maxval = 30, group = grpF)
+maxRetr  = input.float(0.5, "Max flag retrace of pole", minval = 0.1, maxval = 1.0, step = 0.05, group = grpF)
+holdSlow = input.bool(true, "Flag must hold the slow EMA", group = grpF)
+cooldown = input.int(5, "Min bars between signals", minval = 0, group = grpF)
+
+grpS     = "Session"
+sessStr  = input.session("0930-1600", "Session (New York time)", group = grpS)
+onlySess = input.bool(true, "Signals only inside session", group = grpS)
+showSess = input.bool(true, "Plot session high/low", group = grpS)
+
+grpD       = "Display"
+showLevels = input.bool(true, "Draw entry / stop / target lines", group = grpD)
+levelBars  = input.int(20, "Level line length (bars)", minval = 1, maxval = 400, group = grpD)
+
+// ───── Core calcs ─────
+emaF  = ta.ema(close, fastLen)
+emaS  = ta.ema(close, slowLen)
+vwapV = ta.vwap(hlc3)
+atrV  = ta.atr(14)
+
+// Session high/low (New York RTH by default)
+inSess  = not na(time(timeframe.period, sessStr, "America/New_York"))
+newSess = inSess and not inSess[1]
+var float sessHi = na
+var float sessLo = na
+if newSess
+    sessHi := high
+    sessLo := low
+else if inSess
+    sessHi := math.max(sessHi, high)
+    sessLo := math.min(sessLo, low)
+
+// ───── Flag finder ─────
+// Flag = bars 1..fl back. Pole = the pl bars before the flag.
+// Returns [found, flagHigh, flagLow, poleHeight]
+findFlag(bool isBull) =>
+    bool  found = false
+    float fHi   = na
+    float fLo   = na
+    float pSize = na
+    for fl = minFlag to maxFlag
+        float hi = high[1]
+        float lo = low[1]
+        for i = 2 to fl
+            hi := math.max(hi, high[i])
+            lo := math.min(lo, low[i])
+        for pl = minPole to maxPole
+            float pHi = high[fl + 1]
+            float pLo = low[fl + 1]
+            for j = fl + 2 to fl + pl
+                pHi := math.max(pHi, high[j])
+                pLo := math.min(pLo, low[j])
+            float h   = pHi - pLo
+            float tol = atrV * 0.25
+            bool bigPole = h >= poleAtr * atrV
+            bool ok = false
+            if isBull
+                bool poleUp  = close[fl + 1] > open[fl + pl]
+                bool tight   = hi <= pHi + tol and (pHi - lo) <= maxRetr * h
+                bool holds   = not holdSlow or lo > emaS
+                ok := bigPole and poleUp and tight and holds and close > hi
+            else
+                bool poleDn  = close[fl + 1] < open[fl + pl]
+                bool tight   = lo >= pLo - tol and (hi - pLo) <= maxRetr * h
+                bool holds   = not holdSlow or hi < emaS
+                ok := bigPole and poleDn and tight and holds and close < lo
+            if ok
+                found := true
+                fHi   := hi
+                fLo   := lo
+                pSize := h
+                break
+        if found
+            break
+    [found, fHi, fLo, pSize]
+
+[bFound, bHi, bLo, bPole] = findFlag(true)
+[sFound, sHi, sLo, sPole] = findFlag(false)
+
+// ───── Signals ─────
+trendUp = emaF > emaS and close > emaF and (not useVwap or close > vwapV)
+trendDn = emaF < emaS and close < emaF and (not useVwap or close < vwapV)
+sessOK  = not onlySess or inSess
+
+var int lastSig = na
+canFire = na(lastSig) or bar_index - lastSig > cooldown
+
+bullSig = barstate.isconfirmed and bFound and trendUp and sessOK and canFire
+bearSig = barstate.isconfirmed and sFound and trendDn and sessOK and canFire and not bullSig
+
+if bullSig or bearSig
+    lastSig := bar_index
+
+// Targets: session high/low first, measured move if already through it
+float prevHi = sessHi[1]
+float prevLo = sessLo[1]
+bullTgt = not na(prevHi) and prevHi > close ? prevHi : close + bPole
+bearTgt = not na(prevLo) and prevLo < close ? prevLo : close - sPole
+
+// ───── Drawing ─────
+plot(emaF, "EMA Fast", color = color.new(color.aqua, 0), linewidth = 1)
+plot(emaS, "EMA Slow", color = color.new(color.orange, 0), linewidth = 2)
+plot(vwapV, "VWAP", color = color.new(color.fuchsia, 0), linewidth = 2)
+plot(showSess and inSess ? sessHi : na, "Session High", color = color.new(color.green, 40), style = plot.style_linebr)
+plot(showSess and inSess ? sessLo : na, "Session Low", color = color.new(color.red, 40), style = plot.style_linebr)
+
+if bullSig
+    float risk = close - bLo
+    string rr  = risk > 0 ? str.tostring((bullTgt - close) / risk, "#.#") + "R" : "-"
+    label.new(bar_index, low, "BULL FLAG\n" + rr, yloc = yloc.belowbar, style = label.style_label_up, color = color.new(color.green, 0), textcolor = color.white, size = size.small)
+    if showLevels
+        line.new(bar_index, close, bar_index + levelBars, close, color = color.gray)
+        line.new(bar_index, bLo, bar_index + levelBars, bLo, color = color.red, style = line.style_dashed)
+        line.new(bar_index, bullTgt, bar_index + levelBars, bullTgt, color = color.green, style = line.style_dashed)
+
+if bearSig
+    float risk = sHi - close
+    string rr  = risk > 0 ? str.tostring((close - bearTgt) / risk, "#.#") + "R" : "-"
+    label.new(bar_index, high, "BEAR FLAG\n" + rr, yloc = yloc.abovebar, style = label.style_label_down, color = color.new(color.red, 0), textcolor = color.white, size = size.small)
+    if showLevels
+        line.new(bar_index, close, bar_index + levelBars, close, color = color.gray)
+        line.new(bar_index, sHi, bar_index + levelBars, sHi, color = color.red, style = line.style_dashed)
+        line.new(bar_index, bearTgt, bar_index + levelBars, bearTgt, color = color.green, style = line.style_dashed)
+
+// ───── Alerts ─────
+alertcondition(bullSig, "Bull flag breakout", "Bull flag breakout on {{ticker}} at {{close}}")
+alertcondition(bearSig, "Bear flag breakout", "Bear flag breakout on {{ticker}} at {{close}}")
