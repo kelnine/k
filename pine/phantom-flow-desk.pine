@@ -1,0 +1,454 @@
+//@version=6
+indicator("Phantom Flow Desk", shorttitle = "PF Desk", overlay = false, precision = 1, max_boxes_count = 500, max_lines_count = 100, max_labels_count = 100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phantom Flow Desk — a whole desk layout in one indicator.
+//
+//   ON THE CHART   range volume profile (buy / sell split, POC, value area),
+//                  shaded range, range high / low, auto trendlines with break
+//                  markers, moving average, confluence signals, dashboard
+//
+//   IN THIS PANE   top band     momentum histogram + squeeze dots
+//                  middle band  WaveTrend
+//                  bottom band  Stoch RSI
+//
+// The three oscillators are stacked in one pane, so the pane's price scale is
+// a layout scale. Real values are in the Data Window and the dashboard.
+// Signals and trendline breaks are confirmed on bar close (no repaint).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ═════════════════════════════════ Inputs ═══════════════════════════════════
+
+string G_PF = "Range volume profile · on chart"
+bool   showProfile = input.bool(true, "Show profile", group = G_PF)
+string anchorMode  = input.string("Bars back", "Range", options = ["Bars back", "Day", "Week", "Month"], group = G_PF, tooltip = "Bars back: rolling window of the last N bars.\nDay / Week / Month: restarts at the start of each period (use a chart timeframe below the period).")
+int    lookback    = input.int(200, "Bars back", minval = 10, maxval = 3000, group = G_PF)
+int    rowCount    = input.int(40, "Rows", minval = 10, maxval = 120, group = G_PF)
+float  vaPct       = input.float(70.0, "Value area %", minval = 10, maxval = 100, step = 1, group = G_PF)
+int    pfWidth     = input.int(30, "Profile width (% of range)", minval = 5, maxval = 100, group = G_PF)
+string pfSide      = input.string("Left", "Placement", options = ["Left", "Right"], group = G_PF)
+color  upVolCol    = input.color(#22d3ee, "Buy volume", inline = "vol", group = G_PF)
+color  dnVolCol    = input.color(#ff4fa3, "Sell volume", inline = "vol", group = G_PF)
+bool   showRange   = input.bool(true, "Shade range", inline = "rng", group = G_PF)
+color  rangeCol    = input.color(color.new(#2196f3, 82), "", inline = "rng", group = G_PF)
+bool   showLevels  = input.bool(true, "POC / VAH / VAL", inline = "lvl", group = G_PF)
+color  lvlCol      = input.color(#ffffff, "", inline = "lvl", group = G_PF)
+bool   showHL      = input.bool(true, "Range high / low", inline = "hl", group = G_PF)
+color  hiCol       = input.color(#f5d90a, "", inline = "hl", group = G_PF)
+color  loCol       = input.color(#ff3b4e, "", inline = "hl", group = G_PF)
+bool   extendLvls  = input.bool(true, "Extend levels to the right", group = G_PF)
+
+string G_TL = "Auto trendlines · on chart"
+bool   showTL      = input.bool(true, "Show trendlines", group = G_TL)
+int    tlMajor     = input.int(20, "Major pivot length", minval = 2, maxval = 100, group = G_TL)
+bool   showMinor   = input.bool(true, "Show minor trendlines", group = G_TL)
+int    tlMinor     = input.int(7, "Minor pivot length", minval = 2, maxval = 100, group = G_TL)
+bool   tlSlope     = input.bool(true, "Only falling resistance / rising support", group = G_TL)
+color  tlCol       = input.color(#f5d90a, "Color", group = G_TL)
+bool   showBreaks  = input.bool(true, "Mark trendline breaks", group = G_TL)
+
+string G_MA = "Moving average · on chart"
+bool   showMA      = input.bool(true, "Show MA", group = G_MA)
+string maType      = input.string("EMA", "Type", options = ["EMA", "SMA", "WMA", "HMA", "VWMA", "RMA"], group = G_MA)
+int    maLen       = input.int(21, "Length", minval = 1, group = G_MA)
+color  maCol       = input.color(#ff5c8a, "Color", group = G_MA)
+
+string G_MO = "Momentum · top band"
+bool   showMom     = input.bool(true, "Show momentum", group = G_MO)
+int    momLen      = input.int(20, "Length", minval = 5, group = G_MO)
+int    normLen     = input.int(200, "Normalisation window", minval = 20, group = G_MO, tooltip = "The histogram is scaled against its largest reading over this many bars so it fits the band.")
+float  bbMult      = input.float(2.0, "Squeeze: BB multiplier", minval = 0.1, step = 0.1, group = G_MO)
+float  kcMult      = input.float(1.5, "Squeeze: KC multiplier", minval = 0.1, step = 0.1, group = G_MO)
+color  momUpCol    = input.color(#26e0b8, "Up", inline = "mo", group = G_MO)
+color  momDnCol    = input.color(#ff3b4e, "Down", inline = "mo", group = G_MO)
+color  momFadeCol  = input.color(color.new(#ffffff, 15), "Fading", inline = "mo", group = G_MO)
+
+string G_WT = "WaveTrend · middle band"
+bool   showWave    = input.bool(true, "Show WaveTrend", group = G_WT)
+int    wtChLen     = input.int(10, "Channel length", minval = 1, group = G_WT)
+int    wtAvgLen    = input.int(21, "Average length", minval = 1, group = G_WT)
+int    wtSigLen    = input.int(4, "Signal length", minval = 1, group = G_WT)
+int    wtOB        = input.int(53, "Overbought", minval = 1, maxval = 100, group = G_WT)
+int    wtOS        = input.int(-53, "Oversold", minval = -100, maxval = -1, group = G_WT)
+color  wt1Col      = input.color(#2979ff, "Wave", inline = "wt", group = G_WT)
+color  wt2Col      = input.color(#ff5252, "Signal", inline = "wt", group = G_WT)
+
+string G_ST = "Stoch RSI · bottom band"
+bool   showStoch   = input.bool(true, "Show Stoch RSI", group = G_ST)
+int    rsiLen      = input.int(14, "RSI length", minval = 1, group = G_ST)
+int    stochLen    = input.int(14, "Stoch length", minval = 1, group = G_ST)
+int    smoothK     = input.int(3, "%K smoothing", minval = 1, group = G_ST)
+int    smoothD     = input.int(3, "%D smoothing", minval = 1, group = G_ST)
+int    obLvl       = input.int(80, "Overbought", minval = 50, maxval = 100, group = G_ST)
+int    osLvl       = input.int(20, "Oversold", minval = 0, maxval = 50, group = G_ST)
+color  kCol        = input.color(#2979ff, "%K", inline = "st", group = G_ST)
+color  dCol        = input.color(#ff5252, "%D", inline = "st", group = G_ST)
+
+string G_SG = "Signals & dashboard"
+bool   showSignals = input.bool(true, "Show confluence signals on chart", group = G_SG, tooltip = "Fires on a WaveTrend cross when enough of the four reads agree: price vs MA, Stoch RSI, WaveTrend, momentum slope.")
+int    minPts      = input.int(3, "Minimum confluence (of 4)", minval = 1, maxval = 4, group = G_SG)
+bool   sigZone     = input.bool(true, "Longs only below WaveTrend zero, shorts only above", group = G_SG)
+bool   showDash    = input.bool(true, "Show dashboard", group = G_SG)
+string dashPos     = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_SG)
+bool   showNames   = input.bool(true, "Show band names", group = G_SG)
+
+// ════════════════════════════════ Helpers ═══════════════════════════════════
+
+f_ma(src, len, typ) =>
+    switch typ
+        "SMA" => ta.sma(src, len)
+        "WMA" => ta.wma(src, len)
+        "HMA" => ta.hma(src, len)
+        "VWMA" => ta.vwma(src, len)
+        "RMA" => ta.rma(src, len)
+        => ta.ema(src, len)
+
+f_clamp(float x, float lo, float hi) =>
+    math.max(lo, math.min(hi, x))
+
+f_pos(string p) =>
+    switch p
+        "Top left" => position.top_left
+        "Bottom right" => position.bottom_right
+        "Bottom left" => position.bottom_left
+        => position.top_right
+
+f_row(table t, int row, string name, string val, color valCol) =>
+    table.cell(t, 0, row, name, text_color = color.new(#ffffff, 35), text_halign = text.align_left, text_size = size.small)
+    table.cell(t, 1, row, val, text_color = valCol, text_halign = text.align_right, text_size = size.small)
+
+// One trendline per call site: joins the last two pivots, extends right until a
+// bar closes through it. Returns true on the bar that closes through.
+f_trendline(bool enabled, int len, bool isHigh, color col, int wid, bool slopeFilter) =>
+    var line  ln   = na
+    var bool  live = false
+    var float p1   = na
+    var int   x1   = na
+    var float p2   = na
+    var int   x2   = na
+    bool  broke = false
+    float ph = ta.pivothigh(high, len, len)
+    float pl = ta.pivotlow(low, len, len)
+    float pv = isHigh ? ph : pl
+    if enabled and not na(pv)
+        p1 := p2
+        x1 := x2
+        p2 := pv
+        x2 := bar_index - len
+        if not na(p1)
+            bool slopeOk = not slopeFilter or (isHigh ? p2 < p1 : p2 > p1)
+            if slopeOk
+                float slope    = (p2 - p1) / (x2 - x1)
+                float nowPrice = p2 + slope * (bar_index - x2)
+                bool  already  = isHigh ? close > nowPrice : close < nowPrice
+                line.delete(ln)
+                ln := line.new(x1, p1, x2, p2, xloc = xloc.bar_index, extend = already ? extend.none : extend.right, color = col, style = line.style_solid, width = wid, force_overlay = true)
+                live := not already
+    if live and barstate.isconfirmed
+        float lp = line.get_price(ln, bar_index)
+        if (isHigh and close > lp) or (not isHigh and close < lp)
+            broke := true
+            live  := false
+            line.set_extend(ln, extend.none)
+            line.set_x2(ln, bar_index)
+            line.set_y2(ln, lp)
+    broke
+
+// ═════════════════════════════ Calculations ═════════════════════════════════
+
+// Moving average
+float ma = f_ma(close, maLen, maType)
+bool  trendUp = close > ma
+bool  trendDn = close < ma
+
+// Stoch RSI
+float rsiV     = ta.rsi(close, rsiLen)
+float stochRaw = ta.stoch(rsiV, rsiV, rsiV, stochLen)
+float k        = ta.sma(stochRaw, smoothK)
+float d        = ta.sma(k, smoothD)
+
+// WaveTrend
+float esa   = ta.ema(hlc3, wtChLen)
+float wtDev = ta.ema(math.abs(hlc3 - esa), wtChLen)
+float ci    = wtDev != 0 ? (hlc3 - esa) / (0.015 * wtDev) : 0.0
+float wt1   = ta.ema(ci, wtAvgLen)
+float wt2   = ta.sma(wt1, wtSigLen)
+bool  wtUp  = ta.crossover(wt1, wt2)
+bool  wtDn  = ta.crossunder(wt1, wt2)
+
+// Momentum (linear-regression of price vs its range midpoint) + squeeze state
+float momMid  = math.avg(math.avg(ta.highest(high, momLen), ta.lowest(low, momLen)), ta.sma(close, momLen))
+float mom     = ta.linreg(close - momMid, momLen, 0)
+float momPeak = ta.highest(math.abs(mom), normLen)
+float momN    = momPeak > 0 ? mom / momPeak : 0.0
+bool  momRising  = mom > mom[1]
+bool  momFalling = mom < mom[1]
+float bbDev   = bbMult * ta.stdev(close, momLen)
+float kcDev   = kcMult * ta.sma(ta.tr(true), momLen)
+bool  sqzOn   = bbDev < kcDev
+bool  sqzFired = sqzOn[1] and not sqzOn
+
+// Confluence
+int  bullPts  = (trendUp ? 1 : 0) + (k > d ? 1 : 0) + (wt1 > wt2 ? 1 : 0) + (momRising ? 1 : 0)
+int  bearPts  = (trendDn ? 1 : 0) + (k < d ? 1 : 0) + (wt1 < wt2 ? 1 : 0) + (momFalling ? 1 : 0)
+bool longSig  = barstate.isconfirmed and wtUp and (not sigZone or wt2 < 0) and bullPts >= minPts
+bool shortSig = barstate.isconfirmed and wtDn and (not sigZone or wt2 > 0) and bearPts >= minPts
+
+// Trendlines
+bool brkResMaj = f_trendline(showTL, tlMajor, true, tlCol, 2, tlSlope)
+bool brkSupMaj = f_trendline(showTL, tlMajor, false, tlCol, 2, tlSlope)
+bool brkResMin = f_trendline(showTL and showMinor, tlMinor, true, tlCol, 1, tlSlope)
+bool brkSupMin = f_trendline(showTL and showMinor, tlMinor, false, tlCol, 1, tlSlope)
+bool brkUp = brkResMaj or brkResMin
+bool brkDn = brkSupMaj or brkSupMin
+
+// ═══════════════════════════ Chart overlay plots ════════════════════════════
+
+plot(showMA ? ma : na, "MA", color = maCol, linewidth = 2, force_overlay = true)
+
+plotshape(showSignals and longSig, title = "Long signal", style = shape.triangleup, location = location.belowbar, color = #26e0b8, size = size.small, force_overlay = true)
+plotshape(showSignals and shortSig, title = "Short signal", style = shape.triangledown, location = location.abovebar, color = #ff3b4e, size = size.small, force_overlay = true)
+plotshape(showBreaks and brkUp, title = "Resistance trendline break", style = shape.diamond, location = location.belowbar, color = tlCol, size = size.tiny, force_overlay = true)
+plotshape(showBreaks and brkDn, title = "Support trendline break", style = shape.diamond, location = location.abovebar, color = tlCol, size = size.tiny, force_overlay = true)
+
+// ═══════════════════════════ Range volume profile ═══════════════════════════
+
+int MAX_PF_BARS = 5000
+
+var array<float> aHi  = array.new<float>()
+var array<float> aLo  = array.new<float>()
+var array<float> aVol = array.new<float>()
+var array<bool>  aUp  = array.new<bool>()
+var array<int>   aIdx = array.new<int>()
+
+var array<box>   pfBoxes  = array.new<box>()
+var array<line>  pfLines  = array.new<line>()
+var array<label> pfLabels = array.new<label>()
+
+var float pocPrice = na
+
+bool chgD = timeframe.change("D")
+bool chgW = timeframe.change("W")
+bool chgM = timeframe.change("M")
+bool newAnchor = anchorMode == "Day" ? chgD : anchorMode == "Week" ? chgW : anchorMode == "Month" ? chgM : false
+
+if showProfile
+    if newAnchor
+        aHi.clear()
+        aLo.clear()
+        aVol.clear()
+        aUp.clear()
+        aIdx.clear()
+    aHi.push(high)
+    aLo.push(low)
+    aVol.push(nz(volume))
+    aUp.push(close >= open)
+    aIdx.push(bar_index)
+    int cap = anchorMode == "Bars back" ? lookback : MAX_PF_BARS
+    if aHi.size() > cap
+        aHi.shift()
+        aLo.shift()
+        aVol.shift()
+        aUp.shift()
+        aIdx.shift()
+
+if showProfile and barstate.islast
+    for b in pfBoxes
+        box.delete(b)
+    pfBoxes.clear()
+    for ln in pfLines
+        line.delete(ln)
+    pfLines.clear()
+    for lb in pfLabels
+        label.delete(lb)
+    pfLabels.clear()
+
+    int barCount = aHi.size()
+    if barCount > 0
+        float yTop = aHi.max()
+        float yBot = aLo.min()
+        int   xL   = aIdx.first()
+        int   xR   = aIdx.last()
+        int   xR2  = math.max(xR, xL + 1)
+        float rowH = (yTop - yBot) / rowCount
+
+        if showRange
+            pfBoxes.push(box.new(xL, yTop, xR2, yBot, border_color = color.new(rangeCol, 40), border_width = 1, bgcolor = rangeCol, force_overlay = true))
+
+        if showHL
+            pfLines.push(line.new(xL, yTop, xR2, yTop, extend = extend.right, color = hiCol, style = line.style_solid, width = 2, force_overlay = true))
+            pfLines.push(line.new(xL, yBot, xR2, yBot, extend = extend.right, color = loCol, style = line.style_dotted, width = 2, force_overlay = true))
+
+        if rowH > 0
+            // Spread each bar's volume over the rows its high-low range touches.
+            array<float> upV = array.new<float>(rowCount, 0.0)
+            array<float> dnV = array.new<float>(rowCount, 0.0)
+            for i = 0 to barCount - 1
+                float hi  = aHi.get(i)
+                float lo  = aLo.get(i)
+                float vol = aVol.get(i)
+                bool  up  = aUp.get(i)
+                int   r0  = math.max(0, math.min(rowCount - 1, int((lo - yBot) / rowH)))
+                int   r1  = math.max(r0, math.min(rowCount - 1, int((hi - yBot) / rowH)))
+                float rng = hi - lo
+                for r = r0 to r1
+                    float rLo = yBot + r * rowH
+                    float rHi = rLo + rowH
+                    float w   = rng > 0 ? math.max(0.0, math.min(hi, rHi) - math.max(lo, rLo)) / rng : 1.0
+                    if up
+                        upV.set(r, upV.get(r) + vol * w)
+                    else
+                        dnV.set(r, dnV.get(r) + vol * w)
+
+            array<float> tot = array.new<float>(rowCount, 0.0)
+            for r = 0 to rowCount - 1
+                tot.set(r, upV.get(r) + dnV.get(r))
+            float maxTot = tot.max()
+            float sumTot = tot.sum()
+
+            if maxTot > 0
+                // Point of control + value area (grow outward from the POC).
+                int   pocRow = tot.indexof(maxTot)
+                int   vaLo   = pocRow
+                int   vaHi   = pocRow
+                float vaVol  = maxTot
+                float vaGoal = sumTot * vaPct / 100
+                while vaVol < vaGoal and (vaLo > 0 or vaHi < rowCount - 1)
+                    float above = vaHi < rowCount - 1 ? tot.get(vaHi + 1) : -1.0
+                    float below = vaLo > 0 ? tot.get(vaLo - 1) : -1.0
+                    if above >= below
+                        vaHi  += 1
+                        vaVol += above
+                    else
+                        vaLo  -= 1
+                        vaVol += below
+
+                // Histogram rows: buy volume first, sell volume stacked after it.
+                int maxW = math.max(1, int((xR2 - xL + 1) * pfWidth / 100))
+                if pfSide == "Right"
+                    maxW := math.min(maxW, 200)
+                int   xBase = xR + 3 + maxW
+                float pad   = rowH * 0.08
+                for r = 0 to rowCount - 1
+                    float rowVol = tot.get(r)
+                    if rowVol > 0
+                        float yLo  = yBot + r * rowH + pad
+                        float yHi  = yBot + (r + 1) * rowH - pad
+                        int   wTot = math.max(1, int(math.round(rowVol / maxTot * maxW)))
+                        int   wUp  = math.min(wTot, int(math.round(upV.get(r) / maxTot * maxW)))
+                        bool  inVA = r >= vaLo and r <= vaHi
+                        color cUp  = color.new(upVolCol, inVA ? 15 : 60)
+                        color cDn  = color.new(dnVolCol, inVA ? 15 : 60)
+                        if pfSide == "Left"
+                            if wUp > 0
+                                pfBoxes.push(box.new(xL, yHi, xL + wUp, yLo, border_color = na, bgcolor = cUp, force_overlay = true))
+                            if wTot > wUp
+                                pfBoxes.push(box.new(xL + wUp, yHi, xL + wTot, yLo, border_color = na, bgcolor = cDn, force_overlay = true))
+                        else
+                            if wUp > 0
+                                pfBoxes.push(box.new(xBase - wUp, yHi, xBase, yLo, border_color = na, bgcolor = cUp, force_overlay = true))
+                            if wTot > wUp
+                                pfBoxes.push(box.new(xBase - wTot, yHi, xBase - wUp, yLo, border_color = na, bgcolor = cDn, force_overlay = true))
+
+                float pocY = yBot + (pocRow + 0.5) * rowH
+                float vahY = yBot + (vaHi + 1) * rowH
+                float valY = yBot + vaLo * rowH
+                pocPrice := pocY
+
+                if showLevels
+                    string lvlExt = extendLvls ? extend.right : extend.none
+                    pfLines.push(line.new(xL, pocY, xR2, pocY, extend = lvlExt, color = lvlCol, style = line.style_solid, width = 2, force_overlay = true))
+                    pfLines.push(line.new(xL, vahY, xR2, vahY, extend = lvlExt, color = color.new(lvlCol, 25), style = line.style_solid, width = 1, force_overlay = true))
+                    pfLines.push(line.new(xL, valY, xR2, valY, extend = lvlExt, color = color.new(lvlCol, 25), style = line.style_solid, width = 1, force_overlay = true))
+                    color noBg = color.new(#000000, 100)
+                    pfLabels.push(label.new(xR2 + 1, pocY, "POC", style = label.style_label_left, color = noBg, textcolor = lvlCol, size = size.small, force_overlay = true))
+                    pfLabels.push(label.new(xR2 + 1, vahY, "VAH", style = label.style_label_left, color = noBg, textcolor = color.new(lvlCol, 25), size = size.small, force_overlay = true))
+                    pfLabels.push(label.new(xR2 + 1, valY, "VAL", style = label.style_label_left, color = noBg, textcolor = color.new(lvlCol, 25), size = size.small, force_overlay = true))
+
+// ═════════════════════════ Oscillator pane (stacked) ════════════════════════
+
+// Each band is 100 units tall with a 20 unit gap. Hidden bands collapse.
+float BAND   = 100.0
+float GAP    = 20.0
+float stBase = 0.0
+float wtBase = showStoch ? BAND + GAP : 0.0
+float moBase = wtBase + (showWave ? BAND + GAP : 0.0)
+float wtMid  = wtBase + BAND / 2
+float moMid  = moBase + BAND / 2
+color HIDE   = color.new(#000000, 100)
+
+// Bottom band — Stoch RSI
+hStOB = hline(stBase + obLvl, "Stoch RSI overbought", color = showStoch ? color.new(#4fc3f7, 35) : HIDE, linestyle = hline.style_dashed)
+hStOS = hline(stBase + osLvl, "Stoch RSI oversold", color = showStoch ? color.new(#4fc3f7, 35) : HIDE, linestyle = hline.style_dashed)
+fill(hStOB, hStOS, color = showStoch ? color.new(#2196f3, 80) : HIDE, title = "Stoch RSI band")
+plot(showStoch ? stBase + k : na, "Stoch RSI %K", color = kCol, linewidth = 2)
+plot(showStoch ? stBase + d : na, "Stoch RSI %D", color = dCol, linewidth = 2)
+
+// Middle band — WaveTrend (±100 mapped onto the band)
+hline(wtMid, "WaveTrend zero", color = showWave ? color.new(#ffffff, 75) : HIDE, linestyle = hline.style_dotted)
+hline(wtMid + wtOB * 0.5, "WaveTrend overbought", color = showWave ? color.new(#ff5252, 55) : HIDE, linestyle = hline.style_dashed)
+hline(wtMid + wtOS * 0.5, "WaveTrend oversold", color = showWave ? color.new(#26e0b8, 55) : HIDE, linestyle = hline.style_dashed)
+float wt1Y = wtMid + f_clamp(wt1, -100, 100) * 0.5
+float wt2Y = wtMid + f_clamp(wt2, -100, 100) * 0.5
+plot(showWave ? wt1Y : na, "WaveTrend", color = wt1Col, linewidth = 2)
+plot(showWave ? wt2Y : na, "WaveTrend signal", color = wt2Col, linewidth = 2)
+plot(showWave and wtUp ? wt2Y : na, "WaveTrend cross up", color = #26e0b8, style = plot.style_circles, linewidth = 4)
+plot(showWave and wtDn ? wt2Y : na, "WaveTrend cross down", color = #ff3b4e, style = plot.style_circles, linewidth = 4)
+
+// Top band — momentum histogram + squeeze dots on the midline
+color momCol = mom >= 0 ? (momRising ? momUpCol : momFadeCol) : (momFalling ? momDnCol : momFadeCol)
+plot(showMom and not na(mom) ? moMid + momN * 50 : na, "Momentum", color = momCol, style = plot.style_columns, histbase = moMid)
+plot(showMom ? moMid : na, "Squeeze (orange = on)", color = sqzOn ? #ff9800 : color.new(#ffffff, 70), style = plot.style_circles, linewidth = 2)
+
+// Real (un-stacked) values for the Data Window
+plot(k, "%K value", display = display.data_window, editable = false)
+plot(d, "%D value", display = display.data_window, editable = false)
+plot(wt1, "WaveTrend value", display = display.data_window, editable = false)
+plot(wt2, "WaveTrend signal value", display = display.data_window, editable = false)
+plot(mom, "Momentum value", display = display.data_window, editable = false)
+
+// Band names
+var label nameSt = na
+var label nameWt = na
+var label nameMo = na
+if showNames and barstate.islast
+    color nameCol = color.new(#ffffff, 45)
+    label.delete(nameSt)
+    label.delete(nameWt)
+    label.delete(nameMo)
+    if showStoch
+        nameSt := label.new(bar_index + 2, stBase + 50, "STOCH RSI", style = label.style_label_left, color = HIDE, textcolor = nameCol, size = size.tiny)
+    if showWave
+        nameWt := label.new(bar_index + 2, wtMid, "WAVETREND", style = label.style_label_left, color = HIDE, textcolor = nameCol, size = size.tiny)
+    if showMom
+        nameMo := label.new(bar_index + 2, moMid, "MOMENTUM", style = label.style_label_left, color = HIDE, textcolor = nameCol, size = size.tiny)
+
+// ════════════════════════════════ Dashboard ═════════════════════════════════
+
+var table dash = na
+if showDash and barstate.islast
+    if na(dash)
+        dash := table.new(f_pos(dashPos), 2, 8, bgcolor = color.new(#0b0f14, 10), frame_color = #2a3340, frame_width = 1, border_color = color.new(#2a3340, 50), border_width = 1, force_overlay = true)
+    color cBull = #26e0b8
+    color cBear = #ff3b4e
+    color cFlat = color.new(#ffffff, 20)
+    f_row(dash, 0, "PF DESK", syminfo.ticker + " · " + timeframe.period, #ffffff)
+    f_row(dash, 1, maType + " " + str.tostring(maLen), trendUp ? "Price above ▲" : trendDn ? "Price below ▼" : "At MA", trendUp ? cBull : trendDn ? cBear : cFlat)
+    string stState = k > obLvl ? "Overbought" : k < osLvl ? "Oversold" : k > d ? "Rising" : "Falling"
+    f_row(dash, 2, "Stoch RSI", str.tostring(k, "#.0") + " · " + stState, k > d ? cBull : cBear)
+    string wtState = wt1 > wtOB ? "Overbought" : wt1 < wtOS ? "Oversold" : wt1 > wt2 ? "Rising" : "Falling"
+    f_row(dash, 3, "WaveTrend", str.tostring(wt1, "#.0") + " · " + wtState, wt1 > wt2 ? cBull : cBear)
+    string moState = mom >= 0 ? (momRising ? "Bullish, building" : "Bullish, fading") : (momFalling ? "Bearish, building" : "Bearish, fading")
+    f_row(dash, 4, "Momentum", moState, mom >= 0 ? (momRising ? cBull : cFlat) : (momFalling ? cBear : cFlat))
+    f_row(dash, 5, "Squeeze", sqzOn ? "ON (coiling)" : "Off", sqzOn ? #ff9800 : cFlat)
+    f_row(dash, 6, "Range POC", na(pocPrice) ? "—" : str.tostring(pocPrice, format.mintick), na(pocPrice) ? cFlat : close >= pocPrice ? cBull : cBear)
+    string confTxt = bullPts > bearPts ? str.tostring(bullPts) + "/4 bullish" : bearPts > bullPts ? str.tostring(bearPts) + "/4 bearish" : "Mixed"
+    f_row(dash, 7, "Confluence", confTxt, bullPts > bearPts ? cBull : bearPts > bullPts ? cBear : cFlat)
+
+// ═════════════════════════════════ Alerts ═══════════════════════════════════
+
+alertcondition(longSig, "PF Desk: long signal", "{{ticker}} {{interval}}: Phantom Flow Desk long signal at {{close}}")
+alertcondition(shortSig, "PF Desk: short signal", "{{ticker}} {{interval}}: Phantom Flow Desk short signal at {{close}}")
+alertcondition(brkUp, "PF Desk: resistance trendline break", "{{ticker}} {{interval}}: closed above a resistance trendline at {{close}}")
+alertcondition(brkDn, "PF Desk: support trendline break", "{{ticker}} {{interval}}: closed below a support trendline at {{close}}")
+alertcondition(sqzFired, "PF Desk: squeeze released", "{{ticker}} {{interval}}: squeeze released at {{close}}")

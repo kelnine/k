@@ -39,6 +39,21 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production bundle in dist/
 ```
 
+## TradingView indicator
+
+`pine/phantom-flow-desk.pine` is a standalone Pine Script v6 indicator for
+TradingView (it is not used by the KCharts app). One script draws a full desk
+layout:
+
+- **On the chart** — range volume profile with buy/sell split, POC and value
+  area, shaded range with high/low, auto trendlines with break markers, a moving
+  average, confluence signals and a dashboard.
+- **In its own pane** — momentum histogram with squeeze dots, WaveTrend and
+  Stoch RSI, stacked as three bands.
+
+To use it: open the Pine Editor in TradingView, paste the file's contents,
+then **Add to chart**.
+
 ## Adding a data source
 
 Implement the four-method `DataAdapter` interface in `src/data/` (search,
