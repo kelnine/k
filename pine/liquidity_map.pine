@@ -1,0 +1,314 @@
+//@version=6
+indicator("Liquidity Map", "Liquidity Map", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_polylines_count = 100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+const string G_GEN = "General"
+const string G_SES = "Sessions (on / name / time / colour)"
+const string G_LVL = "Session highs and lows"
+const string G_RNG = "Opening range"
+
+string tzIn = input.string("America/New_York", "Timezone", group = G_GEN,
+     options = ["America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Tokyo", "Australia/Sydney", "UTC", "Exchange"],
+     tooltip = "Every session time below is read in this timezone.")
+string shade = input.string("Expanding range", "Session shading", options = ["Expanding range", "Box", "None"], group = G_GEN,
+     tooltip = "Expanding range: the shading grows with each new session high or low. Box: one rectangle per session.")
+bool autoFg = input.bool(true, "Auto black/white lines and text", group = G_GEN,
+     tooltip = "Black on light charts, white on dark charts, for high lines, the range border and level labels. Turn off to use the colours picked below.")
+
+bool   asiaOn   = input.bool(true, "", inline = "asia", group = G_SES)
+string asiaName = input.string("Asia", "", inline = "asia", group = G_SES)
+string asiaSess = input.session("1900-0400", "", inline = "asia", group = G_SES)
+color  asiaCol  = input.color(color.new(#880E4F, 65), "", inline = "asia", group = G_SES)
+
+bool   lonOn    = input.bool(true, "", inline = "lon", group = G_SES)
+string lonName  = input.string("London", "", inline = "lon", group = G_SES)
+string lonSess  = input.session("0300-0800", "", inline = "lon", group = G_SES)
+color  lonCol   = input.color(color.new(#FDD835, 72), "", inline = "lon", group = G_SES)
+
+bool   nyOn     = input.bool(true, "", inline = "ny", group = G_SES)
+string nyName   = input.string("New York", "", inline = "ny", group = G_SES)
+string nySess   = input.session("0800-1700", "", inline = "ny", group = G_SES)
+color  nyCol    = input.color(color.new(#2962FF, 76), "", inline = "ny", group = G_SES)
+
+bool   lvlOn     = input.bool(true, "Show session highs and lows", group = G_LVL)
+int    lvlKeep   = input.int(1, "Sessions to keep (each)", minval = 1, maxval = 10, group = G_LVL,
+     tooltip = "1 keeps only the most recent completed Asia, London and New York session.")
+string sweptMode = input.string("Dashed", "When price sweeps a level", options = ["Dashed", "Stop line", "Remove"], group = G_LVL)
+color  hiColIn   = input.color(#000000, "High", inline = "lc", group = G_LVL)
+color  loCol     = input.color(#80DEEA, "Low", inline = "lc", group = G_LVL)
+int    lvlWidth  = input.int(1, "Width", minval = 1, maxval = 4, inline = "lc", group = G_LVL)
+string lblMode   = input.string("Name + price", "Labels", options = ["Name + price", "Name only", "None"], group = G_LVL)
+string lblPos    = input.string("Line start", "Label position", options = ["Line start", "Right of last bar"], group = G_LVL)
+string lblSizeIn = input.string("Small", "Label size", options = ["Tiny", "Small", "Normal"], group = G_LVL)
+color  lblColIn  = input.color(#131722, "Label text", group = G_LVL)
+
+bool   rngOn     = input.bool(true, "Show opening range", group = G_RNG)
+string rngSess   = input.session("0800-0815", "Range window", group = G_RNG,
+     tooltip = "The box is the high and low of this window. The label is named after its start time.")
+bool   rngExtend = input.bool(true, "Extend to the right", group = G_RNG)
+int    rngKeep   = input.int(1, "Ranges to keep", minval = 1, maxval = 20, group = G_RNG)
+color  rngFill   = input.color(color.new(#B2EBF2, 80), "Fill", inline = "rc", group = G_RNG)
+color  rngBordIn = input.color(#000000, "Border", inline = "rc", group = G_RNG)
+color  rngMidCol = input.color(#787B86, "Midline", inline = "rc", group = G_RNG)
+color  rngTxtCol = input.color(#787B86, "Text", inline = "rc", group = G_RNG)
+bool   rngMidOn  = input.bool(true, "Show midline", group = G_RNG)
+string sizeMode  = input.string("Fixed points", "Size tag", options = ["Fixed points", "Average of past ranges", "Off"], group = G_RNG,
+     tooltip = "Fixed points: Small / Medium / Large from the two point values below. Average: Small is under 75% and Large is over 125% of the average of past ranges.")
+float  smallPts  = input.float(20.0, "Small below", minval = 0, inline = "pts", group = G_RNG)
+float  largePts  = input.float(40.0, "Large from", minval = 0, inline = "pts", group = G_RNG)
+int    avgLen    = input.int(20, "Ranges to average", minval = 3, maxval = 100, group = G_RNG)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Derived settings
+// ─────────────────────────────────────────────────────────────────────────────
+string tz      = tzIn == "Exchange" ? syminfo.timezone : tzIn
+color  fgCol   = autoFg ? chart.fg_color : hiColIn
+color  txtCol  = autoFg ? chart.fg_color : lblColIn
+color  bordCol = autoFg ? chart.fg_color : rngBordIn
+string lblSize = lblSizeIn == "Tiny" ? size.tiny : lblSizeIn == "Small" ? size.small : size.normal
+bool   tfOk    = timeframe.isintraday
+int    BAR_MS  = timeframe.in_seconds() * 1000
+// Two in-session bars further apart than this belong to different sessions
+// (covers symbols with no overnight bars, where one session runs into the next).
+int    GAP_MS  = math.max(4 * 60 * 60 * 1000, 2 * BAR_MS)
+
+inSession(string sess) =>
+    not na(time(timeframe.period, sess, tz))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+type Level
+    line  ln
+    label lb
+    float price
+    bool  isHigh
+    bool  swept = false
+
+type Sess
+    array<Level>       lv
+    array<chart.point> top
+    array<chart.point> bot
+    polyline           pl
+    box                bx
+    float              hi
+    float              lo
+    int                hiT
+    int                loT
+    int                lastT
+    bool               active = false
+
+type Rng
+    box   bx
+    line  mid
+    label lb
+    float hi
+    float lo
+
+newSess() =>
+    Sess.new(array.new<Level>(), array.new<chart.point>(), array.new<chart.point>())
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session logic
+// ─────────────────────────────────────────────────────────────────────────────
+// Stepped shading between the running session high and low, as one polygon.
+method draw(Sess s, color col) =>
+    s.pl.delete()
+    array<chart.point> pts = s.top.copy()
+    pts.push(chart.point.from_time(s.lastT, s.hi))
+    pts.push(chart.point.from_time(s.lastT, s.lo))
+    for i = s.bot.size() - 1 to 0
+        pts.push(s.bot.get(i))
+    s.pl := polyline.new(pts, closed = true, xloc = xloc.bar_time, line_color = color.new(col, 100), fill_color = col)
+    s
+
+// Line from the bar that printed the extreme, extended right.
+method addLevel(Sess s, string name, bool isHigh) =>
+    float p  = isHigh ? s.hi : s.lo
+    int   t  = isHigh ? s.hiT : s.loT
+    line  ln = line.new(t, p, time, p, xloc = xloc.bar_time, extend = extend.right, color = isHigh ? fgCol : loCol, width = lvlWidth)
+    label lb = na
+    if lblMode != "None"
+        string txt = name + (isHigh ? " High" : " Low") + (lblMode == "Name + price" ? " - " + str.tostring(p, format.mintick) : "")
+        lb := label.new(t, p, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(#000000, 100), textcolor = txtCol, size = lblSize)
+    s.lv.push(Level.new(ln, lb, p, isHigh))
+    while s.lv.size() > lvlKeep * 2
+        Level old = s.lv.shift()
+        old.ln.delete()
+        old.lb.delete()
+    s
+
+method update(Sess s, bool inSess, string name, color col) =>
+    bool gap     = s.active and inSess and time - s.lastT > GAP_MS
+    bool ended   = s.active and (not inSess or gap)
+    bool started = inSess and (not s.active or gap)
+    if ended
+        s.active := false
+        if shade == "Expanding range"
+            s.draw(col)
+        s.pl := na
+        s.bx := na
+        if lvlOn
+            s.addLevel(name, true)
+            s.addLevel(name, false)
+    if started
+        s.active := true
+        s.hi     := high
+        s.lo     := low
+        s.hiT    := time
+        s.loT    := time
+        s.top.clear()
+        s.bot.clear()
+        s.top.push(chart.point.from_time(time, high))
+        s.bot.push(chart.point.from_time(time, low))
+        if shade == "Box"
+            s.bx := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(col, 100), bgcolor = col)
+    if s.active and not started
+        if high > s.hi
+            s.top.push(chart.point.from_time(time, s.hi))
+            s.top.push(chart.point.from_time(time, high))
+            s.hi  := high
+            s.hiT := time
+        if low < s.lo
+            s.bot.push(chart.point.from_time(time, s.lo))
+            s.bot.push(chart.point.from_time(time, low))
+            s.lo  := low
+            s.loT := time
+        if not na(s.bx)
+            s.bx.set_top(s.hi)
+            s.bx.set_bottom(s.lo)
+            s.bx.set_right(time)
+    if inSess
+        s.lastT := time
+        if shade == "Expanding range" and barstate.islast
+            s.draw(col)
+    s.active
+
+// A completed session's high is swept when price trades above it, a low when price trades below.
+method sweep(Sess s) =>
+    bool hiSwept = false
+    bool loSwept = false
+    for l in s.lv
+        if not l.swept and (l.isHigh ? high > l.price : low < l.price)
+            l.swept := true
+            if l.isHigh
+                hiSwept := true
+            else
+                loSwept := true
+            if sweptMode == "Remove"
+                l.ln.delete()
+                l.lb.delete()
+            else
+                l.ln.set_style(line.style_dashed)
+                if sweptMode == "Stop line"
+                    l.ln.set_extend(extend.none)
+                    l.ln.set_x2(time)
+    [hiSwept, loSwept]
+
+method parkLabels(Sess s) =>
+    for l in s.lv
+        l.lb.set_x(time + 4 * BAR_MS)
+    s
+
+var Sess asia   = newSess()
+var Sess london = newSess()
+var Sess ny     = newSess()
+
+bool inAsia = inSession(asiaSess) and asiaOn and tfOk
+bool inLon  = inSession(lonSess) and lonOn and tfOk
+bool inNy   = inSession(nySess) and nyOn and tfOk
+
+asia.update(inAsia, asiaName, asiaCol)
+london.update(inLon, lonName, lonCol)
+ny.update(inNy, nyName, nyCol)
+
+[aHi, aLo] = asia.sweep()
+[lHi, lLo] = london.sweep()
+[nHi, nLo] = ny.sweep()
+bool highSwept = aHi or lHi or nHi
+bool lowSwept  = aLo or lLo or nLo
+
+if lblPos == "Right of last bar" and barstate.islast
+    asia.parkLabels()
+    london.parkLabels()
+    ny.parkLabels()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening range
+// ─────────────────────────────────────────────────────────────────────────────
+var array<Rng>   rngs      = array.new<Rng>()
+var array<float> rngHist   = array.new<float>()
+var bool         rngActive = false
+var int          rngLastT  = na
+var float        rngHi     = na
+var float        rngLo     = na
+
+string rngName = str.substring(rngSess, 0, 2) + ":" + str.substring(rngSess, 2, 4) + " Range"
+
+rngText(float pts) =>
+    string cls = ""
+    if sizeMode == "Fixed points"
+        cls := pts < smallPts ? "Small" : pts >= largePts ? "Large" : "Medium"
+    else if sizeMode == "Average of past ranges" and rngHist.size() >= 3
+        float avg = rngHist.avg()
+        cls := pts < 0.75 * avg ? "Small" : pts > 1.25 * avg ? "Large" : "Medium"
+    rngName + " - " + str.tostring(pts, format.mintick) + " pts" + (cls == "" ? "" : " - " + cls)
+
+bool inRng    = inSession(rngSess) and rngOn and tfOk
+bool rGap     = rngActive and inRng and time - rngLastT > GAP_MS
+bool rEnded   = rngActive and (not inRng or rGap)
+bool rStarted = inRng and (not rngActive or rGap)
+
+if rEnded
+    rngActive := false
+    Rng done = rngs.last()
+    rngHi := done.hi
+    rngLo := done.lo
+    rngHist.push(done.hi - done.lo)
+    if rngHist.size() > avgLen
+        rngHist.shift()
+
+if rStarted
+    rngActive := true
+    rngHi := na
+    rngLo := na
+    while rngs.size() >= rngKeep
+        Rng old = rngs.shift()
+        old.bx.delete()
+        old.mid.delete()
+        old.lb.delete()
+    for prev in rngs
+        prev.bx.set_extend(extend.none)
+        prev.bx.set_right(time)
+        prev.mid.set_extend(extend.none)
+        prev.mid.set_x2(time)
+    string ext = rngExtend ? extend.right : extend.none
+    box   b  = box.new(time, high, time_close, low, xloc = xloc.bar_time, extend = ext, border_color = bordCol, border_width = 2, bgcolor = rngFill)
+    line  m  = line.new(time, hl2, time_close, hl2, xloc = xloc.bar_time, extend = ext, color = rngMidOn ? rngMidCol : color.new(rngMidCol, 100), style = line.style_dashed)
+    label tx = label.new(time, low, "", xloc = xloc.bar_time, style = label.style_label_upper_left, color = color.new(#000000, 100), textcolor = rngTxtCol, size = lblSize)
+    rngs.push(Rng.new(b, m, tx, high, low))
+
+if inRng
+    Rng cur = rngs.last()
+    cur.hi := math.max(cur.hi, high)
+    cur.lo := math.min(cur.lo, low)
+    float midP = (cur.hi + cur.lo) / 2
+    cur.bx.set_top(cur.hi)
+    cur.bx.set_bottom(cur.lo)
+    cur.bx.set_right(time_close)
+    cur.mid.set_y1(midP)
+    cur.mid.set_y2(midP)
+    cur.mid.set_x2(time_close)
+    cur.lb.set_y(cur.lo)
+    cur.lb.set_text(rngText(cur.hi - cur.lo))
+    rngLastT := time
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(highSwept, "Session high swept", "{{ticker}}: a session high was swept")
+alertcondition(lowSwept, "Session low swept", "{{ticker}}: a session low was swept")
+alertcondition(ta.crossover(close, rngHi), "Close above opening range", "{{ticker}}: close above the opening range high")
+alertcondition(ta.crossunder(close, rngLo), "Close below opening range", "{{ticker}}: close below the opening range low")
