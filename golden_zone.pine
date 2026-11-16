@@ -1,0 +1,161 @@
+//@version=6
+indicator("Golden Zone Auto-Fib + Demand Zones", shorttitle = "G-Zone", overlay = true, max_lines_count = 50, max_boxes_count = 50, max_labels_count = 50)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+gR = "Range / Fib"
+lookback   = input.int(104, "Range lookback (bars)", minval = 10, maxval = 4000, group = gR, tooltip = "The swing high and swing low are taken from this many bars. 104 weekly bars = 2 years.")
+gzA        = input.float(0.618, "Golden zone start", minval = 0, maxval = 1, step = 0.001, group = gR)
+gzB        = input.float(0.786, "Golden zone end", minval = 0, maxval = 1, step = 0.001, group = gR)
+showFibs   = input.bool(true, "Show 0.236 / 0.382 / 0.5 levels", group = gR)
+showLabels = input.bool(true, "Show price labels", group = gR)
+extendBars = input.int(8, "Extend levels right (bars)", minval = 0, maxval = 200, group = gR)
+colHigh    = input.color(#4caf50, "Range extreme", group = gR, inline = "c")
+colFib     = input.color(#9598a1, "Fibs", group = gR, inline = "c")
+colGold    = input.color(#f0b90b, "Golden zone", group = gR, inline = "c")
+
+gM = "Moving averages"
+showMA = input.bool(true, "Show EMAs", group = gM)
+len1   = input.int(9, "Fast", minval = 1, group = gM, inline = "m1")
+len2   = input.int(21, "Mid", minval = 1, group = gM, inline = "m1")
+len3   = input.int(50, "Slow", minval = 1, group = gM, inline = "m2")
+len4   = input.int(200, "Trend", minval = 1, group = gM, inline = "m2")
+
+gD = "Demand zones"
+showDZ    = input.bool(true, "Show demand zones", group = gD)
+pivL      = input.int(10, "Pivot left", minval = 1, group = gD, inline = "p")
+pivR      = input.int(5, "Pivot right", minval = 1, group = gD, inline = "p")
+maxDZ     = input.int(4, "Max zones", minval = 1, maxval = 20, group = gD)
+dzMinAtr  = input.float(0.5, "Min thickness (ATR)", minval = 0, step = 0.1, group = gD)
+delBroken = input.bool(true, "Remove zone when price closes below it", group = gD)
+colDZ     = input.color(#2e7d32, "Zone color", group = gD)
+
+gT = "Table"
+showTable = input.bool(true, "Show table", group = gT)
+rsiLen    = input.int(14, "RSI length", minval = 1, group = gT)
+atrLen    = input.int(14, "ATR length", minval = 1, group = gT)
+tblPosStr = input.string("Top right", "Position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = gT)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core calculations
+// ─────────────────────────────────────────────────────────────────────────────
+rsi = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+
+len    = math.min(lookback, bar_index + 1)
+rngHi  = ta.highest(high, len)
+rngLo  = ta.lowest(low, len)
+hiBack = -ta.highestbars(high, len)
+loBack = -ta.lowestbars(low, len)
+rng    = rngHi - rngLo
+
+// High printed after the low -> price is retracing an up-leg (fibs measured from the high down).
+upLeg = hiBack <= loBack
+
+fib(float lvl) =>
+    upLeg ? rngHi - rng * lvl : rngLo + rng * lvl
+
+gzP1  = fib(gzA)
+gzP2  = fib(gzB)
+gzHi  = math.max(gzP1, gzP2)
+gzLo  = math.min(gzP1, gzP2)
+gzMid = (gzHi + gzLo) / 2
+
+inZone = close <= gzHi and close >= gzLo
+broken = upLeg ? close < gzLo : close > gzHi
+gzTxt  = inZone ? "🎯 In Zone" : broken ? "❌ Broken" : "⏳ Waiting"
+gzCol  = inZone ? color.lime : broken ? color.red : color.silver
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Moving averages
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showMA ? ta.ema(close, len1) : na, "EMA fast", color = #26c6da, linewidth = 1)
+plot(showMA ? ta.ema(close, len2) : na, "EMA mid", color = #ff7043, linewidth = 1)
+plot(showMA ? ta.ema(close, len3) : na, "EMA slow", color = #66bb6a, linewidth = 1)
+plot(showMA ? ta.ema(close, len4) : na, "EMA trend", color = #2962ff, linewidth = 2)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demand zones (unbroken pivot lows)
+// ─────────────────────────────────────────────────────────────────────────────
+var box[] dz = array.new<box>()
+pl = ta.pivotlow(low, pivL, pivR)
+
+if showDZ and not na(pl)
+    float bodyTop = math.max(open[pivR], close[pivR])
+    float zoneTop = math.max(bodyTop, pl + nz(atr[pivR]) * dzMinAtr)
+    dz.push(box.new(bar_index - pivR, zoneTop, bar_index, pl, extend = extend.right, bgcolor = color.new(colDZ, 65), border_color = color.new(colDZ, 40)))
+    if dz.size() > maxDZ
+        box.delete(dz.shift())
+
+if delBroken and dz.size() > 0
+    for i = dz.size() - 1 to 0
+        box b = dz.get(i)
+        if close < b.get_bottom()
+            b.delete()
+            dz.remove(i)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fib levels + golden zone (redrawn on the last bar)
+// ─────────────────────────────────────────────────────────────────────────────
+var line[]  lns   = array.new<line>()
+var label[] lbs   = array.new<label>()
+var box     gzBox = na
+
+drawLevel(float lvl, color c, string lineStyle, int w, int x1, int x2) =>
+    float p = fib(lvl)
+    lns.push(line.new(x1, p, x2, p, color = c, style = lineStyle, width = w))
+    if showLabels
+        lbs.push(label.new(x2, p, str.tostring(lvl) + "  " + str.tostring(p, format.mintick), style = label.style_label_left, color = color.new(c, 100), textcolor = c, size = size.small))
+    p
+
+if barstate.islast
+    while lns.size() > 0
+        line.delete(lns.pop())
+    while lbs.size() > 0
+        label.delete(lbs.pop())
+    box.delete(gzBox)
+
+    int x1 = bar_index - math.max(hiBack, loBack)
+    int x2 = bar_index + extendBars
+
+    drawLevel(0.0, colHigh, line.style_solid, 2, x1, x2)
+    if showFibs
+        drawLevel(0.236, colFib, line.style_dashed, 1, x1, x2)
+        drawLevel(0.382, colFib, line.style_dashed, 1, x1, x2)
+        drawLevel(0.5, colFib, line.style_dotted, 1, x1, x2)
+    drawLevel(gzA, colGold, line.style_solid, 2, x1, x2)
+    drawLevel(gzB, colGold, line.style_solid, 2, x1, x2)
+    lns.push(line.new(x1, gzMid, x2, gzMid, color = color.new(colGold, 50), style = line.style_solid, width = 1))
+
+    gzBox := box.new(x1, gzHi, x2, gzLo, bgcolor = color.new(colGold, 88), border_color = na, text = "★ GOLDEN ZONE", text_color = colGold, text_size = size.small, text_halign = text.align_left, text_valign = text.align_center)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Table
+// ─────────────────────────────────────────────────────────────────────────────
+tblPos = switch tblPosStr
+    "Top left"     => position.top_left
+    "Bottom right" => position.bottom_right
+    "Bottom left"  => position.bottom_left
+    => position.top_right
+
+var table t = table.new(tblPos, 2, 4, bgcolor = color.new(#131722, 10), frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 80), border_width = 1)
+
+if showTable and barstate.islast
+    color lblCol = color.gray
+    color rsiCol = rsi >= 70 ? color.red : rsi <= 30 ? color.lime : color.white
+    t.cell(0, 0, "RSI", text_color = lblCol, text_size = size.small)
+    t.cell(1, 0, str.tostring(rsi, "#.0"), text_color = rsiCol, text_size = size.small)
+    t.cell(0, 1, "G-Zone", text_color = lblCol, text_size = size.small)
+    t.cell(1, 1, gzTxt, text_color = gzCol, text_size = size.small)
+    t.cell(0, 2, "ATR", text_color = lblCol, text_size = size.small)
+    t.cell(1, 2, str.tostring(atr, "#.00"), text_color = color.white, text_size = size.small)
+    t.cell(0, 3, "Range", text_color = lblCol, text_size = size.small)
+    t.cell(1, 3, str.tostring(rng, "#.00"), text_color = color.white, text_size = size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(inZone and not inZone[1], "Entered Golden Zone", "{{ticker}} entered the Golden Zone at {{close}}")
+alertcondition(broken and not broken[1], "Golden Zone broken", "{{ticker}} closed through the Golden Zone at {{close}}")
+alertcondition(ta.cross(close, gzMid), "Golden Zone midline cross", "{{ticker}} crossed the Golden Zone midline at {{close}}")
