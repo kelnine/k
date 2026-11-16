@@ -1,0 +1,239 @@
+//@version=6
+indicator("Sweep & Reversal Levels", "SRL", overlay = true, max_lines_count = 200, max_labels_count = 200, max_boxes_count = 100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+string GRP_S = "Reversal signals"
+bool   showSig    = input.bool(true, "Show top/bottom signals", group = GRP_S)
+int    swingLen   = input.int(20, "Swing lookback (bars)", minval = 3, group = GRP_S, tooltip = "Price must make a new high/low over this many bars before a reversal can fire.")
+bool   reqLevel   = input.bool(true, "Require sweep of a key level", group = GRP_S, tooltip = "Signal only when price pierces a key level (PDH/PDL/PD50/TDO/ORB/fib/last pivot) and closes back through it.")
+bool   reqExh     = input.bool(true, "Require exhaustion (RSI or VWAP stretch)", group = GRP_S)
+int    rsiLen     = input.int(14, "RSI length", minval = 2, group = GRP_S)
+float  rsiOB      = input.float(70, "RSI overbought", group = GRP_S)
+float  rsiOS      = input.float(30, "RSI oversold", group = GRP_S)
+float  stretchATR = input.float(2.0, "VWAP stretch (ATR multiples)", step = 0.25, minval = 0, group = GRP_S)
+float  wickPct    = input.float(0.5, "Rejection wick (fraction of bar range)", step = 0.05, minval = 0, maxval = 1, group = GRP_S)
+int    pivLen     = input.int(10, "Pivot length for swing levels", minval = 2, group = GRP_S)
+int    cooldown   = input.int(10, "Min bars between same-side signals", minval = 0, group = GRP_S)
+
+string GRP_L = "Levels"
+string tz       = input.string("America/New_York", "Timezone", group = GRP_L)
+bool   showPD   = input.bool(true, "Previous day high / low / 50%", group = GRP_L)
+bool   showTDO  = input.bool(true, "True day open (midnight)", group = GRP_L)
+bool   showD50  = input.bool(true, "Current day 50%", group = GRP_L)
+int    extBars  = input.int(15, "Extend levels right (bars)", minval = 1, group = GRP_L)
+
+string GRP_O = "Opening range"
+bool   showOrb  = input.bool(true, "Show opening range box", group = GRP_O)
+string orbSess  = input.session("0930-0945", "Opening range session", group = GRP_O)
+
+string GRP_F = "Fib grid"
+bool   showFib  = input.bool(true, "Show fib grid", group = GRP_F)
+string fibSrc   = input.string("Previous Day", "Anchor range", options = ["Previous Day", "Opening Range"], group = GRP_F)
+string fibStr   = input.string("-1, -0.786, -0.236, 0, 0.236, 0.786, 1, 1.236, 1.786, 2", "Levels (0 = range low, 1 = range high)", group = GRP_F)
+bool   fibInSig = input.bool(true, "Use fib levels for sweep detection", group = GRP_F)
+
+string GRP_C = "Style"
+color  cUp      = input.color(#22d3ee, "Bull", group = GRP_C)
+color  cDn      = input.color(#e040fb, "Bear", group = GRP_C)
+bool   colBars  = input.bool(true, "Color candles", group = GRP_C)
+color  cLvl     = input.color(#26a69a, "Level lines", group = GRP_C)
+color  cFib     = input.color(#4dd0e1, "Fib lines", group = GRP_C)
+color  cOrb     = input.color(#ff9800, "Opening range", group = GRP_C)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day structure
+// ─────────────────────────────────────────────────────────────────────────────
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+float pd50 = math.avg(pdh, pdl)
+
+bool newSess = timeframe.change("D")
+bool newDate = ta.change(dayofmonth(time, tz)) != 0
+
+var int   sessT = na
+var float dayHi = na
+var float dayLo = na
+var int   tdoT  = na
+var float tdo   = na
+
+if newSess
+    sessT := time
+    dayHi := high
+    dayLo := low
+else
+    dayHi := math.max(nz(dayHi, high), high)
+    dayLo := math.min(nz(dayLo, low), low)
+float d50 = math.avg(dayHi, dayLo)
+
+if newDate
+    tdoT := time
+    tdo  := open
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening range
+// ─────────────────────────────────────────────────────────────────────────────
+bool inOrb    = not na(time(timeframe.period, orbSess, tz))
+bool orbStart = inOrb and not inOrb[1]
+
+var float orbH      = na
+var float orbL      = na
+var box   orbBox    = na
+var bool  orbActive = false
+
+if newSess
+    orbH      := na
+    orbL      := na
+    orbActive := false
+
+if orbStart
+    orbH      := high
+    orbL      := low
+    orbActive := true
+    if showOrb
+        orbBox := box.new(time, high, time, low, xloc = xloc.bar_time, border_color = cOrb, border_style = line.style_dashed, bgcolor = color.new(cOrb, 85))
+else if inOrb and orbActive
+    orbH := math.max(orbH, high)
+    orbL := math.min(orbL, low)
+
+if orbActive and not na(orbBox)
+    orbBox.set_top(orbH)
+    orbBox.set_bottom(orbL)
+    orbBox.set_right(time)
+
+bool orbDone = orbActive and not inOrb
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fib grid
+// ─────────────────────────────────────────────────────────────────────────────
+var array<float> fibLv = array.new<float>()
+if barstate.isfirst
+    for s in str.split(fibStr, ",")
+        float v = str.tonumber(str.trim(s))
+        if not na(v)
+            fibLv.push(v)
+
+bool  fibPD = fibSrc == "Previous Day"
+float fib0  = fibPD ? pdl : (orbDone ? orbL : na)
+float fib1  = fibPD ? pdh : (orbDone ? orbH : na)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reversal engine: new swing extreme + level sweep + exhaustion + rejection
+// ─────────────────────────────────────────────────────────────────────────────
+float ph = ta.pivothigh(high, pivLen, pivLen)
+float pl = ta.pivotlow(low, pivLen, pivLen)
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+array<float> lv = array.from(pdh, pdl, pd50, tdo, orbDone ? orbH : na, orbDone ? orbL : na, lastPH, lastPL)
+if fibInSig and not na(fib0) and not na(fib1)
+    for f in fibLv
+        lv.push(fib0 + (fib1 - fib0) * f)
+
+sweptUp(array<float> a, float hi, float c, float o1) =>
+    bool r = false
+    for l in a
+        if not na(l) and hi > l and c < l and o1 < l
+            r := true
+            break
+    r
+
+sweptDn(array<float> a, float lo, float c, float o1) =>
+    bool r = false
+    for l in a
+        if not na(l) and lo < l and c > l and o1 > l
+            r := true
+            break
+    r
+
+float atr   = ta.atr(14)
+float rsi   = ta.rsi(close, rsiLen)
+float ema   = ta.ema(close, 50)
+float basis = nz(ta.vwap, ema)
+float hi2   = math.max(high, nz(high[1], high))
+float lo2   = math.min(low, nz(low[1], low))
+float rng   = math.max(high - low, syminfo.mintick)
+
+bool swingHi = hi2 >= ta.highest(high, swingLen)
+bool swingLo = lo2 <= ta.lowest(low, swingLen)
+
+bool exhUp = ta.highest(rsi, 3) >= rsiOB or (hi2 - basis) / atr >= stretchATR
+bool exhDn = ta.lowest(rsi, 3) <= rsiOS or (basis - lo2) / atr >= stretchATR
+
+bool rejUp = close < open and (close < low[1] or (high - math.max(open, close)) / rng >= wickPct)
+bool rejDn = close > open and (close > high[1] or (math.min(open, close) - low) / rng >= wickPct)
+
+bool lvlUp = sweptUp(lv, hi2, close, nz(open[1], open))
+bool lvlDn = sweptDn(lv, lo2, close, nz(open[1], open))
+
+var int lastSell = na
+var int lastBuy  = na
+
+bool sell = showSig and barstate.isconfirmed and swingHi and rejUp and (not reqExh or exhUp) and (not reqLevel or lvlUp) and (na(lastSell) or bar_index - lastSell >= cooldown)
+bool buy  = showSig and barstate.isconfirmed and swingLo and rejDn and (not reqExh or exhDn) and (not reqLevel or lvlDn) and (na(lastBuy) or bar_index - lastBuy >= cooldown)
+
+if sell
+    lastSell := bar_index
+if buy
+    lastBuy := bar_index
+
+plotshape(sell, "Top signal", shape.labeldown, location.abovebar, cDn, text = "▼", textcolor = color.white, size = size.small)
+plotshape(buy, "Bottom signal", shape.labelup, location.belowbar, cUp, text = "▲", textcolor = color.white, size = size.small)
+barcolor(colBars ? (close >= open ? cUp : cDn) : na)
+
+alertcondition(sell, "Top reversal", "{{ticker}} {{interval}}: top reversal signal at {{close}}")
+alertcondition(buy, "Bottom reversal", "{{ticker}} {{interval}}: bottom reversal signal at {{close}}")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawing (last bar only)
+// ─────────────────────────────────────────────────────────────────────────────
+newLine(color c, string st) =>
+    line.new(na, na, na, na, xloc = xloc.bar_time, color = c, style = st, width = 1)
+
+newLabel(color c) =>
+    label.new(na, na, "", xloc = xloc.bar_time, style = label.style_label_left, color = color(na), textcolor = c, size = size.small)
+
+setLevel(line ln, label lb, bool show, float p, int x1, int x2, string txt) =>
+    if show and not na(p) and not na(x1)
+        ln.set_xy1(x1, p)
+        ln.set_xy2(x2, p)
+        lb.set_xy(x2, p)
+        lb.set_text(txt)
+
+var line  pdhLn = newLine(cLvl, line.style_solid)
+var line  pdlLn = newLine(cLvl, line.style_solid)
+var line  p50Ln = newLine(cLvl, line.style_dotted)
+var line  tdoLn = newLine(cLvl, line.style_dotted)
+var line  d50Ln = newLine(color.gray, line.style_dotted)
+var label pdhLb = newLabel(cLvl)
+var label pdlLb = newLabel(cLvl)
+var label p50Lb = newLabel(cLvl)
+var label tdoLb = newLabel(cLvl)
+var label d50Lb = newLabel(color.gray)
+
+var array<line>  fibLines  = array.new<line>()
+var array<label> fibLabels = array.new<label>()
+
+if barstate.islast
+    int x2 = time + timeframe.in_seconds() * 1000 * extBars
+    setLevel(pdhLn, pdhLb, showPD, pdh, sessT, x2, "PDH")
+    setLevel(pdlLn, pdlLb, showPD, pdl, sessT, x2, "PDL")
+    setLevel(p50Ln, p50Lb, showPD, pd50, sessT, x2, "PD50")
+    setLevel(tdoLn, tdoLb, showTDO, tdo, tdoT, x2, "TDO")
+    setLevel(d50Ln, d50Lb, showD50, d50, sessT, x2, "D50%")
+
+    for l in fibLines
+        l.delete()
+    for l in fibLabels
+        l.delete()
+    fibLines.clear()
+    fibLabels.clear()
+    if showFib and not na(fib0) and not na(fib1) and not na(sessT)
+        for f in fibLv
+            float p = fib0 + (fib1 - fib0) * f
+            fibLines.push(line.new(sessT, p, x2, p, xloc = xloc.bar_time, color = cFib, width = 1))
+            fibLabels.push(label.new(x2, p, str.tostring(f) + " (" + str.tostring(p, format.mintick) + ")", xloc = xloc.bar_time, style = label.style_label_left, color = color(na), textcolor = cFib, size = size.small))
