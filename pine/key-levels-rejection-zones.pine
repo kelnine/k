@@ -33,9 +33,9 @@ showCW    = input.bool(true,  "current",             group = grpL, inline = "w")
 colW      = input.color(#FF9800, "",                 group = grpL, inline = "w")
 showPD    = input.bool(true,  "Day — previous",      group = grpL, inline = "d")
 showCD    = input.bool(true,  "current",             group = grpL, inline = "d")
-colD      = input.color(#2962FF, "",                 group = grpL, inline = "d")
+colD      = input.color(#2196F3, "",                 group = grpL, inline = "d")
 showFC    = input.bool(true,  "Friday close",        group = grpL, inline = "fc")
-colFC     = input.color(#787B86, "",                 group = grpL, inline = "fc")
+colFC     = input.color(#9598A1, "",                 group = grpL, inline = "fc")
 showOpen  = input.bool(false, "Daily / weekly open", group = grpL, inline = "op")
 colOpen   = input.color(#26A69A, "",                 group = grpL, inline = "op")
 showRound = input.bool(true,  "Round numbers",       group = grpL, inline = "rn")
@@ -72,7 +72,7 @@ colSup     = input.color(#089981, "Support",    group = grpH, inline = "hc")
 grpSe = "Sessions"
 showSess   = input.bool(true, "Session high / low levels", group = grpSe)
 hideSwept  = input.bool(true, "Hide session levels once swept", group = grpSe)
-showSessBx = input.bool(true, "Session boxes", group = grpSe, inline = "sb")
+showSessBx = input.bool(false, "Session boxes", group = grpSe, inline = "sb")
 sessKeep   = input.int(2, "keep last", minval = 1, maxval = 10, group = grpSe, inline = "sb")
 sessTZ     = input.string("America/New_York", "Timezone", group = grpSe)
 asiaOn     = input.bool(true, "Asia", group = grpSe, inline = "as")
@@ -89,7 +89,7 @@ grpV = "Volume Profile"
 showVPH  = input.bool(true, "Histogram", group = grpV, inline = "vh")
 vpLook   = input.int(300, "lookback bars", minval = 50, maxval = 990, group = grpV, inline = "vh")
 vpRows   = input.int(30, "Rows", minval = 10, maxval = 60, group = grpV)
-vpWidth  = input.int(25, "Width (% of lookback)", minval = 5, maxval = 100, group = grpV)
+vpWidth  = input.int(15, "Width (% of lookback)", minval = 5, maxval = 100, group = grpV)
 vpVA     = input.float(70, "Value area %", minval = 10, maxval = 100, group = grpV)
 colVPUp  = input.color(#2962FF, "Buy vol",  group = grpV, inline = "vc")
 colVPDn  = input.color(#F23645, "Sell vol", group = grpV, inline = "vc")
@@ -100,7 +100,9 @@ grpF = "Fibonacci (active structure leg)"
 showFib = input.bool(true, "Auto fib", group = grpF, inline = "fb")
 colFib  = input.color(#FFB300, "", group = grpF, inline = "fb")
 fibStr  = input.string("0, 0.236, 0.382, 0.5, 0.618, 0.65, 0.71, 0.786, 0.886, 1", "Levels", group = grpF)
-fibOTE  = input.bool(true, "Shade OTE (0.618 – 0.786)", group = grpF)
+fibOTE    = input.bool(true, "Shade OTE (0.618 – 0.786)", group = grpF)
+fibMinAtr = input.float(5.0, "Min leg size (x ATR)", minval = 0, step = 0.5, group = grpF, tooltip = "The fib only re-anchors to structure legs at least this tall, so it isn't redrawn on every small swing.")
+fibLblPos = input.string("Left", "Fib labels", options = ["Left", "Right", "Off"], group = grpF)
 
 grpZ = "Structure & Zones"
 swingLen   = input.int(5, "Swing length", minval = 2, maxval = 50, group = grpZ, tooltip = "Pivot strength for structure (BOS / CHoCH), sell/buy zones, fib legs and rejection zones.")
@@ -111,15 +113,15 @@ showBB     = input.bool(true, "flip to breaker", group = grpZ, inline = "ob")
 obMax      = input.int(4, "Max sell / buy zones", minval = 1, maxval = 30, group = grpZ)
 obMaxAtr   = input.float(1.5, "Max zone height (x ATR)", minval = 0.1, step = 0.1, group = grpZ)
 showLeg    = input.bool(true, "Displacement leg box", group = grpZ, inline = "lg")
-colLeg     = input.color(#FFEB3B4D, "", group = grpZ, inline = "lg")
+colLeg     = input.color(#FFEB3B40, "", group = grpZ, inline = "lg")
 colSell    = input.color(#F23645, "Sell", group = grpZ, inline = "sc")
 colBuy     = input.color(#089981, "Buy",  group = grpZ, inline = "sc")
 showFVG    = input.bool(true, "FVG", group = grpZ, inline = "fvg")
 showIFVG   = input.bool(true, "flip to IFVG", group = grpZ, inline = "fvg")
 colFvgBull = input.color(#2962FF, "", group = grpZ, inline = "fvg")
 colFvgBear = input.color(#7E57C2, "", group = grpZ, inline = "fvg")
-fvgMinAtr  = input.float(0.25, "Min FVG size (x ATR)", minval = 0, step = 0.05, group = grpZ)
-fvgMax     = input.int(6, "Max FVGs", minval = 1, maxval = 50, group = grpZ)
+fvgMinAtr  = input.float(0.5, "Min FVG size (x ATR)", minval = 0, step = 0.05, group = grpZ)
+fvgMax     = input.int(4, "Max FVGs", minval = 1, maxval = 50, group = grpZ)
 showRZ     = input.bool(false, "Swing rejection (wick) zones", group = grpZ, inline = "rz")
 rzMax      = input.int(3, "per side", minval = 1, maxval = 20, group = grpZ, inline = "rz")
 rzMinAtr   = input.float(0.2, "Min rejection zone height (x ATR)", minval = 0, step = 0.05, group = grpZ)
@@ -127,12 +129,25 @@ zoneTransp = input.int(80, "Zone transparency", minval = 0, maxval = 100, group 
 zoneExtend = input.int(10, "Extend zones right (bars)", minval = 1, maxval = 300, group = grpZ)
 
 grpG = "Rejection / Sweep Signals"
-showSig  = input.bool(true, "Signals", group = grpG, inline = "sg")
-sigText  = input.bool(true, "with level name", group = grpG, inline = "sg")
-sigZones = input.bool(true, "Include zone re-tests", group = grpG)
-wickMin  = input.float(35, "Min rejection wick (% of candle)", minval = 0, maxval = 100, group = grpG) / 100
-statRR   = input.float(2.0, "Stats: target (R multiple)", minval = 0.5, step = 0.5, group = grpG)
-statBuf  = input.float(0.1, "Stats: stop beyond wick (x ATR)", minval = 0, step = 0.05, group = grpG)
+showSig   = input.bool(true, "Signals", group = grpG, inline = "sg")
+sigText   = input.bool(true, "with level name", group = grpG, inline = "sg")
+freshN    = input.int(15, "Fresh level: untouched for N bars (0 = off)", minval = 0, maxval = 500, group = grpG, tooltip = "Only the first test of a level / zone after price stayed away from it for N bars. Stops signals firing on every candle while price chops around a level.")
+sigCool   = input.int(5, "Cooldown between same-side signals (bars)", minval = 0, maxval = 500, group = grpG)
+minRngAtr = input.float(0.5, "Min signal candle size (x ATR)", minval = 0, step = 0.1, group = grpG)
+wickMin   = input.float(35, "Min rejection wick (% of candle)", minval = 0, maxval = 100, group = grpG) / 100
+sigFilter = input.string("None", "Direction filter", options = ["None", "With structure"], group = grpG, tooltip = "With structure: buy signals only after a bullish BOS, sell signals only after a bearish BOS.")
+statRR    = input.float(2.0, "Stats: target (R multiple)", minval = 0.5, step = 0.5, group = grpG)
+statBuf   = input.float(0.1, "Stats: stop beyond wick (x ATR)", minval = 0, step = 0.05, group = grpG)
+
+grpSS = "Signal Sources"
+srcKey   = input.bool(true,  "Month / Week / Day levels, Friday close, opens, manual", group = grpSS)
+srcHtf   = input.bool(true,  "HTF support / resistance", group = grpSS)
+srcSess  = input.bool(true,  "Session highs / lows", group = grpSS)
+srcZones = input.bool(true,  "Sell / Buy zones, breakers, HTF + rejection zones", group = grpSS)
+srcFvg   = input.bool(false, "FVG / IFVG", group = grpSS)
+srcRound = input.bool(false, "Round numbers", group = grpSS)
+srcFib   = input.bool(false, "Fib levels", group = grpSS)
+srcVP    = input.bool(false, "Volume profile POC / VA", group = grpSS)
 
 grpE = "Moving Averages"
 showEMA = input.bool(false, "EMAs", group = grpE, inline = "e")
@@ -147,7 +162,7 @@ lvlExtend  = input.int(20, "Extend right (bars)", minval = 1, maxval = 300, grou
 showLabels = input.bool(true, "Labels", group = grpS, inline = "lb")
 showPrices = input.bool(true, "with price", group = grpS, inline = "lb")
 lblSizeIn  = input.string("Small", "Label size", options = ["Tiny", "Small", "Normal"], group = grpS)
-mergeAtr   = input.float(0.1, "Merge labels closer than (x ATR)", minval = 0, step = 0.05, group = grpS)
+mergeAtr   = input.float(0.15, "Merge labels closer than (x ATR)", minval = 0, step = 0.05, group = grpS)
 
 grpD = "Dashboard"
 showDash  = input.bool(true, "Dashboard", group = grpD)
@@ -174,6 +189,7 @@ type Lvl
     string sty
     bool   sig  = true
     bool   draw = true
+    int    src  = 0
 
 type Trade
     float entry
@@ -205,6 +221,19 @@ bool  weekOK  = timeframe.isintraday or timeframe.isdaily
 bool  monthOK = not timeframe.ismonthly
 bool  isLast  = barstate.islast
 
+// level kinds (used for signal sources)
+int SRC_KEY   = 0
+int SRC_HTF   = 1
+int SRC_SESS  = 2
+int SRC_ROUND = 3
+int SRC_FIB   = 4
+int SRC_VP    = 5
+
+// freshness: highest high / lowest low of the N bars before this one
+bool  useFresh = freshN > 0
+float hiPrev   = ta.highest(high, math.max(1, freshN))[1]
+float loPrev   = ta.lowest(low, math.max(1, freshN))[1]
+
 var array<line>  bosLines  = array.new<line>()
 var array<label> bosLabels = array.new<label>()
 
@@ -215,6 +244,15 @@ tfName(string tf) =>
 
 joinName(string a, string b) =>
     a == "" ? b : str.contains(a, b) ? a : a + " + " + b
+
+srcOn(int s) =>
+    switch s
+        0 => srcKey
+        1 => srcHtf
+        2 => srcSess
+        3 => srcRound
+        4 => srcFib
+        => srcVP
 
 // Use the chart-tracked time of a high/low when it matches the HTF value, else fall back.
 pickT(float secV, float trkV, int trkT, int fb) =>
@@ -272,7 +310,7 @@ sessTracker(string sess, string tz, bool drawBox, color col, string name, int ke
         hiSw := na
         loSw := na
         if drawBox
-            bxs.push(box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(col, 70), bgcolor = color.new(col, 93), text = name, text_size = size.tiny, text_color = color.new(col, 30), text_halign = text.align_left, text_valign = text.align_bottom))
+            bxs.push(box.new(time, high, time, low, xloc = xloc.bar_time, border_color = color.new(col, 60), border_style = line.style_dotted, bgcolor = color.new(col, 96), text = name, text_size = size.tiny, text_color = color.new(col, 30), text_halign = text.align_left, text_valign = text.align_bottom))
             if bxs.size() > keepN
                 box.delete(bxs.shift())
     else if inS
@@ -366,7 +404,7 @@ addZone(array<Zone> zs, int leftT, float top, float bot, bool bull, string tag, 
 
 // Closed through -> flip role (FVG -> IFVG, zone -> BREAKER) or remove.
 // Wick into the zone from outside + close back out -> re-test (counted, returned as a hit).
-updateZones(array<Zone> zs, bool canFlip, string flipTag, color bullCol, color bearCol) =>
+updateZones(array<Zone> zs, bool canFlip, string flipTag, color bullCol, color bearCol, bool fresh, float hiP, float loP) =>
     bool   bullHit = false
     bool   bearHit = false
     string bullTag = ""
@@ -394,8 +432,8 @@ updateZones(array<Zone> zs, bool canFlip, string flipTag, color bullCol, color b
                     deleteZone(z)
                     zs.remove(i)
             else
-                bool bearTest = not z.bull and open < z.bot and high >= z.bot and close < z.bot
-                bool bullTest = z.bull and open > z.top and low <= z.top and close > z.top
+                bool bearTest = not z.bull and open < z.bot and high >= z.bot and close < z.bot and (not fresh or hiP < z.bot)
+                bool bullTest = z.bull and open > z.top and low <= z.top and close > z.top and (not fresh or loP > z.top)
                 if bearTest or bullTest
                     z.hits := z.hits + 1
                     box.set_text(z.bx, z.tag + " (" + str.tostring(z.hits) + ")")
@@ -411,17 +449,17 @@ extendZones(array<Zone> zs) =>
     for z in zs
         box.set_right(z.bx, time + zoneExtend * tfMs)
 
-addLvl(array<Lvl> arr, bool on, float p, string s, string l, color c, int t1, int t2, string sty, bool sig) =>
+addLvl(array<Lvl> arr, bool on, float p, string s, string l, color c, int t1, int t2, string sty, bool sig, int src) =>
     if on and not na(p) and p > 0
-        arr.push(Lvl.new(p, s, l, c, t1, t2, sty, sig))
+        arr.push(Lvl.new(p, s, l, c, t1, t2, sty, sig, true, src))
 
 addSess(array<Lvl> arr, bool on, float hi, float lo, int hiT, int loT, int hiSw, int loSw, bool inS, string s, string l, color c) =>
     if on and not na(hi) and not na(lo)
         bool   hSw  = not na(hiSw)
         bool   lSw  = not na(loSw)
         string base = inS ? line.style_dotted : lvlStyle
-        arr.push(Lvl.new(hi, s + " H", l + " HIGH", hSw ? color.new(c, 50) : c, hiT, hSw ? hiSw : na, hSw ? line.style_dotted : base, not inS and (not hSw or hiSw == time), not (hSw and hideSwept)))
-        arr.push(Lvl.new(lo, s + " L", l + " LOW", lSw ? color.new(c, 50) : c, loT, lSw ? loSw : na, lSw ? line.style_dotted : base, not inS and (not lSw or loSw == time), not (lSw and hideSwept)))
+        arr.push(Lvl.new(hi, s + " H", l + " HIGH", hSw ? color.new(c, 50) : c, hiT, hSw ? hiSw : na, hSw ? line.style_dotted : base, not inS and (not hSw or hiSw == time), not (hSw and hideSwept), SRC_SESS))
+        arr.push(Lvl.new(lo, s + " L", l + " LOW", lSw ? color.new(c, 50) : c, loT, lSw ? loSw : na, lSw ? line.style_dotted : base, not inS and (not lSw or loSw == time), not (lSw and hideSwept), SRC_SESS))
 
 drawBOS(float price, int t1, bool up, bool choch) =>
     color c = up ? colBuy : colSell
@@ -463,10 +501,10 @@ var array<Zone> fvgs  = array.new<Zone>()
 var array<Zone> rzs   = array.new<Zone>()
 var array<Zone> htfZs = array.new<Zone>()
 
-[obBu, obBe, obBuT, obBeT] = updateZones(obs, showBB, "BREAKER", colBuy, colSell)
-[fvBu, fvBe, fvBuT, fvBeT] = updateZones(fvgs, showIFVG, "IFVG", colFvgBull, colFvgBear)
-[rzBu, rzBe, rzBuT, rzBeT] = updateZones(rzs, false, "", colBuy, colSell)
-[hzBu, hzBe, hzBuT, hzBeT] = updateZones(htfZs, false, "", colBuy, colSell)
+[obBu, obBe, obBuT, obBeT] = updateZones(obs, showBB, "BREAKER", colBuy, colSell, useFresh, hiPrev, loPrev)
+[fvBu, fvBe, fvBuT, fvBeT] = updateZones(fvgs, showIFVG, "IFVG", colFvgBull, colFvgBear, useFresh, hiPrev, loPrev)
+[rzBu, rzBe, rzBuT, rzBeT] = updateZones(rzs, false, "", colBuy, colSell, useFresh, hiPrev, loPrev)
+[hzBu, hzBe, hzBuT, hzBeT] = updateZones(htfZs, false, "", colBuy, colSell, useFresh, hiPrev, loPrev)
 
 // ═══════════════════════════════ STRUCTURE (BOS / CHoCH, sell / buy zones, legs) ═══════════════════════════════
 float ph = ta.pivothigh(high, swingLen, swingLen)
@@ -703,7 +741,7 @@ if isLast
             for r = 0 to vpRows - 1
                 float yb = bot + r * step
                 float yt = yb + step
-                int   tr = r == pocI ? 15 : r >= vaD and r <= vaU ? 50 : 78
+                int   tr = r == pocI ? 35 : r >= vaD and r <= vaU ? 65 : 85
                 int   wU = math.round(maxW * bu.get(r) / mx)
                 int   wD = math.round(maxW * bd.get(r) / mx)
                 if wU > 0
@@ -722,12 +760,25 @@ if barstate.isfirst
         if not na(v)
             fibLv.push(v)
 
+// the fib follows the latest structure leg that is at least fibMinAtr x ATR tall
+var int   fDir = 0
+var float fHi  = na
+var float fLo  = na
+var int   fHiT = na
+var int   fLoT = na
+if legDir != 0 and not na(legHi) and not na(legLo) and legHi - legLo >= fibMinAtr * atr
+    fDir := legDir
+    fHi  := legHi
+    fLo  := legLo
+    fHiT := legHiT
+    fLoT := legLoT
+
 // 0 = end of the leg, 1 = origin (as in the screenshots: 100% on the swing high of a down-leg)
 fibPrice(float f) =>
-    legDir == -1 ? legLo + (legHi - legLo) * f : legHi - (legHi - legLo) * f
+    fDir == -1 ? fLo + (fHi - fLo) * f : fHi - (fHi - fLo) * f
 
-bool fibOK = showFib and legDir != 0 and not na(legHi) and not na(legLo) and legHi > legLo
-int  fibT1 = legDir == -1 ? legHiT : legLoT
+bool fibOK = showFib and fDir != 0 and not na(fHi) and not na(fLo) and fHi > fLo
+int  fibT1 = fDir == -1 ? fHiT : fLoT
 
 // ═══════════════════════════════ LEVEL REGISTRY ═══════════════════════════════
 var array<Lvl> lvls = array.new<Lvl>()
@@ -738,87 +789,97 @@ float  rStep  = roundStep > 0 ? roundStep : math.pow(10, math.floor(math.log10(c
 float  rBase  = math.floor(close / rStep) * rStep
 
 // order = label priority when labels merge
-addLvl(lvls, showPM and monthOK, pmH, "PMH", "PREVIOUS MONTH HIGH", colM, pickT(pmH, tpmH, tpmHT, pmT), na, lvlStyle, true)
-addLvl(lvls, showPM and monthOK, pmL, "PML", "PREVIOUS MONTH LOW", colM, pickT(pmL, tpmL, tpmLT, pmT), na, lvlStyle, true)
-addLvl(lvls, showPW and weekOK, pwH, "PWH", "PREVIOUS WEEK HIGH", colW, pickT(pwH, tpwH, tpwHT, pwT), na, lvlStyle, true)
-addLvl(lvls, showPW and weekOK, pwL, "PWL", "PREVIOUS WEEK LOW", colW, pickT(pwL, tpwL, tpwLT, pwT), na, lvlStyle, true)
-addLvl(lvls, showPD and dayOK, pdH, "PDH", "PREVIOUS DAY HIGH", colD, pickT(pdH, tpdH, tpdHT, pdT), na, lvlStyle, true)
-addLvl(lvls, showPD and dayOK, pdL, "PDL", "PREVIOUS DAY LOW", colD, pickT(pdL, tpdL, tpdLT, pdT), na, lvlStyle, true)
+addLvl(lvls, showPM and monthOK, pmH, "PMH", "PREVIOUS MONTH HIGH", colM, pickT(pmH, tpmH, tpmHT, pmT), na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, showPM and monthOK, pmL, "PML", "PREVIOUS MONTH LOW", colM, pickT(pmL, tpmL, tpmLT, pmT), na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, showPW and weekOK, pwH, "PWH", "PREVIOUS WEEK HIGH", colW, pickT(pwH, tpwH, tpwHT, pwT), na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, showPW and weekOK, pwL, "PWL", "PREVIOUS WEEK LOW", colW, pickT(pwL, tpwL, tpwLT, pwT), na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, showPD and dayOK, pdH, "PDH", "PREVIOUS DAY HIGH", colD, pickT(pdH, tpdH, tpdHT, pdT), na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, showPD and dayOK, pdL, "PDL", "PREVIOUS DAY LOW", colD, pickT(pdL, tpdL, tpdLT, pdT), na, lvlStyle, true, SRC_KEY)
 if isLast
     // developing levels: drawn, never used for signals
-    addLvl(lvls, showCM and monthOK, cmH, "MH", "MONTH HIGH", colM, pickT(cmH, mHi, mHiT, mT), na, line.style_dotted, false)
-    addLvl(lvls, showCM and monthOK, cmL, "ML", "MONTH LOW", colM, pickT(cmL, mLo, mLoT, mT), na, line.style_dotted, false)
-    addLvl(lvls, showCW and weekOK, cwH, "WH", "WEEK HIGH", colW, pickT(cwH, wHi, wHiT, wT), na, line.style_dotted, false)
-    addLvl(lvls, showCW and weekOK, cwL, "WL", "WEEK LOW", colW, pickT(cwL, wLo, wLoT, wT), na, line.style_dotted, false)
-    addLvl(lvls, showCD and dayOK, cdH, "DH", "DAY HIGH", colD, pickT(cdH, dHi, dHiT, dT), na, line.style_dotted, false)
-    addLvl(lvls, showCD and dayOK, cdL, "DL", "DAY LOW", colD, pickT(cdL, dLo, dLoT, dT), na, line.style_dotted, false)
-addLvl(lvls, showFC and weekOK, pwC, "FC", fcName, colFC, wT, na, line.style_dashed, true)
-addLvl(lvls, showOpen and dayOK, dOpen, "DO", "DAILY OPEN", colOpen, dT, na, line.style_dashed, true)
-addLvl(lvls, showOpen and weekOK, wOpen, "WO", "WEEKLY OPEN", colOpen, wT, na, line.style_dashed, true)
-addLvl(lvls, showH1SR and h1OK, h1Res, h1N + " R", h1N + " RESISTANCE", colRes, h1ResT, na, lvlStyle, true)
-addLvl(lvls, showH1SR and h1OK, h1Sup, h1N + " S", h1N + " SUPPORT", colSup, h1SupT, na, lvlStyle, true)
-addLvl(lvls, showH2SR and h2OK, h2Res, h2N + " R", h2N + " RESISTANCE", colRes, h2ResT, na, line.style_dashed, true)
-addLvl(lvls, showH2SR and h2OK, h2Sup, h2N + " S", h2N + " SUPPORT", colSup, h2SupT, na, line.style_dashed, true)
+    addLvl(lvls, showCM and monthOK, cmH, "MH", "MONTH HIGH", colM, pickT(cmH, mHi, mHiT, mT), na, line.style_dotted, false, SRC_KEY)
+    addLvl(lvls, showCM and monthOK, cmL, "ML", "MONTH LOW", colM, pickT(cmL, mLo, mLoT, mT), na, line.style_dotted, false, SRC_KEY)
+    addLvl(lvls, showCW and weekOK, cwH, "WH", "WEEK HIGH", colW, pickT(cwH, wHi, wHiT, wT), na, line.style_dotted, false, SRC_KEY)
+    addLvl(lvls, showCW and weekOK, cwL, "WL", "WEEK LOW", colW, pickT(cwL, wLo, wLoT, wT), na, line.style_dotted, false, SRC_KEY)
+    addLvl(lvls, showCD and dayOK, cdH, "DH", "DAY HIGH", colD, pickT(cdH, dHi, dHiT, dT), na, line.style_dotted, false, SRC_KEY)
+    addLvl(lvls, showCD and dayOK, cdL, "DL", "DAY LOW", colD, pickT(cdL, dLo, dLoT, dT), na, line.style_dotted, false, SRC_KEY)
+addLvl(lvls, showFC and weekOK, pwC, "FC", fcName, colFC, wT, na, line.style_dashed, true, SRC_KEY)
+addLvl(lvls, showOpen and dayOK, dOpen, "DO", "DAILY OPEN", colOpen, dT, na, line.style_dashed, true, SRC_KEY)
+addLvl(lvls, showOpen and weekOK, wOpen, "WO", "WEEKLY OPEN", colOpen, wT, na, line.style_dashed, true, SRC_KEY)
+addLvl(lvls, showH1SR and h1OK, h1Res, h1N + " R", h1N + " RESISTANCE", colRes, h1ResT, na, lvlStyle, true, SRC_HTF)
+addLvl(lvls, showH1SR and h1OK, h1Sup, h1N + " S", h1N + " SUPPORT", colSup, h1SupT, na, lvlStyle, true, SRC_HTF)
+addLvl(lvls, showH2SR and h2OK, h2Res, h2N + " R", h2N + " RESISTANCE", colRes, h2ResT, na, line.style_dashed, true, SRC_HTF)
+addLvl(lvls, showH2SR and h2OK, h2Sup, h2N + " S", h2N + " SUPPORT", colSup, h2SupT, na, line.style_dashed, true, SRC_HTF)
 addSess(lvls, sessOK and asiaOn, asH, asL, asHT, asLT, asHS, asLS, asIn, "Asia", "ASIA", asiaC)
 addSess(lvls, sessOK and ldnOn, lnH, lnL, lnHT, lnLT, lnHS, lnLS, lnIn, "Ldn", "LONDON", ldnC)
 addSess(lvls, sessOK and nyOn, nyH, nyL, nyHT, nyLT, nyHS, nyLS, nyIn, "NY", "NEW YORK", nyC)
-addLvl(lvls, showVPH and isLast, lbPOC, "POC", "POC", colPOC, lbT1, na, lvlStyle, true)
-addLvl(lvls, showPDVP and dayOK, pPOC, "pPOC", "PREV DAY POC", colPOC, pVPT, na, lvlStyle, true)
-addLvl(lvls, showPDVP and dayOK, pVAH, "pVAH", "PREV DAY VAH", colPOC, pVPT, na, line.style_dashed, true)
-addLvl(lvls, showPDVP and dayOK, pVAL, "pVAL", "PREV DAY VAL", colPOC, pVPT, na, line.style_dashed, true)
-addLvl(lvls, c1P > 0, c1P, c1T, c1T, c1C, wT, na, lvlStyle, true)
-addLvl(lvls, c2P > 0, c2P, c2T, c2T, c2C, wT, na, lvlStyle, true)
-addLvl(lvls, c3P > 0, c3P, c3T, c3T, c3C, wT, na, lvlStyle, true)
-addLvl(lvls, c4P > 0, c4P, c4T, c4T, c4C, wT, na, lvlStyle, true)
+addLvl(lvls, showVPH and isLast, lbPOC, "POC", "POC", colPOC, lbT1, na, lvlStyle, true, SRC_VP)
+addLvl(lvls, showPDVP and dayOK, pPOC, "pPOC", "PREV DAY POC", colPOC, pVPT, na, lvlStyle, true, SRC_VP)
+addLvl(lvls, showPDVP and dayOK, pVAH, "pVAH", "PREV DAY VAH", colPOC, pVPT, na, line.style_dashed, true, SRC_VP)
+addLvl(lvls, showPDVP and dayOK, pVAL, "pVAL", "PREV DAY VAL", colPOC, pVPT, na, line.style_dashed, true, SRC_VP)
+addLvl(lvls, c1P > 0, c1P, c1T, c1T, c1C, wT, na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, c2P > 0, c2P, c2T, c2T, c2C, wT, na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, c3P > 0, c3P, c3T, c3T, c3C, wT, na, lvlStyle, true, SRC_KEY)
+addLvl(lvls, c4P > 0, c4P, c4T, c4T, c4C, wT, na, lvlStyle, true, SRC_KEY)
 if showRound
     for k = 1 - roundN to roundN
-        addLvl(lvls, true, rBase + k * rStep, "RN", "ROUND NUMBER", color.new(colRound, 20), time - 100 * tfMs, na, line.style_dotted, true)
+        addLvl(lvls, true, rBase + k * rStep, "RN", "ROUND NUMBER", color.new(colRound, 20), time - 100 * tfMs, na, line.style_dotted, true, SRC_ROUND)
 if fibOK
     for f in fibLv
         string fn = str.tostring(f * 100, "#.#") + "%"
-        // 0% is the moving end of the leg (this bar's own extreme) -> not a signal level
-        addLvl(lvls, true, fibPrice(f), fn, fn, colFib, fibT1, na, line.style_dotted, f != 0)
+        // 0% can be the moving end of the leg (this bar's own extreme) -> not a signal level
+        addLvl(lvls, true, fibPrice(f), fn, fn, colFib, fibT1, na, line.style_dotted, f != 0, SRC_FIB)
 
 // ═══════════════════════════════ REJECTION / SWEEP SIGNALS ═══════════════════════════════
+// A signal needs: a real candle (size + wick), a level/zone from an enabled source that was
+// untouched for freshN bars, a wick through it and a close back on the original side.
 float  rng      = high - low
 float  upW      = high - math.max(open, close)
 float  dnW      = math.min(open, close) - low
+bool   candleOK = rng > 0 and rng >= minRngAtr * nz(atr)
+bool   bearBar  = candleOK and upW >= wickMin * rng
+bool   bullBar  = candleOK and dnW >= wickMin * rng
 bool   lvBear   = false
 bool   lvBull   = false
 string bearName = ""
 string bullName = ""
-if rng > 0
+if bearBar or bullBar
     for l in lvls
-        if l.sig
-            if open < l.price and high >= l.price and close < l.price and upW >= wickMin * rng
+        if l.sig and srcOn(l.src)
+            if bearBar and open < l.price and high >= l.price and close < l.price and (not useFresh or hiPrev < l.price)
                 lvBear   := true
                 bearName := joinName(bearName, l.sname)
-            if open > l.price and low <= l.price and close > l.price and dnW >= wickMin * rng
+            if bullBar and open > l.price and low <= l.price and close > l.price and (not useFresh or loPrev > l.price)
                 lvBull   := true
                 bullName := joinName(bullName, l.sname)
 
-bool zBear = sigZones and (hzBe or obBe or fvBe or rzBe)
-bool zBull = sigZones and (hzBu or obBu or fvBu or rzBu)
-if sigZones
-    if hzBe
+bool zBear = bearBar and ((srcZones and (hzBe or obBe or rzBe)) or (srcFvg and fvBe))
+bool zBull = bullBar and ((srcZones and (hzBu or obBu or rzBu)) or (srcFvg and fvBu))
+if zBear
+    if srcZones and hzBe
         bearName := joinName(bearName, hzBeT)
-    if obBe
+    if srcZones and obBe
         bearName := joinName(bearName, obBeT)
-    if fvBe
-        bearName := joinName(bearName, fvBeT)
-    if rzBe
+    if srcZones and rzBe
         bearName := joinName(bearName, rzBeT)
-    if hzBu
+    if srcFvg and fvBe
+        bearName := joinName(bearName, fvBeT)
+if zBull
+    if srcZones and hzBu
         bullName := joinName(bullName, hzBuT)
-    if obBu
+    if srcZones and obBu
         bullName := joinName(bullName, obBuT)
-    if fvBu
-        bullName := joinName(bullName, fvBuT)
-    if rzBu
+    if srcZones and rzBu
         bullName := joinName(bullName, rzBuT)
+    if srcFvg and fvBu
+        bullName := joinName(bullName, fvBuT)
 
-bool bearSig = showSig and barstate.isconfirmed and (lvBear or zBear)
-bool bullSig = showSig and barstate.isconfirmed and (lvBull or zBull)
+var int lastBearBar = -100000
+var int lastBullBar = -100000
+bool allowBear = sigFilter == "None" or trend == -1
+bool allowBull = sigFilter == "None" or trend == 1
+bool bearSig   = showSig and barstate.isconfirmed and allowBear and bar_index - lastBearBar >= sigCool and (lvBear or zBear)
+bool bullSig   = showSig and barstate.isconfirmed and allowBull and bar_index - lastBullBar >= sigCool and (lvBull or zBull)
 
 // stats: stop beyond the rejection wick, target at a fixed R. Stop is checked first (conservative).
 var array<Trade> trades = array.new<Trade>()
@@ -838,11 +899,13 @@ if trades.size() > 0
 
 if bearSig
     label.new(bar_index, high, sigText ? "▼ " + bearName : "▼", style = label.style_label_down, color = color.new(colSell, 10), textcolor = color.white, size = size.tiny)
+    lastBearBar := bar_index
     float stp = high + atr * statBuf
     trades.push(Trade.new(close, stp, close - (stp - close) * statRR, false))
     alert(syminfo.ticker + " bearish rejection @ " + bearName + " | close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
 if bullSig
     label.new(bar_index, low, sigText ? "▲ " + bullName : "▲", style = label.style_label_up, color = color.new(colBuy, 10), textcolor = color.white, size = size.tiny)
+    lastBullBar := bar_index
     float stp = low - atr * statBuf
     trades.push(Trade.new(close, stp, close + (close - stp) * statRR, true))
     alert(syminfo.ticker + " bullish rejection @ " + bullName + " | close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
@@ -880,7 +943,13 @@ if isLast
             int x1 = na(l.t1) ? time - 50 * tfMs : math.min(l.t1, time)
             int x2 = na(l.t2) ? tFut : l.t2
             lvLines.push(line.new(x1, l.price, x2, l.price, xloc = xloc.bar_time, color = l.col, style = l.sty, width = lvlWidth))
-            if showLabels and na(l.t2)
+            if l.src == SRC_FIB
+                // fib labels get their own column so they never pile onto the key-level labels
+                if fibLblPos != "Off"
+                    bool   lf = fibLblPos == "Left"
+                    string ft = l.lname + " (" + str.tostring(l.price, format.mintick) + ")"
+                    lvLabels.push(label.new(lf ? x1 : tFut, l.price, ft, xloc = xloc.bar_time, style = lf ? label.style_label_right : label.style_label_left, color = color(na), textcolor = l.col, size = size.tiny))
+            else if showLabels and na(l.t2)
                 string nmTxt = longNames ? l.lname : l.sname
                 int found = -1
                 if mP.size() > 0
@@ -923,7 +992,7 @@ if showDash and isLast
     float  nSup  = na
     string nSupN = ""
     for l in lvls
-        if l.draw
+        if l.draw and l.src != SRC_FIB
             if l.price > close and (na(nRes) or l.price < nRes)
                 nRes  := l.price
                 nResN := l.sname
@@ -937,7 +1006,9 @@ if showDash and isLast
     color  strCol  = trend == 1 ? colBuy : trend == -1 ? colSell : color.gray
     string sessNow = asiaOn and asIn ? "Asia" : ldnOn and lnIn ? "London" : nyOn and nyIn ? "New York" : "—"
     int    tot     = wins + losses
-    string stats   = tot > 0 ? str.tostring(wins) + "W / " + str.tostring(losses) + "L  (" + str.tostring(100.0 * wins / tot, "#.#") + "%)" : "no closed signals yet"
+    float  netR    = wins * statRR - losses
+    string stats   = tot > 0 ? str.tostring(wins) + "W / " + str.tostring(losses) + "L  " + str.tostring(100.0 * wins / tot, "#.#") + "%  " + (netR >= 0 ? "+" : "") + str.tostring(netR, "#.#") + "R" : "no closed signals yet"
+    color  statCol = tot == 0 ? color.gray : netR >= 0 ? colBuy : colSell
 
     dashRow(0, "KEY LEVELS", syminfo.ticker, color.new(#D1D4DC, 0))
     dashRow(1, "Bias (D / W open)", bias, biasCol)
@@ -946,7 +1017,7 @@ if showDash and isLast
     dashRow(4, "Resistance", na(nRes) ? "—" : nResN + "  " + str.tostring(nRes, format.mintick) + "  (+" + str.tostring(nRes - close, format.mintick) + ")", colSell)
     dashRow(5, "Support", na(nSup) ? "—" : nSupN + "  " + str.tostring(nSup, format.mintick) + "  (-" + str.tostring(close - nSup, format.mintick) + ")", colBuy)
     dashRow(6, "Day range / ATR", str.tostring(cdH - cdL, format.mintick) + "  /  " + str.tostring(atr, format.mintick), color.new(#D1D4DC, 0))
-    dashRow(7, "Signals 1:" + str.tostring(statRR), stats, color.new(#D1D4DC, 0))
+    dashRow(7, "Signals 1:" + str.tostring(statRR), stats, statCol)
 
 // ═══════════════════════════════ EMAs ═══════════════════════════════
 float ema1 = ta.ema(close, ema1Len)
