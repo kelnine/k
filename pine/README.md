@@ -12,10 +12,10 @@ flags candles that reject them.
 
 | Group | Details |
 |---|---|
-| Key levels | Previous **and** current Month / Week / Day high-low, Friday close, daily/weekly open (off by default), round numbers, 4 manual levels (default names `WEEKLY RESISTANCE` / `WEEKLY SUPPORT` …). Labels that land on the same price merge, e.g. `MONTH HIGH / WEEK HIGH`. |
+| Key levels | Previous **and** current Month / Week / Day high-low, Friday close, daily/weekly open (off by default), round numbers, 4 manual levels (default names `WEEKLY RESISTANCE` / `WEEKLY SUPPORT` …). Labels that land on the same price merge into short names, e.g. `WH / DH / 30M R  74.30`, so they aren't cut off at the price scale. |
 | HTF structure | Latest 4H and 30M swing **RESISTANCE / SUPPORT** + **4H SELL / BUY ZONES** (both timeframes configurable, non-repainting). |
 | Sessions | Asia / London / New York high & low (dotted while the session is live, hidden once swept); session boxes optional (off by default). Default times are New York time: Asia 18:00–03:00, London 03:00–08:00, NY 08:00–17:00. |
-| Structure | BOS / CHoCH. Every break of structure marks a **SELL / BUY ZONE** at the leg's origin candle plus a yellow **displacement-leg** box; closed-through zones flip to **BREAKER**. |
+| Structure | BOS / CHoCH. Every break of structure marks a **SELL / BUY ZONE** at the leg's origin candle; closed-through zones flip to **BREAKER**. A yellow **displacement** box covers the move from the zone to the break, only when that move was fast (≤ 20 bars), last 2 kept. |
 | Imbalances | FVG → **IFVG** flip when price closes through. |
 | Fibonacci | Auto fib on the latest structure leg at least 5 × ATR tall: 0 / 23.6 / 38.2 / 50 / 61.8 / 65 / 71 / 78.6 / 88.6 / 100 (editable) + OTE shading. 100% = origin of the leg, 0% = its extreme. Labels sit on the left so they don't collide with the key-level labels. |
 | Volume profile | Lookback histogram split into buy (blue) / sell (red) volume, value area highlighted, POC level. Optional previous-day POC/VAH/VAL. |
@@ -35,6 +35,9 @@ Filters (all in *Rejection / Sweep Signals*):
 - **Min candle size** (0.5 × ATR) and **min wick** (35% of the candle).
 - **Cooldown** (5 bars) between same-side signals.
 - **Direction filter**: optionally only buy after a bullish BOS / sell after a bearish BOS.
+- **Min confluence**: 2 = only candles that reject two or more things at once
+  (e.g. `30M S + Ldn L + BUY ZONE`).
+- **Signal hours**: any time, London + New York, or New York only.
 
 *Signal Sources* picks which levels can fire: by default month/week/day levels,
 Friday close, manual levels, HTF S/R, session highs/lows and sell/buy/HTF zones.

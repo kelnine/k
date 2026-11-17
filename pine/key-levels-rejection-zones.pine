@@ -65,7 +65,7 @@ htf2       = input.timeframe("30", "HTF 2", group = grpH, inline = "h2")
 showH2SR   = input.bool(true, "S/R levels",     group = grpH, inline = "h2")
 htfLen     = input.int(3, "HTF swing length", minval = 1, maxval = 20, group = grpH)
 htfZMax    = input.int(3, "Max HTF zones per side", minval = 1, maxval = 10, group = grpH)
-htfZMaxAtr = input.float(1.0, "Max HTF zone height (x HTF ATR)", minval = 0.1, step = 0.1, group = grpH)
+htfZMaxAtr = input.float(0.5, "Max HTF zone height (x HTF ATR)", minval = 0.1, step = 0.1, group = grpH)
 colRes     = input.color(#F23645, "Resistance", group = grpH, inline = "hc")
 colSup     = input.color(#089981, "Support",    group = grpH, inline = "hc")
 
@@ -111,9 +111,11 @@ bosKeep    = input.int(6, "keep last", minval = 1, maxval = 50, group = grpZ, in
 showOB     = input.bool(true, "Sell / Buy zones", group = grpZ, inline = "ob")
 showBB     = input.bool(true, "flip to breaker", group = grpZ, inline = "ob")
 obMax      = input.int(4, "Max sell / buy zones", minval = 1, maxval = 30, group = grpZ)
-obMaxAtr   = input.float(1.5, "Max zone height (x ATR)", minval = 0.1, step = 0.1, group = grpZ)
+obMaxAtr   = input.float(1.0, "Max zone height (x ATR)", minval = 0.1, step = 0.1, group = grpZ)
 showLeg    = input.bool(true, "Displacement leg box", group = grpZ, inline = "lg")
-colLeg     = input.color(#FFEB3B40, "", group = grpZ, inline = "lg")
+colLeg     = input.color(#FFEB3B33, "", group = grpZ, inline = "lg")
+legKeep    = input.int(2, "keep last", minval = 1, maxval = 20, group = grpZ, inline = "lg")
+legMaxBars = input.int(20, "Max displacement length (bars)", minval = 2, maxval = 200, group = grpZ, tooltip = "The yellow box covers the move from the zone to the break of structure, and is only drawn when that move took at most this many bars (i.e. it was impulsive).")
 colSell    = input.color(#F23645, "Sell", group = grpZ, inline = "sc")
 colBuy     = input.color(#089981, "Buy",  group = grpZ, inline = "sc")
 showFVG    = input.bool(true, "FVG", group = grpZ, inline = "fvg")
@@ -125,7 +127,7 @@ fvgMax     = input.int(4, "Max FVGs", minval = 1, maxval = 50, group = grpZ)
 showRZ     = input.bool(false, "Swing rejection (wick) zones", group = grpZ, inline = "rz")
 rzMax      = input.int(3, "per side", minval = 1, maxval = 20, group = grpZ, inline = "rz")
 rzMinAtr   = input.float(0.2, "Min rejection zone height (x ATR)", minval = 0, step = 0.05, group = grpZ)
-zoneTransp = input.int(80, "Zone transparency", minval = 0, maxval = 100, group = grpZ)
+zoneTransp = input.int(85, "Zone transparency", minval = 0, maxval = 100, group = grpZ)
 zoneExtend = input.int(10, "Extend zones right (bars)", minval = 1, maxval = 300, group = grpZ)
 
 grpG = "Rejection / Sweep Signals"
@@ -136,6 +138,8 @@ sigCool   = input.int(5, "Cooldown between same-side signals (bars)", minval = 0
 minRngAtr = input.float(0.5, "Min signal candle size (x ATR)", minval = 0, step = 0.1, group = grpG)
 wickMin   = input.float(35, "Min rejection wick (% of candle)", minval = 0, maxval = 100, group = grpG) / 100
 sigFilter = input.string("None", "Direction filter", options = ["None", "With structure"], group = grpG, tooltip = "With structure: buy signals only after a bullish BOS, sell signals only after a bearish BOS.")
+sigConf   = input.int(1, "Min confluence (levels / zones hit)", minval = 1, maxval = 5, group = grpG, tooltip = "2 = only signals where the candle rejects at least two things at once, e.g. 30M S + BUY ZONE.")
+sigHours  = input.string("Any", "Signal hours", options = ["Any", "London + New York", "New York"], group = grpG, tooltip = "Uses the session times from the Sessions section.")
 statRR    = input.float(2.0, "Stats: target (R multiple)", minval = 0.5, step = 0.5, group = grpG)
 statBuf   = input.float(0.1, "Stats: stop beyond wick (x ATR)", minval = 0, step = 0.05, group = grpG)
 
@@ -171,7 +175,6 @@ dashPosIn = input.string("Top Right", "Position", options = ["Top Right", "Top L
 // ═══════════════════════════════ TYPES ═══════════════════════════════
 type Zone
     box    bx
-    box    leg
     float  top
     float  bot
     bool   bull    = false
@@ -236,14 +239,19 @@ float loPrev   = ta.lowest(low, math.max(1, freshN))[1]
 
 var array<line>  bosLines  = array.new<line>()
 var array<label> bosLabels = array.new<label>()
+var array<box>   legBoxes  = array.new<box>()
 
 // ═══════════════════════════════ HELPERS ═══════════════════════════════
 tfName(string tf) =>
     float m = timeframe.in_seconds(tf) / 60.0
     m >= 10080 ? str.tostring(m / 10080, "#") + "W" : m >= 1440 ? str.tostring(m / 1440, "#") + "D" : m >= 60 ? str.tostring(m / 60, "#.#") + "H" : str.tostring(m, "#") + "M"
 
+// exact-name check, so "WH" isn't treated as already present in "PWH"
+hasName(string list, string n, string sep) =>
+    str.contains(sep + list + sep, sep + n + sep)
+
 joinName(string a, string b) =>
-    a == "" ? b : str.contains(a, b) ? a : a + " + " + b
+    a == "" ? b : hasName(a, b, " + ") ? a : a + " + " + b
 
 srcOn(int s) =>
     switch s
@@ -390,9 +398,6 @@ valueArea(array<float> bins, float vaPct) =>
 
 deleteZone(Zone z) =>
     box.delete(z.bx)
-    if not na(z.leg)
-        box.delete(z.leg)
-        z.leg := na
 
 addZone(array<Zone> zs, int leftT, float top, float bot, bool bull, string tag, color col, int maxN) =>
     box b = box.new(leftT, top, time + zoneExtend * tfMs, bot, xloc = xloc.bar_time, border_color = color.new(col, 50), bgcolor = color.new(col, zoneTransp), text = tag, text_size = size.tiny, text_color = col, text_halign = text.align_right, text_valign = text.align_center)
@@ -425,9 +430,6 @@ updateZones(array<Zone> zs, bool canFlip, string flipTag, color bullCol, color b
                     box.set_border_style(z.bx, line.style_dashed)
                     box.set_text(z.bx, flipTag)
                     box.set_text_color(z.bx, c)
-                    if not na(z.leg)
-                        box.delete(z.leg)
-                        z.leg := na
                 else
                     deleteZone(z)
                     zs.remove(i)
@@ -460,6 +462,12 @@ addSess(array<Lvl> arr, bool on, float hi, float lo, int hiT, int loT, int hiSw,
         string base = inS ? line.style_dotted : lvlStyle
         arr.push(Lvl.new(hi, s + " H", l + " HIGH", hSw ? color.new(c, 50) : c, hiT, hSw ? hiSw : na, hSw ? line.style_dotted : base, not inS and (not hSw or hiSw == time), not (hSw and hideSwept), SRC_SESS))
         arr.push(Lvl.new(lo, s + " L", l + " LOW", lSw ? color.new(c, 50) : c, loT, lSw ? loSw : na, lSw ? line.style_dotted : base, not inS and (not lSw or loSw == time), not (lSw and hideSwept), SRC_SESS))
+
+// yellow displacement box: from the zone candle to the break-of-structure candle
+addLeg(int t1, float top, float bot) =>
+    legBoxes.push(box.new(t1, top, time, bot, xloc = xloc.bar_time, border_color = color(na), bgcolor = colLeg))
+    if legBoxes.size() > legKeep
+        box.delete(legBoxes.shift())
 
 drawBOS(float price, int t1, bool up, bool choch) =>
     color c = up ? colBuy : colSell
@@ -539,7 +547,6 @@ var float legHi   = na
 var float legLo   = na
 var int   legHiT  = na
 var int   legLoT  = na
-var Zone  legZone = na
 
 if bosUp
     phTaken := true
@@ -564,12 +571,10 @@ if bosUp
     legLoT  := time[idx]
     legHi   := hh
     legHiT  := hhT
-    legZone := na
     if showOB
-        Zone z = addZone(obs, time[idx], math.min(high[idx], low[idx] + atr * obMaxAtr), low[idx], true, "BUY ZONE", colBuy, obMax)
-        if showLeg
-            z.leg := box.new(time[idx], hh, time, low[idx], xloc = xloc.bar_time, border_color = color(na), bgcolor = colLeg)
-        legZone := z
+        addZone(obs, time[idx], math.min(high[idx], low[idx] + atr * obMaxAtr), low[idx], true, "BUY ZONE", colBuy, obMax)
+    if showLeg and idx <= legMaxBars
+        addLeg(time[idx], hh, low[idx])
 
 if bosDn
     plTaken := true
@@ -594,29 +599,19 @@ if bosDn
     legHiT  := time[idx]
     legLo   := ll
     legLoT  := llT
-    legZone := na
     if showOB
-        Zone z = addZone(obs, time[idx], high[idx], math.max(low[idx], high[idx] - atr * obMaxAtr), false, "SELL ZONE", colSell, obMax)
-        if showLeg
-            z.leg := box.new(time[idx], high[idx], time, ll, xloc = xloc.bar_time, border_color = color(na), bgcolor = colLeg)
-        legZone := z
+        addZone(obs, time[idx], high[idx], math.max(low[idx], high[idx] - atr * obMaxAtr), false, "SELL ZONE", colSell, obMax)
+    if showLeg and idx <= legMaxBars
+        addLeg(time[idx], high[idx], ll)
 
-// extend the active leg while it keeps making new extremes
+// extend the active leg (for the fib) while it keeps making new extremes
 if not bosUp and not bosDn
     if legDir == 1 and high > legHi
         legHi  := high
         legHiT := time
-        if not na(legZone)
-            if not na(legZone.leg)
-                box.set_top(legZone.leg, high)
-                box.set_right(legZone.leg, time)
     else if legDir == -1 and low < legLo
         legLo  := low
         legLoT := time
-        if not na(legZone)
-            if not na(legZone.leg)
-                box.set_bottom(legZone.leg, low)
-                box.set_right(legZone.leg, time)
 
 // ═══════════════════════════════ FVG / REJECTION ZONES / HTF ZONES ═══════════════════════════════
 if showFVG
@@ -874,12 +869,17 @@ if zBull
     if srcFvg and fvBu
         bullName := joinName(bullName, fvBuT)
 
+// confluence = number of distinct levels / zones the candle rejected
+int  bearCnt = bearName == "" ? (lvBear or zBear ? 1 : 0) : array.size(str.split(bearName, " + "))
+int  bullCnt = bullName == "" ? (lvBull or zBull ? 1 : 0) : array.size(str.split(bullName, " + "))
+bool hoursOK = not dayOK or sigHours == "Any" or (sigHours == "New York" ? nyIn : (lnIn or nyIn))
+
 var int lastBearBar = -100000
 var int lastBullBar = -100000
 bool allowBear = sigFilter == "None" or trend == -1
 bool allowBull = sigFilter == "None" or trend == 1
-bool bearSig   = showSig and barstate.isconfirmed and allowBear and bar_index - lastBearBar >= sigCool and (lvBear or zBear)
-bool bullSig   = showSig and barstate.isconfirmed and allowBull and bar_index - lastBullBar >= sigCool and (lvBull or zBull)
+bool bearSig   = showSig and barstate.isconfirmed and hoursOK and allowBear and bar_index - lastBearBar >= sigCool and (lvBear or zBear) and bearCnt >= sigConf
+bool bullSig   = showSig and barstate.isconfirmed and hoursOK and allowBull and bar_index - lastBullBar >= sigCool and (lvBull or zBull) and bullCnt >= sigConf
 
 // stats: stop beyond the rejection wick, target at a fixed R. Stop is checked first (conservative).
 var array<Trade> trades = array.new<Trade>()
@@ -937,6 +937,8 @@ if isLast
     float tol  = nz(atr) * mergeAtr
     array<float>  mP = array.new<float>()
     array<string> mN = array.new<string>()
+    array<string> mS = array.new<string>()
+    array<int>    mK = array.new<int>()
     array<color>  mC = array.new<color>()
     for l in lvls
         if l.draw
@@ -950,7 +952,6 @@ if isLast
                     string ft = l.lname + " (" + str.tostring(l.price, format.mintick) + ")"
                     lvLabels.push(label.new(lf ? x1 : tFut, l.price, ft, xloc = xloc.bar_time, style = lf ? label.style_label_right : label.style_label_left, color = color(na), textcolor = l.col, size = size.tiny))
             else if showLabels and na(l.t2)
-                string nmTxt = longNames ? l.lname : l.sname
                 int found = -1
                 if mP.size() > 0
                     for j = 0 to mP.size() - 1
@@ -958,15 +959,20 @@ if isLast
                             found := j
                             break
                 if found >= 0
-                    if not str.contains(mN.get(found), nmTxt)
-                        mN.set(found, mN.get(found) + " / " + nmTxt)
+                    if not hasName(mS.get(found), l.sname, " / ")
+                        mS.set(found, mS.get(found) + " / " + l.sname)
+                        mK.set(found, mK.get(found) + 1)
                 else
                     mP.push(l.price)
-                    mN.push(nmTxt)
+                    mN.push(l.lname)
+                    mS.push(l.sname)
+                    mK.push(1)
                     mC.push(l.col)
     if mP.size() > 0
         for j = 0 to mP.size() - 1
-            string t = showPrices ? mN.get(j) + "  " + str.tostring(mP.get(j), format.mintick) : mN.get(j)
+            // one level: full name; several on one price: short names, so the label isn't cut off
+            string nmTxt = longNames and mK.get(j) == 1 ? mN.get(j) : mS.get(j)
+            string t = showPrices ? nmTxt + "  " + str.tostring(mP.get(j), format.mintick) : nmTxt
             lvLabels.push(label.new(tFut, mP.get(j), t, xloc = xloc.bar_time, style = label.style_label_left, color = color(na), textcolor = mC.get(j), size = lblSize))
 
     if fibOK and fibOTE
