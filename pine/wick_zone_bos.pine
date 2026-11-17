@@ -1,0 +1,303 @@
+//@version=6
+indicator("Daily Bias + 1H Wick Zone + 5m BOS", shorttitle = "Wick Zone BOS", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// Put this on the 5-minute chart. The rules it follows:
+//   1. Daily bias  - daily going up = buys only, daily going down = sells only.
+//   2. 1H zone     - three candles in a row: small-wick candle, small candle with big wicks,
+//                    small-wick candle. The box runs from the middle candle's low to its high
+//                    and is dragged to the right. Boxes below price are buy zones, boxes above
+//                    price are sell zones.
+//   3. Tap         - price trades back into the box. If it goes out the far side, the box is dead.
+//   4. Entry       - the first 5m candle that closes through the latest 5m swing high (buys) or
+//                    swing low (sells). Enter on that close, stop beyond the swing made at the
+//                    box, target at 1:2.
+// Every higher-timeframe value is read from a closed candle and every signal is made on a closed
+// 5m candle, so nothing repaints.
+
+// ── Inputs ───────────────────────────────────────────────────────────────────────────────────
+const string G_BIAS  = "1 - Daily bias"
+const string G_ZONE  = "2 - 1H three-candle zone"
+const string G_ENTRY = "3 - 5m entry"
+const string G_VIS   = "Display"
+
+string biasTf   = input.timeframe("D", "Bias timeframe", group = G_BIAS)
+string biasMode = input.string("EMA", "Trend method", options = ["EMA", "Market structure", "Last closed candle"], group = G_BIAS, tooltip = "EMA: close above the EMA = up, below = down.\nMarket structure: direction of the last daily swing high / low that price closed through.\nLast closed candle: colour of the previous daily candle.")
+int    emaLen   = input.int(20, "EMA length", minval = 1, group = G_BIAS)
+int    biasPiv  = input.int(3, "Structure swing length", minval = 1, group = G_BIAS)
+
+string zoneTf       = input.timeframe("60", "Zone timeframe", group = G_ZONE)
+float  midBodyMax   = input.float(35.0, "Middle candle: max body % of its range", minval = 1, maxval = 100, group = G_ZONE, tooltip = "Lower = the middle candle must be more wick and less body.")
+float  outerWickMax = input.float(40.0, "Outer candles: max wick % of their range", minval = 0, maxval = 100, group = G_ZONE, tooltip = "Lower = the first and third candles must be fuller-bodied.")
+float  minBodyAtr   = input.float(0.3, "Outer candles: min body (x ATR 14)", minval = 0.0, step = 0.1, group = G_ZONE, tooltip = "Skips formations made of tiny candles. 0 = off.")
+string colourMode   = input.string("Any", "Outer candle colours", options = ["Any", "Reversal only"], group = G_ZONE, tooltip = "Reversal only: a buy zone needs a down candle then an up candle around the middle candle, a sell zone needs up then down.")
+int    maxAge       = input.int(200, "Zone expires after (zone-timeframe candles)", minval = 1, group = G_ZONE)
+int    maxZones     = input.int(30, "Max live zones", minval = 1, maxval = 100, group = G_ZONE)
+
+int    pivLen      = input.int(2, "Swing length for structure (bars each side)", minval = 1, group = G_ENTRY)
+string throughMode = input.string("Close", "Box is broken when price goes out the far side by", options = ["Close", "Wick"], group = G_ENTRY)
+int    maxWait     = input.int(48, "Max bars between the tap and the break of structure", minval = 0, group = G_ENTRY, tooltip = "0 = no limit.")
+float  rr          = input.float(2.0, "Reward : risk", minval = 0.1, step = 0.1, group = G_ENTRY)
+int    slTicks     = input.int(0, "Extra stop distance (ticks)", minval = 0, group = G_ENTRY)
+bool   allowStack  = input.bool(false, "Allow a new trade while one is open", group = G_ENTRY)
+
+color buyCol   = input.color(#089981, "Buy", inline = "col", group = G_VIS)
+color sellCol  = input.color(#f23645, "Sell", inline = "col", group = G_VIS)
+color idleCol  = input.color(#787b86, "Inactive", inline = "col", group = G_VIS)
+bool  keepDead = input.bool(true, "Keep broken / expired boxes (greyed out)", group = G_VIS)
+bool  showTaps = input.bool(true, "Mark taps into a box", group = G_VIS)
+bool  showBg   = input.bool(false, "Tint background by daily bias", group = G_VIS)
+bool  showTbl  = input.bool(true, "Show stats table", group = G_VIS)
+
+// ── Types ────────────────────────────────────────────────────────────────────────────────────
+type Zone
+    box   bx
+    float top
+    float bottom
+    int   born                // open time of the third candle
+    int   kind    = 0         // 1 = down-then-up formation, -1 = up-then-down, 0 = other
+    int   side    = 0         // 1 = price is above the box (buy zone), -1 = below it (sell zone)
+    bool  tapped  = false
+    int   tapBar  = 0
+    float extreme = na        // lowest low (buys) / highest high (sells) since the tap
+
+type Trade
+    int   dir
+    float sl
+    float tp
+    line  lnEntry
+    line  lnSl
+    line  lnTp
+
+method setSide(Zone z, int s) =>
+    if z.side != s
+        z.side := s
+        color c = s == 1 ? buyCol : s == -1 ? sellCol : idleCol
+        z.bx.set_bgcolor(color.new(c, 85))
+        z.bx.set_border_color(color.new(c, 30))
+
+method retire(Zone z, bool used) =>
+    if used or keepDead
+        z.bx.set_extend(extend.none)
+        z.bx.set_right(time)
+        if not used
+            z.bx.set_bgcolor(color.new(idleCol, 92))
+            z.bx.set_border_color(color.new(idleCol, 70))
+        z.bx.set_border_width(1)
+    else
+        z.bx.delete()
+
+// ── Higher-timeframe reads ───────────────────────────────────────────────────────────────────
+f_structTrend(int len) =>
+    var float lastHi = na
+    var float lastLo = na
+    var int   trend  = 0
+    float pHi = ta.pivothigh(high, len, len)
+    float pLo = ta.pivotlow(low, len, len)
+    if not na(pHi)
+        lastHi := pHi
+    if not na(pLo)
+        lastLo := pLo
+    if not na(lastHi) and close > lastHi
+        trend := 1
+    else if not na(lastLo) and close < lastLo
+        trend := -1
+    trend
+
+f_bias(int o) =>
+    float e       = ta.ema(close, emaLen)
+    int   structB = f_structTrend(biasPiv)
+    int   emaB    = close > e ? 1 : close < e ? -1 : 0
+    int   candleB = close > open ? 1 : close < open ? -1 : 0
+    int   b       = biasMode == "EMA" ? emaB : biasMode == "Market structure" ? structB : candleB
+    b[o]
+
+// Candle o is the third candle of the formation, o + 1 the middle one, o + 2 the first.
+f_zone(int o) =>
+    float atr = ta.atr(14)
+    float r1  = high[o + 2] - low[o + 2]
+    float b1  = math.abs(close[o + 2] - open[o + 2])
+    float r2  = high[o + 1] - low[o + 1]
+    float b2  = math.abs(close[o + 1] - open[o + 1])
+    float r3  = high[o] - low[o]
+    float b3  = math.abs(close[o] - open[o])
+    float minBody = minBodyAtr * nz(atr[o])
+    bool outerOk = r1 > 0 and r3 > 0 and (r1 - b1) / r1 * 100 <= outerWickMax and (r3 - b3) / r3 * 100 <= outerWickMax and b1 >= minBody and b3 >= minBody
+    bool midOk   = r2 > 0 and b2 / r2 * 100 <= midBodyMax and b2 < b1 and b2 < b3
+    int  kind    = close[o + 2] < open[o + 2] and close[o] > open[o] ? 1 : close[o + 2] > open[o + 2] and close[o] < open[o] ? -1 : 0
+    bool found   = outerOk and midOk and (colourMode == "Any" or kind != 0)
+    [found, kind, high[o + 1], low[o + 1], time[o + 1], time[o]]
+
+int  chartSec  = timeframe.in_seconds()
+int  zoneSec   = timeframe.in_seconds(zoneTf)
+bool tfTooHigh = chartSec > zoneSec
+bool canSignal = chartSec < zoneSec
+
+int bias = nz(request.security(syminfo.tickerid, biasTf, f_bias(1), lookahead = barmerge.lookahead_on))
+[zFound, zKind, zTop, zBot, zTime, zConfT] = request.security(syminfo.tickerid, zoneTf, f_zone(1), lookahead = barmerge.lookahead_on)
+bool newZone = zFound and not tfTooHigh and not na(zConfT) and zConfT != nz(zConfT[1])
+
+// ── Structure on the chart timeframe ─────────────────────────────────────────────────────────
+float pHi = ta.pivothigh(high, pivLen, pivLen)
+float pLo = ta.pivotlow(low, pivLen, pivLen)
+var float hiLvl  = na
+var int   hiTime = na
+var float loLvl  = na
+var int   loTime = na
+if not na(pHi)
+    hiLvl  := pHi
+    hiTime := time[pivLen]
+if not na(pLo)
+    loLvl  := pLo
+    loTime := time[pivLen]
+
+// A swing can only be broken once, so a break is always a fresh event.
+bool  bosUp     = barstate.isconfirmed and not na(hiLvl) and close > hiLvl
+bool  bosDn     = barstate.isconfirmed and not na(loLvl) and close < loLvl
+float bosUpLvl  = hiLvl
+int   bosUpTime = hiTime
+float bosDnLvl  = loLvl
+int   bosDnTime = loTime
+if bosUp
+    hiLvl := na
+if bosDn
+    loLvl := na
+
+// ── State ────────────────────────────────────────────────────────────────────────────────────
+var array<Zone>  zones  = array.new<Zone>()
+var array<Trade> trades = array.new<Trade>()
+var int   wins   = 0
+var int   losses = 0
+var float netR   = 0.0
+
+bool evTapBuy  = false
+bool evTapSell = false
+bool evBuy     = false
+bool evSell    = false
+
+if barstate.isconfirmed and not tfTooHigh
+    bool useClose = throughMode == "Close"
+
+    // Open trades: extend the lines, close on stop or target. If one candle touches both, count it as the stop.
+    if trades.size() > 0
+        for i = trades.size() - 1 to 0
+            Trade t = trades.get(i)
+            t.lnEntry.set_x2(time)
+            t.lnSl.set_x2(time)
+            t.lnTp.set_x2(time)
+            bool hitSl = t.dir == 1 ? low <= t.sl : high >= t.sl
+            bool hitTp = t.dir == 1 ? high >= t.tp : low <= t.tp
+            if hitSl or hitTp
+                bool win = hitTp and not hitSl
+                if win
+                    wins += 1
+                    netR += rr
+                else
+                    losses += 1
+                    netR -= 1
+                label.new(time, win ? t.tp : t.sl, win ? "TP" : "SL", xloc = xloc.bar_time, style = label.style_label_left, color = win ? buyCol : sellCol, textcolor = color.white, size = size.tiny)
+                trades.remove(i)
+
+    // New 1H formation: box the middle candle and drag it right.
+    if newZone
+        box b = box.new(zTime, zTop, time, zBot, xloc = xloc.bar_time, extend = extend.right, bgcolor = color.new(idleCol, 85), border_color = color.new(idleCol, 30))
+        zones.push(Zone.new(b, zTop, zBot, zConfT, zKind))
+        if zones.size() > maxZones
+            Zone oldest = zones.shift()
+            oldest.retire(false)
+
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z     = zones.get(i)
+            bool dead  = false
+            bool used  = false
+            bool above = low > z.top
+            bool below = high < z.bottom
+
+            if time - z.born > maxAge * zoneSec * 1000
+                dead := true
+            else if not z.tapped
+                if (z.side == 1 and below) or (z.side == -1 and above)
+                    dead := true                    // gapped straight through the box
+                else if above
+                    z.setSide(1)
+                else if below
+                    z.setSide(-1)
+                else if z.side != 0
+                    z.tapped  := true
+                    z.tapBar  := bar_index
+                    z.extreme := z.side == 1 ? low : high
+                    z.bx.set_border_width(2)
+                    if canSignal and z.side == bias
+                        if z.side == 1
+                            evTapBuy := true
+                        else
+                            evTapSell := true
+
+            if not dead and z.tapped
+                z.extreme := z.side == 1 ? math.min(z.extreme, low) : math.max(z.extreme, high)
+                bool through = z.side == 1 ? (useClose ? close < z.bottom : low < z.bottom) : (useClose ? close > z.top : high > z.top)
+                bool kindOk  = colourMode == "Any" or z.kind == z.side
+                bool trigger = (z.side == 1 and bias == 1 and bosUp) or (z.side == -1 and bias == -1 and bosDn)
+                if through
+                    dead := true                    // went straight through: no trade
+                else if maxWait > 0 and bar_index - z.tapBar > maxWait
+                    z.tapped := false               // setup went stale: price has to leave and come back
+                    z.setSide(0)
+                    z.bx.set_border_width(1)
+                else if canSignal and kindOk and trigger
+                    int  dir   = z.side
+                    bool free  = allowStack or trades.size() == 0
+                    bool first = dir == 1 ? not evBuy : not evSell
+                    float sl   = z.extreme - dir * slTicks * syminfo.mintick
+                    float risk = math.abs(close - sl)
+                    if free and first and risk > 0
+                        float  tp     = close + dir * rr * risk
+                        float  bosLvl = dir == 1 ? bosUpLvl : bosDnLvl
+                        int    bosT   = dir == 1 ? bosUpTime : bosDnTime
+                        color  c      = dir == 1 ? buyCol : sellCol
+                        string tip    = "Entry " + str.tostring(close, format.mintick) + "\nStop " + str.tostring(sl, format.mintick) + "\nTarget " + str.tostring(tp, format.mintick)
+                        line.new(bosT, bosLvl, time, bosLvl, xloc = xloc.bar_time, color = c, style = line.style_dashed)
+                        label.new(bar_index, na, dir == 1 ? "BUY" : "SELL", yloc = dir == 1 ? yloc.belowbar : yloc.abovebar, style = dir == 1 ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.small, tooltip = tip)
+                        line lnE = line.new(time, close, time, close, xloc = xloc.bar_time, color = color.new(idleCol, 0), style = line.style_dotted)
+                        line lnS = line.new(time, sl, time, sl, xloc = xloc.bar_time, color = sellCol)
+                        line lnT = line.new(time, tp, time, tp, xloc = xloc.bar_time, color = buyCol)
+                        linefill.new(lnE, lnS, color.new(sellCol, 85))
+                        linefill.new(lnE, lnT, color.new(buyCol, 85))
+                        trades.push(Trade.new(dir, sl, tp, lnE, lnS, lnT))
+                        alert((dir == 1 ? "BUY " : "SELL ") + syminfo.ticker + " @ " + str.tostring(close, format.mintick) + " | SL " + str.tostring(sl, format.mintick) + " | TP " + str.tostring(tp, format.mintick), alert.freq_once_per_bar_close)
+                        if dir == 1
+                            evBuy := true
+                        else
+                            evSell := true
+                    dead := true                    // one shot per box
+                    used := true
+
+            if dead
+                z.retire(used)
+                zones.remove(i)
+
+// ── Display ──────────────────────────────────────────────────────────────────────────────────
+bgcolor(showBg and bias == 1 ? color.new(buyCol, 93) : showBg and bias == -1 ? color.new(sellCol, 93) : na, title = "Daily bias")
+plotshape(showTaps and evTapBuy, title = "Tap into buy box", style = shape.circle, location = location.belowbar, color = buyCol, size = size.tiny)
+plotshape(showTaps and evTapSell, title = "Tap into sell box", style = shape.circle, location = location.abovebar, color = sellCol, size = size.tiny)
+
+f_row(table t, int r, string k, string v, color c) =>
+    table.cell(t, 0, r, k, text_color = chart.fg_color, text_halign = text.align_left, text_size = size.small)
+    table.cell(t, 1, r, v, text_color = c, text_halign = text.align_right, text_size = size.small)
+
+var table tbl = table.new(position.top_right, 2, 6, bgcolor = color.new(chart.bg_color, 10), frame_color = color.new(chart.fg_color, 70), frame_width = 1, border_color = color.new(chart.fg_color, 88), border_width = 1)
+if showTbl and barstate.islast
+    int n = wins + losses
+    f_row(tbl, 0, "Daily bias", bias == 1 ? "Up - buys only" : bias == -1 ? "Down - sells only" : "Flat - stand aside", bias == 1 ? buyCol : bias == -1 ? sellCol : idleCol)
+    f_row(tbl, 1, "Live boxes", str.tostring(zones.size()), chart.fg_color)
+    f_row(tbl, 2, "Closed trades (W / L)", str.tostring(n) + " (" + str.tostring(wins) + " / " + str.tostring(losses) + ")", chart.fg_color)
+    f_row(tbl, 3, "Win rate", n > 0 ? str.tostring(100.0 * wins / n, "#.#") + "%" : "-", chart.fg_color)
+    f_row(tbl, 4, "Net result", (netR > 0 ? "+" : "") + str.tostring(netR, "#.#") + "R", netR > 0 ? buyCol : netR < 0 ? sellCol : chart.fg_color)
+    if not canSignal
+        f_row(tbl, 5, "Note", tfTooHigh ? "Chart is above the zone timeframe" : "Boxes only - go to 5m for entries", idleCol)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────────────────────
+alertcondition(evBuy, "Buy signal", "Wick Zone BOS: BUY - 5m break of structure up after a tap into a buy box")
+alertcondition(evSell, "Sell signal", "Wick Zone BOS: SELL - 5m break of structure down after a tap into a sell box")
+alertcondition(evTapBuy, "Tap into buy box", "Wick Zone BOS: price tapped a buy box - wait for a 5m break of structure up")
+alertcondition(evTapSell, "Tap into sell box", "Wick Zone BOS: price tapped a sell box - wait for a 5m break of structure down")
