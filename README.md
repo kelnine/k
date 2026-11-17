@@ -31,6 +31,13 @@ fully custom canvas rendering engine, with no third-party charting library.
   - `DemoAdapter` — deterministic synthetic feed used automatically when the
     exchange is unreachable, so the app always works
 
+## TradingView indicator
+
+`pine/key-levels-rejection-zones.pine` is a standalone Pine Script v6 overlay
+(key levels, session highs/lows, HTF sell/buy zones, BOS + order-block zones,
+FVG/IFVG, auto-fib, volume profile, rejection/sweep signals with stats).
+See [`pine/README.md`](pine/README.md).
+
 ## Run it
 
 ```sh
