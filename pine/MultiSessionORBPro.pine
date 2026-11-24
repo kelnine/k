@@ -208,15 +208,15 @@ bool   SHORT_OK     = iDir != "Long only"
 // ───────────────────────────── Chart & data ─────────────────────────────
 bool   TIME_CHART = timeframe.isintraday and not timeframe.isticks
 int    TF_SEC     = TIME_CHART ? timeframe.in_seconds(timeframe.period) : 0
-bool   CHART_OK   = chart.is_standard or chart.is_heikinashi
+bool   CHART_OK   = chart.is_standard
 string STD_TICKER = ticker.standard(syminfo.tickerid)
 
-// Real OHLC even on Heikin Ashi charts (ranges must use true wick highs / lows).
-[stdO, stdH, stdL, stdC] = request.security(STD_TICKER, timeframe.period, [open, high, low, close])
-float sO = chart.is_heikinashi ? stdO : open
-float sH = chart.is_heikinashi ? stdH : high
-float sL = chart.is_heikinashi ? stdL : low
-float sC = chart.is_heikinashi ? stdC : close
+// Ranges must use true wick highs / lows, so only standard candles / bars / line charts are accepted
+// (CHART_OK); Heikin Ashi and other synthetic chart types are disabled with a warning.
+float sO = open
+float sH = high
+float sL = low
+float sC = close
 
 float trueRng = na(sC[1]) ? sH - sL : math.max(sH - sL, math.abs(sH - sC[1]), math.abs(sL - sC[1]))
 float atrV    = ta.rma(trueRng, iAtrLen)
@@ -259,6 +259,7 @@ type SessCfg
 
 type SessState
     int    candStart = na
+    int    candNext = na
     bool   candOk = false
     string candDate = ""
     int    winStart = na
@@ -388,6 +389,11 @@ f_latestStart(SessCfg c, int t) =>
         st := timestamp(c.tz, year(p, c.tz), month(p, c.tz), dayofmonth(p, c.tz), c.sh, c.sm, 0)
     st
 
+// First window start after `st` (next LOCAL calendar day, same local time).
+f_nextDayStart(SessCfg c, int st) =>
+    int p = timestamp(c.tz, year(st, c.tz), month(st, c.tz), dayofmonth(st, c.tz), 12, 0, 0) + 86400000
+    timestamp(c.tz, year(p, c.tz), month(p, c.tz), dayofmonth(p, c.tz), c.sh, c.sm, 0)
+
 f_momentum(int dir) =>
     float rng = sH - sL
     bool dirBar = dir == 1 ? sC > sO : sC < sO
@@ -403,6 +409,7 @@ f_rTxt(float r) =>
     na(r) ? "" : (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + "R"
 
 // ───────────────────────────── Engine ─────────────────────────────
+// Only the flags are reset each bar; payload fields (ids, prices, R) are read only when their flag is set.
 f_resetEvents(SessState s) =>
     s.evNewWin := false
     s.evRangeDone := false
@@ -415,15 +422,7 @@ f_resetEvents(SessState s) =>
     s.evFiltered := 0
     s.evEntry := 0
     s.evTp1 := false
-    s.evTp1Id := ""
-    s.evTp1Dir := 0
-    s.evTp1Px := na
-    s.evTp1Stop := na
     s.evExitDir := 0
-    s.evExitReason := 0
-    s.evExitId := ""
-    s.evExitPx := na
-    s.evExitR := na
     true
 
 // reason: 2 = TP2, 3 = stop, 4 = break-even stop, 5 = time / expiry, 6 = close back inside range, 7 = replaced by new signal
@@ -685,12 +684,15 @@ f_engine(SessCfg c, SessState s, bool allowSig) =>
         if s.trDir != 0 and bar_index > s.trBar and conf
             f_manageTrade(s)
         // 2 — most recent window start in the session's own timezone + trading-day / holiday check
-        int st = f_latestStart(c, time)
-        // NOTE: any comparison with na is false in Pine, so the na() checks below are required
-        if na(s.candStart) or st != s.candStart
-            s.candStart := st
-            s.candDate := f_dateStr(st, c.tz)
-            s.candOk := f_dayOk(c, st) and not f_isHoliday(c, s.candDate)
+        //     Timezone maths runs only when the cached next window start is reached (≈ once a day),
+        //     not on every bar. NOTE: comparisons with na are false in Pine, hence the na() checks.
+        if na(s.candStart) or time >= s.candNext
+            int newSt = f_latestStart(c, time)
+            s.candStart := newSt
+            s.candNext := f_nextDayStart(c, newSt)
+            s.candDate := f_dateStr(newSt, c.tz)
+            s.candOk := f_dayOk(c, newSt) and not f_isHoliday(c, s.candDate)
+        int st = s.candStart
         bool inWin = s.candOk and time >= st and time < st + c.dur * 60000
         // 3 — a new window starts: everything from the previous window is reset (no stale levels)
         if inWin and (na(s.winStart) or st != s.winStart)
@@ -846,6 +848,7 @@ type SessDraw
     RangeDraw cur
     array<RangeDraw> hist
     TradeDraw tr
+    int nextSt = na
 
 // ───────────────────────────── Drawing helpers ─────────────────────────────
 f_delB(box b) =>
@@ -1191,7 +1194,10 @@ f_status(SessCfg c, SessState s) =>
     color col = #787B86
     if not c.enabled
         st := "Off"
-    else if not c.tfOk or not CHART_OK
+    else if not CHART_OK
+        st := "Chart type ✗"
+        col := cWarn
+    else if not c.tfOk
         st := "TF ✗"
         col := cWarn
     else if s.phase == 1
@@ -1230,7 +1236,7 @@ f_warnings() =>
     if not TIME_CHART
         w := "⚠ Use a time-based intraday chart (1m / 3m / 5m / 15m recommended)."
     else if not CHART_OK
-        w := "⚠ Renko / Kagi / P&F / Line-break / Range charts are not supported."
+        w := "⚠ Use standard candles / bars: Heikin Ashi, Renko, Kagi, P&F, Line-break and Range charts distort wick highs / lows, so ranges are disabled."
     else
         string bad = (cNY.enabled and not cNY.tfOk ? " NY" : "") + (cLDN.enabled and not cLDN.tfOk ? " LDN" : "") + (cCME.enabled and not cCME.tfOk ? " CME" : "") + (cTKY.enabled and not cTKY.tfOk ? " TKY" : "")
         if bad != ""
@@ -1379,7 +1385,10 @@ if dbOn and barstate.islast
         int dr = f_dirOf(s)
         string nm = c.name + (dbValid ? " " + (c.sh < 10 ? "0" : "") + str.tostring(c.sh) + ":" + (c.sm < 10 ? "0" : "") + str.tostring(c.sm) : "")
         bool live = s.phase == 1 or s.phase == 2
-        int shown = live ? s.winStart : (c.enabled ? f_nextStart(c, BAR_TC) : na)
+        SessDraw dd = A_DR.get(i)
+        if c.enabled and not live and (na(dd.nextSt) or dd.nextSt <= BAR_TC)
+            dd.nextSt := f_nextStart(c, BAR_TC)
+        int shown = live ? s.winStart : (c.enabled ? dd.nextSt : na)
         string stFull = stTxt == "Waiting" and not na(shown) ? "Waiting · " + f_when(shown, c.tz) : stTxt
         f_cell(dash, 0, i + 2, nm, c.enabled ? c.col : #5D606B, rowBg)
         f_cell(dash, 1, i + 2, stFull, stCol, rowBg)

@@ -114,6 +114,7 @@ class Bar:
 @dataclass
 class SessState:
     candStart: int | None = None
+    candNext: int | None = None
     candOk: bool = False
     candDate: str = ""
     winStart: int | None = None
@@ -185,6 +186,13 @@ class Engine:
             pd = local(p, c.tz)
             st = ts(c.tz, pd.year, pd.month, pd.day, c.sh, c.sm)
         return st
+
+    @staticmethod
+    def next_day_start(c: SessCfg, st: int) -> int:
+        d = local(st, c.tz)
+        p = ts(c.tz, d.year, d.month, d.day, 12, 0) + DAY_MS
+        pd = local(p, c.tz)
+        return ts(c.tz, pd.year, pd.month, pd.day, c.sh, c.sm)
 
     def close_trade(self, s: SessState, px: float, reason: int):
         risk0 = abs(s.trEntry - s.trStop0)
@@ -374,11 +382,14 @@ class Engine:
             return entry
         if s.trDir != 0 and bar_index > s.trBar:
             self.manage_trade(s, b, atr, bar_tc)
-        st = self.latest_start(c, b.time)
-        if isna(s.candStart) or pine_ne(st, s.candStart):
-            s.candStart = st
-            s.candDate = date_str(st, c.tz)
-            s.candOk = self.day_ok(c, st) and not self.is_holiday(c, s.candDate)
+        # session clock: timezone maths only when the cached next window start is reached
+        if isna(s.candStart) or b.time >= s.candNext:
+            new_st = self.latest_start(c, b.time)
+            s.candStart = new_st
+            s.candNext = self.next_day_start(c, new_st)
+            s.candDate = date_str(new_st, c.tz)
+            s.candOk = self.day_ok(c, new_st) and not self.is_holiday(c, s.candDate)
+        st = s.candStart
         in_win = s.candOk and st <= b.time < st + c.dur * 60000
         if in_win and (isna(s.winStart) or pine_ne(st, s.winStart)):
             if s.trDir != 0:

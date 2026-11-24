@@ -95,6 +95,32 @@ class SessionClock(unittest.TestCase):
             for a, b in spans:
                 self.check_range(c, a, b)
 
+    def test_cached_clock_matches_timezone_database(self):
+        # Runs the full engine (with its once-a-day clock cache) over continuous 5-minute bars,
+        # including weekends, and compares every window it opens with zoneinfo's answer.
+        for c in (cfg_ny(), cfg_ldn(), cfg_cme(), cfg_tky()):
+            for a, b in [(date(2026, 3, 1), date(2026, 4, 3)), (date(2026, 10, 22), date(2026, 11, 6)),
+                         (date(2027, 3, 10), date(2027, 3, 31))]:
+                utc = ZoneInfo("UTC")
+                t = int(datetime(a.year, a.month, a.day, tzinfo=utc).timestamp() * 1000)
+                t_end = int(datetime(b.year, b.month, b.day, tzinfo=utc).timestamp() * 1000)
+                bars = []
+                while t < t_end:
+                    bars.append(Bar(t, 100, 100.25, 99.75, 100, t + 300_000))
+                    t += 300_000
+                _, log = run(Engine(Params()), [c], bars)
+                got = [ev["new_window"] for _, ev in events(log, kind="new_window")]
+                tz = ZoneInfo(c.tz)
+                want = []
+                d = a - timedelta(days=1)
+                while d <= b:
+                    st = datetime(d.year, d.month, d.day, c.sh, c.sm, tzinfo=tz)
+                    ms = int(st.timestamp() * 1000)
+                    if c.days[st.isoweekday() % 7] == "1" and bars[0].time <= ms < t_end:
+                        want.append(ms)
+                    d += timedelta(days=1)
+                self.assertEqual(got, want, f"{c.key} {a}..{b}")
+
     def test_window_crossing_local_midnight(self):
         # 23:50 + 30 min crosses midnight: bars after 00:00 must still belong to the previous day's window
         self.check_range(SessCfg(key="X", tz=NY, sh=23, sm=50, dur=30, days="1111111"), date(2026, 3, 5), date(2026, 3, 12))

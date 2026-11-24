@@ -10,15 +10,19 @@ Opening-range breakout (ORB) toolkit for **MNQ / NQ futures** and **crypto perpe
 | [`tools/check_shared.py`](tools/check_shared.py) | Proves the two scripts share a byte-identical signal engine |
 | [`tools/lint_pine.py`](tools/lint_pine.py) | Offline syntax + name / field / parameter / na-comparison checks |
 | [`tools/engine_reference.py`](tools/engine_reference.py) | Python model of the engine + session-time table generator |
-| [`tools/test_engine_reference.py`](tools/test_engine_reference.py) | 24 unit tests for sessions, DST, missing bars, signals, exits |
+| [`tools/test_engine_reference.py`](tools/test_engine_reference.py) | 25 unit tests for sessions, DST, missing bars, signals, exits |
 
 > **Compilation status.** The indicator compiles and runs in TradingView: it was
 > tested on a SOLUSDC.P 5 m chart (Hyperliquid) on 2026-11-24. That first run exposed a
 > bug, now fixed: no session window ever started, because Pine evaluates
-> `x != na` as false. The strategy has not been compiled in TradingView yet. Offline,
+> `x != na` as false. The second run hit runtime error RE10110 (execution time limit).
+> The per-bar work has since been cut sharply: timezone maths now runs about once a day
+> per session instead of on every bar, the extra same-timeframe data request is gone,
+> and the dashboard caches next-window times. The strategy has not been compiled in
+> TradingView yet. Offline,
 > both files parse with an open-source Pine grammar, pass the static checker (names,
 > built-ins, keyword arguments, type fields, and `==` / `!=` against values that can be
-> `na`), share identical engine blocks, and the engine logic passes 24 reference tests.
+> `na`), share identical engine blocks, and the engine logic passes 25 reference tests.
 > If the Pine Editor reports an error, send me the line number and message.
 
 > **No performance claims.** Nothing here says any preset is profitable. Use the
@@ -64,7 +68,8 @@ year has no dates in a list.
 ### Opening range
 
 * ORH = highest **wick high**, ORL = lowest **wick low** of the bars inside the window.
-  On Heikin Ashi charts real OHLC is fetched with `ticker.standard()`.
+  Standard candles, bars or line charts only. Heikin Ashi and other synthetic chart
+  types distort wick highs and lows, so ranges are disabled there, with a warning.
 * A shaded box grows while the range forms. ORH / ORL are **frozen only when the last
   window candle closes**. If that candle is missing, they freeze on the first bar after
   the window, before that bar is evaluated.
@@ -309,7 +314,7 @@ signals, except signals counted as Skipped.
 
 ### f) Offline tests (standard Python 3.9+)
 ```
-python3 pine/tools/test_engine_reference.py -v      # 24 tests: DST, holidays, gaps, signals, exits
+python3 pine/tools/test_engine_reference.py -v      # 25 tests: DST, holidays, gaps, signals, exits
 pip install pynescript                              # optional, for the linter
 python3 pine/tools/lint_pine.py pine/*.pine         # slow (~1–2 min per file)
 ```
@@ -329,5 +334,8 @@ TradingView's runtime.
   emulator uses its own open→high/low ordering. Bar Magnifier reduces the difference.
 * TradingView strategies hold one net position. With *One position at a time* off,
   opposite-direction signals are skipped rather than netted.
-* Range charts (Renko, Kagi, P&F, line break, range) are not supported.
+* Heikin Ashi, Renko, Kagi, P&F, line-break and range charts are not supported (wick highs / lows are synthetic).
+* **If TradingView reports “takes too long to execute” (RE10110):** turn off the sessions you
+  don't trade (a disabled session skips the whole engine), then open the Pine Editor's
+  **Profiler** mode and send me the slowest lines.
 * Charts above the range length (e.g. 30 m for 15-min ranges) disable those ranges by design.
