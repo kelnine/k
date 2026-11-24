@@ -29,6 +29,11 @@ def isna(x) -> bool:
     return x is None or (isinstance(x, float) and math.isnan(x))
 
 
+def pine_ne(a, b) -> bool:
+    """Pine's `a != b`: any comparison involving na evaluates to false."""
+    return False if isna(a) or isna(b) else a != b
+
+
 # ───────────────────────── Pine time built-ins ─────────────────────────
 def ts(tz: str, y: int, m: int, d: int, h: int, mi: int, s: int = 0) -> int:
     return int(datetime(y, m, d, h, mi, s, tzinfo=ZoneInfo(tz)).timestamp() * 1000)
@@ -370,12 +375,12 @@ class Engine:
         if s.trDir != 0 and bar_index > s.trBar:
             self.manage_trade(s, b, atr, bar_tc)
         st = self.latest_start(c, b.time)
-        if st != s.candStart:
+        if isna(s.candStart) or pine_ne(st, s.candStart):
             s.candStart = st
             s.candDate = date_str(st, c.tz)
             s.candOk = self.day_ok(c, st) and not self.is_holiday(c, s.candDate)
         in_win = s.candOk and st <= b.time < st + c.dur * 60000
-        if in_win and st != s.winStart:
+        if in_win and (isna(s.winStart) or pine_ne(st, s.winStart)):
             if s.trDir != 0:
                 self.close_trade(s, b.c, 5)
             self.new_window(c, s, st, b, prev_tc)

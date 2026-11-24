@@ -686,13 +686,14 @@ f_engine(SessCfg c, SessState s, bool allowSig) =>
             f_manageTrade(s)
         // 2 — most recent window start in the session's own timezone + trading-day / holiday check
         int st = f_latestStart(c, time)
-        if st != s.candStart
+        // NOTE: any comparison with na is false in Pine, so the na() checks below are required
+        if na(s.candStart) or st != s.candStart
             s.candStart := st
             s.candDate := f_dateStr(st, c.tz)
             s.candOk := f_dayOk(c, st) and not f_isHoliday(c, s.candDate)
         bool inWin = s.candOk and time >= st and time < st + c.dur * 60000
         // 3 — a new window starts: everything from the previous window is reset (no stale levels)
-        if inWin and st != s.winStart
+        if inWin and (na(s.winStart) or st != s.winStart)
             if s.trDir != 0
                 f_closeTrade(s, sC, 5)
             f_newWindow(c, s, st)

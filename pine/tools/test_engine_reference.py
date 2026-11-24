@@ -125,6 +125,14 @@ class SessionClock(unittest.TestCase):
         starts = [local(ev["new_window"], NY).strftime("%a %H:%M") for _, ev in events(log, kind="new_window")]
         self.assertEqual(starts, ["Sun 18:00"])
 
+    def test_first_window_forms_from_fresh_state(self):
+        # Regression: winStart / candStart start as na, and in Pine `st != na` is FALSE.
+        # Without explicit na() checks no window ever started (all sessions stuck on "Waiting").
+        _, log = run(Engine(Params()), [cfg_ny()], flat_bars("2026-11-24", "09:00", "10:00"))
+        starts = [local(ev["new_window"], NY).strftime("%m-%d %H:%M") for _, ev in events(log, kind="new_window")]
+        self.assertEqual(starts, ["11-24 09:30"])
+        self.assertEqual(len(events(log, kind="range_done")), 1)
+
     def test_holiday_is_skipped(self):
         eng = Engine(Params())
         c = cfg_ny(hol="2026-11-26 Thanksgiving")

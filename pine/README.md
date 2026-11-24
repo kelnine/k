@@ -8,17 +8,18 @@ Opening-range breakout (ORB) toolkit for **MNQ / NQ futures** and **crypto perpe
 | [`MultiSessionORBPro.pine`](MultiSessionORBPro.pine) | The indicator: four session ranges, signals, trade levels, dashboard, alerts |
 | [`MultiSessionORBPro_Strategy.pine`](MultiSessionORBPro_Strategy.pine) | Separate `strategy()` for backtesting the exact same signals |
 | [`tools/check_shared.py`](tools/check_shared.py) | Proves the two scripts share a byte-identical signal engine |
-| [`tools/lint_pine.py`](tools/lint_pine.py) | Offline syntax + name / field / parameter checks |
+| [`tools/lint_pine.py`](tools/lint_pine.py) | Offline syntax + name / field / parameter / na-comparison checks |
 | [`tools/engine_reference.py`](tools/engine_reference.py) | Python model of the engine + session-time table generator |
-| [`tools/test_engine_reference.py`](tools/test_engine_reference.py) | 23 unit tests for sessions, DST, missing bars, signals, exits |
+| [`tools/test_engine_reference.py`](tools/test_engine_reference.py) | 24 unit tests for sessions, DST, missing bars, signals, exits |
 
-> **Compilation status — unverified.** TradingView's Pine compiler only runs inside
-> TradingView, so neither script has been compiled or run there. What *was* checked
-> offline: both files parse with an open-source Pine grammar, every identifier /
-> built-in / keyword argument / type field passes the static checker, the shared
-> engine blocks are identical, and the engine's logic passes 23 reference tests.
-> The first time you paste them into the Pine Editor, the compiler is the real test —
-> if it reports an error, send me the line number and message.
+> **Compilation status.** The indicator compiles and runs in TradingView: it was
+> tested on a SOLUSDC.P 5 m chart (Hyperliquid) on 2026-11-24. That first run exposed a
+> bug, now fixed: no session window ever started, because Pine evaluates
+> `x != na` as false. The strategy has not been compiled in TradingView yet. Offline,
+> both files parse with an open-source Pine grammar, pass the static checker (names,
+> built-ins, keyword arguments, type fields, and `==` / `!=` against values that can be
+> `na`), share identical engine blocks, and the engine logic passes 24 reference tests.
+> If the Pine Editor reports an error, send me the line number and message.
 
 > **No performance claims.** Nothing here says any preset is profitable. Use the
 > strategy script to measure it on your own data, costs and settings.
@@ -308,7 +309,7 @@ signals, except signals counted as Skipped.
 
 ### f) Offline tests (standard Python 3.9+)
 ```
-python3 pine/tools/test_engine_reference.py -v      # 23 tests: DST, holidays, gaps, signals, exits
+python3 pine/tools/test_engine_reference.py -v      # 24 tests: DST, holidays, gaps, signals, exits
 pip install pynescript                              # optional, for the linter
 python3 pine/tools/lint_pine.py pine/*.pine         # slow (~1–2 min per file)
 ```
@@ -319,7 +320,7 @@ TradingView's runtime.
 
 ## 7. Known limitations
 
-* **Compilation not yet verified in TradingView** (see top).
+* **The strategy has not been compiled in TradingView yet** (see top).
 * Holiday lists are hand-maintained text. Early closes don't matter (the open still happens).
 * Engine entries use the signal candle close. The strategy fills at the next open, so its
   realised R differs slightly from the indicator's.

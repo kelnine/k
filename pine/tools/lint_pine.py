@@ -15,6 +15,10 @@ authoritative check is pasting the script into the Pine Editor. What this tool d
   5. User-defined types: `obj.field` on a variable with a declared UDT type must be a
      real field; `Type.new(field = ...)` must use real fields.
   6. User functions: call arity / keyword names must match the definition.
+  7. na comparisons: `==` / `!=` against a UDT field that can be `na` (default `na`, or
+     no default) is flagged unless the same `or` expression checks `na(field)`.
+     In Pine any comparison with na evaluates to false, so `x != s.winStart` is
+     false — not true — while `winStart` is still na.
 
 Usage:  python3 pine/tools/lint_pine.py pine/*.pine
 Needs:  pip install pynescript   (parsing a large file can take a few minutes)
@@ -252,6 +256,8 @@ class Linter:
         self.errors: list[str] = []
         self.udts: dict[str, dict[str, str | None]] = {}
         self.funcs: dict[str, list[tuple[str, bool]]] = {}
+        self.na_fields: dict[str, set[str]] = {}
+        self.guarded: list[set[str]] = []
 
     def err(self, node, msg):
         line = getattr(node, "lineno", "?")
@@ -302,12 +308,17 @@ class Linter:
     def stmt(self, st, scope):
         if isinstance(st, N.TypeDef):
             fields = {}
+            na_f = set()
             for f in st.body:
                 if isinstance(f, N.Assign) and isinstance(f.target, N.Name):
                     fields[f.target.id] = type_name(f.type)
+                    no_default_na = f.value is None and type_name(f.type) in ("int", "float", "string", "color")
+                    if no_default_na or (isinstance(f.value, N.Name) and f.value.id == "na"):
+                        na_f.add(f.target.id)
                     if f.value is not None:
                         self.expr(f.value, scope)
             self.udts[st.name] = fields
+            self.na_fields[st.name] = na_f
             scope.names[st.name] = None
         elif isinstance(st, N.FunctionDef):
             params = [(p.name, p.default is not None) for p in st.args]
@@ -378,11 +389,29 @@ class Linter:
             self.expr(e.left, scope)
             self.expr(e.right, scope)
         elif isinstance(e, N.BoolOp):
+            guards = set()
+            if isinstance(e.op, N.Or):
+                for v in e.values:
+                    if isinstance(v, N.Call) and dotted(v.func) == "na" and v.args:
+                        d = dotted(v.args[0].value)
+                        if d:
+                            guards.add(d)
+            self.guarded.append(guards)
             for v in e.values:
                 self.expr(v, scope)
+            self.guarded.pop()
         elif isinstance(e, N.UnaryOp):
             self.expr(e.operand, scope)
         elif isinstance(e, N.Compare):
+            if any(isinstance(op, (N.Eq, N.NotEq)) for op in e.ops):
+                for operand in [e.left, *e.comparators]:
+                    if isinstance(operand, N.Attribute):
+                        base_t = self.type_of(operand.value, scope)
+                        d = dotted(operand)
+                        if (base_t in self.na_fields and operand.attr in self.na_fields[base_t]
+                                and not any(d in g for g in self.guarded)):
+                            self.err(e, f"'==' / '!=' with '{d}', which can be na: Pine evaluates the "
+                                        f"comparison as false while it is na — add 'na({d}) or …'")
             self.expr(e.left, scope)
             for c in e.comparators:
                 self.expr(c, scope)
