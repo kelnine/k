@@ -7,6 +7,8 @@ Opening-range breakout (ORB) toolkit for **MNQ / NQ futures** and **crypto perpe
 |---|---|
 | [`MultiSessionORBPro.pine`](MultiSessionORBPro.pine) | The indicator: four session ranges, signals, trade levels, dashboard, alerts |
 | [`MultiSessionORBPro_Strategy.pine`](MultiSessionORBPro_Strategy.pine) | Separate `strategy()` for backtesting the exact same signals |
+| [`MultiSessionORBPro_ChartBeyond.pine`](MultiSessionORBPro_ChartBeyond.pine) | Generated variant for Chart Beyond: no alerts / tables, label dashboard |
+| [`tools/make_chartbeyond.py`](tools/make_chartbeyond.py) | Regenerates the Chart Beyond variant from the indicator |
 | [`tools/check_shared.py`](tools/check_shared.py) | Proves the two scripts share a byte-identical signal engine |
 | [`tools/lint_pine.py`](tools/lint_pine.py) | Offline syntax + name / field / parameter / na-comparison checks |
 | [`tools/engine_reference.py`](tools/engine_reference.py) | Python model of the engine + session-time table generator |
@@ -163,6 +165,23 @@ The Pine Editor is mainly a desktop / web tool, and menu names differ between ap
    *Text size: Tiny* and a *Top left* / *Bottom left* dashboard on small screens.
 4. Alerts made in the app work the same way as on desktop (next section). Alerts run on
    TradingView's servers, so they fire even when the app is closed.
+
+### Chart Beyond (chartbeyond.com)
+
+Chart Beyond runs a subset of Pine Script. Its editor rejects the TradingView indicator
+with *"17 of 20 features supported. Not yet: alert, table +1"*. Paste
+**`MultiSessionORBPro_ChartBeyond.pine`** there instead. It is generated from the
+indicator with only the TradingView-only blocks swapped out:
+
+* no `alert()` / `alertcondition()`: no alerts or webhooks there, so keep using TradingView for those;
+* the dashboard is one multi-line label to the right of the last bar instead of a table
+  (move it with *Dashboard offset*);
+* everything else is the same code: session clock, ranges, signals, levels and markers.
+
+The "+1" feature was not named in the editor, so this variant may still need one more
+change. If Chart Beyond reports something else, send the feature name or the line.
+After editing the indicator, regenerate the variant with
+`python3 pine/tools/make_chartbeyond.py` (`check_shared.py` fails if you forget).
 
 ---
 

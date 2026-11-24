@@ -11,6 +11,9 @@ retest / false-breakout logic, stop / target maths and the virtual trade tracker
 lives inside those blocks. If they differ, the strategy would be testing a different
 signal than the indicator shows, so this check fails.
 
+The Chart Beyond variant is generated from the indicator by make_chartbeyond.py; this
+check also fails if that generated file is out of date.
+
 Usage:
     python3 pine/tools/check_shared.py            # verify (exit 1 on mismatch)
     python3 pine/tools/check_shared.py --sync     # copy the indicator's blocks into the strategy
@@ -59,6 +62,15 @@ def main() -> int:
             diff = difflib.unified_diff(a.splitlines(), b.splitlines(), "indicator", "strategy", lineterm="", n=1)
             for line in list(diff)[:60]:
                 print("   ", line)
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import make_chartbeyond  # noqa: E402
+
+    cb = make_chartbeyond.TARGET
+    if cb.exists() and cb.read_text(encoding="utf-8") == make_chartbeyond.build():
+        print(f"OK  {cb.name}: up to date with the indicator")
+    else:
+        ok = False
+        print(f"FAIL {cb.name} is missing or out of date: run python3 pine/tools/make_chartbeyond.py")
     for path, text in ((INDICATOR, ind), (STRATEGY, strat)):
         if not text.startswith("//@version=6\n"):
             ok = False
