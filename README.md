@@ -31,6 +31,14 @@ fully custom canvas rendering engine, with no third-party charting library.
   - `DemoAdapter` — deterministic synthetic feed used automatically when the
     exchange is unreachable, so the app always works
 
+## TradingView scripts
+
+[`pine/`](pine/README.md) holds **Multi-Session ORB Pro**, a Pine Script v6
+indicator (New York / London / CME Globex / Tokyo opening ranges with breakout and
+retest signals, alerts and a dashboard) plus a companion `strategy()` for
+backtesting the same signals. See [`pine/README.md`](pine/README.md) for setup,
+recommended inputs and the validation guide.
+
 ## Run it
 
 ```sh

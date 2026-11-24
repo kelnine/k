@@ -3,3 +3,4 @@ dist
 dist-bot
 .env
 bot-state.json
+__pycache__
