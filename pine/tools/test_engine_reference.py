@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from engine_reference import Bar, Engine, Params, SessCfg, SessState, local, run, ts  # noqa: E402
+from engine_reference import Bar, Engine, Params, SessCfg, SessState, local, mask_from_text, parse_hm, run, ts  # noqa: E402
 
 NY = "America/New_York"
 
@@ -58,6 +58,23 @@ def flat_bars(day: str, start: str, end: str, price=100.0, tf_min=5):
 
 def events(log, key=None, kind=None):
     return [(i, ev) for i, _, k, ev in log if (key is None or k == key) and (kind is None or kind in ev)]
+
+
+class InputParsing(unittest.TestCase):
+    def test_day_codes(self):
+        self.assertEqual(mask_from_text("Mo Tu We Th Fr"), "0111110")
+        self.assertEqual(mask_from_text("Su Mo Tu We Th"), "1111100")
+        self.assertEqual(mask_from_text("mon,tue,wed,thu,fri,sat,sun"), "1111111")
+        self.assertEqual(mask_from_text("Th"), "0000100")  # Th must not switch on Tu
+        self.assertEqual(mask_from_text("Tu"), "0010000")
+        self.assertEqual(mask_from_text("Sa Su"), "1000001")
+        self.assertEqual(mask_from_text(""), "0000000")
+
+    def test_start_time(self):
+        self.assertEqual((parse_hm("09:30", 0, -1), parse_hm("09:30", 1, -1)), (9, 30))
+        self.assertEqual((parse_hm(" 18 : 00 ", 0, -1), parse_hm(" 18 : 00 ", 1, -1)), (18, 0))
+        for bad in ("9.30", "24:00", "09:60", "0930", "ab:cd", "9:30:00", "09:7.5"):
+            self.assertTrue(parse_hm(bad, 0, -1) == -1 or parse_hm(bad, 1, -1) == -1, bad)
 
 
 class SessionClock(unittest.TestCase):

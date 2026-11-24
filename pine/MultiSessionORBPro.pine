@@ -18,6 +18,7 @@ indicator("Multi-Session ORB Pro", shorttitle = "MS-ORB Pro", overlay = true, ma
 // ───────────────────────────── ① Market profile ─────────────────────────────
 string G_PROF = "① Market profile"
 string iProfile = input.string("Auto-detect", "Market profile", options = ["Auto-detect", "Futures (MNQ/NQ)", "Crypto (perpetuals)"], group = G_PROF, display = display.none, tooltip = "Auto-detect: crypto spot / perpetual symbols use the Crypto profile, everything else the Futures profile. The profile selects which enable column is used for every session and which risk block (⑦ Futures or ⑧ Crypto) applies. The dashboard shows the profile in use.")
+bool iHolOn = input.bool(true, "Skip listed holiday dates (all sessions)", group = G_PROF, display = display.none, tooltip = "Each session has its own holiday list below. Turn this off to ignore all of them.")
 bool iCrypto7d = input.bool(false, "Crypto: form reference windows 7 days a week", group = G_PROF, display = display.none, tooltip = "Crypto trades continuously, so on crypto charts all four windows are REFERENCE windows, not real market opens. Off: each session keeps its own day calendar below. On: every enabled window also forms on Saturday / Sunday (holiday lists still apply).")
 
 // ───────────────────────────── ② New York ─────────────────────────────
@@ -25,80 +26,44 @@ string G_NY = "② New York — NYSE cash open"
 bool   nyOnF   = input.bool(true, "Enable on futures", inline = "ny1", group = G_NY, display = display.none)
 bool   nyOnC   = input.bool(true, "on crypto", inline = "ny1", group = G_NY, display = display.none)
 string nyTz    = input.string("America/New_York", "Timezone (IANA)", options = ["America/New_York", "America/Chicago", "Europe/London", "Europe/Berlin", "Europe/Zurich", "Asia/Tokyo", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Singapore", "Australia/Sydney", "GMT+0"], group = G_NY, display = display.none)
-int    nyH     = input.int(9, "Start (local)  hh", minval = 0, maxval = 23, inline = "ny2", group = G_NY, display = display.none)
-int    nyM     = input.int(30, "mm", minval = 0, maxval = 59, inline = "ny2", group = G_NY, display = display.none)
+string nyStart = input.string("09:30", "Start (local time, HH:MM)", group = G_NY, display = display.none, tooltip = "24-hour local time in the timezone above. If the text cannot be read, 09:30 is used and the dashboard shows a warning.")
 int    nyDur   = input.int(15, "Range minutes", options = [5, 15, 30, 60], group = G_NY, display = display.none)
-bool   nySu    = input.bool(false, "Days  Su", inline = "ny3", group = G_NY, display = display.none)
-bool   nyMo    = input.bool(true, "Mo", inline = "ny3", group = G_NY, display = display.none)
-bool   nyTu    = input.bool(true, "Tu", inline = "ny3", group = G_NY, display = display.none)
-bool   nyWe    = input.bool(true, "We", inline = "ny3", group = G_NY, display = display.none)
-bool   nyTh    = input.bool(true, "Th", inline = "ny3", group = G_NY, display = display.none)
-bool   nyFr    = input.bool(true, "Fr", inline = "ny3", group = G_NY, display = display.none)
-bool   nySa    = input.bool(false, "Sa", inline = "ny3", group = G_NY, display = display.none)
-bool   nyHolOn = input.bool(true, "Skip listed holidays", group = G_NY, display = display.none, tooltip = "NYSE full-day closures 2025–2027 are pre-filled. On these days MNQ/NQ still trade at 09:30 ET, so without this list a false 'cash open' range would form. Verify against the official NYSE calendar and add new years yourself. Any text after the date is ignored.")
-string nyHol   = input.text_area("2025-01-01 New Year\n2025-01-09 Natl Day of Mourning\n2025-01-20 MLK Day\n2025-02-17 Presidents Day\n2025-04-18 Good Friday\n2025-05-26 Memorial Day\n2025-06-19 Juneteenth\n2025-07-04 Independence Day\n2025-09-01 Labor Day\n2025-11-27 Thanksgiving\n2025-12-25 Christmas\n2026-01-01 New Year\n2026-01-19 MLK Day\n2026-02-16 Presidents Day\n2026-04-03 Good Friday\n2026-05-25 Memorial Day\n2026-06-19 Juneteenth\n2026-07-03 Independence Day (obs)\n2026-09-07 Labor Day\n2026-11-26 Thanksgiving\n2026-12-25 Christmas\n2027-01-01 New Year\n2027-01-18 MLK Day\n2027-02-15 Presidents Day\n2027-03-26 Good Friday\n2027-05-31 Memorial Day\n2027-06-18 Juneteenth (obs)\n2027-07-05 Independence Day (obs)\n2027-09-06 Labor Day\n2027-11-25 Thanksgiving\n2027-12-24 Christmas (obs)", "Holidays (local date YYYY-MM-DD)", group = G_NY, display = display.none)
-color  nyCol   = input.color(#2962FF, "Levels", inline = "ny4", group = G_NY)
-color  nyFill  = input.color(#2962FF, "Fill", inline = "ny4", group = G_NY)
+string nyDays  = input.string("Mo Tu We Th Fr", "Trading days", group = G_NY, display = display.none, tooltip = "Two-letter day codes on the LOCAL date of the window, any order or separator: Su Mo Tu We Th Fr Sa (Mon / Tue … also work).")
+string nyHol   = input.text_area("2025-01-01 New Year\n2025-01-09 Natl Day of Mourning\n2025-01-20 MLK Day\n2025-02-17 Presidents Day\n2025-04-18 Good Friday\n2025-05-26 Memorial Day\n2025-06-19 Juneteenth\n2025-07-04 Independence Day\n2025-09-01 Labor Day\n2025-11-27 Thanksgiving\n2025-12-25 Christmas\n2026-01-01 New Year\n2026-01-19 MLK Day\n2026-02-16 Presidents Day\n2026-04-03 Good Friday\n2026-05-25 Memorial Day\n2026-06-19 Juneteenth\n2026-07-03 Independence Day (obs)\n2026-09-07 Labor Day\n2026-11-26 Thanksgiving\n2026-12-25 Christmas\n2027-01-01 New Year\n2027-01-18 MLK Day\n2027-02-15 Presidents Day\n2027-03-26 Good Friday\n2027-05-31 Memorial Day\n2027-06-18 Juneteenth (obs)\n2027-07-05 Independence Day (obs)\n2027-09-06 Labor Day\n2027-11-25 Thanksgiving\n2027-12-24 Christmas (obs)", "Holidays (local date YYYY-MM-DD)", tooltip = "NYSE full-day closures 2025–2027 are pre-filled. On these days MNQ/NQ still trade at 09:30 ET, so without this list a false 'cash open' range would form. Verify against the official NYSE calendar and add new years yourself. Any text after the date is ignored.", group = G_NY, display = display.none)
+color  nyCol   = input.color(#2962FF, "Colour", group = G_NY)
 
 // ───────────────────────────── ③ London ─────────────────────────────
 string G_LDN = "③ London — LSE cash open"
 bool   ldOnF   = input.bool(true, "Enable on futures", inline = "ld1", group = G_LDN, display = display.none)
 bool   ldOnC   = input.bool(true, "on crypto", inline = "ld1", group = G_LDN, display = display.none)
 string ldTz    = input.string("Europe/London", "Timezone (IANA)", options = ["America/New_York", "America/Chicago", "Europe/London", "Europe/Berlin", "Europe/Zurich", "Asia/Tokyo", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Singapore", "Australia/Sydney", "GMT+0"], group = G_LDN, display = display.none, tooltip = "Europe/London switches between GMT and BST automatically, so the window is 03:00 ET most of the year and 04:00 ET during the short periods when only one side of the Atlantic is on daylight-saving time.")
-int    ldH     = input.int(8, "Start (local)  hh", minval = 0, maxval = 23, inline = "ld2", group = G_LDN, display = display.none)
-int    ldM     = input.int(0, "mm", minval = 0, maxval = 59, inline = "ld2", group = G_LDN, display = display.none)
+string ldStart = input.string("08:00", "Start (local time, HH:MM)", group = G_LDN, display = display.none, tooltip = "24-hour local time in the timezone above. If the text cannot be read, 08:00 is used and the dashboard shows a warning.")
 int    ldDur   = input.int(15, "Range minutes", options = [5, 15, 30, 60], group = G_LDN, display = display.none)
-bool   ldSu    = input.bool(false, "Days  Su", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldMo    = input.bool(true, "Mo", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldTu    = input.bool(true, "Tu", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldWe    = input.bool(true, "We", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldTh    = input.bool(true, "Th", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldFr    = input.bool(true, "Fr", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldSa    = input.bool(false, "Sa", inline = "ld3", group = G_LDN, display = display.none)
-bool   ldHolOn = input.bool(true, "Skip listed holidays", group = G_LDN, display = display.none, tooltip = "LSE full-day closures (England & Wales bank holidays) 2025–2027 are pre-filled. Verify against the official LSE calendar and extend yearly.")
-string ldHol   = input.text_area("2025-01-01 New Year\n2025-04-18 Good Friday\n2025-04-21 Easter Monday\n2025-05-05 Early May BH\n2025-05-26 Spring BH\n2025-08-25 Summer BH\n2025-12-25 Christmas\n2025-12-26 Boxing Day\n2026-01-01 New Year\n2026-04-03 Good Friday\n2026-04-06 Easter Monday\n2026-05-04 Early May BH\n2026-05-25 Spring BH\n2026-08-31 Summer BH\n2026-12-25 Christmas\n2026-12-28 Boxing Day (sub)\n2027-01-01 New Year\n2027-03-26 Good Friday\n2027-03-29 Easter Monday\n2027-05-03 Early May BH\n2027-05-31 Spring BH\n2027-08-30 Summer BH\n2027-12-27 Christmas (sub)\n2027-12-28 Boxing Day (sub)", "Holidays (local date YYYY-MM-DD)", group = G_LDN, display = display.none)
-color  ldCol   = input.color(#AB47BC, "Levels", inline = "ld4", group = G_LDN)
-color  ldFill  = input.color(#AB47BC, "Fill", inline = "ld4", group = G_LDN)
+string ldDays  = input.string("Mo Tu We Th Fr", "Trading days", group = G_LDN, display = display.none, tooltip = "Two-letter day codes on the LOCAL date of the window, any order or separator: Su Mo Tu We Th Fr Sa (Mon / Tue … also work).")
+string ldHol   = input.text_area("2025-01-01 New Year\n2025-04-18 Good Friday\n2025-04-21 Easter Monday\n2025-05-05 Early May BH\n2025-05-26 Spring BH\n2025-08-25 Summer BH\n2025-12-25 Christmas\n2025-12-26 Boxing Day\n2026-01-01 New Year\n2026-04-03 Good Friday\n2026-04-06 Easter Monday\n2026-05-04 Early May BH\n2026-05-25 Spring BH\n2026-08-31 Summer BH\n2026-12-25 Christmas\n2026-12-28 Boxing Day (sub)\n2027-01-01 New Year\n2027-03-26 Good Friday\n2027-03-29 Easter Monday\n2027-05-03 Early May BH\n2027-05-31 Spring BH\n2027-08-30 Summer BH\n2027-12-27 Christmas (sub)\n2027-12-28 Boxing Day (sub)", "Holidays (local date YYYY-MM-DD)", tooltip = "LSE full-day closures (England & Wales bank holidays) 2025–2027 are pre-filled. Verify against the official LSE calendar and extend yearly.", group = G_LDN, display = display.none)
+color  ldCol   = input.color(#AB47BC, "Colour", group = G_LDN)
 
 // ───────────────────────────── ④ CME Globex ─────────────────────────────
 string G_CME = "④ CME Globex — evening reopen"
 bool   cmOnF   = input.bool(true, "Enable on futures", inline = "cm1", group = G_CME, display = display.none)
 bool   cmOnC   = input.bool(true, "on crypto", inline = "cm1", group = G_CME, display = display.none)
 string cmTz    = input.string("America/New_York", "Timezone (IANA)", options = ["America/New_York", "America/Chicago", "Europe/London", "Europe/Berlin", "Europe/Zurich", "Asia/Tokyo", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Singapore", "Australia/Sydney", "GMT+0"], group = G_CME, display = display.none, tooltip = "18:00 America/New_York = 17:00 America/Chicago, the CME Globex reopen after the daily maintenance halt. On crypto charts this is a reference window only.")
-int    cmH     = input.int(18, "Start (local)  hh", minval = 0, maxval = 23, inline = "cm2", group = G_CME, display = display.none)
-int    cmM     = input.int(0, "mm", minval = 0, maxval = 59, inline = "cm2", group = G_CME, display = display.none)
+string cmStart = input.string("18:00", "Start (local time, HH:MM)", group = G_CME, display = display.none, tooltip = "24-hour local time in the timezone above. If the text cannot be read, 18:00 is used and the dashboard shows a warning.")
 int    cmDur   = input.int(15, "Range minutes", options = [5, 15, 30, 60], group = G_CME, display = display.none)
-bool   cmSu    = input.bool(true, "Days  Su", inline = "cm3", group = G_CME, display = display.none, tooltip = "Days are the LOCAL date of the window. Globex reopens Sunday–Thursday evenings (Sunday evening = start of the trading week).")
-bool   cmMo    = input.bool(true, "Mo", inline = "cm3", group = G_CME, display = display.none)
-bool   cmTu    = input.bool(true, "Tu", inline = "cm3", group = G_CME, display = display.none)
-bool   cmWe    = input.bool(true, "We", inline = "cm3", group = G_CME, display = display.none)
-bool   cmTh    = input.bool(true, "Th", inline = "cm3", group = G_CME, display = display.none)
-bool   cmFr    = input.bool(false, "Fr", inline = "cm3", group = G_CME, display = display.none)
-bool   cmSa    = input.bool(false, "Sa", inline = "cm3", group = G_CME, display = display.none)
-bool   cmHolOn = input.bool(true, "Skip listed holidays", group = G_CME, display = display.none, tooltip = "Empty by default on purpose: on MNQ/NQ charts an evening with no Globex reopen simply has no bars, so no range forms. Holiday reopen times change year to year (e.g. Good Friday / payrolls), so a wrong date here would hide a real range. Add evening dates (NY local date) only if you want to skip the reference window on crypto charts.")
-string cmHol   = input.text_area("", "Holidays (local date YYYY-MM-DD)", group = G_CME, display = display.none)
-color  cmCol   = input.color(#FFA000, "Levels", inline = "cm4", group = G_CME)
-color  cmFill  = input.color(#FFA000, "Fill", inline = "cm4", group = G_CME)
+string cmDays  = input.string("Su Mo Tu We Th", "Trading days", group = G_CME, display = display.none, tooltip = "Days are the LOCAL date of the window. Globex reopens Sunday–Thursday evenings (Sunday evening = start of the trading week). Two-letter day codes on the LOCAL date of the window, any order or separator: Su Mo Tu We Th Fr Sa (Mon / Tue … also work).")
+string cmHol   = input.text_area("", "Holidays (local date YYYY-MM-DD)", tooltip = "Empty by default on purpose: on MNQ/NQ charts an evening with no Globex reopen simply has no bars, so no range forms. Holiday reopen times change year to year (e.g. Good Friday / payrolls), so a wrong date here would hide a real range. Add evening dates (NY local date) only if you want to skip the reference window on crypto charts.", group = G_CME, display = display.none)
+color  cmCol   = input.color(#FFA000, "Colour", group = G_CME)
 
 // ───────────────────────────── ⑤ Tokyo ─────────────────────────────
 string G_TKY = "⑤ Tokyo — TSE cash open"
 bool   tkOnF   = input.bool(false, "Enable on futures", inline = "tk1", group = G_TKY, display = display.none)
 bool   tkOnC   = input.bool(true, "on crypto", inline = "tk1", group = G_TKY, display = display.none)
 string tkTz    = input.string("Asia/Tokyo", "Timezone (IANA)", options = ["America/New_York", "America/Chicago", "Europe/London", "Europe/Berlin", "Europe/Zurich", "Asia/Tokyo", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Singapore", "Australia/Sydney", "GMT+0"], group = G_TKY, display = display.none, tooltip = "Japan has no daylight-saving time; 09:00 JST is 19:00 ET in US winter and 20:00 ET in US summer (previous NY calendar day).")
-int    tkH     = input.int(9, "Start (local)  hh", minval = 0, maxval = 23, inline = "tk2", group = G_TKY, display = display.none)
-int    tkM     = input.int(0, "mm", minval = 0, maxval = 59, inline = "tk2", group = G_TKY, display = display.none)
+string tkStart = input.string("09:00", "Start (local time, HH:MM)", group = G_TKY, display = display.none, tooltip = "24-hour local time in the timezone above. If the text cannot be read, 09:00 is used and the dashboard shows a warning.")
 int    tkDur   = input.int(15, "Range minutes", options = [5, 15, 30, 60], group = G_TKY, display = display.none)
-bool   tkSu    = input.bool(false, "Days  Su", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkMo    = input.bool(true, "Mo", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkTu    = input.bool(true, "Tu", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkWe    = input.bool(true, "We", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkTh    = input.bool(true, "Th", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkFr    = input.bool(true, "Fr", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkSa    = input.bool(false, "Sa", inline = "tk3", group = G_TKY, display = display.none)
-bool   tkHolOn = input.bool(true, "Skip listed holidays", group = G_TKY, display = display.none, tooltip = "JPX (Tokyo Stock Exchange) full-day closures 2025–2027 are pre-filled, including the Dec 31 – Jan 3 year-end closure. Verify against the official JPX calendar and extend yearly.")
-string tkHol   = input.text_area("2025-01-01\n2025-01-02\n2025-01-03\n2025-01-13\n2025-02-11\n2025-02-24\n2025-03-20\n2025-04-29\n2025-05-05\n2025-05-06\n2025-07-21\n2025-08-11\n2025-09-15\n2025-09-23\n2025-10-13\n2025-11-03\n2025-11-24\n2025-12-31\n2026-01-01\n2026-01-02\n2026-01-12\n2026-02-11\n2026-02-23\n2026-03-20\n2026-04-29\n2026-05-04\n2026-05-05\n2026-05-06\n2026-07-20\n2026-08-11\n2026-09-21\n2026-09-22\n2026-09-23\n2026-10-12\n2026-11-03\n2026-11-23\n2026-12-31\n2027-01-01\n2027-01-11\n2027-02-11\n2027-02-23\n2027-03-22\n2027-04-29\n2027-05-03\n2027-05-04\n2027-05-05\n2027-07-19\n2027-08-11\n2027-09-20\n2027-09-23\n2027-10-11\n2027-11-03\n2027-11-23\n2027-12-31", "Holidays (local date YYYY-MM-DD)", group = G_TKY, display = display.none)
-color  tkCol   = input.color(#00ACC1, "Levels", inline = "tk4", group = G_TKY)
-color  tkFill  = input.color(#00ACC1, "Fill", inline = "tk4", group = G_TKY)
+string tkDays  = input.string("Mo Tu We Th Fr", "Trading days", group = G_TKY, display = display.none, tooltip = "Two-letter day codes on the LOCAL date of the window, any order or separator: Su Mo Tu We Th Fr Sa (Mon / Tue … also work).")
+string tkHol   = input.text_area("2025-01-01\n2025-01-02\n2025-01-03\n2025-01-13\n2025-02-11\n2025-02-24\n2025-03-20\n2025-04-29\n2025-05-05\n2025-05-06\n2025-07-21\n2025-08-11\n2025-09-15\n2025-09-23\n2025-10-13\n2025-11-03\n2025-11-24\n2025-12-31\n2026-01-01\n2026-01-02\n2026-01-12\n2026-02-11\n2026-02-23\n2026-03-20\n2026-04-29\n2026-05-04\n2026-05-05\n2026-05-06\n2026-07-20\n2026-08-11\n2026-09-21\n2026-09-22\n2026-09-23\n2026-10-12\n2026-11-03\n2026-11-23\n2026-12-31\n2027-01-01\n2027-01-11\n2027-02-11\n2027-02-23\n2027-03-22\n2027-04-29\n2027-05-03\n2027-05-04\n2027-05-05\n2027-07-19\n2027-08-11\n2027-09-20\n2027-09-23\n2027-10-11\n2027-11-03\n2027-11-23\n2027-12-31", "Holidays (local date YYYY-MM-DD)", tooltip = "JPX (Tokyo Stock Exchange) full-day closures 2025–2027 are pre-filled, including the Dec 31 – Jan 3 year-end closure. Verify against the official JPX calendar and extend yearly.", group = G_TKY, display = display.none)
+color  tkCol   = input.color(#00ACC1, "Colour", group = G_TKY)
 
 // ───────────────────────────── ⑥ Signals ─────────────────────────────
 string G_SIG = "⑥ Signals"
@@ -242,16 +207,17 @@ int PREV_T  = time[1]
 
 // ───────────────────────────── Types ─────────────────────────────
 type SessCfg
-    string key
-    string name
-    string tz
+    string key = ""
+    string name = ""
+    string tz = ""
     int    sh
     int    sm
+    bool   timeOk = true
     int    dur
     bool   enabled = false
-    string days
+    string days = ""
     bool   holOn = false
-    string hol
+    string hol = ""
     color  col
     color  fillCol
     bool   tfOk = false
@@ -332,8 +298,20 @@ type SessState
     float  evExitR = na
 
 // ───────────────────────────── Utilities ─────────────────────────────
-f_mask(bool su, bool mo, bool tu, bool we, bool th, bool fr, bool sa) =>
-    (su ? "1" : "0") + (mo ? "1" : "0") + (tu ? "1" : "0") + (we ? "1" : "0") + (th ? "1" : "0") + (fr ? "1" : "0") + (sa ? "1" : "0")
+// "Mo Tu We Th Fr" (or "Mon Tue …", any case / separator) → 7-char mask, index 0 = Sunday.
+f_maskText(string t) =>
+    string l = str.lower(t)
+    (str.contains(l, "su") ? "1" : "0") + (str.contains(l, "mo") ? "1" : "0") + (str.contains(l, "tu") ? "1" : "0") + (str.contains(l, "we") ? "1" : "0") + (str.contains(l, "th") ? "1" : "0") + (str.contains(l, "fr") ? "1" : "0") + (str.contains(l, "sa") ? "1" : "0")
+
+// Hour (part 0) or minute (part 1) of an "HH:MM" text; returns `def` when it can't be read.
+f_parseHM(string t, int part, int def) =>
+    array<string> p = str.split(str.replace_all(t, " ", ""), ":")
+    float v = p.size() == 2 ? str.tonumber(p.get(part)) : na
+    int lim = part == 0 ? 23 : 59
+    na(v) or v < 0 or v > lim or v != math.floor(v) ? def : int(v)
+
+f_hmOk(string t) =>
+    f_parseHM(t, 0, -1) >= 0 and f_parseHM(t, 1, -1) >= 0
 
 // A range of `durMin` minutes is exact only when whole chart bars tile it.
 f_tfOk(int durMin) =>
@@ -736,10 +714,10 @@ f_engine(SessCfg c, SessState s, bool allowSig) =>
     entryDir
 
 // ───────────────────────────── Session objects ─────────────────────────────
-var SessCfg cNY  = SessCfg.new(key = "NY", name = "New York", tz = nyTz, sh = nyH, sm = nyM, dur = nyDur, enabled = IS_CRYPTO ? nyOnC : nyOnF, days = f_mask(nySu, nyMo, nyTu, nyWe, nyTh, nyFr, nySa), holOn = nyHolOn, hol = nyHol, col = nyCol, fillCol = nyFill, tfOk = f_tfOk(nyDur), tf1hOk = f_tfOk(60))
-var SessCfg cLDN = SessCfg.new(key = "LDN", name = "London", tz = ldTz, sh = ldH, sm = ldM, dur = ldDur, enabled = IS_CRYPTO ? ldOnC : ldOnF, days = f_mask(ldSu, ldMo, ldTu, ldWe, ldTh, ldFr, ldSa), holOn = ldHolOn, hol = ldHol, col = ldCol, fillCol = ldFill, tfOk = f_tfOk(ldDur), tf1hOk = f_tfOk(60))
-var SessCfg cCME = SessCfg.new(key = "CME", name = "CME Globex", tz = cmTz, sh = cmH, sm = cmM, dur = cmDur, enabled = IS_CRYPTO ? cmOnC : cmOnF, days = f_mask(cmSu, cmMo, cmTu, cmWe, cmTh, cmFr, cmSa), holOn = cmHolOn, hol = cmHol, col = cmCol, fillCol = cmFill, tfOk = f_tfOk(cmDur), tf1hOk = f_tfOk(60))
-var SessCfg cTKY = SessCfg.new(key = "TKY", name = "Tokyo", tz = tkTz, sh = tkH, sm = tkM, dur = tkDur, enabled = IS_CRYPTO ? tkOnC : tkOnF, days = f_mask(tkSu, tkMo, tkTu, tkWe, tkTh, tkFr, tkSa), holOn = tkHolOn, hol = tkHol, col = tkCol, fillCol = tkFill, tfOk = f_tfOk(tkDur), tf1hOk = f_tfOk(60))
+var SessCfg cNY  = SessCfg.new(key = "NY", name = "New York", tz = nyTz, sh = f_parseHM(nyStart, 0, 9), sm = f_parseHM(nyStart, 1, 30), timeOk = f_hmOk(nyStart), dur = nyDur, enabled = IS_CRYPTO ? nyOnC : nyOnF, days = f_maskText(nyDays), holOn = iHolOn, hol = nyHol, col = nyCol, fillCol = nyCol, tfOk = f_tfOk(nyDur), tf1hOk = f_tfOk(60))
+var SessCfg cLDN = SessCfg.new(key = "LDN", name = "London", tz = ldTz, sh = f_parseHM(ldStart, 0, 8), sm = f_parseHM(ldStart, 1, 0), timeOk = f_hmOk(ldStart), dur = ldDur, enabled = IS_CRYPTO ? ldOnC : ldOnF, days = f_maskText(ldDays), holOn = iHolOn, hol = ldHol, col = ldCol, fillCol = ldCol, tfOk = f_tfOk(ldDur), tf1hOk = f_tfOk(60))
+var SessCfg cCME = SessCfg.new(key = "CME", name = "CME Globex", tz = cmTz, sh = f_parseHM(cmStart, 0, 18), sm = f_parseHM(cmStart, 1, 0), timeOk = f_hmOk(cmStart), dur = cmDur, enabled = IS_CRYPTO ? cmOnC : cmOnF, days = f_maskText(cmDays), holOn = iHolOn, hol = cmHol, col = cmCol, fillCol = cmCol, tfOk = f_tfOk(cmDur), tf1hOk = f_tfOk(60))
+var SessCfg cTKY = SessCfg.new(key = "TKY", name = "Tokyo", tz = tkTz, sh = f_parseHM(tkStart, 0, 9), sm = f_parseHM(tkStart, 1, 0), timeOk = f_hmOk(tkStart), dur = tkDur, enabled = IS_CRYPTO ? tkOnC : tkOnF, days = f_maskText(tkDays), holOn = iHolOn, hol = tkHol, col = tkCol, fillCol = tkCol, tfOk = f_tfOk(tkDur), tf1hOk = f_tfOk(60))
 var SessState sNY  = SessState.new()
 var SessState sLDN = SessState.new()
 var SessState sCME = SessState.new()
@@ -1303,6 +1281,12 @@ f_warnings() =>
         w := w + (w != "" ? "\n" : "") + "⚠ No volume data on this symbol: volume filter is ignored."
     if not IS_CRYPTO and syminfo.session == session.regular and (cLDN.enabled or cCME.enabled or cTKY.enabled)
         w := w + (w != "" ? "\n" : "") + "⚠ Chart shows regular hours only: London / CME / Tokyo windows need extended (ETH) bars."
+    string badT = (cNY.enabled and not cNY.timeOk ? " NY" : "") + (cLDN.enabled and not cLDN.timeOk ? " LDN" : "") + (cCME.enabled and not cCME.timeOk ? " CME" : "") + (cTKY.enabled and not cTKY.timeOk ? " TKY" : "")
+    if badT != ""
+        w := w + (w != "" ? "\n" : "") + "⚠ Start time not understood (use HH:MM) for:" + badT + " — the default time is used."
+    string noDays = (cNY.enabled and cNY.days == "0000000" ? " NY" : "") + (cLDN.enabled and cLDN.days == "0000000" ? " LDN" : "") + (cCME.enabled and cCME.days == "0000000" ? " CME" : "") + (cTKY.enabled and cTKY.days == "0000000" ? " TKY" : "")
+    if noDays != ""
+        w := w + (w != "" ? "\n" : "") + "⚠ No trading days recognised for:" + noDays + " — use codes like Mo Tu We Th Fr."
     string yr = str.tostring(year(BAR_TC, "GMT+0"))
     string noHol = (cNY.enabled and cNY.holOn and not str.contains(cNY.hol, yr) ? " NY" : "") + (cLDN.enabled and cLDN.holOn and not str.contains(cLDN.hol, yr) ? " LDN" : "") + (cTKY.enabled and cTKY.holOn and not str.contains(cTKY.hol, yr) ? " TKY" : "")
     if noHol != ""

@@ -51,6 +51,22 @@ def date_str(t: int, tz: str) -> str:
     return local(t, tz).strftime("%Y-%m-%d")
 
 
+# ───────────────────────── input parsing (mirrors f_maskText / f_parseHM) ─────────────────────────
+def mask_from_text(t: str) -> str:
+    low = t.lower()
+    return "".join("1" if code in low else "0" for code in ("su", "mo", "tu", "we", "th", "fr", "sa"))
+
+
+def parse_hm(t: str, part: int, default: int) -> int:
+    p = t.replace(" ", "").split(":")
+    try:
+        v = float(p[part]) if len(p) == 2 else None
+    except ValueError:
+        v = None
+    lim = 23 if part == 0 else 59
+    return default if v is None or v < 0 or v > lim or v != math.floor(v) else int(v)
+
+
 # ───────────────────────── configuration ─────────────────────────
 @dataclass
 class SessCfg:

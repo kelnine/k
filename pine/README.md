@@ -57,7 +57,10 @@ there is no real "open" at these times. By default each window keeps its own wee
 calendar. Turn on *Crypto: form reference windows 7 days a week* to include weekends.
 
 Each session has its own: enable switch for futures and for crypto, timezone, start
-time, duration (5 / 15 / 30 / 60 min), weekday checkboxes, holiday list and colours.
+time (`HH:MM`, local), duration (5 / 15 / 30 / 60 min), trading days (`Mo Tu We Th Fr`,
+any order; `Mon Tue …` also works), holiday list and colour. One switch in ① turns
+holiday skipping on or off for all sessions. An unreadable start time falls back to
+the default and shows a dashboard warning.
 
 **Holidays.** Pre-filled full-day closures for 2025–2027 (taken from exchange
 calendars) for NYSE, LSE and JPX. Without them a fake "cash open" range would form,
@@ -182,6 +185,20 @@ The "+1" feature was not named in the editor, so this variant may still need one
 change. If Chart Beyond reports something else, send the feature name or the line.
 After editing the indicator, regenerate the variant with
 `python3 pine/tools/make_chartbeyond.py` (`check_shared.py` fails if you forget).
+
+### OpenMarket (openmarket.xyz)
+
+OpenMarket does not run Pine. Its assistant (Kata) translates the script into
+OpenMarket's own language. The first translation failed because OpenMarket caps a
+script at **128 parameters**, and it counts some inputs as several (a min/max range
+counts as two). The indicator originally had 169 inputs. The days, start times,
+holiday switches and fill colours have since been consolidated, so it now has **134**,
+and the eight min/max-ranged hour and minute inputs are gone. That should bring the
+translation well under the cap. Paste the current `MultiSessionORBPro.pine` and ask
+Kata to translate it again. I can't run or check OpenMarket's translation from here,
+so compare its output with the TradingView version (section 6) before relying on it.
+If it still hits the cap, ask Kata to fix the alert settings and the
+multi-timeframe-bias timeframes as constants: that removes about 11 more parameters.
 
 ---
 
