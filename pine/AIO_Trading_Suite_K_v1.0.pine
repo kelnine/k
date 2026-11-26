@@ -282,8 +282,8 @@ float emaS = ta.ema(close, slowLen)
 bool emaBullState = emaF > emaS
 bool emaBearState = emaF < emaS
 
-pFast = plot(showEma ? emaF : na, "Fast EMA", fastCol, 2)
-pSlow = plot(showEma ? emaS : na, "Slow EMA", slowCol, 2)
+pFast = plot(showEma ? emaF : na, "Fast EMA", fastCol, 2, display = display.all - display.status_line)
+pSlow = plot(showEma ? emaS : na, "Slow EMA", slowCol, 2, display = display.all - display.status_line)
 fill(pFast, pSlow, showEma and emaFill ? (emaBullState ? color.new(#26a69a, 88) : color.new(#ef5350, 88)) : na, "EMA trend fill")
 
 bool emaXUp = ta.crossover(emaF, emaS)
@@ -303,8 +303,8 @@ else
     ribDir := ribC > ribC[1] ? 1 : ribC < ribC[1] ? -1 : ribDir
 
 color ribCol = ribDir == 1 ? ribBull : ribDir == -1 ? ribBear : color.gray
-pRibH = plot(ribOn ? ribH : na, "Ribbon EMA(high)", color.new(ribCol, ribLineT), 1)
-pRibC = plot(ribOn ? ribC : na, "Ribbon EMA(close)", color.new(ribCol, ribLineT), 1)
+pRibH = plot(ribOn ? ribH : na, "Ribbon EMA(high)", color.new(ribCol, ribLineT), 1, display = display.all - display.status_line)
+pRibC = plot(ribOn ? ribC : na, "Ribbon EMA(close)", color.new(ribCol, ribLineT), 1, display = display.all - display.status_line)
 fill(pRibH, pRibC, ribOn ? color.new(ribCol, ribFillT) : na, "EMA ribbon fill")
 
 bool ribFlipUp = ribOn and ribDir == 1 and ribDir[1] == -1
@@ -668,14 +668,14 @@ bool orbAnyS = lonS or nyS or gxS
 bool orbAnyRL = lonRL or nyRL or gxRL
 bool orbAnyRS = lonRS or nyRS or gxRS
 
-plotshape(orbMarkers and lonL, "London ORB long", shape.triangleup, location.belowbar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny)
-plotshape(orbMarkers and lonS, "London ORB short", shape.triangledown, location.abovebar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny)
-plotshape(orbMarkers and nyL, "NY ORB long", shape.triangleup, location.belowbar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny)
-plotshape(orbMarkers and nyS, "NY ORB short", shape.triangledown, location.abovebar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny)
-plotshape(orbMarkers and gxL, "Globex ORB long", shape.triangleup, location.belowbar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
-plotshape(orbMarkers and gxS, "Globex ORB short", shape.triangledown, location.abovebar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
-plotshape(orbMarkers and orbAnyRL, "ORB retest long", shape.circle, location.belowbar, color.new(#26a69a, 0), text = "R", textcolor = #26a69a, size = size.tiny)
-plotshape(orbMarkers and orbAnyRS, "ORB retest short", shape.circle, location.abovebar, color.new(#ef5350, 0), text = "R", textcolor = #ef5350, size = size.tiny)
+plotshape(orbMarkers and lonL, "London ORB long", shape.triangleup, location.belowbar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and lonS, "London ORB short", shape.triangledown, location.abovebar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and nyL, "NY ORB long", shape.triangleup, location.belowbar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and nyS, "NY ORB short", shape.triangledown, location.abovebar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and gxL, "Globex ORB long", shape.triangleup, location.belowbar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and gxS, "Globex ORB short", shape.triangledown, location.abovebar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and orbAnyRL, "ORB retest long", shape.circle, location.belowbar, color.new(#26a69a, 0), text = "R", textcolor = #26a69a, size = size.tiny, display = display.all - display.status_line)
+plotshape(orbMarkers and orbAnyRS, "ORB retest short", shape.circle, location.abovebar, color.new(#ef5350, 0), text = "R", textcolor = #ef5350, size = size.tiny, display = display.all - display.status_line)
 
 // =============================================================================
 // 3 - FIXED RANGE VOLUME PROFILE (original math; refresh policy + bar cap added)
@@ -1556,14 +1556,14 @@ if tlOn and barstate.islast and array.size(tls) > 0
         line.set_style(t.ln, t.broken ? line.style_dotted : (strong ? line.style_solid : line.style_dashed))
 
 plotshape(tlOn and showSwings and not tlCleanEff and not na(tlPh) ? tlPh : na, title = "Swing High",
-     style = shape.triangledown, location = location.absolute, color = color.new(#ef5350, 20), size = size.tiny, offset = -L)
+     style = shape.triangledown, location = location.absolute, color = color.new(#ef5350, 20), size = size.tiny, offset = -L, display = display.all - display.status_line)
 plotshape(tlOn and showSwings and not tlCleanEff and not na(tlPl) ? tlPl : na, title = "Swing Low",
-     style = shape.triangleup, location = location.absolute, color = color.new(#26a69a, 20), size = size.tiny, offset = -L)
+     style = shape.triangleup, location = location.absolute, color = color.new(#26a69a, 20), size = size.tiny, offset = -L, display = display.all - display.status_line)
 
-plot(tlOn and showE9 ? tlE9 : na, "TL EMA 9", color = color.new(#ffb74d, 0), linewidth = 1)
-plot(tlOn and showE21 ? tlE21 : na, "TL EMA 21", color = color.new(#42a5f5, 0), linewidth = 1)
-plot(tlOn and showE50 and not tlCleanEff ? tlE50 : na, "TL EMA 50", color = color.new(#ab47bc, 0), linewidth = 1)
-plot(tlOn and showE200 and not tlCleanEff ? tlE200 : na, "TL EMA 200", color = color.new(#787b86, 0), linewidth = 2)
+plot(tlOn and showE9 ? tlE9 : na, "TL EMA 9", color = color.new(#ffb74d, 0), linewidth = 1, display = display.all - display.status_line)
+plot(tlOn and showE21 ? tlE21 : na, "TL EMA 21", color = color.new(#42a5f5, 0), linewidth = 1, display = display.all - display.status_line)
+plot(tlOn and showE50 and not tlCleanEff ? tlE50 : na, "TL EMA 50", color = color.new(#ab47bc, 0), linewidth = 1, display = display.all - display.status_line)
+plot(tlOn and showE200 and not tlCleanEff ? tlE200 : na, "TL EMA 200", color = color.new(#787b86, 0), linewidth = 2, display = display.all - display.status_line)
 
 // =============================================================================
 // COMPACT DASHBOARD (MTF rows + trendline rows + context rows, one table)
