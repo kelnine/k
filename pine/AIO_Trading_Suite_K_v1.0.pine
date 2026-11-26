@@ -1,55 +1,55 @@
 //@version=6
 // ============================================================================
-//  AIO Trading Suite [K] - Performance Edition v1.0
+// AIO Trading Suite [K] - Performance Edition v1.0
 //
-//  Merges:  (1) MTF Trend Dashboard + FVG Zones
-//           (2) FRVP + ORB + 9/20 EMA
-//           (3) Auto Trendline Detector Pro
-//  Adds:    three 15m ORBs (London / New York / CME Globex), 4H supply & demand
-//           zones, EMA 200 high/close ribbon, Basic Lite performance mode.
+// Merges: (1) MTF Trend Dashboard + FVG Zones
+// (2) FRVP + ORB + 9/20 EMA
+// (3) Auto Trendline Detector Pro
+// Adds: three 15m ORBs (London / New York / CME Globex), 4H supply & demand
+// zones, EMA 200 high/close ribbon, Basic Lite performance mode.
 //
-//  STATUS: written to the Pine v6 reference. NOT yet compiled or profiled on
-//  TradingView by the author. See pine/REPORT.md for the change list,
-//  limitations and the test procedure.
+// STATUS: written to the Pine v6 reference. NOT yet compiled or profiled on
+// TradingView by the author. See pine/REPORT.md for the change list,
+// limitations and the test procedure.
 //
-//  Non-repainting rules used throughout
-//  * Every trading signal (ORB, trendline, zone, MTF-agreement, ribbon flip)
-//    is gated on a confirmed (closed) chart bar.
-//  * Higher-timeframe data uses expr[1] + lookahead_on (the documented
-//    non-repainting pattern), so only completed HTF candles are read.
-//  * Pivots are only used L bars after they occur; nothing is moved back in
-//    time except the swing markers, which are drawn at their true bar exactly
-//    as in the original script.
-//  * Live-bar drawing updates (line extensions, profile, dashboard) are
-//    cosmetic and never change a confirmed signal.
+// Non-repainting rules used throughout
+// * Every trading signal (ORB, trendline, zone, MTF-agreement, ribbon flip)
+// is gated on a confirmed (closed) chart bar.
+// * Higher-timeframe data uses expr[1] + lookahead_on (the documented
+// non-repainting pattern), so only completed HTF candles are read.
+// * Pivots are only used L bars after they occur; nothing is moved back in
+// time except the swing markers, which are drawn at their true bar exactly
+// as in the original script.
+// * Live-bar drawing updates (line extensions, profile, dashboard) are
+// cosmetic and never change a confirmed signal.
 // ============================================================================
 indicator("AIO Trading Suite [K] - Performance Edition", shorttitle = "AIO [K]", overlay = true,
      max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 3000)
 
 // =============================================================================
-//  INPUTS  (declared in UI order 1 ... 10)
+// INPUTS (declared in UI order 1 ... 10)
 // =============================================================================
-const string G1  = "1 - MTF Trend Dashboard"
-const string G2  = "2 - FVG Zones"
-const string G3  = "3 - Volume Profile"
-const string G4  = "4 - Opening Range Breakouts"
-const string G5  = "5 - EMA 9/20"
-const string G6  = "6 - Auto Trendlines"
+const string G1 = "1 - MTF Trend Dashboard"
+const string G2 = "2 - FVG Zones"
+const string G3 = "3 - Volume Profile"
+const string G4 = "4 - Opening Range Breakouts"
+const string G5 = "5 - EMA 9/20"
+const string G6 = "6 - Auto Trendlines"
 const string G6b = "6b - Trendline Breakouts & Filters"
 const string G6c = "6c - Trendline Display"
-const string G7  = "7 - 4H Supply & Demand"
-const string G8  = "8 - EMA 200 Ribbon"
-const string G9  = "9 - Alerts"
+const string G7 = "7 - 4H Supply & Demand"
+const string G8 = "8 - EMA 200 Ribbon"
+const string G9 = "9 - Alerts"
 const string G10 = "10 - Performance & Display"
 
 // -- 1 - MTF Trend Dashboard (Script 1) -------------------------------------
-mtfOn      = input.bool(true, "Enable MTF trend dashboard", group = G1)
-mtfMethod  = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = G1,
+mtfOn = input.bool(true, "Enable MTF trend dashboard", group = G1)
+mtfMethod = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = G1,
      tooltip = "Structure: bullish after price closes above the last swing high, bearish after it closes below the last swing low.\nEMA: bullish when the fast EMA is above the slow EMA.")
-swingLen   = input.int(5, "Swing length (Structure)", minval = 1, group = G1)
+swingLen = input.int(5, "Swing length (Structure)", minval = 1, group = G1)
 mtfEmaFast = input.int(9, "Fast EMA", minval = 1, group = G1)
 mtfEmaSlow = input.int(21, "Slow EMA", minval = 2, group = G1)
-mtfSource  = input.string("Confirmed (no repaint)", "Higher-TF values", options = ["Confirmed (no repaint)", "Live (original)"], group = G1,
+mtfSource = input.string("Confirmed (no repaint)", "Higher-TF values", options = ["Confirmed (no repaint)", "Live (original)"], group = G1,
      tooltip = "Confirmed: higher-timeframe rows show the trend of the last CLOSED candle of that timeframe (no repaint, matches history).\nLive (original): rows update with the still-forming higher-timeframe candle, exactly like the original script. Live values can flip back and forth and differ from history.")
 on1 = input.bool(true, "Row 1", inline = "t1", group = G1)
 tf1 = input.timeframe("1", "", inline = "t1", group = G1)
@@ -67,82 +67,82 @@ on7 = input.bool(true, "Row 7", inline = "t7", group = G1)
 tf7 = input.timeframe("D", "", inline = "t7", group = G1)
 on8 = input.bool(true, "Row 8", inline = "t8", group = G1)
 tf8 = input.timeframe("W", "", inline = "t8", group = G1)
-bullBg  = input.color(#E8622C, "Bullish", inline = "c1", group = G1)
-bearBg  = input.color(#000000, "Bearish", inline = "c1", group = G1)
-flatBg  = input.color(#555555, "No trend yet", inline = "c1", group = G1)
-headBg  = input.color(#000000, "Header", inline = "c2", group = G1)
+bullBg = input.color(#E8622C, "Bullish", inline = "c1", group = G1)
+bearBg = input.color(#000000, "Bearish", inline = "c1", group = G1)
+flatBg = input.color(#555555, "No trend yet", inline = "c1", group = G1)
+headBg = input.color(#000000, "Header", inline = "c2", group = G1)
 labelBg = input.color(#3A3A3A, "Timeframe column", inline = "c2", group = G1)
-txtC    = input.color(color.white, "Text", inline = "c3", group = G1)
+txtC = input.color(color.white, "Text", inline = "c3", group = G1)
 borderC = input.color(#6B6B6B, "Border", inline = "c3", group = G1)
 
 // -- 2 - FVG Zones (Script 1) -----------------------------------------------
-showZ      = input.bool(true, "Show fair value gaps", group = G2)
-minAtr     = input.float(0.25, "Min gap size (x ATR 14)", minval = 0, step = 0.05, group = G2)
-maxZ       = input.int(10, "Max active zones", minval = 1, maxval = 100, group = G2, tooltip = "Basic Lite caps this at 5.")
-mitig      = input.string("Wick", "Mitigated when", options = ["Wick", "Close"], group = G2,
+showZ = input.bool(true, "Show fair value gaps", group = G2)
+minAtr = input.float(0.25, "Min gap size (x ATR 14)", minval = 0, step = 0.05, group = G2)
+maxZ = input.int(10, "Max active zones", minval = 1, maxval = 100, group = G2, tooltip = "Basic Lite caps this at 5.")
+mitig = input.string("Wick", "Mitigated when", options = ["Wick", "Close"], group = G2,
      tooltip = "Wick: any wick through the far edge ends the zone. Close: a candle must close through it.")
-keepOld    = input.bool(false, "Keep mitigated zones on chart", group = G2, tooltip = "Ignored in Basic Lite.")
-keepOldN   = input.int(10, "Mitigated zones kept (max)", minval = 1, maxval = 50, group = G2,
+keepOld = input.bool(false, "Keep mitigated zones on chart", group = G2, tooltip = "Ignored in Basic Lite.")
+keepOldN = input.int(10, "Mitigated zones kept (max)", minval = 1, maxval = 50, group = G2,
      tooltip = "NEW: the original kept every mitigated zone until TradingView's 500-box limit. In the merged script that limit is shared, so old zones are capped here.")
-showMid    = input.bool(true, "Show 50% line", group = G2)
-fvgExtend  = input.int(15, "Extend right (bars)", minval = 0, group = G2)
-bullZ      = input.color(color.new(#E8622C, 75), "Bullish fill", inline = "z1", group = G2)
-bearZ      = input.color(color.new(#1E1E1E, 45), "Bearish fill", inline = "z1", group = G2)
-zBorder    = input.color(color.black, "Border", inline = "z2", group = G2)
-midC       = input.color(color.black, "50% line", inline = "z2", group = G2)
+showMid = input.bool(true, "Show 50% line", group = G2)
+fvgExtend = input.int(15, "Extend right (bars)", minval = 0, group = G2)
+bullZ = input.color(color.new(#E8622C, 75), "Bullish fill", inline = "z1", group = G2)
+bearZ = input.color(color.new(#1E1E1E, 45), "Bearish fill", inline = "z1", group = G2)
+zBorder = input.color(color.black, "Border", inline = "z2", group = G2)
+midC = input.color(color.black, "50% line", inline = "z2", group = G2)
 
 // -- 3 - Volume Profile (Script 2) ------------------------------------------
-showVP     = input.bool(false, "Show volume profile", group = G3, tooltip = "Off by default to keep Basic Lite light. Calculation is identical to the original when on.")
-vpTz       = input.string("America/New_York", "Timezone (session modes)", group = G3)
-vpMode     = input.string("Latest session", "Range", options = ["Latest session", "Previous session", "Last N bars", "Pick on chart"], group = G3,
+showVP = input.bool(false, "Show volume profile", group = G3, tooltip = "Off by default to keep Basic Lite light. Calculation is identical to the original when on.")
+vpTz = input.string("America/New_York", "Timezone (session modes)", group = G3)
+vpMode = input.string("Latest session", "Range", options = ["Latest session", "Previous session", "Last N bars", "Pick on chart"], group = G3,
      tooltip = "Latest session: the session in progress, or the last one if the market is closed.\nPick on chart: uses Range start / end below.")
-vpSess     = input.session("0930-1600", "Session", group = G3, tooltip = "For the two session modes. 0930-1600 = NY regular hours, 1800-1700 = full futures day.")
-vpBars     = input.int(200, "Last N bars", minval = 10, maxval = 5000, group = G3)
-vpStart    = input.time(timestamp("29 Sep 2026 09:30 -0400"), "Range start", group = G3, tooltip = "Pick on chart mode only.")
-vpEnd      = input.time(timestamp("29 Sep 2026 16:00 -0400"), "Range end", group = G3, tooltip = "Pick on chart mode only.")
-vpToLive   = input.bool(false, "Extend picked range to the live bar", group = G3)
-vpRows     = input.int(24, "Rows", minval = 5, maxval = 100, group = G3, tooltip = "Profile resolution. Cost of each rebuild is roughly bars x rows covered.")
-vpVAPct    = input.float(70.0, "Value area %", minval = 10.0, maxval = 100.0, step = 5.0, group = G3)
+vpSess = input.session("0930-1600", "Session", group = G3, tooltip = "For the two session modes. 0930-1600 = NY regular hours, 1800-1700 = full futures day.")
+vpBars = input.int(200, "Last N bars", minval = 10, maxval = 5000, group = G3)
+vpStart = input.time(timestamp("29 Sep 2026 09:30 -0400"), "Range start", group = G3, tooltip = "Pick on chart mode only.")
+vpEnd = input.time(timestamp("29 Sep 2026 16:00 -0400"), "Range end", group = G3, tooltip = "Pick on chart mode only.")
+vpToLive = input.bool(false, "Extend picked range to the live bar", group = G3)
+vpRows = input.int(24, "Rows", minval = 5, maxval = 100, group = G3, tooltip = "Profile resolution. Cost of each rebuild is roughly bars x rows covered.")
+vpVAPct = input.float(70.0, "Value area %", minval = 10.0, maxval = 100.0, step = 5.0, group = G3)
 vpWidthPct = input.int(30, "Histogram width (% of range)", minval = 5, maxval = 100, group = G3)
-vpSide     = input.string("Left", "Placement", options = ["Left", "Right"], group = G3)
-vpSplit    = input.bool(true, "Split up / down volume", group = G3)
-vpExtend   = input.bool(true, "Extend POC / VAH / VAL to the right", group = G3)
-vpRefresh  = input.string("On bar close", "Refresh", options = ["On bar close", "Every tick (original)"], group = G3,
+vpSide = input.string("Left", "Placement", options = ["Left", "Right"], group = G3)
+vpSplit = input.bool(true, "Split up / down volume", group = G3)
+vpExtend = input.bool(true, "Extend POC / VAH / VAL to the right", group = G3)
+vpRefresh = input.string("On bar close", "Refresh", options = ["On bar close", "Every tick (original)"], group = G3,
      tooltip = "On bar close: the profile is rebuilt once per closed bar (and on load). The live bar joins the profile when it closes.\nEvery tick: rebuilt on every realtime update like the original. Basic Lite forces On bar close.")
-vpMaxBars  = input.int(2000, "Max bars in profile", minval = 100, maxval = 5000, group = G3,
+vpMaxBars = input.int(2000, "Max bars in profile", minval = 100, maxval = 5000, group = G3,
      tooltip = "Safety cap. If the selected range holds more bars, only the most recent N are profiled and the POC label says so.")
-vpUpCol    = input.color(#26a69a, "Up volume", inline = "vpc", group = G3)
-vpDnCol    = input.color(#ef5350, "Down volume", inline = "vpc", group = G3)
-pocCol     = input.color(#ff9800, "POC", inline = "lvl", group = G3)
-vaCol      = input.color(#2962ff, "VAH / VAL", inline = "lvl", group = G3)
+vpUpCol = input.color(#26a69a, "Up volume", inline = "vpc", group = G3)
+vpDnCol = input.color(#ef5350, "Down volume", inline = "vpc", group = G3)
+pocCol = input.color(#ff9800, "POC", inline = "lvl", group = G3)
+vaCol = input.color(#2962ff, "VAH / VAL", inline = "lvl", group = G3)
 
 // -- 4 - Opening Range Breakouts --------------------------------------------
-orbTz        = input.string("America/New_York", "Timezone", group = G4, tooltip = "IANA zone. America/New_York switches between EST and EDT automatically.")
-orbLonOn     = input.bool(true, "London", inline = "lon", group = G4)
-orbLonCol    = input.color(#AB47BC, "", inline = "lon", group = G4)
-orbLonMode   = input.string("3:00 New York (fixed)", "London mode", options = ["3:00 New York (fixed)", "08:00 Europe/London (actual open)"], group = G4,
+orbTz = input.string("America/New_York", "Timezone", group = G4, tooltip = "IANA zone. America/New_York switches between EST and EDT automatically.")
+orbLonOn = input.bool(true, "London", inline = "lon", group = G4)
+orbLonCol = input.color(#AB47BC, "", inline = "lon", group = G4)
+orbLonMode = input.string("3:00 New York (fixed)", "London mode", options = ["3:00 New York (fixed)", "08:00 Europe/London (actual open)"], group = G4,
      tooltip = "Fixed: uses the London range / active sessions below in the ORB timezone.\nActual open: 0800-0815 Europe/London, active until 16:30 London. UK and US clocks change on different dates, so the two modes differ by an hour for a few weeks each year.")
-orbLonSess   = input.session("0300-0315", "London range", group = G4)
-orbLonAct    = input.session("0300-0930", "London levels active", group = G4)
-orbNyOn      = input.bool(true, "New York", inline = "ny", group = G4)
-orbNyCol     = input.color(#42A5F5, "", inline = "ny", group = G4)
-orbNySess    = input.session("0930-0945", "New York range", group = G4)
-orbNyAct     = input.session("0930-1600", "New York levels active", group = G4, tooltip = "Same as the original 'Levels active during'. Levels stop extending and signals stop when this session ends.")
-orbGlxOn     = input.bool(true, "CME Globex", inline = "glx", group = G4)
-orbGlxCol    = input.color(#FFB300, "", inline = "glx", group = G4)
-orbGlxSess   = input.session("1800-1815", "Globex range", group = G4, tooltip = "CME futures reopen at 18:00 New York. On 24/7 crypto this is only a scheduled time window, not a real reopening.")
-orbGlxAct    = input.session("1800-0300", "Globex levels active", group = G4)
-orbSignals   = input.bool(true, "Breakout signals", group = G4, tooltip = "First candle CLOSE outside the completed range. At most one long and one short per range (original rule).")
-orbFilter    = input.bool(true, "Only in the direction of the 9/20 EMAs", group = G4, tooltip = "Original rule: longs need fast EMA > slow EMA, shorts need it below.")
-orbRetest    = input.bool(true, "Retest confirmation", group = G4, tooltip = "After a breakout: a later closed candle wicks back to the broken level (within tolerance) and closes beyond it again. A close back inside the range before that cancels the retest.")
-orbRtTol     = input.float(0.10, "Retest tolerance (x ATR 14)", minval = 0.0, maxval = 1.0, step = 0.05, group = G4)
+orbLonSess = input.session("0300-0315", "London range", group = G4)
+orbLonAct = input.session("0300-0930", "London levels active", group = G4)
+orbNyOn = input.bool(true, "New York", inline = "ny", group = G4)
+orbNyCol = input.color(#42A5F5, "", inline = "ny", group = G4)
+orbNySess = input.session("0930-0945", "New York range", group = G4)
+orbNyAct = input.session("0930-1600", "New York levels active", group = G4, tooltip = "Same as the original 'Levels active during'. Levels stop extending and signals stop when this session ends.")
+orbGlxOn = input.bool(true, "CME Globex", inline = "glx", group = G4)
+orbGlxCol = input.color(#FFB300, "", inline = "glx", group = G4)
+orbGlxSess = input.session("1800-1815", "Globex range", group = G4, tooltip = "CME futures reopen at 18:00 New York. On 24/7 crypto this is only a scheduled time window, not a real reopening.")
+orbGlxAct = input.session("1800-0300", "Globex levels active", group = G4)
+orbSignals = input.bool(true, "Breakout signals", group = G4, tooltip = "First candle CLOSE outside the completed range. At most one long and one short per range (original rule).")
+orbFilter = input.bool(true, "Only in the direction of the 9/20 EMAs", group = G4, tooltip = "Original rule: longs need fast EMA > slow EMA, shorts need it below.")
+orbRetest = input.bool(true, "Retest confirmation", group = G4, tooltip = "After a breakout: a later closed candle wicks back to the broken level (within tolerance) and closes beyond it again. A close back inside the range before that cancels the retest.")
+orbRtTol = input.float(0.10, "Retest tolerance (x ATR 14)", minval = 0.0, maxval = 1.0, step = 0.05, group = G4)
 orbRequireFull = input.bool(true, "Require complete range data", group = G4, tooltip = "Skip a range if any bar inside the 15-minute window is missing, instead of drawing a partial range.")
-orbShowBox   = input.bool(true, "Range box", inline = "od", group = G4)
-orbShowMid   = input.bool(true, "Midpoint", inline = "od", group = G4)
-orbLabels    = input.bool(true, "Level labels", inline = "od", group = G4)
-orbMarkers   = input.bool(true, "Signal markers", inline = "od", group = G4)
-orbExtBars   = input.int(5, "Extend active levels past last bar", minval = 0, maxval = 50, group = G4)
-orbHist      = input.int(2, "Historical ranges kept (per ORB)", minval = 0, maxval = 20, group = G4, tooltip = "Clean Mode and Basic Lite force 0 (latest range only).")
+orbShowBox = input.bool(true, "Range box", inline = "od", group = G4)
+orbShowMid = input.bool(true, "Midpoint", inline = "od", group = G4)
+orbLabels = input.bool(true, "Level labels", inline = "od", group = G4)
+orbMarkers = input.bool(true, "Signal markers", inline = "od", group = G4)
+orbExtBars = input.int(5, "Extend active levels past last bar", minval = 0, maxval = 50, group = G4)
+orbHist = input.int(2, "Historical ranges kept (per ORB)", minval = 0, maxval = 20, group = G4, tooltip = "Clean Mode and Basic Lite force 0 (latest range only).")
 
 // -- 5 - EMA 9/20 (Script 2) ------------------------------------------------
 showEma = input.bool(true, "Show EMAs", group = G5)
@@ -153,112 +153,112 @@ slowCol = input.color(#ffeb3b, "", inline = "slow", group = G5)
 emaFill = input.bool(true, "Trend fill between EMAs", group = G5)
 
 // -- 6 - Auto Trendlines (Script 3) -----------------------------------------
-tlOn         = input.bool(true, "Enable auto trendlines", group = G6)
-pivotLenIn   = input.int(8,    "Pivot Length (swing sensitivity)",  minval = 2, maxval = 60,  group = G6, tooltip = "Left/right bars used to confirm a swing. Signals are delayed by this many bars - the honest, non-repainting cost of pivots.")
-autoAdapt    = input.bool(true,"Auto-adapt pivot length to timeframe", group = G6)
-minTouches   = input.int(2,    "Minimum touches",                    minval = 2, maxval = 6,  group = G6)
-maxPerSide   = input.int(3,    "Maximum active trendlines (per side)",minval = 1, maxval = 8, group = G6)
-maxAnalyze   = input.int(400,  "Maximum bars to analyze",            minval = 80, maxval = 1000, group = G6, tooltip = "Main cost driver: work per confirmed swing is about (pairing depth x this value). Lowering it is the most effective trendline speed-up, but it changes which lines are found.")
-minPivotDist = input.int(10,   "Minimum distance between pivots (bars)", minval = 2, maxval = 300, group = G6)
-strongThr    = input.float(60, "Strength threshold (Strong)",        minval = 10, maxval = 100, step = 1, group = G6)
-minScoreIn   = input.float(35, "Minimum score to keep a line",       minval = 0,  maxval = 100, step = 1, group = G6)
-tolATR       = input.float(0.35,"Touch tolerance (ATR x)",           minval = 0.05, maxval = 2.0, step = 0.05, group = G6)
-pairDepth    = input.int(6,    "Anchor pairing depth",               minval = 2, maxval = 14, group = G6)
-maxViolIn    = input.int(1,    "Max allowed violations",             minval = 0, maxval = 6,  group = G6)
-slopeMode    = input.string("Classic", "Slope filter", options = ["Classic", "Any Slope"], group = G6)
+tlOn = input.bool(true, "Enable auto trendlines", group = G6)
+pivotLenIn = input.int(8, "Pivot Length (swing sensitivity)", minval = 2, maxval = 60, group = G6, tooltip = "Left/right bars used to confirm a swing. Signals are delayed by this many bars - the honest, non-repainting cost of pivots.")
+autoAdapt = input.bool(true,"Auto-adapt pivot length to timeframe", group = G6)
+minTouches = input.int(2, "Minimum touches", minval = 2, maxval = 6, group = G6)
+maxPerSide = input.int(3, "Maximum active trendlines (per side)",minval = 1, maxval = 8, group = G6)
+maxAnalyze = input.int(400, "Maximum bars to analyze", minval = 80, maxval = 1000, group = G6, tooltip = "Main cost driver: work per confirmed swing is about (pairing depth x this value). Lowering it is the most effective trendline speed-up, but it changes which lines are found.")
+minPivotDist = input.int(10, "Minimum distance between pivots (bars)", minval = 2, maxval = 300, group = G6)
+strongThr = input.float(60, "Strength threshold (Strong)", minval = 10, maxval = 100, step = 1, group = G6)
+minScoreIn = input.float(35, "Minimum score to keep a line", minval = 0, maxval = 100, step = 1, group = G6)
+tolATR = input.float(0.35,"Touch tolerance (ATR x)", minval = 0.05, maxval = 2.0, step = 0.05, group = G6)
+pairDepth = input.int(6, "Anchor pairing depth", minval = 2, maxval = 14, group = G6)
+maxViolIn = input.int(1, "Max allowed violations", minval = 0, maxval = 6, group = G6)
+slopeMode = input.string("Classic", "Slope filter", options = ["Classic", "Any Slope"], group = G6)
 
-breakMode    = input.string("Confirmed", "Breakout mode", options = ["Aggressive", "Confirmed"], group = G6b)
-requireClose = input.bool(true,  "Candle close confirmation",        group = G6b)
-secondConf   = input.bool(false, "Second-candle confirmation",       group = G6b)
-enableRetest = input.bool(true,  "Retest detection",                 group = G6b)
-retestTolATR = input.float(0.30, "Retest tolerance (ATR x)",         minval = 0.05, maxval = 2.0, step = 0.05, group = G6b)
-retestWindow = input.int(30,     "Retest window (bars)",             minval = 3, maxval = 200, group = G6b)
-useATRf      = input.bool(true,  "ATR breakout distance filter",     group = G6b)
-atrBreakMult = input.float(0.25, "    ATR distance (x ATR)",         minval = 0.0, maxval = 3.0, step = 0.05, group = G6b)
-useVolf      = input.bool(false, "Volume confirmation filter",       group = G6b)
-volMult      = input.float(1.20, "    Volume > SMA x",               minval = 0.5, maxval = 5.0, step = 0.1, group = G6b)
-volLen       = input.int(20,     "    Volume SMA length",            minval = 2, maxval = 200, group = G6b)
-useBodyf     = input.bool(true,  "Minimum candle body filter",       group = G6b)
-minBodyATR   = input.float(0.25, "    Min body (x ATR)",             minval = 0.0, maxval = 3.0, step = 0.05, group = G6b)
-useEmaf      = input.bool(false, "EMA trend direction filter",       group = G6b)
+breakMode = input.string("Confirmed", "Breakout mode", options = ["Aggressive", "Confirmed"], group = G6b)
+requireClose = input.bool(true, "Candle close confirmation", group = G6b)
+secondConf = input.bool(false, "Second-candle confirmation", group = G6b)
+enableRetest = input.bool(true, "Retest detection", group = G6b)
+retestTolATR = input.float(0.30, "Retest tolerance (ATR x)", minval = 0.05, maxval = 2.0, step = 0.05, group = G6b)
+retestWindow = input.int(30, "Retest window (bars)", minval = 3, maxval = 200, group = G6b)
+useATRf = input.bool(true, "ATR breakout distance filter", group = G6b)
+atrBreakMult = input.float(0.25, "    ATR distance (x ATR)", minval = 0.0, maxval = 3.0, step = 0.05, group = G6b)
+useVolf = input.bool(false, "Volume confirmation filter", group = G6b)
+volMult = input.float(1.20, "    Volume > SMA x", minval = 0.5, maxval = 5.0, step = 0.1, group = G6b)
+volLen = input.int(20, "    Volume SMA length", minval = 2, maxval = 200, group = G6b)
+useBodyf = input.bool(true, "Minimum candle body filter", group = G6b)
+minBodyATR = input.float(0.25, "    Min body (x ATR)", minval = 0.0, maxval = 3.0, step = 0.05, group = G6b)
+useEmaf = input.bool(false, "EMA trend direction filter", group = G6b)
 
-showRes      = input.bool(true,  "Resistance trendlines", inline = "d1", group = G6c)
-showSup      = input.bool(true,  "Support trendlines",    inline = "d1", group = G6c)
+showRes = input.bool(true, "Resistance trendlines", inline = "d1", group = G6c)
+showSup = input.bool(true, "Support trendlines", inline = "d1", group = G6c)
 brokenPolicy = input.string("Keep most recent", "Broken trendlines", options = ["Hide", "Keep", "Keep most recent"], group = G6c)
-keepBrokenN  = input.int(2,      "    Keep N most recent broken",  minval = 1, maxval = 8, group = G6c)
-showSwings   = input.bool(false, "Swing point markers",   inline = "d2", group = G6c)
-showBrkLbl   = input.bool(true,  "Breakout labels",       inline = "d3", group = G6c)
-showRtLbl    = input.bool(true,  "Retest labels",         inline = "d3", group = G6c)
-tlCleanIn    = input.bool(false, "Trendline clean mode (best S/R + active setup only)", group = G6c, tooltip = "Also forced on by global Clean Mode and Basic Lite.")
-tlExtend     = input.int(8,      "Project active lines forward (bars)", minval = 0, maxval = 100, group = G6c)
-resCol       = input.color(color.new(#ef5350, 0), "Resistance", inline = "c1", group = G6c)
-supCol       = input.color(color.new(#26a69a, 0), "Support",    inline = "c1", group = G6c)
-brokenCol    = input.color(color.new(#787b86, 0), "Broken",     inline = "c1", group = G6c)
-showE9       = input.bool(false, "Plot EMA 9",   inline = "e1", group = G6c, tooltip = "Trendline EMAs are always calculated for the trend/filters. Plots default off because section 5 and the ribbon already draw EMAs.")
-showE21      = input.bool(false, "Plot EMA 21",  inline = "e1", group = G6c)
-showE50      = input.bool(false, "Plot EMA 50",  inline = "e2", group = G6c)
-showE200     = input.bool(false, "Plot EMA 200", inline = "e2", group = G6c)
+keepBrokenN = input.int(2, "    Keep N most recent broken", minval = 1, maxval = 8, group = G6c)
+showSwings = input.bool(false, "Swing point markers", inline = "d2", group = G6c)
+showBrkLbl = input.bool(true, "Breakout labels", inline = "d3", group = G6c)
+showRtLbl = input.bool(true, "Retest labels", inline = "d3", group = G6c)
+tlCleanIn = input.bool(false, "Trendline clean mode (best S/R + active setup only)", group = G6c, tooltip = "Also forced on by global Clean Mode and Basic Lite.")
+tlExtend = input.int(8, "Project active lines forward (bars)", minval = 0, maxval = 100, group = G6c)
+resCol = input.color(color.new(#ef5350, 0), "Resistance", inline = "c1", group = G6c)
+supCol = input.color(color.new(#26a69a, 0), "Support", inline = "c1", group = G6c)
+brokenCol = input.color(color.new(#787b86, 0), "Broken", inline = "c1", group = G6c)
+showE9 = input.bool(false, "Plot EMA 9", inline = "e1", group = G6c, tooltip = "Trendline EMAs are always calculated for the trend/filters. Plots default off because section 5 and the ribbon already draw EMAs.")
+showE21 = input.bool(false, "Plot EMA 21", inline = "e1", group = G6c)
+showE50 = input.bool(false, "Plot EMA 50", inline = "e2", group = G6c)
+showE200 = input.bool(false, "Plot EMA 200", inline = "e2", group = G6c)
 
 // -- 7 - 4H Supply & Demand -------------------------------------------------
-sdOn       = input.bool(true, "Enable 4H supply & demand zones", group = G7, tooltip = "Price-action estimates of supply/demand built from CLOSED 4H candles only. They are not verified institutional orders.")
-sdAtrLen   = input.int(14, "4H ATR length", minval = 2, group = G7)
+sdOn = input.bool(true, "Enable 4H supply & demand zones", group = G7, tooltip = "Price-action estimates of supply/demand built from CLOSED 4H candles only. They are not verified institutional orders.")
+sdAtrLen = input.int(14, "4H ATR length", minval = 2, group = G7)
 sdDispMult = input.float(1.5, "Displacement body >= x ATR", minval = 0.5, maxval = 5.0, step = 0.1, group = G7, tooltip = "The candle that leaves the base must have a body at least this many 4H ATRs.")
-sdReqBOS   = input.bool(true, "Displacement must break structure", group = G7, tooltip = "Bullish: close above the highest high of the previous N 4H candles. Bearish: close below the lowest low.")
-sdBosLen   = input.int(10, "Structure lookback (4H candles)", minval = 2, maxval = 50, group = G7)
-sdBaseMax  = input.int(3, "Max base candles", minval = 1, maxval = 5, group = G7)
+sdReqBOS = input.bool(true, "Displacement must break structure", group = G7, tooltip = "Bullish: close above the highest high of the previous N 4H candles. Bearish: close below the lowest low.")
+sdBosLen = input.int(10, "Structure lookback (4H candles)", minval = 2, maxval = 50, group = G7)
+sdBaseMax = input.int(3, "Max base candles", minval = 1, maxval = 5, group = G7)
 sdBaseBody = input.float(0.6, "Base candle body <= x ATR", minval = 0.1, maxval = 2.0, step = 0.05, group = G7)
-sdReqBase  = input.bool(false, "Require a base", group = G7, tooltip = "Off: if no small-bodied base candle precedes the displacement, the single candle before it is used as the zone.")
-sdProx     = input.string("Body", "Proximal edge", options = ["Body", "Wick"], group = G7, tooltip = "Edge nearest to price: base candle bodies (tighter) or wicks (wider). The far (distal) edge always uses wicks.")
-sdMaxH     = input.float(2.0, "Max zone height (x ATR)", minval = 0.2, maxval = 6.0, step = 0.1, group = G7)
-sdInvalid  = input.string("4H close", "Invalidate on", options = ["4H close", "Wick"], group = G7, tooltip = "4H close: a completed 4H candle closes beyond the far edge.\nWick: any closed chart candle trades beyond the far edge.")
-sdShowN    = input.int(2, "Zones shown per side (nearest)", minval = 0, maxval = 4, group = G7)
-sdTrack    = input.int(8, "Zones tracked per side", minval = 2, maxval = 20, group = G7)
-sdShowInv  = input.bool(false, "Show last invalidated zone (grey)", group = G7)
-sdExt      = input.int(20, "Extend right (bars)", minval = 0, maxval = 200, group = G7)
-sdDemCol   = input.color(#26A69A, "Buy zone", inline = "sdc", group = G7)
-sdSupCol   = input.color(#EF5350, "Sell zone", inline = "sdc", group = G7)
-sdFillT    = input.int(82, "Fill transparency", minval = 50, maxval = 95, group = G7)
+sdReqBase = input.bool(false, "Require a base", group = G7, tooltip = "Off: if no small-bodied base candle precedes the displacement, the single candle before it is used as the zone.")
+sdProx = input.string("Body", "Proximal edge", options = ["Body", "Wick"], group = G7, tooltip = "Edge nearest to price: base candle bodies (tighter) or wicks (wider). The far (distal) edge always uses wicks.")
+sdMaxH = input.float(2.0, "Max zone height (x ATR)", minval = 0.2, maxval = 6.0, step = 0.1, group = G7)
+sdInvalid = input.string("4H close", "Invalidate on", options = ["4H close", "Wick"], group = G7, tooltip = "4H close: a completed 4H candle closes beyond the far edge.\nWick: any closed chart candle trades beyond the far edge.")
+sdShowN = input.int(2, "Zones shown per side (nearest)", minval = 0, maxval = 4, group = G7)
+sdTrack = input.int(8, "Zones tracked per side", minval = 2, maxval = 20, group = G7)
+sdShowInv = input.bool(false, "Show last invalidated zone (grey)", group = G7)
+sdExt = input.int(20, "Extend right (bars)", minval = 0, maxval = 200, group = G7)
+sdDemCol = input.color(#26A69A, "Buy zone", inline = "sdc", group = G7)
+sdSupCol = input.color(#EF5350, "Sell zone", inline = "sdc", group = G7)
+sdFillT = input.int(82, "Fill transparency", minval = 50, maxval = 95, group = G7)
 
 // -- 8 - EMA 200 Ribbon -----------------------------------------------------
-ribOn    = input.bool(true, "Enable EMA high/close ribbon", group = G8, tooltip = "APPROXIMATION of 'PB-EMA 200 high close' rebuilt from screenshots: band between EMA(high) and EMA(close). The original switching rule is unknown - choose one below.")
-ribLen   = input.int(200, "EMA period", minval = 2, group = G8)
-ribRule  = input.string("Close beyond band (hold inside)", "Colour rule", options = ["Close beyond band (hold inside)", "Close vs EMA(close)", "EMA(close) slope"], group = G8,
+ribOn = input.bool(true, "Enable EMA high/close ribbon", group = G8, tooltip = "APPROXIMATION of 'PB-EMA 200 high close' rebuilt from screenshots: band between EMA(high) and EMA(close). The original switching rule is unknown - choose one below.")
+ribLen = input.int(200, "EMA period", minval = 2, group = G8)
+ribRule = input.string("Close beyond band (hold inside)", "Colour rule", options = ["Close beyond band (hold inside)", "Close vs EMA(close)", "EMA(close) slope"], group = G8,
      tooltip = "Close beyond band: green after a close above the whole band, red after a close below it; keeps its colour while price closes inside.\nClose vs EMA(close): green above, red below.\nSlope: green while EMA(close) rises.")
-ribBull  = input.color(#4CAF50, "Bullish", inline = "rb", group = G8)
-ribBear  = input.color(#F44336, "Bearish", inline = "rb", group = G8)
+ribBull = input.color(#4CAF50, "Bullish", inline = "rb", group = G8)
+ribBear = input.color(#F44336, "Bearish", inline = "rb", group = G8)
 ribFillT = input.int(60, "Fill transparency", minval = 0, maxval = 100, group = G8)
 ribLineT = input.int(20, "Edge transparency", minval = 0, maxval = 100, group = G8)
 
 // -- 9 - Alerts (alert() events; every event also has its own alertcondition) -
-alMtf      = input.bool(false, "MTF: all rows agree", group = G9)
-alOrbBrk   = input.bool(true,  "ORB breakout", group = G9)
-alOrbRt    = input.bool(false, "ORB retest confirmed", group = G9)
-alEmaX     = input.bool(false, "EMA 9/20 cross", group = G9)
-alTlBrk    = input.bool(true,  "Trendline breakout / breakdown", group = G9)
-alTlRt     = input.bool(false, "Trendline retest touch", group = G9)
-alTlConf   = input.bool(true,  "Trendline confirmed retest", group = G9)
-alTlNew    = input.bool(false, "New strong trendline", group = G9)
-alSdEntry  = input.bool(false, "4H zone entry", group = G9)
-alSdRej    = input.bool(true,  "4H zone rejection", group = G9)
-alRib      = input.bool(false, "Ribbon colour change", group = G9)
+alMtf = input.bool(false, "MTF: all rows agree", group = G9)
+alOrbBrk = input.bool(true, "ORB breakout", group = G9)
+alOrbRt = input.bool(false, "ORB retest confirmed", group = G9)
+alEmaX = input.bool(false, "EMA 9/20 cross", group = G9)
+alTlBrk = input.bool(true, "Trendline breakout / breakdown", group = G9)
+alTlRt = input.bool(false, "Trendline retest touch", group = G9)
+alTlConf = input.bool(true, "Trendline confirmed retest", group = G9)
+alTlNew = input.bool(false, "New strong trendline", group = G9)
+alSdEntry = input.bool(false, "4H zone entry", group = G9)
+alSdRej = input.bool(true, "4H zone rejection", group = G9)
+alRib = input.bool(false, "Ribbon colour change", group = G9)
 
 // -- 10 - Performance & Display ---------------------------------------------
-perfMode  = input.string("Basic Lite", "Performance mode", options = ["Basic Lite", "Standard"], group = G10,
+perfMode = input.string("Basic Lite", "Performance mode", options = ["Basic Lite", "Standard"], group = G10,
      tooltip = "Basic Lite: caps FVGs at 5, no kept mitigated FVGs, MTF rows below the chart timeframe skipped, volume profile refreshed on bar close only, trendline clean display, 10 trendline labels, no ORB history.\nSigns and levels that ARE shown are calculated exactly as in Standard.")
 cleanMode = input.bool(true, "Clean Mode", group = G10, tooltip = "Latest ORB ranges only, best trendlines only, no swing markers.")
-dashOn    = input.bool(true, "Show dashboard", group = G10)
-dashPos   = input.string("Bottom Right", "Dashboard position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = G10)
-dashSize  = input.string("Small", "Dashboard text", options = ["Tiny", "Small", "Normal", "Large"], group = G10)
+dashOn = input.bool(true, "Show dashboard", group = G10)
+dashPos = input.string("Bottom Right", "Dashboard position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = G10)
+dashSize = input.string("Small", "Dashboard text", options = ["Tiny", "Small", "Normal", "Large"], group = G10)
 showClock = input.bool(true, "Show bar close countdown", group = G10)
-dashTL    = input.bool(true, "Dashboard: trendline rows", group = G10)
-dashCtx   = input.bool(true, "Dashboard: ORB / 4H zone / ribbon rows", group = G10)
+dashTL = input.bool(true, "Dashboard: trendline rows", group = G10)
+dashCtx = input.bool(true, "Dashboard: ORB / 4H zone / ribbon rows", group = G10)
 
 // =============================================================================
-//  SHARED SERIES (computed once, used by several modules)
+// SHARED SERIES (computed once, used by several modules)
 // =============================================================================
-isLite   = perfMode == "Basic Lite"
+isLite = perfMode == "Basic Lite"
 chartSec = timeframe.in_seconds()
-float atr14 = ta.atr(14)                 // FVG + trendlines + ORB retest
+float atr14 = ta.atr(14) // FVG + trendlines + ORB retest
 float atrNow = nz(atr14, high - low)
 atrNow := atrNow <= 0 ? syminfo.mintick * 10 : atrNow
 
@@ -275,12 +275,12 @@ max_bars_back(tlCl, 1100)
 max_bars_back(atr14, 1100)
 
 // =============================================================================
-//  5 - EMA 9/20
+// 5 - EMA 9/20
 // =============================================================================
 float emaF = ta.ema(close, fastLen)
 float emaS = ta.ema(close, slowLen)
-bool  emaBullState = emaF > emaS
-bool  emaBearState = emaF < emaS
+bool emaBullState = emaF > emaS
+bool emaBearState = emaF < emaS
 
 pFast = plot(showEma ? emaF : na, "Fast EMA", fastCol, 2)
 pSlow = plot(showEma ? emaS : na, "Slow EMA", slowCol, 2)
@@ -290,7 +290,7 @@ bool emaXUp = ta.crossover(emaF, emaS)
 bool emaXDn = ta.crossunder(emaF, emaS)
 
 // =============================================================================
-//  8 - EMA 200 HIGH/CLOSE RIBBON  (approximation - see tooltip)
+// 8 - EMA 200 HIGH/CLOSE RIBBON (approximation - see tooltip)
 // =============================================================================
 float ribH = ta.ema(high, ribLen)
 float ribC = ta.ema(close, ribLen)
@@ -311,23 +311,23 @@ bool ribFlipUp = ribOn and ribDir == 1 and ribDir[1] == -1
 bool ribFlipDn = ribOn and ribDir == -1 and ribDir[1] == 1
 
 // =============================================================================
-//  1 - MTF TREND (one request per enabled row)
+// 1 - MTF TREND (one request per enabled row)
 // =============================================================================
 f_structure(int len) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
     var float lastH = na
     var float lastL = na
-    var int   tr    = 0
+    var int tr = 0
     if not na(ph)
         lastH := ph
     if not na(pl)
         lastL := pl
     if not na(lastH) and close > lastH
-        tr    := 1
+        tr := 1
         lastH := na
     if not na(lastL) and close < lastL
-        tr    := -1
+        tr := -1
         lastL := na
     tr
 
@@ -393,7 +393,7 @@ if use8
 
 f_ok(bool use, int t, int dir) =>
     not use or t == dir
-bool anyRow  = use1 or use2 or use3 or use4 or use5 or use6 or use7 or use8
+bool anyRow = use1 or use2 or use3 or use4 or use5 or use6 or use7 or use8
 bool allBull = anyRow and f_ok(use1, mt1, 1) and f_ok(use2, mt2, 1) and f_ok(use3, mt3, 1) and f_ok(use4, mt4, 1) and
      f_ok(use5, mt5, 1) and f_ok(use6, mt6, 1) and f_ok(use7, mt7, 1) and f_ok(use8, mt8, 1)
 bool allBear = anyRow and f_ok(use1, mt1, -1) and f_ok(use2, mt2, -1) and f_ok(use3, mt3, -1) and f_ok(use4, mt4, -1) and
@@ -402,18 +402,18 @@ bool mtfBullFlip = allBull and not allBull[1]
 bool mtfBearFlip = allBear and not allBear[1]
 
 // =============================================================================
-//  2 - FVG ZONES
+// 2 - FVG ZONES
 // =============================================================================
 type FvgZone
-    box   bx
-    line  mid
+    box bx
+    line mid
     float top
     float bot
-    bool  bull
+    bool bull
 
 var array<FvgZone> fvgZones = array.new<FvgZone>()
-var array<FvgZone> fvgOld   = array.new<FvgZone>()
-fvgMaxEff  = isLite ? math.min(maxZ, 5) : maxZ
+var array<FvgZone> fvgOld = array.new<FvgZone>()
+fvgMaxEff = isLite ? math.min(maxZ, 5) : maxZ
 fvgKeepEff = keepOld and not isLite
 
 f_fvgKill(FvgZone z) =>
@@ -445,9 +445,9 @@ if showZ
     if bullGap or bearGap
         float top = bullGap ? low : low[2]
         float bot = bullGap ? high[2] : high
-        float m   = (top + bot) / 2
-        box  b    = box.new(bar_index - 2, top, bar_index + fvgExtend, bot, border_color = zBorder, border_width = 1, bgcolor = bullGap ? bullZ : bearZ)
-        line l    = showMid ? line.new(bar_index - 2, m, bar_index + fvgExtend, m, color = midC, style = line.style_dashed, width = 1) : na
+        float m = (top + bot) / 2
+        box b = box.new(bar_index - 2, top, bar_index + fvgExtend, bot, border_color = zBorder, border_width = 1, bgcolor = bullGap ? bullZ : bearZ)
+        line l = showMid ? line.new(bar_index - 2, m, bar_index + fvgExtend, m, color = midC, style = line.style_dashed, width = 1) : na
         fvgZones.push(FvgZone.new(b, l, top, bot, bullGap))
         if fvgZones.size() > fvgMaxEff
             f_fvgKill(fvgZones.shift())
@@ -461,27 +461,27 @@ if showZ
                 z.mid.set_x2(bar_index + fvgExtend)
 
 // =============================================================================
-//  4 - THREE 15-MINUTE OPENING RANGES
+// 4 - THREE 15-MINUTE OPENING RANGES
 // =============================================================================
 type OrbRange
     float hi
     float lo
-    int   startBar
-    int   barsIn    = 0
-    int   endBar    = na
-    int   stopBar   = na
-    int   brkLBar   = na
-    int   brkSBar   = na
-    bool  formed    = false
-    bool  active    = false
-    bool  longDone  = false
-    bool  shortDone = false
-    bool  longWait  = false
-    bool  shortWait = false
-    box   bx
-    line  hiL
-    line  loL
-    line  midL
+    int startBar
+    int barsIn = 0
+    int endBar = na
+    int stopBar = na
+    int brkLBar = na
+    int brkSBar = na
+    bool formed = false
+    bool active = false
+    bool longDone = false
+    bool shortDone = false
+    bool longWait = false
+    bool shortWait = false
+    box bx
+    line hiL
+    line loL
+    line midL
     label hiLb
     label loLb
 
@@ -494,7 +494,7 @@ method erase(OrbRange r) =>
     label.delete(r.loLb)
 
 method stopAt(OrbRange r, int x) =>
-    r.active  := false
+    r.active := false
     r.stopBar := x
     if not na(r.hiL)
         r.hiL.set_x2(x)
@@ -527,27 +527,27 @@ f_orbNeed(string s) =>
     na(winSec) ? 1 : int(math.round(winSec / chartSec))
 
 lonActual = orbLonMode == "08:00 Europe/London (actual open)"
-lonSess   = lonActual ? "0800-0815" : orbLonSess
-lonAct    = lonActual ? "0800-1630" : orbLonAct
-lonTz     = lonActual ? "Europe/London" : orbTz
-lonSup    = f_orbSupported(lonSess)
-nySup     = f_orbSupported(orbNySess)
-glxSup    = f_orbSupported(orbGlxSess)
-lonNeed   = f_orbNeed(lonSess)
-nyNeed    = f_orbNeed(orbNySess)
-glxNeed   = f_orbNeed(orbGlxSess)
-orbKeepN  = (cleanMode or isLite) ? 0 : orbHist
+lonSess = lonActual ? "0800-0815" : orbLonSess
+lonAct = lonActual ? "0800-1630" : orbLonAct
+lonTz = lonActual ? "Europe/London" : orbTz
+lonSup = f_orbSupported(lonSess)
+nySup = f_orbSupported(orbNySess)
+glxSup = f_orbSupported(orbGlxSess)
+lonNeed = f_orbNeed(lonSess)
+nyNeed = f_orbNeed(orbNySess)
+glxNeed = f_orbNeed(orbGlxSess)
+orbKeepN = (cleanMode or isLite) ? 0 : orbHist
 
 f_orbStep(OrbRange curIn, array<OrbRange> hist, bool enabled, string sess, string actSess, string otz, color col, string tag, int keepN, bool sup, int need) =>
     OrbRange cur = curIn
-    bool inW    = sup and not na(time(timeframe.period, sess, otz))
-    bool inAct  = sup and not na(time(timeframe.period, actSess, otz))
+    bool inW = sup and not na(time(timeframe.period, sess, otz))
+    bool inAct = sup and not na(time(timeframe.period, actSess, otz))
     bool wStart = inW and not inW[1]
-    bool wEnd   = not inW and inW[1]
-    bool sigL   = false
-    bool sigS   = false
-    bool rtL    = false
-    bool rtS    = false
+    bool wEnd = not inW and inW[1]
+    bool sigL = false
+    bool sigS = false
+    bool rtL = false
+    bool rtS = false
     if enabled and sup
         if wStart
             if not na(cur)
@@ -559,8 +559,8 @@ f_orbStep(OrbRange curIn, array<OrbRange> hist, bool enabled, string sess, strin
             if orbShowBox
                 cur.bx := box.new(bar_index, high, bar_index, low, border_color = color.new(col, 60), bgcolor = color.new(col, 90))
         else if inW and not na(cur) and not cur.formed
-            cur.hi     := math.max(cur.hi, high)
-            cur.lo     := math.min(cur.lo, low)
+            cur.hi := math.max(cur.hi, high)
+            cur.lo := math.min(cur.lo, low)
             cur.barsIn := cur.barsIn + 1
             if not na(cur.bx)
                 cur.bx.set_top(cur.hi)
@@ -612,12 +612,12 @@ f_orbStep(OrbRange curIn, array<OrbRange> hist, bool enabled, string sess, strin
                     sigL := true
                     cur.longDone := true
                     cur.longWait := true
-                    cur.brkLBar  := bar_index
+                    cur.brkLBar := bar_index
                 if orbSignals and not cur.shortDone and close < cur.lo and (not orbFilter or emaBearState)
                     sigS := true
                     cur.shortDone := true
                     cur.shortWait := true
-                    cur.brkSBar   := bar_index
+                    cur.brkSBar := bar_index
     [cur, sigL, sigS, rtL, rtS]
 
 f_orbExtend(array<OrbRange> hist) =>
@@ -645,17 +645,17 @@ f_orbStatus(OrbRange r, bool on, bool sup, string tag) =>
     s
 
 var OrbRange orbLon = na
-var OrbRange orbNy  = na
+var OrbRange orbNy = na
 var OrbRange orbGlx = na
 var array<OrbRange> orbLonHist = array.new<OrbRange>()
-var array<OrbRange> orbNyHist  = array.new<OrbRange>()
+var array<OrbRange> orbNyHist = array.new<OrbRange>()
 var array<OrbRange> orbGlxHist = array.new<OrbRange>()
 
 [lonNew, lonL, lonS, lonRL, lonRS] = f_orbStep(orbLon, orbLonHist, orbLonOn, lonSess, lonAct, lonTz, orbLonCol, "LDN", orbKeepN, lonSup, lonNeed)
-[nyNew, nyL, nyS, nyRL, nyRS]      = f_orbStep(orbNy, orbNyHist, orbNyOn, orbNySess, orbNyAct, orbTz, orbNyCol, "NY", orbKeepN, nySup, nyNeed)
-[glxNew, gxL, gxS, gxRL, gxRS]     = f_orbStep(orbGlx, orbGlxHist, orbGlxOn, orbGlxSess, orbGlxAct, orbTz, orbGlxCol, "GLX", orbKeepN, glxSup, glxNeed)
+[nyNew, nyL, nyS, nyRL, nyRS] = f_orbStep(orbNy, orbNyHist, orbNyOn, orbNySess, orbNyAct, orbTz, orbNyCol, "NY", orbKeepN, nySup, nyNeed)
+[glxNew, gxL, gxS, gxRL, gxRS] = f_orbStep(orbGlx, orbGlxHist, orbGlxOn, orbGlxSess, orbGlxAct, orbTz, orbGlxCol, "GLX", orbKeepN, glxSup, glxNeed)
 orbLon := lonNew
-orbNy  := nyNew
+orbNy := nyNew
 orbGlx := glxNew
 
 if barstate.islast
@@ -663,30 +663,30 @@ if barstate.islast
     f_orbExtend(orbNyHist)
     f_orbExtend(orbGlxHist)
 
-bool orbAnyL  = lonL or nyL or gxL
-bool orbAnyS  = lonS or nyS or gxS
+bool orbAnyL = lonL or nyL or gxL
+bool orbAnyS = lonS or nyS or gxS
 bool orbAnyRL = lonRL or nyRL or gxRL
 bool orbAnyRS = lonRS or nyRS or gxRS
 
-plotshape(orbMarkers and lonL, "London ORB long",  shape.triangleup,   location.belowbar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny)
+plotshape(orbMarkers and lonL, "London ORB long", shape.triangleup, location.belowbar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny)
 plotshape(orbMarkers and lonS, "London ORB short", shape.triangledown, location.abovebar, orbLonCol, text = "LDN", textcolor = orbLonCol, size = size.tiny)
-plotshape(orbMarkers and nyL,  "NY ORB long",      shape.triangleup,   location.belowbar, orbNyCol,  text = "NY",  textcolor = orbNyCol,  size = size.tiny)
-plotshape(orbMarkers and nyS,  "NY ORB short",     shape.triangledown, location.abovebar, orbNyCol,  text = "NY",  textcolor = orbNyCol,  size = size.tiny)
-plotshape(orbMarkers and gxL,  "Globex ORB long",  shape.triangleup,   location.belowbar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
-plotshape(orbMarkers and gxS,  "Globex ORB short", shape.triangledown, location.abovebar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
-plotshape(orbMarkers and orbAnyRL, "ORB retest long",  shape.circle, location.belowbar, color.new(#26a69a, 0), text = "R", textcolor = #26a69a, size = size.tiny)
+plotshape(orbMarkers and nyL, "NY ORB long", shape.triangleup, location.belowbar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny)
+plotshape(orbMarkers and nyS, "NY ORB short", shape.triangledown, location.abovebar, orbNyCol, text = "NY", textcolor = orbNyCol, size = size.tiny)
+plotshape(orbMarkers and gxL, "Globex ORB long", shape.triangleup, location.belowbar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
+plotshape(orbMarkers and gxS, "Globex ORB short", shape.triangledown, location.abovebar, orbGlxCol, text = "GLX", textcolor = orbGlxCol, size = size.tiny)
+plotshape(orbMarkers and orbAnyRL, "ORB retest long", shape.circle, location.belowbar, color.new(#26a69a, 0), text = "R", textcolor = #26a69a, size = size.tiny)
 plotshape(orbMarkers and orbAnyRS, "ORB retest short", shape.circle, location.abovebar, color.new(#ef5350, 0), text = "R", textcolor = #ef5350, size = size.tiny)
 
 // =============================================================================
-//  3 - FIXED RANGE VOLUME PROFILE  (original math; refresh policy + bar cap added)
+// 3 - FIXED RANGE VOLUME PROFILE (original math; refresh policy + bar cap added)
 // =============================================================================
 type Profile
     array<float> h
     array<float> l
     array<float> v
-    array<bool>  up
-    int          startBar = na
-    int          endBar   = na
+    array<bool> up
+    int startBar = na
+    int endBar = na
 
 newProfile() =>
     Profile.new(array.new<float>(), array.new<float>(), array.new<float>(), array.new<bool>())
@@ -712,18 +712,18 @@ method trim(Profile p, int n) =>
 textOn(color c) =>
     0.299 * color.r(c) + 0.587 * color.g(c) + 0.114 * color.b(c) > 150 ? color.black : color.white
 
-var Profile pickP   = newProfile()
+var Profile pickP = newProfile()
 var Profile latestP = newProfile()
-var Profile prevP   = newProfile()
-var Profile lastNP  = newProfile()
+var Profile prevP = newProfile()
+var Profile lastNP = newProfile()
 
-var array<box>   vpBoxes  = array.new<box>()
-var array<line>  vpLines  = array.new<line>()
+var array<box> vpBoxes = array.new<box>()
+var array<line> vpLines = array.new<line>()
 var array<label> vpLabels = array.new<label>()
 
-int  vpT0      = math.min(vpStart, vpEnd)
-int  vpT1      = math.max(vpStart, vpEnd)
-bool inVPSess  = timeframe.isintraday and not na(time(timeframe.period, vpSess, vpTz))
+int vpT0 = math.min(vpStart, vpEnd)
+int vpT1 = math.max(vpStart, vpEnd)
+bool inVPSess = timeframe.isintraday and not na(time(timeframe.period, vpSess, vpTz))
 bool vpNewSess = inVPSess and not inVPSess[1]
 
 if showVP
@@ -737,16 +737,16 @@ if showVP
                 lastNP.trim(vpBars)
         =>
             if vpNewSess
-                prevP   := latestP
+                prevP := latestP
                 latestP := newProfile()
             if inVPSess
                 latestP.addBar()
 
 Profile prof = switch vpMode
-    "Pick on chart"    => pickP
-    "Last N bars"      => lastNP
+    "Pick on chart" => pickP
+    "Last N bars" => lastNP
     "Previous session" => prevP
-    =>                    latestP
+    => latestP
 
 vpLiveEff = vpRefresh == "Every tick (original)" and not isLite
 bool vpRedraw = (barstate.islast and (vpLiveEff or barstate.isconfirmed)) or barstate.islastconfirmedhistory
@@ -766,22 +766,22 @@ if vpRedraw
         string msg = vpMode == "Pick on chart" ? "FRVP: the picked range isn't on the chart.\nSet Range start / end in Settings." : not timeframe.isintraday and vpMode != "Last N bars" ? "FRVP: session modes need an intraday chart." : "FRVP: no bars in range yet."
         vpLabels.push(label.new(bar_index, high, msg, style = label.style_label_down, color = color.new(color.gray, 20), textcolor = color.white, size = size.small))
     else if showVP
-        int  nAll   = prof.h.size()
-        int  i0     = math.max(0, nAll - vpMaxBars)
+        int nAll = prof.h.size()
+        int i0 = math.max(0, nAll - vpMaxBars)
         bool capped = i0 > 0
         float vpTop = prof.h.slice(i0, nAll).max()
         float vpBot = prof.l.slice(i0, nAll).min()
-        float step  = (vpTop - vpBot) / vpRows
-        array<float> upVol  = array.new<float>(vpRows, 0.0)
-        array<float> dnVol  = array.new<float>(vpRows, 0.0)
+        float step = (vpTop - vpBot) / vpRows
+        array<float> upVol = array.new<float>(vpRows, 0.0)
+        array<float> dnVol = array.new<float>(vpRows, 0.0)
         array<float> totVol = array.new<float>(vpRows, 0.0)
 
         // Spread each bar's volume across the rows its high-low range covers (original math)
         if step > 0
             for i = i0 to nAll - 1
-                float h  = prof.h.get(i)
+                float h = prof.h.get(i)
                 float lo = prof.l.get(i)
-                float v  = prof.v.get(i)
+                float v = prof.v.get(i)
                 if v > 0
                     int r0 = math.max(0, math.min(vpRows - 1, math.floor((lo - vpBot) / step)))
                     int r1 = math.max(0, math.min(vpRows - 1, math.floor((h - vpBot) / step)))
@@ -797,10 +797,10 @@ if vpRedraw
 
         float total = totVol.sum()
         if total > 0
-            int   poc    = totVol.indexof(totVol.max())
-            int   vaLo   = poc
-            int   vaHi   = poc
-            float acc    = totVol.get(poc)
+            int poc = totVol.indexof(totVol.max())
+            int vaLo = poc
+            int vaHi = poc
+            float acc = totVol.get(poc)
             float target = total * vpVAPct / 100.0
             // Grow the value area out from the POC toward the busier neighbour
             while acc < target and (vaLo > 0 or vaHi < vpRows - 1)
@@ -808,33 +808,33 @@ if vpRedraw
                 float below = vaLo > 0 ? totVol.get(vaLo - 1) : -1.0
                 if above >= below
                     vaHi += 1
-                    acc  += above
+                    acc += above
                 else
                     vaLo -= 1
-                    acc  += below
+                    acc += below
 
             float pocPx = math.round_to_mintick(vpBot + (poc + 0.5) * step)
             float vahPx = math.round_to_mintick(vpBot + (vaHi + 1) * step)
             float valPx = math.round_to_mintick(vpBot + vaLo * step)
-            int   x0    = prof.startBar + i0
-            int   x1    = prof.endBar
+            int x0 = prof.startBar + i0
+            int x1 = prof.endBar
 
             vpBoxes.push(box.new(x0, vahPx, x1, valPx, border_color = color.new(vaCol, 75), bgcolor = color.new(vaCol, 94)))
 
-            int   span   = x1 - x0 + 1
-            int   maxW   = math.max(2, math.round(span * vpWidthPct / 100.0))
-            float maxV   = totVol.max()
-            float gap    = step * 0.08
-            int   anchor = vpSide == "Left" ? x0 : x1
-            int   dir    = vpSide == "Left" ? 1 : -1
+            int span = x1 - x0 + 1
+            int maxW = math.max(2, math.round(span * vpWidthPct / 100.0))
+            float maxV = totVol.max()
+            float gap = step * 0.08
+            int anchor = vpSide == "Left" ? x0 : x1
+            int dir = vpSide == "Left" ? 1 : -1
             for r = 0 to vpRows - 1
                 float rv = totVol.get(r)
                 if rv > 0
-                    int   w   = math.max(1, math.round(maxW * rv / maxV))
-                    int   wUp = vpSplit ? math.round(w * upVol.get(r) / rv) : w
-                    int   tr  = r >= vaLo and r <= vaHi ? 40 : 75
-                    float yT  = vpBot + (r + 1) * step - gap
-                    float yB  = vpBot + r * step + gap
+                    int w = math.max(1, math.round(maxW * rv / maxV))
+                    int wUp = vpSplit ? math.round(w * upVol.get(r) / rv) : w
+                    int tr = r >= vaLo and r <= vaHi ? 40 : 75
+                    float yT = vpBot + (r + 1) * step - gap
+                    float yB = vpBot + r * step + gap
                     if wUp > 0
                         int xa = anchor
                         int xb = anchor + dir * wUp
@@ -858,39 +858,39 @@ if vpRedraw
             vpLabels.push(label.new(bar_index, high, "FRVP: no volume data on this symbol.", style = label.style_label_down, color = color.new(color.gray, 20), textcolor = color.white, size = size.small))
 
 // =============================================================================
-//  7 - 4H SUPPLY & DEMAND  (detected inside the 4H context, read with [1] +
-//      lookahead_on so only COMPLETED 4H candles are ever used)
+// 7 - 4H SUPPLY & DEMAND (detected inside the 4H context, read with [1] +
+// lookahead_on so only COMPLETED 4H candles are ever used)
 // =============================================================================
 const string SD_TF = "240"
 
 f_sdCalc() =>
-    float a    = ta.atr(sdAtrLen)
-    float hh   = ta.highest(high, sdBosLen)
-    float ll   = ta.lowest(low, sdBosLen)
+    float a = ta.atr(sdAtrLen)
+    float hh = ta.highest(high, sdBosLen)
+    float ll = ta.lowest(low, sdBosLen)
     float body = math.abs(close - open)
     bool bullD = close > open and body >= sdDispMult * a and (not sdReqBOS or close > hh[1])
     bool bearD = close < open and body >= sdDispMult * a and (not sdReqBOS or close < ll[1])
-    float zTop  = na
-    float zBot  = na
-    int   zLeft = na
-    int   nb    = 0
+    float zTop = na
+    float zBot = na
+    int zLeft = na
+    int nb = 0
     if bullD or bearD
         for i = 1 to sdBaseMax
             float bi = math.abs(close[i] - open[i])
             if bi <= sdBaseBody * nz(a[i], a)
                 float pTop = bullD ? (sdProx == "Body" ? math.max(open[i], close[i]) : high[i]) : high[i]
                 float pBot = bullD ? low[i] : (sdProx == "Body" ? math.min(open[i], close[i]) : low[i])
-                zTop  := na(zTop) ? pTop : math.max(zTop, pTop)
-                zBot  := na(zBot) ? pBot : math.min(zBot, pBot)
+                zTop := na(zTop) ? pTop : math.max(zTop, pTop)
+                zBot := na(zBot) ? pBot : math.min(zBot, pBot)
                 zLeft := time[i]
-                nb    += 1
+                nb += 1
             else
                 break
         if nb == 0 and not sdReqBase
-            zTop  := bullD ? (sdProx == "Body" ? math.max(open[1], close[1]) : high[1]) : high[1]
-            zBot  := bullD ? low[1] : (sdProx == "Body" ? math.min(open[1], close[1]) : low[1])
+            zTop := bullD ? (sdProx == "Body" ? math.max(open[1], close[1]) : high[1]) : high[1]
+            zBot := bullD ? low[1] : (sdProx == "Body" ? math.min(open[1], close[1]) : low[1])
             zLeft := time[1]
-    bool okZ  = not na(zTop) and not na(zBot) and zTop > zBot and (zTop - zBot) <= sdMaxH * a
+    bool okZ = not na(zTop) and not na(zBot) and zTop > zBot and (zTop - zBot) <= sdMaxH * a
     bool newD = bullD and okZ
     bool newS = bearD and okZ
     [newD[1], newS[1], zTop[1], zBot[1], zLeft[1], close[1], time[1]]
@@ -903,10 +903,10 @@ bool sdHtfNew = not na(sdHtfTime) and (na(sdHtfTime[1]) or sdHtfTime != sdHtfTim
 type SdZone
     float top
     float bot
-    int   left
-    int   state   = 0     // 0 fresh, 1 tested, 2 mitigated (50% reached), 3 invalidated
-    bool  inside  = false
-    int   endTime = na
+    int left
+    int state = 0 // 0 fresh, 1 tested, 2 mitigated (50% reached), 3 invalidated
+    bool inside = false
+    int endTime = na
 
 var array<SdZone> sdDem = array.new<SdZone>()
 var array<SdZone> sdSup = array.new<SdZone>()
@@ -929,21 +929,21 @@ f_sdTrim(array<SdZone> arr) =>
         arr.remove(idx)
     true
 
-bool sdEntryBuy  = false
-bool sdRejBuy    = false
+bool sdEntryBuy = false
+bool sdRejBuy = false
 bool sdEntrySell = false
-bool sdRejSell   = false
+bool sdRejSell = false
 
 if sdActive and sdHtfNew
     // 1) invalidation by a completed 4H close (zones that existed before this candle)
     if sdInvalid == "4H close"
         for z in sdDem
             if z.state < 3 and sdHtfClose < z.bot
-                z.state   := 3
+                z.state := 3
                 z.endTime := time
         for z in sdSup
             if z.state < 3 and sdHtfClose > z.top
-                z.state   := 3
+                z.state := 3
                 z.endTime := time
     // 2) new zones from the candle that just closed (overlapping duplicates skipped)
     if sdNewD and not f_sdOverlaps(sdDem, sdTop, sdBot)
@@ -958,7 +958,7 @@ if sdActive and barstate.isconfirmed
     for z in sdDem
         if z.state < 3
             if sdInvalid == "Wick" and low < z.bot
-                z.state   := 3
+                z.state := 3
                 z.endTime := time
             else
                 bool touch = low <= z.top and high >= z.bot
@@ -974,7 +974,7 @@ if sdActive and barstate.isconfirmed
     for z in sdSup
         if z.state < 3
             if sdInvalid == "Wick" and high > z.top
-                z.state   := 3
+                z.state := 3
                 z.endTime := time
             else
                 bool touch = high >= z.bot and low <= z.top
@@ -990,7 +990,7 @@ if sdActive and barstate.isconfirmed
 
 f_sdNearest(array<SdZone> arr, int n) =>
     array<SdZone> out = array.new<SdZone>()
-    array<float>  dst = array.new<float>()
+    array<float> dst = array.new<float>()
     for z in arr
         if z.state < 3
             float d = close > z.top ? close - z.top : close < z.bot ? z.bot - close : 0.0
@@ -1027,7 +1027,7 @@ f_sdDrawSide(array<box> pool, array<SdZone> sel, int n, color base, string txt, 
         for i = 0 to total - 1
             if i < sel.size()
                 SdZone z = sel.get(i)
-                int    tr = z.state == 0 ? sdFillT : z.state == 1 ? math.min(98, sdFillT + 5) : math.min(98, sdFillT + 10)
+                int tr = z.state == 0 ? sdFillT : z.state == 1 ? math.min(98, sdFillT + 5) : math.min(98, sdFillT + 10)
                 string st = z.state == 0 ? "" : z.state == 1 ? " - tested" : " - mitigated"
                 if i >= pool.size()
                     pool.push(box.new(z.left, z.top, rightT, z.bot, xloc = xloc.bar_time, border_color = color.new(base, 50), bgcolor = color.new(base, tr),
@@ -1085,76 +1085,76 @@ if barstate.islast and sdActive
                 b.set_text("")
 
 // =============================================================================
-//  6 - AUTO TRENDLINE DETECTOR PRO
+// 6 - AUTO TRENDLINE DETECTOR PRO
 // =============================================================================
 adaptLen = chartSec <= 60 ? 12 : chartSec <= 300 ? 10 : chartSec <= 900 ? 9 : chartSec <= 3600 ? 8 : chartSec <= 14400 ? 7 : 6
-L        = math.max(2, autoAdapt ? adaptLen : pivotLenIn)
-minDist  = math.max(minPivotDist, L)
+L = math.max(2, autoAdapt ? adaptLen : pivotLenIn)
+minDist = math.max(minPivotDist, L)
 clusterG = math.max(2, L)
 tlCleanEff = tlCleanIn or cleanMode or isLite
-tlLabMax   = isLite ? 10 : 30
+tlLabMax = isLite ? 10 : 30
 
-float tlE9   = ta.ema(close, 9)
-float tlE21  = ta.ema(close, 21)
-float tlE50  = ta.ema(close, 50)
+float tlE9 = ta.ema(close, 9)
+float tlE21 = ta.ema(close, 21)
+float tlE50 = ta.ema(close, 50)
 float tlE200 = ta.ema(close, 200)
 float volSma = ta.sma(nz(volume), volLen)
 
-bool e50Bull  = na(tlE50)  ? false : close > tlE50
-bool e50Bear  = na(tlE50)  ? false : close < tlE50
-bool e200Bull = na(tlE200) ? true  : close > tlE200
-bool e200Bear = na(tlE200) ? true  : close < tlE200
+bool e50Bull = na(tlE50) ? false : close > tlE50
+bool e50Bear = na(tlE50) ? false : close < tlE50
+bool e200Bull = na(tlE200) ? true : close > tlE200
+bool e200Bear = na(tlE200) ? true : close < tlE200
 bool stackBull = tlE9 > tlE21 and (na(tlE50) or tlE21 > tlE50)
 bool stackBear = tlE9 < tlE21 and (na(tlE50) or tlE21 < tlE50)
 bool trendBull = e50Bull and e200Bull and stackBull
 bool trendBear = e50Bear and e200Bear and stackBear
 string trendTxt = trendBull ? "BULLISH" : trendBear ? "BEARISH" : "NEUTRAL"
-color  trendCl  = trendBull ? color.new(#26a69a, 0) : trendBear ? color.new(#ef5350, 0) : color.new(#b2b5be, 0)
+color trendCl = trendBull ? color.new(#26a69a, 0) : trendBear ? color.new(#ef5350, 0) : color.new(#b2b5be, 0)
 
-float bodySz    = math.abs(close - open)
-bool  volOk     = not useVolf  or na(volume) or na(volSma) or volume > volSma * volMult
-bool  bodyOk    = not useBodyf or bodySz >= atrNow * minBodyATR
-bool  emaBullOk = not useEmaf  or ((na(tlE50) or close > tlE50) and (na(tlE21) or tlE9 > tlE21))
-bool  emaBearOk = not useEmaf  or ((na(tlE50) or close < tlE50) and (na(tlE21) or tlE9 < tlE21))
-float brkDist   = useATRf ? atrNow * atrBreakMult : 0.0
+float bodySz = math.abs(close - open)
+bool volOk = not useVolf or na(volume) or na(volSma) or volume > volSma * volMult
+bool bodyOk = not useBodyf or bodySz >= atrNow * minBodyATR
+bool emaBullOk = not useEmaf or ((na(tlE50) or close > tlE50) and (na(tlE21) or tlE9 > tlE21))
+bool emaBearOk = not useEmaf or ((na(tlE50) or close < tlE50) and (na(tlE21) or tlE9 < tlE21))
+float brkDist = useATRf ? atrNow * atrBreakMult : 0.0
 
 bool barOk = barstate.isconfirmed
 
 type TL
-    int   id
-    int   x1
+    int id
+    int x1
     float y1
-    int   x2
+    int x2
     float y2
     float slope
-    bool  isRes
+    bool isRes
     float score
-    int   touches
-    int   viol
-    int   lastTouch
-    int   createdBar
-    bool  broken
-    int   brokeBar
-    bool  pending
-    int   pendingBar
-    bool  retestSeen
-    int   retestBar
-    bool  retestConf
-    bool  failed
-    line  ln
+    int touches
+    int viol
+    int lastTouch
+    int createdBar
+    bool broken
+    int brokeBar
+    bool pending
+    int pendingBar
+    bool retestSeen
+    int retestBar
+    bool retestConf
+    bool failed
+    line ln
 
-var array<TL>    tls   = array.new<TL>()
+var array<TL> tls = array.new<TL>()
 var array<label> tlLabs = array.new<label>()
-var int          tlNextId = 0
+var int tlNextId = 0
 
-var array<int>   phBar = array.new<int>()
-var array<float> phPx  = array.new<float>()
+var array<int> phBar = array.new<int>()
+var array<float> phPx = array.new<float>()
 var array<float> phStr = array.new<float>()
-var array<int>   plBar = array.new<int>()
-var array<float> plPx  = array.new<float>()
+var array<int> plBar = array.new<int>()
+var array<float> plPx = array.new<float>()
 var array<float> plStr = array.new<float>()
 
-var array<int>   vI = array.new<int>(3, 0)
+var array<int> vI = array.new<int>(3, 0)
 var array<float> vF = array.new<float>(1, 0.0)
 
 f_val(float y1, float slope, int x1, int b) => y1 + slope * (b - x1)
@@ -1163,24 +1163,24 @@ f_val(float y1, float slope, int x1, int b) => y1 + slope * (b - x1)
 // violations exceed the allowed maximum - such a candidate is rejected anyway,
 // so accepted lines and their scores are unchanged.
 f_validate(int x1, float y1, float slope, bool isRes, int x2, float tolM, int gap) =>
-    int   tc    = 0
-    int   vc    = 0
-    float dsum  = 0.0
-    int   lastT = -999999
-    bool  prevV = false
+    int tc = 0
+    int vc = 0
+    float dsum = 0.0
+    int lastT = -999999
+    bool prevV = false
     if x1 <= x2
         for b = x1 to x2
             int off = bar_index - b
             if off >= 0 and off <= 1000
-                float lv  = y1 + slope * (b - x1)
+                float lv = y1 + slope * (b - x1)
                 float atb = nz(atr14[off], atrNow)
                 float tol = atb * tolM
-                float px  = isRes ? tlHi[off] : tlLo[off]
-                float cl  = tlCl[off]
-                float d   = math.abs(px - lv)
+                float px = isRes ? tlHi[off] : tlLo[off]
+                float cl = tlCl[off]
+                float d = math.abs(px - lv)
                 if d <= tol and (b - lastT) >= gap
-                    tc    += 1
-                    dsum  += d
+                    tc += 1
+                    dsum += d
                     lastT := b
                 bool v = isRes ? cl > lv + tol : cl < lv - tol
                 if v and not prevV
@@ -1200,7 +1200,7 @@ f_alreadyBroken(int x1, float y1, float slope, bool isRes, int fromB, int toB, f
         for b = fromB to toB
             int off = bar_index - b
             if off >= 0 and off <= 1000
-                float lv  = y1 + slope * (b - x1)
+                float lv = y1 + slope * (b - x1)
                 float tol = nz(atr14[off], atrNow) * tolM
                 if isRes ? tlCl[off] > lv + tol : tlCl[off] < lv - tol
                     br := true
@@ -1208,13 +1208,13 @@ f_alreadyBroken(int x1, float y1, float slope, bool isRes, int fromB, int toB, f
     br
 
 f_score(int tc, int vc, float avgDev, float tolAbs, int span, int lastT, float strA, float strB) =>
-    float sTouch  = math.min(tc, 6) / 6.0 * 30.0
-    float sSpan   = math.min(span / (maxAnalyze * 0.6), 1.0) * 15.0
-    float sResp   = tolAbs > 0 ? math.max(0.0, 1.0 - avgDev / tolAbs) * 20.0 : 0.0
-    float age     = math.max(0, bar_index - lastT)
-    float sRec    = math.max(0.0, 1.0 - age / (maxAnalyze * 0.5)) * 15.0
+    float sTouch = math.min(tc, 6) / 6.0 * 30.0
+    float sSpan = math.min(span / (maxAnalyze * 0.6), 1.0) * 15.0
+    float sResp = tolAbs > 0 ? math.max(0.0, 1.0 - avgDev / tolAbs) * 20.0 : 0.0
+    float age = math.max(0, bar_index - lastT)
+    float sRec = math.max(0.0, 1.0 - age / (maxAnalyze * 0.5)) * 15.0
     float sStruct = (strA + strB) / 2.0 * 20.0
-    float pen     = vc * 12.0
+    float pen = vc * 12.0
     math.max(0.0, math.min(100.0, sTouch + sSpan + sResp + sRec + sStruct - pen))
 
 f_strengthTxt(float s) => s >= strongThr ? "STRONG" : s >= strongThr * 0.7 ? "MODERATE" : "WEAK"
@@ -1252,14 +1252,14 @@ f_add(bool isRes, int x1, float y1, int x2, float y2, float slope, int tc, int v
     if found >= 0
         TL t = array.get(tls, found)
         if sc > t.score
-            t.x1        := x1
-            t.y1        := y1
-            t.x2        := x2
-            t.y2        := y2
-            t.slope     := slope
-            t.touches   := tc
-            t.viol      := vc
-            t.score     := sc
+            t.x1 := x1
+            t.y1 := y1
+            t.x2 := x2
+            t.y2 := y2
+            t.slope := slope
+            t.touches := tc
+            t.viol := vc
+            t.score := sc
             t.lastTouch := lastT
         created := false
     else
@@ -1296,31 +1296,31 @@ f_prune(bool isRes) =>
             go := false
 
 float tlPh = ta.pivothigh(high, L, L)
-float tlPl = ta.pivotlow(low,  L, L)
+float tlPl = ta.pivotlow(low, L, L)
 float promHi = ta.highest(high, math.max(3, L * 3))[L]
-float promLo = ta.lowest(low,   math.max(3, L * 3))[L]
+float promLo = ta.lowest(low, math.max(3, L * 3))[L]
 
 bool alNewStrongRes = false
 bool alNewStrongSup = false
 
 if tlOn and barOk and not na(tlPh)
-    int   pb  = bar_index - L
-    float pv  = tlPh
+    int pb = bar_index - L
+    float pv = tlPh
     float pst = pv >= promHi ? 1.0 : 0.6
     array.push(phBar, pb)
-    array.push(phPx,  pv)
+    array.push(phPx, pv)
     array.push(phStr, pst)
     f_trimPivots(phBar, phPx, phStr)
     int n = array.size(phBar)
     if n >= 2
         int startI = math.max(0, n - 1 - pairDepth)
-        int endI   = n - 2
+        int endI = n - 2
         if startI <= endI
             for i = startI to endI
-                int   ab   = array.get(phBar, i)
-                float ap   = array.get(phPx,  i)
-                float ast  = array.get(phStr, i)
-                int   span = pb - ab
+                int ab = array.get(phBar, i)
+                float ap = array.get(phPx, i)
+                float ast = array.get(phStr, i)
+                int span = pb - ab
                 if span >= minDist and ab >= bar_index - maxAnalyze
                     float slope = (pv - ap) / span
                     bool slopeOk = slopeMode == "Any Slope" or slope <= atrNow * 0.02
@@ -1328,10 +1328,10 @@ if tlOn and barOk and not na(tlPh)
                     // runs before the expensive span validation. Both are required
                     // for acceptance, so the result is identical.
                     if slopeOk and not f_alreadyBroken(ab, ap, slope, true, pb + 1, bar_index, tolATR)
-                        int   tc    = f_validate(ab, ap, slope, true, pb, tolATR, clusterG)
-                        int   vc    = array.get(vI, 1)
-                        int   lastT = array.get(vI, 2)
-                        float dev   = array.get(vF, 0)
+                        int tc = f_validate(ab, ap, slope, true, pb, tolATR, clusterG)
+                        int vc = array.get(vI, 1)
+                        int lastT = array.get(vI, 2)
+                        float dev = array.get(vF, 0)
                         if tc >= minTouches and vc <= maxViolIn
                             float sc = f_score(tc, vc, dev, atrNow * tolATR, span, lastT, ast, pst)
                             if sc >= minScoreIn
@@ -1343,31 +1343,31 @@ if tlOn and barOk and not na(tlPh)
             f_prune(true)
 
 if tlOn and barOk and not na(tlPl)
-    int   pb  = bar_index - L
-    float pv  = tlPl
+    int pb = bar_index - L
+    float pv = tlPl
     float pst = pv <= promLo ? 1.0 : 0.6
     array.push(plBar, pb)
-    array.push(plPx,  pv)
+    array.push(plPx, pv)
     array.push(plStr, pst)
     f_trimPivots(plBar, plPx, plStr)
     int n = array.size(plBar)
     if n >= 2
         int startI = math.max(0, n - 1 - pairDepth)
-        int endI   = n - 2
+        int endI = n - 2
         if startI <= endI
             for i = startI to endI
-                int   ab   = array.get(plBar, i)
-                float ap   = array.get(plPx,  i)
-                float ast  = array.get(plStr, i)
-                int   span = pb - ab
+                int ab = array.get(plBar, i)
+                float ap = array.get(plPx, i)
+                float ast = array.get(plStr, i)
+                int span = pb - ab
                 if span >= minDist and ab >= bar_index - maxAnalyze
                     float slope = (pv - ap) / span
                     bool slopeOk = slopeMode == "Any Slope" or slope >= -atrNow * 0.02
                     if slopeOk and not f_alreadyBroken(ab, ap, slope, false, pb + 1, bar_index, tolATR)
-                        int   tc    = f_validate(ab, ap, slope, false, pb, tolATR, clusterG)
-                        int   vc    = array.get(vI, 1)
-                        int   lastT = array.get(vI, 2)
-                        float dev   = array.get(vF, 0)
+                        int tc = f_validate(ab, ap, slope, false, pb, tolATR, clusterG)
+                        int vc = array.get(vI, 1)
+                        int lastT = array.get(vI, 2)
+                        float dev = array.get(vF, 0)
                         if tc >= minTouches and vc <= maxViolIn
                             float sc = f_score(tc, vc, dev, atrNow * tolATR, span, lastT, ast, pst)
                             if sc >= minScoreIn
@@ -1379,36 +1379,36 @@ if tlOn and barOk and not na(tlPl)
             f_prune(false)
 
 // -- breakout / retest state machine (closed bars only) ---------------------
-bool alBullBreak  = false
-bool alBearBreak  = false
+bool alBullBreak = false
+bool alBearBreak = false
 bool alBullRetest = false
 bool alBearRetest = false
-bool alBullConf   = false
-bool alBearConf   = false
+bool alBullConf = false
+bool alBearConf = false
 
 var string setupTxt = "None"
-var int    setupBar = 0
-var int    setupId  = -1     // CHANGE: tracked by line id (the original index could point at the wrong line after removals)
+var int setupBar = 0
+var int setupId = -1 // CHANGE: tracked by line id (the original index could point at the wrong line after removals)
 
 if tlOn and barOk and array.size(tls) > 0
     for i = 0 to array.size(tls) - 1
         TL t = array.get(tls, i)
         float lv = f_val(t.y1, t.slope, t.x1, bar_index)
-        bool doBreak  = not t.broken and bar_index > t.x2
+        bool doBreak = not t.broken and bar_index > t.x2
         bool doRetest = t.broken and enableRetest and not t.failed and bar_index > t.brokeBar and bar_index - t.brokeBar <= retestWindow
 
         if doBreak
             bool pierce = t.isRes
                  ? (breakMode == "Aggressive" ? high > lv + brkDist : close > lv + brkDist)
-                 : (breakMode == "Aggressive" ? low  < lv - brkDist : close < lv - brkDist)
+                 : (breakMode == "Aggressive" ? low < lv - brkDist : close < lv - brkDist)
             bool closeOk = not requireClose or (t.isRes ? close > lv : close < lv)
-            bool filtOk  = volOk and bodyOk and (t.isRes ? emaBullOk : emaBearOk)
-            bool raw     = pierce and closeOk and filtOk
+            bool filtOk = volOk and bodyOk and (t.isRes ? emaBullOk : emaBearOk)
+            bool raw = pierce and closeOk and filtOk
             bool confirm = false
             if raw and not secondConf
                 confirm := true
             if raw and secondConf and not t.pending
-                t.pending    := true
+                t.pending := true
                 t.pendingBar := bar_index
             if raw and secondConf and t.pending and bar_index > t.pendingBar
                 confirm := true
@@ -1416,12 +1416,12 @@ if tlOn and barOk and array.size(tls) > 0
                 t.pending := false
 
             if confirm
-                t.broken   := true
+                t.broken := true
                 t.brokeBar := bar_index
-                t.pending  := false
-                setupBar   := bar_index
-                setupId    := t.id
-                setupTxt   := t.isRes ? "BREAKOUT" : "BREAKDOWN"
+                t.pending := false
+                setupBar := bar_index
+                setupId := t.id
+                setupTxt := t.isRes ? "BREAKOUT" : "BREAKDOWN"
                 if t.isRes
                     alBullBreak := true
                 else
@@ -1437,10 +1437,10 @@ if tlOn and barOk and array.size(tls) > 0
             bool hit = t.isRes ? low <= lv + rtol : high >= lv - rtol
             if not t.failed and not t.retestSeen and hit
                 t.retestSeen := true
-                t.retestBar  := bar_index
-                setupBar     := bar_index
-                setupId      := t.id
-                setupTxt     := t.isRes ? "BULL RETEST" : "BEAR RETEST"
+                t.retestBar := bar_index
+                setupBar := bar_index
+                setupId := t.id
+                setupTxt := t.isRes ? "BULL RETEST" : "BEAR RETEST"
                 if t.isRes
                     alBullRetest := true
                 else
@@ -1452,9 +1452,9 @@ if tlOn and barOk and array.size(tls) > 0
                  : (close < lv - rtol * 0.5 and close < open and emaBearOk)
             if not t.failed and t.retestSeen and not t.retestConf and bar_index > t.retestBar and confOk
                 t.retestConf := true
-                setupBar     := bar_index
-                setupId      := t.id
-                setupTxt     := t.isRes ? "BULL RETEST OK" : "BEAR RETEST OK"
+                setupBar := bar_index
+                setupId := t.id
+                setupTxt := t.isRes ? "BULL RETEST OK" : "BEAR RETEST OK"
                 if t.isRes
                     alBullConf := true
                 else
@@ -1464,7 +1464,7 @@ if tlOn and barOk and array.size(tls) > 0
 
 if tlOn and barOk and setupTxt != "None" and bar_index - setupBar > math.max(20, retestWindow)
     setupTxt := "None"
-    setupId  := -1
+    setupId := -1
 
 // -- garbage collection (original rules) ------------------------------------
 if tlOn and barOk and array.size(tls) > 0
@@ -1510,29 +1510,29 @@ if tlOn and barOk and array.size(tls) > 0
             go := false
 
 // -- rendering: LAST BAR ONLY (CHANGE: the original restyled every line on
-//    every historical bar, including an O(n^2) pass; only the final state is
-//    ever displayed, so the result on screen is the same) --------------------
+// every historical bar, including an O(n^2) pass; only the final state is
+// ever displayed, so the result on screen is the same) --------------------
 float topScore = 0.0
-bool  hasRes   = false
-bool  hasSup   = false
+bool hasRes = false
+bool hasSup = false
 
 if tlOn and barstate.islast and array.size(tls) > 0
-    int   bestResId = -1
-    int   bestSupId = -1
-    float bestResS  = -1.0
-    float bestSupS  = -1.0
+    int bestResId = -1
+    int bestSupId = -1
+    float bestResS = -1.0
+    float bestSupS = -1.0
     for t in tls
         if not t.broken
             topScore := math.max(topScore, t.score)
             if t.isRes
                 hasRes := true
                 if t.score > bestResS
-                    bestResS  := t.score
+                    bestResS := t.score
                     bestResId := t.id
             else
                 hasSup := true
                 if t.score > bestSupS
-                    bestSupS  := t.score
+                    bestSupS := t.score
                     bestSupId := t.id
     for t in tls
         int rightX = t.broken ? math.min(bar_index, t.brokeBar + retestWindow) : bar_index + tlExtend
@@ -1548,9 +1548,9 @@ if tlOn and barstate.islast and array.size(tls) > 0
             vis := vis and (brokenPolicy == "Keep" or (brokenPolicy == "Keep most recent" and newer < keepBrokenN))
         if tlCleanEff
             vis := vis and (t.id == bestResId or t.id == bestSupId or t.id == setupId)
-        bool  strong = t.score >= strongThr
-        color base   = t.broken ? brokenCol : (t.isRes ? resCol : supCol)
-        int   transp = vis ? (t.broken ? 45 : (strong ? 0 : 35)) : 100
+        bool strong = t.score >= strongThr
+        color base = t.broken ? brokenCol : (t.isRes ? resCol : supCol)
+        int transp = vis ? (t.broken ? 45 : (strong ? 0 : 35)) : 100
         line.set_color(t.ln, color.new(base, transp))
         line.set_width(t.ln, t.broken ? 1 : (strong ? 3 : 1))
         line.set_style(t.ln, t.broken ? line.style_dotted : (strong ? line.style_solid : line.style_dashed))
@@ -1560,28 +1560,28 @@ plotshape(tlOn and showSwings and not tlCleanEff and not na(tlPh) ? tlPh : na, t
 plotshape(tlOn and showSwings and not tlCleanEff and not na(tlPl) ? tlPl : na, title = "Swing Low",
      style = shape.triangleup, location = location.absolute, color = color.new(#26a69a, 20), size = size.tiny, offset = -L)
 
-plot(tlOn and showE9   ? tlE9   : na, "TL EMA 9",   color = color.new(#ffb74d, 0), linewidth = 1)
-plot(tlOn and showE21  ? tlE21  : na, "TL EMA 21",  color = color.new(#42a5f5, 0), linewidth = 1)
-plot(tlOn and showE50  and not tlCleanEff ? tlE50  : na, "TL EMA 50",  color = color.new(#ab47bc, 0), linewidth = 1)
+plot(tlOn and showE9 ? tlE9 : na, "TL EMA 9", color = color.new(#ffb74d, 0), linewidth = 1)
+plot(tlOn and showE21 ? tlE21 : na, "TL EMA 21", color = color.new(#42a5f5, 0), linewidth = 1)
+plot(tlOn and showE50 and not tlCleanEff ? tlE50 : na, "TL EMA 50", color = color.new(#ab47bc, 0), linewidth = 1)
 plot(tlOn and showE200 and not tlCleanEff ? tlE200 : na, "TL EMA 200", color = color.new(#787b86, 0), linewidth = 2)
 
 // =============================================================================
-//  COMPACT DASHBOARD (MTF rows + trendline rows + context rows, one table)
+// COMPACT DASHBOARD (MTF rows + trendline rows + context rows, one table)
 // =============================================================================
 f_pos(string s) =>
     switch s
-        "Top Left"      => position.top_left
-        "Top Center"    => position.top_center
-        "Top Right"     => position.top_right
-        "Middle Left"   => position.middle_left
-        "Middle Right"  => position.middle_right
-        "Bottom Left"   => position.bottom_left
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
         "Bottom Center" => position.bottom_center
         => position.bottom_right
 
 f_size(string s) =>
     switch s
-        "Tiny"  => size.tiny
+        "Tiny" => size.tiny
         "Small" => size.small
         "Large" => size.large
         => size.normal
@@ -1609,7 +1609,7 @@ f_row(table t, int row, bool use, string tf, int tr, string ts) =>
     int next = row
     if use
         string txt = tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "-"
-        color  bg  = tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
+        color bg = tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
         table.cell(t, 0, row, f_tfLabel(tf), text_color = txtC, bgcolor = labelBg, text_size = ts)
         table.cell(t, 1, row, txt, text_color = txtC, bgcolor = bg, text_size = ts)
         next := row + 1
@@ -1640,9 +1640,9 @@ if dashOn and barstate.islast
         r := f_row(dash, r, use8, tf8, mt8, ts)
     if tlOn and dashTL
         string strTxt = topScore > 0 ? f_strengthTxt(topScore) : "-"
-        color  strCl  = topScore >= strongThr ? color.new(#26a69a, 0) : topScore >= strongThr * 0.7 ? color.new(#ffb74d, 0) : color.new(#b2b5be, 0)
-        color  setCl  = str.contains(setupTxt, "BULL") or setupTxt == "BREAKOUT" ? color.new(#26a69a, 0) : str.contains(setupTxt, "BEAR") or setupTxt == "BREAKDOWN" ? color.new(#ef5350, 0) : color.new(#b2b5be, 0)
-        string srTxt  = "R " + (hasRes ? "ok" : "-") + "  S " + (hasSup ? "ok" : "-")
+        color strCl = topScore >= strongThr ? color.new(#26a69a, 0) : topScore >= strongThr * 0.7 ? color.new(#ffb74d, 0) : color.new(#b2b5be, 0)
+        color setCl = str.contains(setupTxt, "BULL") or setupTxt == "BREAKOUT" ? color.new(#26a69a, 0) : str.contains(setupTxt, "BEAR") or setupTxt == "BREAKDOWN" ? color.new(#ef5350, 0) : color.new(#b2b5be, 0)
+        string srTxt = "R " + (hasRes ? "ok" : "-") + "  S " + (hasSup ? "ok" : "-")
         r := f_kv(dash, r, "TL trend", trendTxt, trendCl, ts)
         r := f_kv(dash, r, "TL lines", srTxt, color.new(#d1d4dc, 0), ts)
         r := f_kv(dash, r, "TL setup", setupTxt, setCl, ts)
@@ -1651,7 +1651,7 @@ if dashOn and barstate.islast
         if orbLonOn or orbNyOn or orbGlxOn
             string o = ""
             string a = f_orbStatus(orbLon, orbLonOn, lonSup, "LDN")
-            string b = f_orbStatus(orbNy,  orbNyOn,  nySup,  "NY")
+            string b = f_orbStatus(orbNy, orbNyOn, nySup, "NY")
             string c = f_orbStatus(orbGlx, orbGlxOn, glxSup, "GLX")
             o := a
             o := b == "" ? o : (o == "" ? b : o + "  " + b)
@@ -1664,35 +1664,35 @@ if dashOn and barstate.islast
             r := f_kv(dash, r, "EMA " + str.tostring(ribLen), ribDir == 1 ? "Bullish" : ribDir == -1 ? "Bearish" : "-", ribDir == 1 ? ribBull : ribDir == -1 ? ribBear : color.gray, ts)
 
 // =============================================================================
-//  ALERTS
-//  alertcondition(): one entry per event (pick it in the Create Alert dialog).
-//  alert(): a single "Any alert() function call" alert delivers only the events
-//           switched on in section 9. Both fire on closed bars only.
+// ALERTS
+// alertcondition(): one entry per event (pick it in the Create Alert dialog).
+// alert(): a single "Any alert() function call" alert delivers only the events
+// switched on in section 9. Both fire on closed bars only.
 // =============================================================================
 alertcondition(mtfBullFlip, "All timeframes bullish", "{{ticker}}: every timeframe in the dashboard is now Bullish")
 alertcondition(mtfBearFlip, "All timeframes bearish", "{{ticker}}: every timeframe in the dashboard is now Bearish")
-alertcondition(lonL, "London ORB long",  "{{ticker}} closed above the London opening range high")
+alertcondition(lonL, "London ORB long", "{{ticker}} closed above the London opening range high")
 alertcondition(lonS, "London ORB short", "{{ticker}} closed below the London opening range low")
-alertcondition(nyL,  "NY ORB long",      "{{ticker}} closed above the New York opening range high")
-alertcondition(nyS,  "NY ORB short",     "{{ticker}} closed below the New York opening range low")
-alertcondition(gxL,  "Globex ORB long",  "{{ticker}} closed above the Globex opening range high")
-alertcondition(gxS,  "Globex ORB short", "{{ticker}} closed below the Globex opening range low")
-alertcondition(orbAnyRL, "ORB retest long confirmed",  "{{ticker}} retested a broken opening range high and held")
+alertcondition(nyL, "NY ORB long", "{{ticker}} closed above the New York opening range high")
+alertcondition(nyS, "NY ORB short", "{{ticker}} closed below the New York opening range low")
+alertcondition(gxL, "Globex ORB long", "{{ticker}} closed above the Globex opening range high")
+alertcondition(gxS, "Globex ORB short", "{{ticker}} closed below the Globex opening range low")
+alertcondition(orbAnyRL, "ORB retest long confirmed", "{{ticker}} retested a broken opening range high and held")
 alertcondition(orbAnyRS, "ORB retest short confirmed", "{{ticker}} retested a broken opening range low and held")
-alertcondition(emaXUp, "EMA cross up",   "{{ticker}} fast EMA crossed above slow EMA")
+alertcondition(emaXUp, "EMA cross up", "{{ticker}} fast EMA crossed above slow EMA")
 alertcondition(emaXDn, "EMA cross down", "{{ticker}} fast EMA crossed below slow EMA")
-alertcondition(alBullBreak,  "Bullish Trendline Breakout",  "AutoTL: bullish breakout of resistance trendline")
-alertcondition(alBearBreak,  "Bearish Trendline Breakdown", "AutoTL: bearish breakdown of support trendline")
-alertcondition(alBullRetest, "Bullish Retest",              "AutoTL: price retesting broken resistance trendline")
-alertcondition(alBearRetest, "Bearish Retest",              "AutoTL: price retesting broken support trendline")
-alertcondition(alBullConf,   "Confirmed Bullish Retest",    "AutoTL: bullish retest confirmed - holding above broken resistance")
-alertcondition(alBearConf,   "Confirmed Bearish Retest",    "AutoTL: bearish retest confirmed - holding below broken support")
-alertcondition(alNewStrongSup, "New Strong Support Trendline",    "AutoTL: new strong ascending support trendline detected")
+alertcondition(alBullBreak, "Bullish Trendline Breakout", "AutoTL: bullish breakout of resistance trendline")
+alertcondition(alBearBreak, "Bearish Trendline Breakdown", "AutoTL: bearish breakdown of support trendline")
+alertcondition(alBullRetest, "Bullish Retest", "AutoTL: price retesting broken resistance trendline")
+alertcondition(alBearRetest, "Bearish Retest", "AutoTL: price retesting broken support trendline")
+alertcondition(alBullConf, "Confirmed Bullish Retest", "AutoTL: bullish retest confirmed - holding above broken resistance")
+alertcondition(alBearConf, "Confirmed Bearish Retest", "AutoTL: bearish retest confirmed - holding below broken support")
+alertcondition(alNewStrongSup, "New Strong Support Trendline", "AutoTL: new strong ascending support trendline detected")
 alertcondition(alNewStrongRes, "New Strong Resistance Trendline", "AutoTL: new strong descending resistance trendline detected")
-alertcondition(sdEntryBuy,  "4H buy zone entry",      "{{ticker}} entered a 4H buy zone")
-alertcondition(sdEntrySell, "4H sell zone entry",     "{{ticker}} entered a 4H sell zone")
-alertcondition(sdRejBuy,    "4H buy zone rejection",  "{{ticker}} touched a 4H buy zone and closed above it")
-alertcondition(sdRejSell,   "4H sell zone rejection", "{{ticker}} touched a 4H sell zone and closed below it")
+alertcondition(sdEntryBuy, "4H buy zone entry", "{{ticker}} entered a 4H buy zone")
+alertcondition(sdEntrySell, "4H sell zone entry", "{{ticker}} entered a 4H sell zone")
+alertcondition(sdRejBuy, "4H buy zone rejection", "{{ticker}} touched a 4H buy zone and closed above it")
+alertcondition(sdRejSell, "4H sell zone rejection", "{{ticker}} touched a 4H sell zone and closed below it")
 alertcondition(ribFlipUp, "Ribbon turned bullish", "{{ticker}} EMA high/close ribbon turned bullish")
 alertcondition(ribFlipDn, "Ribbon turned bearish", "{{ticker}} EMA high/close ribbon turned bearish")
 
