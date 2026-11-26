@@ -129,7 +129,7 @@ If you paste the PB-EMA source later, this section will be replaced with its exa
 1. **Not compiled or profiled yet.** Expect a few compiler messages on the first paste. Send them as-is.
 2. Dynamic requests (`request.security` inside `if`) are assumed to skip disabled MTF rows. If the Profiler still shows time for disabled rows, the fallback is to remove those rows' code paths.
 3. The 4H zone request always runs, even when the module is off (a tuple request can't be placed in a conditional block). It is one 4H context, which should be cheap.
-4. `calc_bars_count = 3000`: on 1m that is about 2 days of history for drawings and markers. Raise it in Settings if you need more.
+4. `calc_bars_count = 20000`: the higher-timeframe rows and 4H zones can only use history inside the chart's loaded range, so on 1m the 1D/1W rows may still be empty if TradingView loads few bars. If RE10110 appears, lower Settings → Calculated bars.
 5. ORBs are unsupported above 15m by design. Lower-timeframe aggregation was judged not worth its cost for a 5m/15m trader.
 6. Supply/demand zones are price-action estimates, not order-flow data.
 
