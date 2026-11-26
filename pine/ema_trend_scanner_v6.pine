@@ -1,0 +1,300 @@
+//@version=6
+indicator("EMA Trend Scanner [v6]", shorttitle = "EMA Scanner", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+grpEma   = "EMAs"
+fastLen  = input.int(21, "Fast EMA", minval = 1, group = grpEma)
+slowLen  = input.int(50, "Slow EMA", minval = 1, group = grpEma)
+fastCol  = input.color(#FFA726, "Fast EMA Color", group = grpEma)
+slowCol  = input.color(#00E5FF, "Slow EMA Color", group = grpEma)
+showGlow = input.bool(true, "Glow Effect", group = grpEma)
+
+grpSig     = "Signal Logic"
+rsiLen     = input.int(14, "RSI Length", minval = 1, group = grpSig)
+rsiLongMin = input.float(40, "Long: RSI Min", group = grpSig)
+rsiLongMax = input.float(70, "Long: RSI Max", group = grpSig)
+rsiShortMin = input.float(30, "Short: RSI Min", group = grpSig)
+rsiShortMax = input.float(60, "Short: RSI Max", group = grpSig)
+atrLen     = input.int(14, "ATR Length", minval = 1, group = grpSig)
+touchMult  = input.float(0.5, "EMA 'Near' Distance (x ATR)", minval = 0, step = 0.1, group = grpSig)
+touchBars  = input.int(3, "EMA Touch Lookback (bars)", minval = 0, group = grpSig)
+volLen     = input.int(20, "Volume MA Length", minval = 1, group = grpSig)
+volStrong  = input.float(1.5, "Strong Volume (x MA)", minval = 1, step = 0.1, group = grpSig)
+useVolFilt = input.bool(false, "Require Non-Weak Volume", group = grpSig)
+pivLen     = input.int(5, "Structure Pivot Length", minval = 1, group = grpSig)
+allowShort = input.bool(true, "Enable Short Signals", group = grpSig)
+
+grpRisk  = "Risk / Levels"
+slLook   = input.int(10, "SL Swing Lookback", minval = 1, group = grpRisk)
+slBuf    = input.float(0.25, "SL Buffer (x ATR)", minval = 0, step = 0.05, group = grpRisk)
+rr       = input.float(2.0, "Take Profit (R:R)", minval = 0.1, step = 0.1, group = grpRisk)
+lvlExt   = input.int(8, "Level Extension (bars)", minval = 1, group = grpRisk)
+
+grpTbl   = "Dashboard"
+showDash = input.bool(true, "Show Status Table", group = grpTbl)
+dashPos  = input.string("Top Right", "Status Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpTbl)
+showScan = input.bool(true, "Show Scanner", group = grpTbl)
+scanPos  = input.string("Bottom Right", "Scanner Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpTbl)
+txtSize  = input.string("Small", "Text Size", options = ["Tiny", "Small", "Normal"], group = grpTbl)
+
+grpScan = "Scanner Symbols"
+scanTf  = input.timeframe("15", "Scanner Timeframe", group = grpScan)
+sym1    = input.symbol("CME_MINI:MNQ1!", "Symbol 1", group = grpScan)
+sym2    = input.symbol("CME_MINI:MES1!", "Symbol 2", group = grpScan)
+sym3    = input.symbol("COMEX:SI1!", "Symbol 3", group = grpScan)
+sym4    = input.symbol("NYMEX:CL1!", "Symbol 4", group = grpScan)
+sym5    = input.symbol("CME:BTC1!", "Symbol 5", group = grpScan)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COLORS
+// ─────────────────────────────────────────────────────────────────────────────
+cBg     = color.new(#0B0F17, 0)
+cCell   = color.new(#131A26, 0)
+cFrame  = color.new(#00E5FF, 0)
+cText   = color.new(#D1D4DC, 0)
+cMuted  = color.new(#5D6675, 0)
+cBull   = color.new(#00E676, 0)
+cBear   = color.new(#FF1744, 0)
+cNeut   = color.new(#FFD600, 0)
+cBullBg = color.new(#00E676, 20)
+cBearBg = color.new(#FF1744, 75)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+f_pos(string p) =>
+    switch p
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+f_size(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        => size.small
+
+f_short(string s) =>
+    parts = str.split(s, ":")
+    parts.size() > 1 ? parts.get(1) : s
+
+f_tfLabel(string tf) =>
+    secs = timeframe.in_seconds(tf)
+    secs < 3600 ? str.tostring(secs / 60, "#") + "m" : secs < 86400 ? str.tostring(secs / 3600, "#") + "H" : tf
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE CALCULATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+rsi     = ta.rsi(close, rsiLen)
+atr     = ta.atr(atrLen)
+volMa   = ta.sma(volume, volLen)
+
+// Trend
+trendBull = emaFast > emaSlow and close > emaSlow
+trendBear = emaFast < emaSlow and close < emaSlow
+
+// EMA touch
+touched   = low <= emaFast and high >= emaFast
+near      = math.abs(close - emaFast) <= atr * touchMult
+touchCond = touched or near
+recentTouch = ta.barssince(touchCond) <= touchBars
+
+// Candle patterns
+body      = math.abs(close - open)
+rng       = high - low
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+hammer     = rng > 0 and lowerWick >= 2 * body and upperWick <= body
+shootStar  = rng > 0 and upperWick >= 2 * body and lowerWick <= body
+doji       = rng > 0 and body <= rng * 0.1
+bullPattern = bullEngulf or hammer
+bearPattern = bearEngulf or shootStar
+
+patternTxt = bullEngulf ? "✓ BULL ENGULF" : bearEngulf ? "✓ BEAR ENGULF" : hammer ? "✓ HAMMER" : shootStar ? "✓ SHOOT STAR" : doji ? "• DOJI" : "✕ NONE"
+patternCol = bullPattern ? cBull : bearPattern ? cBear : doji ? cNeut : cMuted
+
+// Market structure (HH/HL/LH/LL from confirmed pivots)
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+var float lastPH = na
+var float prevPH = na
+var float lastPL = na
+var float prevPL = na
+var string hiTag = ""
+var string loTag = ""
+if not na(ph)
+    prevPH := lastPH
+    lastPH := ph
+    hiTag  := na(prevPH) ? "" : ph > prevPH ? "HH" : "LH"
+if not na(pl)
+    prevPL := lastPL
+    lastPL := pl
+    loTag  := na(prevPL) ? "" : pl > prevPL ? "HL" : "LL"
+structBull = hiTag == "HH" and loTag == "HL"
+structBear = hiTag == "LH" and loTag == "LL"
+structTxt  = hiTag == "" and loTag == "" ? "—" : hiTag == "" ? loTag : loTag == "" ? hiTag : hiTag + " / " + loTag
+structCol  = structBull ? cBull : structBear ? cBear : hiTag == "" and loTag == "" ? cMuted : cNeut
+
+// Volume
+volIsStrong = volume > volMa * volStrong
+volIsWeak   = volume < volMa
+volTxt = volIsStrong ? "↑ STRONG" : volIsWeak ? "↓ WEAK" : "→ NORMAL"
+volCol = volIsStrong ? cBull : volIsWeak ? cMuted : cText
+volOk  = not useVolFilt or not volIsWeak
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNALS
+// ─────────────────────────────────────────────────────────────────────────────
+crossUpFast = close > emaFast and close[1] <= emaFast[1]
+crossDnFast = close < emaFast and close[1] >= emaFast[1]
+
+longCond  = trendBull and recentTouch and (bullPattern or crossUpFast) and rsi >= rsiLongMin and rsi <= rsiLongMax and volOk
+shortCond = allowShort and trendBear and recentTouch and (bearPattern or crossDnFast) and rsi >= rsiShortMin and rsi <= rsiShortMax and volOk
+
+swingLow  = ta.lowest(low, slLook)
+swingHigh = ta.highest(high, slLook)
+
+var int   tradeDir = 0   // 1 = long, -1 = short, 0 = flat
+var float entryPx  = na
+var float slPx     = na
+var float tpPx     = na
+var line  entryLn  = na
+var line  slLn     = na
+var line  tpLn     = na
+var label entryLb  = na
+var label slLb     = na
+var label tpLb     = na
+
+f_level(float y, color c, string txt, string lnStyle) =>
+    ln = line.new(bar_index, y, bar_index + lvlExt, y, color = c, style = lnStyle, width = 1)
+    lb = label.new(bar_index + lvlExt, y, txt, style = label.style_label_left, color = c, textcolor = color.black, size = f_size(txtSize))
+    [ln, lb]
+
+f_clear() =>
+    line.delete(entryLn)
+    line.delete(slLn)
+    line.delete(tpLn)
+    label.delete(entryLb)
+    label.delete(slLb)
+    label.delete(tpLb)
+
+// Close an open trade when SL or TP is hit
+exitLong  = tradeDir == 1  and (low <= slPx or high >= tpPx)
+exitShort = tradeDir == -1 and (high >= slPx or low <= tpPx)
+if exitLong or exitShort
+    tradeDir := 0
+
+longSig  = longCond  and barstate.isconfirmed and tradeDir != 1
+shortSig = shortCond and barstate.isconfirmed and tradeDir != -1
+
+if longSig or shortSig
+    f_clear()
+    tradeDir := longSig ? 1 : -1
+    entryPx  := close
+    slPx     := longSig ? math.min(swingLow, emaSlow) - atr * slBuf : math.max(swingHigh, emaSlow) + atr * slBuf
+    risk      = math.abs(entryPx - slPx)
+    tpPx     := longSig ? entryPx + risk * rr : entryPx - risk * rr
+    [eL, eB] = f_level(entryPx, color.new(#00E5FF, 0), "ENTRY", line.style_solid)
+    [sL, sB] = f_level(slPx, color.new(#FF5252, 0), "SL", line.style_dashed)
+    [tL, tB] = f_level(tpPx, color.new(#69F0AE, 0), "TP", line.style_dashed)
+    entryLn := eL
+    entryLb := eB
+    slLn    := sL
+    slLb    := sB
+    tpLn    := tL
+    tpLb    := tB
+    sigTxt = (longSig ? "▲ LONG\n" : "▼ SHORT\n") + str.tostring(close, format.mintick)
+    label.new(bar_index, longSig ? low - atr * 0.6 : high + atr * 0.6, sigTxt, style = longSig ? label.style_label_up : label.style_label_down, color = longSig ? cBull : cBear, textcolor = color.black, size = f_size(txtSize))
+
+// Keep active levels extended to the current bar
+if tradeDir != 0
+    x2 = bar_index + lvlExt
+    line.set_x2(entryLn, x2)
+    line.set_x2(slLn, x2)
+    line.set_x2(tpLn, x2)
+    label.set_x(entryLb, x2)
+    label.set_x(slLb, x2)
+    label.set_x(tpLb, x2)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTS (EMAs with glow)
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showGlow ? emaSlow : na, "Slow EMA Glow Outer", color.new(slowCol, 88), 10, display = display.pane)
+plot(showGlow ? emaSlow : na, "Slow EMA Glow Inner", color.new(slowCol, 70), 6, display = display.pane)
+plot(emaSlow, "Slow EMA", slowCol, 2)
+plot(showGlow ? emaFast : na, "Fast EMA Glow Outer", color.new(fastCol, 88), 10, display = display.pane)
+plot(showGlow ? emaFast : na, "Fast EMA Glow Inner", color.new(fastCol, 70), 6, display = display.pane)
+plot(emaFast, "Fast EMA", fastCol, 2)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCANNER DATA
+// ─────────────────────────────────────────────────────────────────────────────
+scanExpr() =>
+    [ta.rsi(close, rsiLen), close > ta.ema(close, fastLen)]
+
+[r1, b1] = request.security(sym1, scanTf, scanExpr(), ignore_invalid_symbol = true)
+[r2, b2] = request.security(sym2, scanTf, scanExpr(), ignore_invalid_symbol = true)
+[r3, b3] = request.security(sym3, scanTf, scanExpr(), ignore_invalid_symbol = true)
+[r4, b4] = request.security(sym4, scanTf, scanExpr(), ignore_invalid_symbol = true)
+[r5, b5] = request.security(sym5, scanTf, scanExpr(), ignore_invalid_symbol = true)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABLES
+// ─────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(f_pos(dashPos), 2, 8, bgcolor = cBg, frame_color = cFrame, frame_width = 2, border_color = cFrame, border_width = 1)
+var table scan = table.new(f_pos(scanPos), 2, 6, bgcolor = cBg, frame_color = cFrame, frame_width = 2, border_color = cFrame, border_width = 1)
+
+f_row(table t, int row, string k, string v, color vCol, color vBg) =>
+    sz = f_size(txtSize)
+    table.cell(t, 0, row, k, text_color = cText, bgcolor = cCell, text_size = sz)
+    table.cell(t, 1, row, v, text_color = vCol, bgcolor = vBg, text_size = sz)
+
+f_scanRow(int row, string sym, float r, bool bull) =>
+    txt = na(r) ? "n/a" : (bull ? "▲ " : "▼ ") + str.tostring(r, "#.0")
+    col = na(r) ? cMuted : bull ? cBull : cBear
+    f_row(scan, row, f_short(sym), txt, col, cCell)
+
+if barstate.islast
+    if showDash
+        liveCol = barstate.isrealtime ? cBull : cMuted
+        f_row(dash, 0, syminfo.ticker, "STATUS ●", liveCol, cBg)
+
+        trendTxt = trendBull ? "▲ BULL" : trendBear ? "▼ BEAR" : "◆ NEUTRAL"
+        f_row(dash, 1, "Trend", trendTxt, trendBull ? color.black : trendBear ? color.white : cNeut, trendBull ? cBullBg : trendBear ? color.new(#FF1744, 30) : cCell)
+
+        rsiUp = rsi >= rsi[1]
+        f_row(dash, 2, "RSI (" + str.tostring(rsiLen) + ")", str.tostring(rsi, "#.00") + (rsiUp ? " ▲" : " ▼"), rsiUp ? cBull : cBear, rsiUp ? cCell : cBearBg)
+
+        touchTxt = touched ? "✓ TOUCH" : near ? "✓ NEAR" : "✕ FAR"
+        f_row(dash, 3, "EMA Touch", touchTxt, touchCond ? cBull : cMuted, cCell)
+
+        f_row(dash, 4, "Pattern", patternTxt, patternCol, cCell)
+        f_row(dash, 5, "Structure", structTxt, structCol, cCell)
+        f_row(dash, 6, "Volume", volTxt, volCol, cCell)
+
+        sigTxt = longCond ? "▲ LONG" : shortCond ? "▼ SHORT" : tradeDir == 1 ? "LONG ACTIVE" : tradeDir == -1 ? "SHORT ACTIVE" : "SCANNING..."
+        sigCol = longCond or tradeDir == 1 ? cBull : shortCond or tradeDir == -1 ? cBear : cFrame
+        f_row(dash, 7, "Signal", sigTxt, sigCol, cCell)
+
+    if showScan
+        table.cell(scan, 0, 0, "◈ SCANNER", text_color = cFrame, bgcolor = cBg, text_size = f_size(txtSize))
+        table.cell(scan, 1, 0, f_tfLabel(scanTf), text_color = cFrame, bgcolor = cBg, text_size = f_size(txtSize))
+        f_scanRow(1, sym1, r1, b1)
+        f_scanRow(2, sym2, r2, b2)
+        f_scanRow(3, sym3, r3, b3)
+        f_scanRow(4, sym4, r4, b4)
+        f_scanRow(5, sym5, r5, b5)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(longSig,  "Long Signal",  "{{ticker}} LONG @ {{close}}")
+alertcondition(shortSig, "Short Signal", "{{ticker}} SHORT @ {{close}}")
+alertcondition(exitLong or exitShort, "Trade Closed", "{{ticker}} trade hit SL/TP @ {{close}}")
