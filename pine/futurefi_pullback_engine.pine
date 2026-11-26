@@ -1,0 +1,422 @@
+//@version=6
+indicator("FutureFi • Structure Pullback Engine", shorttitle="FutureFi PB", overlay=true, max_bars_back=500, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ════════════════════════════════════════════════════════════════
+// HOW IT WORKS
+//  1. HTF filter   : HTF EMA fast vs slow, with chop blocked when they are too close
+//  2. Structure    : candle CLOSE through the last confirmed swing = BOS
+//  3. Impulse      : origin = extreme between that swing and the break
+//  4. Pullback     : price must retrace into the Fib zone of the impulse (or the EMA)
+//  5. Trigger      : reversal candle in the trend direction
+//  6. Risk         : SL beyond the pullback extreme + ATR buffer, TP1 / TP2 in R
+//  7. Management   : partial at TP1, optional breakeven, live stats in the dashboard
+//  The engine only runs on confirmed bars, so what you see in history
+//  matches what happens live (no repainting).
+// ════════════════════════════════════════════════════════════════
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INPUTS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const string G1 = "① HTF Trend Filter"
+const string G2 = "② Market Structure"
+const string G3 = "③ Pullback Zone"
+const string G4 = "④ Entry Trigger"
+const string G5 = "⑤ Risk & Exits"
+const string G6 = "⑥ Visuals"
+
+useHTF     = input.bool(true, "Require HTF Trend", group=G1)
+htf        = input.timeframe("60", "HTF Timeframe", group=G1)
+htfFastLen = input.int(50, "HTF EMA Fast", minval=1, group=G1)
+htfSlowLen = input.int(200, "HTF EMA Slow", minval=1, group=G1)
+chopFilter = input.bool(true, "Block Chop", group=G1, tooltip="No trend when the HTF EMAs are closer than the gap below.")
+chopGap    = input.float(0.5, "Min EMA Gap (× HTF ATR)", minval=0, step=0.1, group=G1)
+
+swingLen = input.int(3, "Swing Strength", minval=1, maxval=20, group=G2, tooltip="Bars on each side needed to confirm a swing high / low.")
+
+zoneMode   = input.string("Fib or EMA", "Pullback Must Reach", options=["Fib Zone", "EMA", "Fib or EMA"], group=G3)
+fibA       = input.float(0.5, "Fib Zone Start", minval=0, maxval=1, step=0.05, group=G3)
+fibB       = input.float(0.786, "Fib Zone End", minval=0, maxval=1, step=0.05, group=G3)
+pbEmaLen   = input.int(50, "Pullback EMA", minval=1, group=G3)
+fastEmaLen = input.int(21, "Fast EMA (display)", minval=1, group=G3)
+maxWait    = input.int(40, "Setup Expiry (bars)", minval=1, group=G3)
+
+trigMode = input.string("Close > Prev High", "Trigger Candle", options=["Close > Prev High", "Sweep Reversal", "Engulfing"], group=G4, tooltip="Shown for longs. Shorts use the mirror: close < previous low, etc.")
+
+atrLen   = input.int(14, "ATR Length", minval=1, group=G5)
+slBuffer = input.float(0.25, "SL Buffer beyond Pullback (× ATR)", minval=0, step=0.05, group=G5)
+minRisk  = input.float(0.75, "Min Stop Distance (× ATR)", minval=0.1, step=0.05, group=G5)
+rrAIn    = input.float(2.0, "TP1 (R)", minval=0.1, step=0.1, group=G5)
+rrBIn    = input.float(4.0, "TP2 (R)", minval=0.1, step=0.1, group=G5)
+tp1Pct   = input.int(50, "Close % at TP1", minval=0, maxval=100, group=G5)
+moveBE   = input.bool(true, "Stop to Breakeven after TP1", group=G5)
+
+showEMAs    = input.bool(true, "EMAs", group=G6, inline="v1")
+showTrendBg = input.bool(false, "HTF Background", group=G6, inline="v1")
+showStruct  = input.bool(true, "BOS Lines", group=G6, inline="v2")
+showZone    = input.bool(true, "Pullback Zone", group=G6, inline="v2")
+showTrades  = input.bool(true, "Position Boxes", group=G6, inline="v3")
+showLabels  = input.bool(true, "Trade Labels", group=G6, inline="v3")
+showDash    = input.bool(true, "Dashboard", group=G6)
+dashPosIn   = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=G6)
+dashSizeIn  = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=G6)
+bullCol     = input.color(#26a69a, "Bull", group=G6, inline="c")
+bearCol     = input.color(#ef5350, "Bear", group=G6, inline="c")
+
+// Normalised inputs (order does not matter to the user)
+rr1 = math.min(rrAIn, rrBIn)
+rr2 = math.max(rrAIn, rrBIn)
+fLo = math.min(fibA, fibB)
+fHi = math.max(fibA, fibB)
+w1  = tp1Pct / 100.0
+
+if barstate.isfirst and timeframe.in_seconds(htf) < timeframe.in_seconds(timeframe.period)
+    runtime.error("HTF Timeframe must be greater than or equal to the chart timeframe.")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HTF TREND (last CLOSED HTF bar → no repaint)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[hFast, hSlow, hAtr] = request.security(syminfo.tickerid, htf, [ta.ema(close, htfFastLen)[1], ta.ema(close, htfSlowLen)[1], ta.atr(14)[1]], lookahead=barmerge.lookahead_on)
+
+htfChop = chopFilter and math.abs(hFast - hSlow) < hAtr * chopGap
+htfBull = hFast > hSlow and not htfChop
+htfBear = hFast < hSlow and not htfChop
+longOK  = not useHTF or htfBull
+shortOK = not useHTF or htfBear
+
+bgcolor(showTrendBg ? (htfBull ? color.new(bullCol, 93) : htfBear ? color.new(bearCol, 93) : na) : na, title="HTF Trend")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LOCAL SERIES (always computed on every bar)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+atr     = ta.atr(atrLen)
+pbEma   = ta.ema(close, pbEmaLen)
+fastEma = ta.ema(close, fastEmaLen)
+
+plot(showEMAs ? fastEma : na, "Fast EMA", color.new(color.orange, 20))
+plot(showEMAs ? pbEma : na, "Pullback EMA", color.new(color.blue, 20), 2)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SWINGS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float sHigh     = na
+var int   sHighBar  = na
+var bool  sHighLive = false   // true until this swing high is broken once
+var float sLow      = na
+var int   sLowBar   = na
+var bool  sLowLive  = false
+
+if not na(ph)
+    sHigh     := ph
+    sHighBar  := bar_index - swingLen
+    sHighLive := true
+if not na(pl)
+    sLow     := pl
+    sLowBar  := bar_index - swingLen
+    sLowLive := true
+
+// Impulse origin: lowest low since the swing high (for longs), highest high since the swing low (for shorts)
+lenSinceHigh = math.min(math.max(bar_index - nz(sHighBar, bar_index), 0) + 1, 500)
+lenSinceLow  = math.min(math.max(bar_index - nz(sLowBar, bar_index), 0) + 1, 500)
+legLow       = ta.lowest(low, lenSinceHigh)
+legHigh      = ta.highest(high, lenSinceLow)
+
+bosUp   = sHighLive and close > sHigh
+bosDown = sLowLive and close < sLow
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TRIGGER CANDLES
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+bullTrig = switch trigMode
+    "Sweep Reversal" => close > open and low < low[1]
+    "Engulfing"      => close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+    => close > open and close > high[1]
+
+bearTrig = switch trigMode
+    "Sweep Reversal" => close < open and high > high[1]
+    "Engulfing"      => close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+    => close < open and close < low[1]
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HELPERS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fmt(float v) => str.tostring(v, format.mintick)
+fmtR(float r) => (r >= 0 ? "+" : "") + str.tostring(r, "#.##") + "R"
+
+// Fib zone of an impulse: d = +1 long / -1 short → [top, bottom]
+calcZone(int d, float orig, float ext, float a, float b) =>
+    rng = math.abs(ext - orig)
+    p1  = ext - d * rng * a
+    p2  = ext - d * rng * b
+    [math.max(p1, p2), math.min(p1, p2)]
+
+stretchBox(box b) =>
+    if not na(b)
+        box.set_right(b, bar_index)
+
+stretchLine(line l) =>
+    if not na(l)
+        line.set_x2(l, bar_index)
+
+killBox(box b) =>
+    if not na(b)
+        box.delete(b)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// STATE
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const int IDLE  = 0
+const int SETUP = 1   // BOS printed, waiting for pullback + trigger
+const int TRADE = 2   // position open
+
+var int   state    = IDLE
+var int   dir      = 0      // +1 long, -1 short
+var int   setupBar = na
+var float origin   = na     // impulse start = invalidation level
+var float impExt   = na     // impulse extreme (high for long, low for short)
+var float pbExt    = na     // deepest point of the pullback
+var bool  touched  = false
+var float zTop     = na
+var float zBot     = na
+var box   zoneBox  = na
+
+var float entry    = na
+var float sl       = na
+var float initSL   = na
+var float tp1      = na
+var float tp2      = na
+var bool  tp1Done  = false
+var int   entryBar = na
+var box   riskBox  = na
+var box   rwdBox   = na
+var line  tp1Line  = na
+
+var int   nTrades  = 0
+var int   nWins    = 0
+var float sumR     = 0.0
+
+// Per-bar events (for alerts)
+bool  evSetupL = false
+bool  evSetupS = false
+bool  evEntryL = false
+bool  evEntryS = false
+bool  evTP1    = false
+bool  evExit   = false
+float exitR    = na
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ENGINE (confirmed bars only)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if barstate.isconfirmed
+
+    // ── 1. Manage the open trade ─────────────────────────
+    if state == TRADE and bar_index > entryBar
+        riskPts = math.abs(entry - initSL)
+        hitSL   = dir == 1 ? low <= sl : high >= sl
+        hitTP1  = dir == 1 ? high >= tp1 : low <= tp1
+        hitTP2  = dir == 1 ? high >= tp2 : low <= tp2
+        float closedAt = na
+
+        if hitSL                                   // stop first = conservative
+            slR    = dir * (sl - entry) / riskPts
+            exitR := tp1Done ? w1 * rr1 + (1 - w1) * slR : slR
+            closedAt := sl
+        else if hitTP2
+            exitR := w1 * rr1 + (1 - w1) * rr2
+            closedAt := tp2
+        else if hitTP1 and not tp1Done
+            tp1Done := true
+            evTP1   := true
+            if moveBE
+                sl := entry
+            if showLabels
+                label.new(bar_index, tp1, moveBE ? "TP1 ✓  SL→BE" : "TP1 ✓", style=label.style_label_left, color=color.new(bullCol, 20), textcolor=color.white, size=size.tiny)
+
+        stretchBox(riskBox)
+        stretchBox(rwdBox)
+        stretchLine(tp1Line)
+
+        if not na(closedAt)
+            evExit  := true
+            nTrades += 1
+            nWins   += exitR > 0 ? 1 : 0
+            sumR    += exitR
+            if showLabels
+                exitCol = exitR > 0 ? bullCol : exitR < 0 ? bearCol : color.gray
+                label.new(bar_index, closedAt, fmtR(exitR), style=label.style_label_left, color=exitCol, textcolor=color.white, size=size.small)
+            alert(syminfo.ticker + " FutureFi " + (dir == 1 ? "LONG" : "SHORT") + " closed " + fmtR(exitR), alert.freq_once_per_bar)
+            state := IDLE
+            dir   := 0
+
+    // ── 2. Progress a pending setup ──────────────────────
+    if state == SETUP
+        if not touched
+            newExt = dir == 1 ? high > impExt : low < impExt
+            if newExt                              // impulse still extending
+                impExt := dir == 1 ? high : low
+                pbExt  := dir == 1 ? low : high
+            else
+                pbExt := dir == 1 ? math.min(pbExt, low) : math.max(pbExt, high)
+            [zt, zb] = calcZone(dir, origin, impExt, fLo, fHi)
+            zTop := zt
+            zBot := zb
+        else
+            pbExt := dir == 1 ? math.min(pbExt, low) : math.max(pbExt, high)
+
+        fibHit  = dir == 1 ? low <= zTop : high >= zBot
+        emaHit  = dir == 1 ? low <= pbEma : high >= pbEma
+        reached = zoneMode == "Fib Zone" ? fibHit : zoneMode == "EMA" ? emaHit : fibHit or emaHit
+        if reached
+            touched := true
+
+        invalid = dir == 1 ? close < origin : close > origin
+        expired = bar_index - setupBar > maxWait
+
+        if invalid or expired
+            killBox(zoneBox)
+            zoneBox := na
+            state   := IDLE
+            dir     := 0
+        else
+            if not na(zoneBox)
+                box.set_top(zoneBox, zTop)
+                box.set_bottom(zoneBox, zBot)
+                box.set_right(zoneBox, bar_index)
+
+            trig = dir == 1 ? bullTrig and longOK : bearTrig and shortOK
+            if touched and trig and bar_index > setupBar
+                entry   := close
+                rawSL    = dir == 1 ? pbExt - atr * slBuffer : pbExt + atr * slBuffer
+                minDist  = atr * minRisk
+                sl      := dir == 1 ? math.min(rawSL, entry - minDist) : math.max(rawSL, entry + minDist)
+                initSL  := sl
+                r        = math.abs(entry - sl)
+                tp1     := entry + dir * r * rr1
+                tp2     := entry + dir * r * rr2
+                tp1Done := false
+                entryBar := bar_index
+                state   := TRADE
+                evEntryL := dir == 1
+                evEntryS := dir == -1
+
+                riskBox := na
+                rwdBox  := na
+                tp1Line := na
+                if showTrades
+                    riskBox := box.new(bar_index, math.max(entry, sl), bar_index + 1, math.min(entry, sl), border_color=color.new(bearCol, 50), bgcolor=color.new(bearCol, 85))
+                    rwdBox  := box.new(bar_index, math.max(entry, tp2), bar_index + 1, math.min(entry, tp2), border_color=color.new(bullCol, 50), bgcolor=color.new(bullCol, 85))
+                    tp1Line := line.new(bar_index, tp1, bar_index + 1, tp1, color=bullCol, style=line.style_dashed)
+
+                txt = (dir == 1 ? "▲ LONG" : "▼ SHORT") + "\nEntry " + fmt(entry) + "\nSL " + fmt(sl) + "\nTP1 " + fmt(tp1) + "  (" + str.tostring(rr1) + "R)" + "\nTP2 " + fmt(tp2) + "  (" + str.tostring(rr2) + "R)"
+                if showLabels
+                    if dir == 1
+                        label.new(bar_index, low, txt, yloc=yloc.belowbar, style=label.style_label_up, color=bullCol, textcolor=color.white, size=size.small)
+                    else
+                        label.new(bar_index, high, txt, yloc=yloc.abovebar, style=label.style_label_down, color=bearCol, textcolor=color.white, size=size.small)
+                alert(syminfo.ticker + " FutureFi " + str.replace_all(txt, "\n", " | "), alert.freq_once_per_bar)
+                zoneBox := na                      // keep the zone drawn, stop updating it
+
+    // ── 3. Structure breaks ──────────────────────────────
+    if showStruct
+        if bosUp
+            c = longOK ? bullCol : color.new(color.gray, 40)
+            line.new(sHighBar, sHigh, bar_index, sHigh, color=c, style=line.style_dashed)
+            label.new(int((sHighBar + bar_index) / 2), sHigh, "BOS", style=label.style_label_down, color=color.new(color.white, 100), textcolor=c, size=size.tiny)
+        if bosDown
+            c = shortOK ? bearCol : color.new(color.gray, 40)
+            line.new(sLowBar, sLow, bar_index, sLow, color=c, style=line.style_dashed)
+            label.new(int((sLowBar + bar_index) / 2), sLow, "BOS", style=label.style_label_up, color=color.new(color.white, 100), textcolor=c, size=size.tiny)
+
+    if bosUp
+        sHighLive := false
+    if bosDown
+        sLowLive := false
+
+    // ── 4. New setup from a trend-aligned BOS ────────────
+    if state != TRADE
+        // opposite break kills a pending setup
+        if state == SETUP and ((dir == 1 and bosDown) or (dir == -1 and bosUp))
+            killBox(zoneBox)
+            zoneBox := na
+            state   := IDLE
+            dir     := 0
+
+        newDir = bosUp and longOK ? 1 : bosDown and shortOK ? -1 : 0
+        if newDir != 0
+            killBox(zoneBox)                       // replace any older setup
+            state    := SETUP
+            dir      := newDir
+            setupBar := bar_index
+            origin   := newDir == 1 ? legLow : legHigh
+            impExt   := newDir == 1 ? high : low
+            pbExt    := newDir == 1 ? low : high
+            touched  := false
+            [zt, zb] = calcZone(newDir, origin, impExt, fLo, fHi)
+            zTop     := zt
+            zBot     := zb
+            evSetupL := newDir == 1
+            evSetupS := newDir == -1
+            zoneBox  := na
+            if showZone
+                zc = newDir == 1 ? bullCol : bearCol
+                zoneBox := box.new(bar_index, zTop, bar_index + 1, zBot, border_color=color.new(zc, 70), bgcolor=color.new(zc, 90), text="PB zone", text_color=color.new(zc, 30), text_size=size.tiny, text_halign=text.align_right)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DASHBOARD
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+dashLoc = switch dashPosIn
+    "Top Left"     => position.top_left
+    "Bottom Right" => position.bottom_right
+    "Bottom Left"  => position.bottom_left
+    => position.top_right
+
+dashTxt = switch dashSizeIn
+    "Tiny"   => size.tiny
+    "Normal" => size.normal
+    => size.small
+
+var table dash = table.new(dashLoc, 2, 9, bgcolor=color.new(#131722, 10), frame_color=color.new(color.gray, 60), frame_width=1, border_color=color.new(color.gray, 85), border_width=1)
+
+dashCell(int col, int row, string t, color tc) =>
+    table.cell(dash, col, row, t, text_color=tc, text_size=dashTxt, text_halign=col == 0 ? text.align_left : text.align_right)
+
+if showDash and barstate.islast
+    trendTxt = htfBull ? "BULL" : htfBear ? "BEAR" : htfChop ? "CHOP" : "—"
+    trendClr = htfBull ? bullCol : htfBear ? bearCol : color.gray
+    dirTxt   = dir == 1 ? "Long" : "Short"
+    stateTxt = state == TRADE ? "In " + dirTxt : state == SETUP ? (touched ? dirTxt + ": wait trigger" : dirTxt + ": wait pullback") : "Scanning"
+    stateClr = dir == 1 ? bullCol : dir == -1 ? bearCol : color.gray
+    openR    = state == TRADE ? dir * (close - entry) / math.abs(entry - initSL) : na
+    winRate  = nTrades > 0 ? str.tostring(100.0 * nWins / nTrades, "#.#") + "%" : "—"
+    avgR     = nTrades > 0 ? fmtR(sumR / nTrades) : "—"
+
+    dashCell(0, 0, "FutureFi PB", color.white)
+    dashCell(1, 0, "HTF " + htf, color.silver)
+    dashCell(0, 1, "Trend", color.silver)
+    dashCell(1, 1, useHTF ? trendTxt : "off", trendClr)
+    dashCell(0, 2, "State", color.silver)
+    dashCell(1, 2, stateTxt, stateClr)
+    dashCell(0, 3, "Open P/L", color.silver)
+    dashCell(1, 3, state == TRADE ? fmtR(openR) : "—", na(openR) ? color.gray : openR >= 0 ? bullCol : bearCol)
+    dashCell(0, 4, "Stop", color.silver)
+    dashCell(1, 4, state == TRADE ? fmt(sl) + (tp1Done ? " (BE)" : "") : "—", color.white)
+    dashCell(0, 5, "Trades", color.silver)
+    dashCell(1, 5, str.tostring(nTrades), color.white)
+    dashCell(0, 6, "Win rate", color.silver)
+    dashCell(1, 6, winRate, color.white)
+    dashCell(0, 7, "Net R", color.silver)
+    dashCell(1, 7, nTrades > 0 ? fmtR(sumR) : "—", sumR >= 0 ? bullCol : bearCol)
+    dashCell(0, 8, "Avg R / trade", color.silver)
+    dashCell(1, 8, avgR, color.white)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ALERTS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+alertcondition(evSetupL, "Long Setup (BOS)",  "FutureFi: bullish BOS with trend, waiting for pullback")
+alertcondition(evSetupS, "Short Setup (BOS)", "FutureFi: bearish BOS with trend, waiting for pullback")
+alertcondition(evEntryL, "LONG Entry",        "FutureFi: LONG entry triggered")
+alertcondition(evEntryS, "SHORT Entry",       "FutureFi: SHORT entry triggered")
+alertcondition(evTP1,    "TP1 Hit",           "FutureFi: TP1 hit")
+alertcondition(evExit,   "Trade Closed",      "FutureFi: trade closed")
