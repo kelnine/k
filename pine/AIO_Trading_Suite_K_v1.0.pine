@@ -24,7 +24,7 @@
 // cosmetic and never change a confirmed signal.
 // ============================================================================
 indicator("AIO Trading Suite [K] - Performance Edition", shorttitle = "AIO [K]", overlay = true,
-     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 3000, scale = scale.right)
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 20000, max_bars_back = 1100, scale = scale.right)
 
 // =============================================================================
 // INPUTS (declared in UI order 1 ... 10)
@@ -262,17 +262,12 @@ float atr14 = ta.atr(14) // FVG + trendlines + ORB retest
 float atrNow = nz(atr14, high - low)
 atrNow := atrNow <= 0 ? syminfo.mintick * 10 : atrNow
 
-// Copies with an explicit history buffer: the trendline validator reads up to
-// 1000 bars back with a variable offset. Declaring the buffer up front avoids
-// Pine's automatic re-run of the whole script when it discovers the depth, and
-// replaces the original global max_bars_back = 1100 (which sized EVERY series).
+// Copies used by the trendline validator, which reads up to 1000 bars back with a
+// variable offset. The history buffer is set globally (max_bars_back = 1100 in
+// indicator(), as in the original Auto Trendline script).
 float tlHi = high
 float tlLo = low
 float tlCl = close
-max_bars_back(tlHi, 1100)
-max_bars_back(tlLo, 1100)
-max_bars_back(tlCl, 1100)
-max_bars_back(atr14, 1100)
 
 // =============================================================================
 // 5 - EMA 9/20

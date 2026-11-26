@@ -48,7 +48,7 @@ File: `pine/AIO_Trading_Suite_K_v1.0.pine` (one indicator, overlay).
 
 * One indicator, one `ta.atr(14)` shared by FVG, trendlines and ORB retests. There is one compact dashboard instead of two tables.
 * All name clashes are resolved (`mt1..mt8`, `emaF/emaS`, `tlHi/tlLo/tlCl`, `fvgExtend`, `tlExtend`, `vpTz`, …).
-* `calc_bars_count = 3000` limits the initial calculation to the last 3000 bars. It shows up as **Settings → Calculated bars**, so you can raise or lower it. This is the biggest single lever against RE10110. It does not change recent signals, because every module needs far fewer than 3000 bars of warm-up (EMA 200 converges within about 600–800 bars).
+* `calc_bars_count = 20000` (Settings → Calculated bars). 3000 proved too few: higher-timeframe requests only see data inside the chart's calculated range, so on 1m the 4H/1D/1W rows and 4H zones were empty. Lower it only if RE10110 appears. It shows up as **Settings → Calculated bars**, so you can raise or lower it. This is the biggest single lever against RE10110. It does not change recent signals, because every module needs far fewer than 3000 bars of warm-up (EMA 200 converges within about 600–800 bars).
 * Every major module has its own ON/OFF switch. Disabled modules skip their per-bar work. MTF rows that are disabled, or skipped in Lite, sit inside `if` blocks (v6 dynamic requests), so they should not be fetched. **Check this in the Profiler.**
 
 ---
@@ -68,7 +68,7 @@ File: `pine/AIO_Trading_Suite_K_v1.0.pine` (one indicator, overlay).
 | 9 | ORB | New: retest confirmation, "require complete range data" (default on), unsupported above 15m. | Additive. A range with a missing bar is skipped instead of drawn partially. |
 | 10 | Trendlines | `f_alreadyBroken` is checked before `f_validate`. Validation exits early once violations exceed the limit. | **Identical** accepted lines and scores. |
 | 11 | Trendlines | Rendering runs on the last bar only. `setupIdx` is replaced by a stable line id (bug fix). | Display identical, except that clean mode now highlights the correct setup line. |
-| 12 | Trendlines | Global `max_bars_back = 1100` is replaced by per-series `max_bars_back(…, 1100)` on the 4 series that need it. | None. |
+| 12 | Trendlines | Global `max_bars_back = 1100` kept as in the original. (v1.0 tried per-series buffers; TradingView ignored them and threw RE10143 on 5m, so this was reverted.) | None. |
 | 13 | Trendlines | The EMA 9/21/50/200 plots default **off**, because section 5 and the ribbon already draw EMAs. They are still calculated for the trend and filters. Global Clean Mode / Lite force trendline clean display, and Lite keeps 10 labels instead of 30. | Display only. |
 | 14 | Dashboard | One table. Default text **Small** (was Normal). Trendline rows condensed from 5 to 4 (Resistance/Support merged into "TL lines"). | Display only. |
 
