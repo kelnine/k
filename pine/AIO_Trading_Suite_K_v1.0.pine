@@ -344,8 +344,6 @@ f_mtfCalcOff(simple int off) =>
 mtfLive = mtfSource == "Live (original)"
 f_rowUse(bool on, string tf) =>
     mtfOn and on and not (isLite and timeframe.in_seconds(tf) < chartSec)
-f_off(string tf) =>
-    not mtfLive and timeframe.in_seconds(tf) > chartSec ? 1 : 0
 
 use1 = f_rowUse(on1, tf1)
 use2 = f_rowUse(on2, tf2)
@@ -355,14 +353,16 @@ use5 = f_rowUse(on5, tf5)
 use6 = f_rowUse(on6, tf6)
 use7 = f_rowUse(on7, tf7)
 use8 = f_rowUse(on8, tf8)
-off1 = f_off(tf1)
-off2 = f_off(tf2)
-off3 = f_off(tf3)
-off4 = f_off(tf4)
-off5 = f_off(tf5)
-off6 = f_off(tf6)
-off7 = f_off(tf7)
-off8 = f_off(tf8)
+// Offsets are computed inline from inputs so they stay "simple" (required by
+// request.security's lookahead and by the history offset inside the request).
+off1 = not mtfLive and timeframe.in_seconds(tf1) > chartSec ? 1 : 0
+off2 = not mtfLive and timeframe.in_seconds(tf2) > chartSec ? 1 : 0
+off3 = not mtfLive and timeframe.in_seconds(tf3) > chartSec ? 1 : 0
+off4 = not mtfLive and timeframe.in_seconds(tf4) > chartSec ? 1 : 0
+off5 = not mtfLive and timeframe.in_seconds(tf5) > chartSec ? 1 : 0
+off6 = not mtfLive and timeframe.in_seconds(tf6) > chartSec ? 1 : 0
+off7 = not mtfLive and timeframe.in_seconds(tf7) > chartSec ? 1 : 0
+off8 = not mtfLive and timeframe.in_seconds(tf8) > chartSec ? 1 : 0
 
 // Requests sit inside `if` blocks (Pine v6 dynamic requests) so that disabled /
 // skipped rows are not fetched.
