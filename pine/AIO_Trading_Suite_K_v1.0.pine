@@ -1,6 +1,6 @@
 //@version=6
 // ============================================================================
-//  AIO Trading Suite [K] — Performance Edition v1.0
+//  AIO Trading Suite [K] - Performance Edition v1.0
 //
 //  Merges:  (1) MTF Trend Dashboard + FVG Zones
 //           (2) FRVP + ORB + 9/20 EMA
@@ -23,26 +23,26 @@
 //  * Live-bar drawing updates (line extensions, profile, dashboard) are
 //    cosmetic and never change a confirmed signal.
 // ============================================================================
-indicator("AIO Trading Suite [K] — Performance Edition", shorttitle = "AIO [K]", overlay = true,
+indicator("AIO Trading Suite [K] - Performance Edition", shorttitle = "AIO [K]", overlay = true,
      max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 3000)
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  INPUTS  (declared in UI order 1 … 10)
-// ═════════════════════════════════════════════════════════════════════════════
-const string G1  = "1 · MTF Trend Dashboard"
-const string G2  = "2 · FVG Zones"
-const string G3  = "3 · Volume Profile"
-const string G4  = "4 · Opening Range Breakouts"
-const string G5  = "5 · EMA 9/20"
-const string G6  = "6 · Auto Trendlines"
-const string G6b = "6b · Trendline Breakouts & Filters"
-const string G6c = "6c · Trendline Display"
-const string G7  = "7 · 4H Supply & Demand"
-const string G8  = "8 · EMA 200 Ribbon"
-const string G9  = "9 · Alerts"
-const string G10 = "10 · Performance & Display"
+// =============================================================================
+//  INPUTS  (declared in UI order 1 ... 10)
+// =============================================================================
+const string G1  = "1 - MTF Trend Dashboard"
+const string G2  = "2 - FVG Zones"
+const string G3  = "3 - Volume Profile"
+const string G4  = "4 - Opening Range Breakouts"
+const string G5  = "5 - EMA 9/20"
+const string G6  = "6 - Auto Trendlines"
+const string G6b = "6b - Trendline Breakouts & Filters"
+const string G6c = "6c - Trendline Display"
+const string G7  = "7 - 4H Supply & Demand"
+const string G8  = "8 - EMA 200 Ribbon"
+const string G9  = "9 - Alerts"
+const string G10 = "10 - Performance & Display"
 
-// ── 1 · MTF Trend Dashboard (Script 1) ─────────────────────────────────────
+// -- 1 - MTF Trend Dashboard (Script 1) -------------------------------------
 mtfOn      = input.bool(true, "Enable MTF trend dashboard", group = G1)
 mtfMethod  = input.string("Structure", "Trend method", options = ["Structure", "EMA"], group = G1,
      tooltip = "Structure: bullish after price closes above the last swing high, bearish after it closes below the last swing low.\nEMA: bullish when the fast EMA is above the slow EMA.")
@@ -75,7 +75,7 @@ labelBg = input.color(#3A3A3A, "Timeframe column", inline = "c2", group = G1)
 txtC    = input.color(color.white, "Text", inline = "c3", group = G1)
 borderC = input.color(#6B6B6B, "Border", inline = "c3", group = G1)
 
-// ── 2 · FVG Zones (Script 1) ───────────────────────────────────────────────
+// -- 2 - FVG Zones (Script 1) -----------------------------------------------
 showZ      = input.bool(true, "Show fair value gaps", group = G2)
 minAtr     = input.float(0.25, "Min gap size (x ATR 14)", minval = 0, step = 0.05, group = G2)
 maxZ       = input.int(10, "Max active zones", minval = 1, maxval = 100, group = G2, tooltip = "Basic Lite caps this at 5.")
@@ -91,7 +91,7 @@ bearZ      = input.color(color.new(#1E1E1E, 45), "Bearish fill", inline = "z1", 
 zBorder    = input.color(color.black, "Border", inline = "z2", group = G2)
 midC       = input.color(color.black, "50% line", inline = "z2", group = G2)
 
-// ── 3 · Volume Profile (Script 2) ──────────────────────────────────────────
+// -- 3 - Volume Profile (Script 2) ------------------------------------------
 showVP     = input.bool(false, "Show volume profile", group = G3, tooltip = "Off by default to keep Basic Lite light. Calculation is identical to the original when on.")
 vpTz       = input.string("America/New_York", "Timezone (session modes)", group = G3)
 vpMode     = input.string("Latest session", "Range", options = ["Latest session", "Previous session", "Last N bars", "Pick on chart"], group = G3,
@@ -116,7 +116,7 @@ vpDnCol    = input.color(#ef5350, "Down volume", inline = "vpc", group = G3)
 pocCol     = input.color(#ff9800, "POC", inline = "lvl", group = G3)
 vaCol      = input.color(#2962ff, "VAH / VAL", inline = "lvl", group = G3)
 
-// ── 4 · Opening Range Breakouts ────────────────────────────────────────────
+// -- 4 - Opening Range Breakouts --------------------------------------------
 orbTz        = input.string("America/New_York", "Timezone", group = G4, tooltip = "IANA zone. America/New_York switches between EST and EDT automatically.")
 orbLonOn     = input.bool(true, "London", inline = "lon", group = G4)
 orbLonCol    = input.color(#AB47BC, "", inline = "lon", group = G4)
@@ -144,7 +144,7 @@ orbMarkers   = input.bool(true, "Signal markers", inline = "od", group = G4)
 orbExtBars   = input.int(5, "Extend active levels past last bar", minval = 0, maxval = 50, group = G4)
 orbHist      = input.int(2, "Historical ranges kept (per ORB)", minval = 0, maxval = 20, group = G4, tooltip = "Clean Mode and Basic Lite force 0 (latest range only).")
 
-// ── 5 · EMA 9/20 (Script 2) ────────────────────────────────────────────────
+// -- 5 - EMA 9/20 (Script 2) ------------------------------------------------
 showEma = input.bool(true, "Show EMAs", group = G5)
 fastLen = input.int(9, "Fast", minval = 1, inline = "fast", group = G5)
 fastCol = input.color(#00bcd4, "", inline = "fast", group = G5)
@@ -152,7 +152,7 @@ slowLen = input.int(20, "Slow", minval = 1, inline = "slow", group = G5)
 slowCol = input.color(#ffeb3b, "", inline = "slow", group = G5)
 emaFill = input.bool(true, "Trend fill between EMAs", group = G5)
 
-// ── 6 · Auto Trendlines (Script 3) ─────────────────────────────────────────
+// -- 6 - Auto Trendlines (Script 3) -----------------------------------------
 tlOn         = input.bool(true, "Enable auto trendlines", group = G6)
 pivotLenIn   = input.int(8,    "Pivot Length (swing sensitivity)",  minval = 2, maxval = 60,  group = G6, tooltip = "Left/right bars used to confirm a swing. Signals are delayed by this many bars - the honest, non-repainting cost of pivots.")
 autoAdapt    = input.bool(true,"Auto-adapt pivot length to timeframe", group = G6)
@@ -199,14 +199,14 @@ showE21      = input.bool(false, "Plot EMA 21",  inline = "e1", group = G6c)
 showE50      = input.bool(false, "Plot EMA 50",  inline = "e2", group = G6c)
 showE200     = input.bool(false, "Plot EMA 200", inline = "e2", group = G6c)
 
-// ── 7 · 4H Supply & Demand ─────────────────────────────────────────────────
+// -- 7 - 4H Supply & Demand -------------------------------------------------
 sdOn       = input.bool(true, "Enable 4H supply & demand zones", group = G7, tooltip = "Price-action estimates of supply/demand built from CLOSED 4H candles only. They are not verified institutional orders.")
 sdAtrLen   = input.int(14, "4H ATR length", minval = 2, group = G7)
-sdDispMult = input.float(1.5, "Displacement body ≥ x ATR", minval = 0.5, maxval = 5.0, step = 0.1, group = G7, tooltip = "The candle that leaves the base must have a body at least this many 4H ATRs.")
+sdDispMult = input.float(1.5, "Displacement body >= x ATR", minval = 0.5, maxval = 5.0, step = 0.1, group = G7, tooltip = "The candle that leaves the base must have a body at least this many 4H ATRs.")
 sdReqBOS   = input.bool(true, "Displacement must break structure", group = G7, tooltip = "Bullish: close above the highest high of the previous N 4H candles. Bearish: close below the lowest low.")
 sdBosLen   = input.int(10, "Structure lookback (4H candles)", minval = 2, maxval = 50, group = G7)
 sdBaseMax  = input.int(3, "Max base candles", minval = 1, maxval = 5, group = G7)
-sdBaseBody = input.float(0.6, "Base candle body ≤ x ATR", minval = 0.1, maxval = 2.0, step = 0.05, group = G7)
+sdBaseBody = input.float(0.6, "Base candle body <= x ATR", minval = 0.1, maxval = 2.0, step = 0.05, group = G7)
 sdReqBase  = input.bool(false, "Require a base", group = G7, tooltip = "Off: if no small-bodied base candle precedes the displacement, the single candle before it is used as the zone.")
 sdProx     = input.string("Body", "Proximal edge", options = ["Body", "Wick"], group = G7, tooltip = "Edge nearest to price: base candle bodies (tighter) or wicks (wider). The far (distal) edge always uses wicks.")
 sdMaxH     = input.float(2.0, "Max zone height (x ATR)", minval = 0.2, maxval = 6.0, step = 0.1, group = G7)
@@ -219,7 +219,7 @@ sdDemCol   = input.color(#26A69A, "Buy zone", inline = "sdc", group = G7)
 sdSupCol   = input.color(#EF5350, "Sell zone", inline = "sdc", group = G7)
 sdFillT    = input.int(82, "Fill transparency", minval = 50, maxval = 95, group = G7)
 
-// ── 8 · EMA 200 Ribbon ─────────────────────────────────────────────────────
+// -- 8 - EMA 200 Ribbon -----------------------------------------------------
 ribOn    = input.bool(true, "Enable EMA high/close ribbon", group = G8, tooltip = "APPROXIMATION of 'PB-EMA 200 high close' rebuilt from screenshots: band between EMA(high) and EMA(close). The original switching rule is unknown - choose one below.")
 ribLen   = input.int(200, "EMA period", minval = 2, group = G8)
 ribRule  = input.string("Close beyond band (hold inside)", "Colour rule", options = ["Close beyond band (hold inside)", "Close vs EMA(close)", "EMA(close) slope"], group = G8,
@@ -229,7 +229,7 @@ ribBear  = input.color(#F44336, "Bearish", inline = "rb", group = G8)
 ribFillT = input.int(60, "Fill transparency", minval = 0, maxval = 100, group = G8)
 ribLineT = input.int(20, "Edge transparency", minval = 0, maxval = 100, group = G8)
 
-// ── 9 · Alerts (alert() events; every event also has its own alertcondition) ─
+// -- 9 - Alerts (alert() events; every event also has its own alertcondition) -
 alMtf      = input.bool(false, "MTF: all rows agree", group = G9)
 alOrbBrk   = input.bool(true,  "ORB breakout", group = G9)
 alOrbRt    = input.bool(false, "ORB retest confirmed", group = G9)
@@ -242,7 +242,7 @@ alSdEntry  = input.bool(false, "4H zone entry", group = G9)
 alSdRej    = input.bool(true,  "4H zone rejection", group = G9)
 alRib      = input.bool(false, "Ribbon colour change", group = G9)
 
-// ── 10 · Performance & Display ─────────────────────────────────────────────
+// -- 10 - Performance & Display ---------------------------------------------
 perfMode  = input.string("Basic Lite", "Performance mode", options = ["Basic Lite", "Standard"], group = G10,
      tooltip = "Basic Lite: caps FVGs at 5, no kept mitigated FVGs, MTF rows below the chart timeframe skipped, volume profile refreshed on bar close only, trendline clean display, 10 trendline labels, no ORB history.\nSigns and levels that ARE shown are calculated exactly as in Standard.")
 cleanMode = input.bool(true, "Clean Mode", group = G10, tooltip = "Latest ORB ranges only, best trendlines only, no swing markers.")
@@ -253,9 +253,9 @@ showClock = input.bool(true, "Show bar close countdown", group = G10)
 dashTL    = input.bool(true, "Dashboard: trendline rows", group = G10)
 dashCtx   = input.bool(true, "Dashboard: ORB / 4H zone / ribbon rows", group = G10)
 
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 //  SHARED SERIES (computed once, used by several modules)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 isLite   = perfMode == "Basic Lite"
 chartSec = timeframe.in_seconds()
 float atr14 = ta.atr(14)                 // FVG + trendlines + ORB retest
@@ -274,9 +274,9 @@ max_bars_back(tlLo, 1100)
 max_bars_back(tlCl, 1100)
 max_bars_back(atr14, 1100)
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  5 · EMA 9/20
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  5 - EMA 9/20
+// =============================================================================
 float emaF = ta.ema(close, fastLen)
 float emaS = ta.ema(close, slowLen)
 bool  emaBullState = emaF > emaS
@@ -289,9 +289,9 @@ fill(pFast, pSlow, showEma and emaFill ? (emaBullState ? color.new(#26a69a, 88) 
 bool emaXUp = ta.crossover(emaF, emaS)
 bool emaXDn = ta.crossunder(emaF, emaS)
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  8 · EMA 200 HIGH/CLOSE RIBBON  (approximation - see tooltip)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  8 - EMA 200 HIGH/CLOSE RIBBON  (approximation - see tooltip)
+// =============================================================================
 float ribH = ta.ema(high, ribLen)
 float ribC = ta.ema(close, ribLen)
 var int ribDir = 0
@@ -310,9 +310,9 @@ fill(pRibH, pRibC, ribOn ? color.new(ribCol, ribFillT) : na, "EMA ribbon fill")
 bool ribFlipUp = ribOn and ribDir == 1 and ribDir[1] == -1
 bool ribFlipDn = ribOn and ribDir == -1 and ribDir[1] == 1
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  1 · MTF TREND (one request per enabled row)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  1 - MTF TREND (one request per enabled row)
+// =============================================================================
 f_structure(int len) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
@@ -401,9 +401,9 @@ bool allBear = anyRow and f_ok(use1, mt1, -1) and f_ok(use2, mt2, -1) and f_ok(u
 bool mtfBullFlip = allBull and not allBull[1]
 bool mtfBearFlip = allBear and not allBear[1]
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  2 · FVG ZONES
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  2 - FVG ZONES
+// =============================================================================
 type FvgZone
     box   bx
     line  mid
@@ -460,9 +460,9 @@ if showZ
             if not na(z.mid)
                 z.mid.set_x2(bar_index + fvgExtend)
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  4 · THREE 15-MINUTE OPENING RANGES
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  4 - THREE 15-MINUTE OPENING RANGES
+// =============================================================================
 type OrbRange
     float hi
     float lo
@@ -639,8 +639,8 @@ f_orbExtend(array<OrbRange> hist) =>
 f_orbStatus(OrbRange r, bool on, bool sup, string tag) =>
     string s = ""
     if on
-        string st = not sup ? "n/a" : na(r) ? "·" : not r.formed ? "…" :
-             r.longDone and r.shortDone ? "▲▼" : r.longDone ? "▲" : r.shortDone ? "▼" : r.active ? "■" : "·"
+        string st = not sup ? "n/a" : na(r) ? "-" : not r.formed ? "..." :
+             r.longDone and r.shortDone ? "UP+DN" : r.longDone ? "UP" : r.shortDone ? "DN" : r.active ? "ON" : "-"
         s := tag + " " + st
     s
 
@@ -677,9 +677,9 @@ plotshape(orbMarkers and gxS,  "Globex ORB short", shape.triangledown, location.
 plotshape(orbMarkers and orbAnyRL, "ORB retest long",  shape.circle, location.belowbar, color.new(#26a69a, 0), text = "R", textcolor = #26a69a, size = size.tiny)
 plotshape(orbMarkers and orbAnyRS, "ORB retest short", shape.circle, location.abovebar, color.new(#ef5350, 0), text = "R", textcolor = #ef5350, size = size.tiny)
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  3 · FIXED RANGE VOLUME PROFILE  (original math; refresh policy + bar cap added)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  3 - FIXED RANGE VOLUME PROFILE  (original math; refresh policy + bar cap added)
+// =============================================================================
 type Profile
     array<float> h
     array<float> l
@@ -857,10 +857,10 @@ if vpRedraw
         else
             vpLabels.push(label.new(bar_index, high, "FRVP: no volume data on this symbol.", style = label.style_label_down, color = color.new(color.gray, 20), textcolor = color.white, size = size.small))
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  7 · 4H SUPPLY & DEMAND  (detected inside the 4H context, read with [1] +
+// =============================================================================
+//  7 - 4H SUPPLY & DEMAND  (detected inside the 4H context, read with [1] +
 //      lookahead_on so only COMPLETED 4H candles are ever used)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 const string SD_TF = "240"
 
 f_sdCalc() =>
@@ -1028,7 +1028,7 @@ f_sdDrawSide(array<box> pool, array<SdZone> sel, int n, color base, string txt, 
             if i < sel.size()
                 SdZone z = sel.get(i)
                 int    tr = z.state == 0 ? sdFillT : z.state == 1 ? math.min(98, sdFillT + 5) : math.min(98, sdFillT + 10)
-                string st = z.state == 0 ? "" : z.state == 1 ? " · tested" : " · mitigated"
+                string st = z.state == 0 ? "" : z.state == 1 ? " - tested" : " - mitigated"
                 if i >= pool.size()
                     pool.push(box.new(z.left, z.top, rightT, z.bot, xloc = xloc.bar_time, border_color = color.new(base, 50), bgcolor = color.new(base, tr),
                          text = txt + st, text_size = size.tiny, text_color = color.new(base, 10), text_halign = text.align_right, text_valign = text.align_center))
@@ -1067,14 +1067,14 @@ if barstate.islast and sdActive
         for z in inv
             if k >= sdInvPool.size()
                 sdInvPool.push(box.new(z.left, z.top, z.endTime, z.bot, xloc = xloc.bar_time, border_color = color.new(color.gray, 60), bgcolor = color.new(color.gray, 88),
-                     text = "4H ZONE · invalid", text_size = size.tiny, text_color = color.new(color.gray, 20), text_halign = text.align_right, text_valign = text.align_center))
+                     text = "4H ZONE - invalid", text_size = size.tiny, text_color = color.new(color.gray, 20), text_halign = text.align_right, text_valign = text.align_center))
             else
                 box b = sdInvPool.get(k)
                 b.set_lefttop(z.left, z.top)
                 b.set_rightbottom(z.endTime, z.bot)
                 b.set_bgcolor(color.new(color.gray, 88))
                 b.set_border_color(color.new(color.gray, 60))
-                b.set_text("4H ZONE · invalid")
+                b.set_text("4H ZONE - invalid")
             k += 1
         // hide pool boxes that have no zone this time
         if sdInvPool.size() > k
@@ -1084,9 +1084,9 @@ if barstate.islast and sdActive
                 b.set_border_color(color(na))
                 b.set_text("")
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  6 · AUTO TRENDLINE DETECTOR PRO
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
+//  6 - AUTO TRENDLINE DETECTOR PRO
+// =============================================================================
 adaptLen = chartSec <= 60 ? 12 : chartSec <= 300 ? 10 : chartSec <= 900 ? 9 : chartSec <= 3600 ? 8 : chartSec <= 14400 ? 7 : 6
 L        = math.max(2, autoAdapt ? adaptLen : pivotLenIn)
 minDist  = math.max(minPivotDist, L)
@@ -1378,7 +1378,7 @@ if tlOn and barOk and not na(tlPl)
                                         alNewStrongSup := true
             f_prune(false)
 
-// ── breakout / retest state machine (closed bars only) ─────────────────────
+// -- breakout / retest state machine (closed bars only) ---------------------
 bool alBullBreak  = false
 bool alBearBreak  = false
 bool alBullRetest = false
@@ -1466,7 +1466,7 @@ if tlOn and barOk and setupTxt != "None" and bar_index - setupBar > math.max(20,
     setupTxt := "None"
     setupId  := -1
 
-// ── garbage collection (original rules) ────────────────────────────────────
+// -- garbage collection (original rules) ------------------------------------
 if tlOn and barOk and array.size(tls) > 0
     for i = array.size(tls) - 1 to 0
         if i < array.size(tls)
@@ -1509,9 +1509,9 @@ if tlOn and barOk and array.size(tls) > 0
         else
             go := false
 
-// ── rendering: LAST BAR ONLY (CHANGE: the original restyled every line on
-//    every historical bar, including an O(n²) pass; only the final state is
-//    ever displayed, so the result on screen is the same) ────────────────────
+// -- rendering: LAST BAR ONLY (CHANGE: the original restyled every line on
+//    every historical bar, including an O(n^2) pass; only the final state is
+//    ever displayed, so the result on screen is the same) --------------------
 float topScore = 0.0
 bool  hasRes   = false
 bool  hasSup   = false
@@ -1565,9 +1565,9 @@ plot(tlOn and showE21  ? tlE21  : na, "TL EMA 21",  color = color.new(#42a5f5, 0
 plot(tlOn and showE50  and not tlCleanEff ? tlE50  : na, "TL EMA 50",  color = color.new(#ab47bc, 0), linewidth = 1)
 plot(tlOn and showE200 and not tlCleanEff ? tlE200 : na, "TL EMA 200", color = color.new(#787b86, 0), linewidth = 2)
 
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 //  COMPACT DASHBOARD (MTF rows + trendline rows + context rows, one table)
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 f_pos(string s) =>
     switch s
         "Top Left"      => position.top_left
@@ -1608,7 +1608,7 @@ f_countdown() =>
 f_row(table t, int row, bool use, string tf, int tr, string ts) =>
     int next = row
     if use
-        string txt = tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "—"
+        string txt = tr == 1 ? "Bullish" : tr == -1 ? "Bearish" : "-"
         color  bg  = tr == 1 ? bullBg : tr == -1 ? bearBg : flatBg
         table.cell(t, 0, row, f_tfLabel(tf), text_color = txtC, bgcolor = labelBg, text_size = ts)
         table.cell(t, 1, row, txt, text_color = txtC, bgcolor = bg, text_size = ts)
@@ -1626,7 +1626,7 @@ if dashOn and barstate.islast
     string ts = f_size(dashSize)
     table.clear(dash, 0, 0, 1, 17)
     string head = syminfo.ticker + (showClock ? "   " + f_countdown() : "")
-    table.cell(dash, 0, 0, isLite ? "AIO · Lite" : "AIO · Std", text_color = txtC, bgcolor = labelBg, text_size = ts)
+    table.cell(dash, 0, 0, isLite ? "AIO - Lite" : "AIO - Std", text_color = txtC, bgcolor = labelBg, text_size = ts)
     table.cell(dash, 1, 0, head, text_color = txtC, bgcolor = headBg, text_size = ts)
     int r = 1
     if mtfOn
@@ -1642,7 +1642,7 @@ if dashOn and barstate.islast
         string strTxt = topScore > 0 ? f_strengthTxt(topScore) : "-"
         color  strCl  = topScore >= strongThr ? color.new(#26a69a, 0) : topScore >= strongThr * 0.7 ? color.new(#ffb74d, 0) : color.new(#b2b5be, 0)
         color  setCl  = str.contains(setupTxt, "BULL") or setupTxt == "BREAKOUT" ? color.new(#26a69a, 0) : str.contains(setupTxt, "BEAR") or setupTxt == "BREAKDOWN" ? color.new(#ef5350, 0) : color.new(#b2b5be, 0)
-        string srTxt  = "R " + (hasRes ? "✓" : "—") + "  S " + (hasSup ? "✓" : "—")
+        string srTxt  = "R " + (hasRes ? "ok" : "-") + "  S " + (hasSup ? "ok" : "-")
         r := f_kv(dash, r, "TL trend", trendTxt, trendCl, ts)
         r := f_kv(dash, r, "TL lines", srTxt, color.new(#d1d4dc, 0), ts)
         r := f_kv(dash, r, "TL setup", setupTxt, setCl, ts)
@@ -1661,14 +1661,14 @@ if dashOn and barstate.islast
             string z = not sdSupported ? "n/a above 4H" : "Buy " + str.tostring(f_sdCount(sdDem)) + "  Sell " + str.tostring(f_sdCount(sdSup))
             r := f_kv(dash, r, "4H zones", z, color.new(#d1d4dc, 0), ts)
         if ribOn
-            r := f_kv(dash, r, "EMA " + str.tostring(ribLen), ribDir == 1 ? "Bullish" : ribDir == -1 ? "Bearish" : "—", ribDir == 1 ? ribBull : ribDir == -1 ? ribBear : color.gray, ts)
+            r := f_kv(dash, r, "EMA " + str.tostring(ribLen), ribDir == 1 ? "Bullish" : ribDir == -1 ? "Bearish" : "-", ribDir == 1 ? ribBull : ribDir == -1 ? ribBear : color.gray, ts)
 
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 //  ALERTS
 //  alertcondition(): one entry per event (pick it in the Create Alert dialog).
 //  alert(): a single "Any alert() function call" alert delivers only the events
 //           switched on in section 9. Both fire on closed bars only.
-// ═════════════════════════════════════════════════════════════════════════════
+// =============================================================================
 alertcondition(mtfBullFlip, "All timeframes bullish", "{{ticker}}: every timeframe in the dashboard is now Bullish")
 alertcondition(mtfBearFlip, "All timeframes bearish", "{{ticker}}: every timeframe in the dashboard is now Bearish")
 alertcondition(lonL, "London ORB long",  "{{ticker}} closed above the London opening range high")
