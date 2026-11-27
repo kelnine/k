@@ -152,3 +152,16 @@ Run it in this order. Each step turns modules on or off **in the inputs**. No co
 
 If a step fails, the error text plus the Profiler's top lines is enough for me to fix the
 specific component and send a corrected build.
+
+---
+
+## 8. GG Charts edition
+
+`pine/AIO_Trading_Suite_K_GGCharts.pine` is generated from the main script by
+`python3 pine/tools/build_gg.py`. Always edit the main file and regenerate, never the other way round.
+
+GG Charts runs Pine v6 but rejects scripts over 64 KB, and the main build is about 93 KB. The GG edition is about 58 KB:
+
+* **Removed:** the Volume Profile module (section 3, which is off by default) and the `alert()` delivery block with its section-9 toggles. All 26 `alertcondition()` entries are kept.
+* **Stripped:** comments, tooltips and status-line display arguments. Wrapped lines are joined and optional spaces around operators are dropped.
+* **Unchanged:** every other calculation, input default and signal is identical to the TradingView build.
