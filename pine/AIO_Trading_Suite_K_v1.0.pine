@@ -166,6 +166,7 @@ tolATR = input.float(0.35,"Touch tolerance (ATR x)", minval = 0.05, maxval = 2.0
 pairDepth = input.int(6, "Anchor pairing depth", minval = 2, maxval = 14, group = G6, display = display.none)
 maxViolIn = input.int(1, "Max allowed violations", minval = 0, maxval = 6, group = G6, display = display.none)
 slopeMode = input.string("Classic", "Slope filter", options = ["Classic", "Any Slope"], group = G6, display = display.none)
+tlHistBars = input.int(1500, "Search window (recent bars)", minval = 300, maxval = 20000, group = G6, tooltip = "NEW: new trendlines are only searched for in this many recent bars (never less than 3 x Maximum bars to analyze). Lines and signals near the current price are unaffected, because a line is discarded once its anchor is 2 x Maximum bars old. Older history simply shows no trendline labels. This removes most of the trendline cost on long 1m/5m histories.", display = display.none)
 
 breakMode = input.string("Confirmed", "Breakout mode", options = ["Aggressive", "Confirmed"], group = G6b, display = display.none)
 requireClose = input.bool(true, "Candle close confirmation", group = G6b, display = display.none)
@@ -361,6 +362,9 @@ off8 = not mtfLive and timeframe.in_seconds(tf8) > chartSec ? 1 : 0
 
 // Requests sit inside `if` blocks (Pine v6 dynamic requests) so that disabled /
 // skipped rows are not fetched.
+// A row on the chart's own timeframe is computed locally instead of through a
+// second copy of the chart (identical value, one less request context).
+mtLocal = f_mtfCalc()
 int mt1 = na
 int mt2 = na
 int mt3 = na
@@ -370,21 +374,45 @@ int mt6 = na
 int mt7 = na
 int mt8 = na
 if use1
-    mt1 := request.security(syminfo.tickerid, tf1, f_mtfCalcOff(off1), lookahead = off1 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf1) == chartSec
+        mt1 := mtLocal
+    else
+        mt1 := request.security(syminfo.tickerid, tf1, f_mtfCalcOff(off1), lookahead = off1 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use2
-    mt2 := request.security(syminfo.tickerid, tf2, f_mtfCalcOff(off2), lookahead = off2 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf2) == chartSec
+        mt2 := mtLocal
+    else
+        mt2 := request.security(syminfo.tickerid, tf2, f_mtfCalcOff(off2), lookahead = off2 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use3
-    mt3 := request.security(syminfo.tickerid, tf3, f_mtfCalcOff(off3), lookahead = off3 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf3) == chartSec
+        mt3 := mtLocal
+    else
+        mt3 := request.security(syminfo.tickerid, tf3, f_mtfCalcOff(off3), lookahead = off3 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use4
-    mt4 := request.security(syminfo.tickerid, tf4, f_mtfCalcOff(off4), lookahead = off4 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf4) == chartSec
+        mt4 := mtLocal
+    else
+        mt4 := request.security(syminfo.tickerid, tf4, f_mtfCalcOff(off4), lookahead = off4 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use5
-    mt5 := request.security(syminfo.tickerid, tf5, f_mtfCalcOff(off5), lookahead = off5 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf5) == chartSec
+        mt5 := mtLocal
+    else
+        mt5 := request.security(syminfo.tickerid, tf5, f_mtfCalcOff(off5), lookahead = off5 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use6
-    mt6 := request.security(syminfo.tickerid, tf6, f_mtfCalcOff(off6), lookahead = off6 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf6) == chartSec
+        mt6 := mtLocal
+    else
+        mt6 := request.security(syminfo.tickerid, tf6, f_mtfCalcOff(off6), lookahead = off6 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use7
-    mt7 := request.security(syminfo.tickerid, tf7, f_mtfCalcOff(off7), lookahead = off7 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf7) == chartSec
+        mt7 := mtLocal
+    else
+        mt7 := request.security(syminfo.tickerid, tf7, f_mtfCalcOff(off7), lookahead = off7 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 if use8
-    mt8 := request.security(syminfo.tickerid, tf8, f_mtfCalcOff(off8), lookahead = off8 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+    if timeframe.in_seconds(tf8) == chartSec
+        mt8 := mtLocal
+    else
+        mt8 := request.security(syminfo.tickerid, tf8, f_mtfCalcOff(off8), lookahead = off8 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
 
 f_ok(bool use, int t, int dir) =>
     not use or t == dir
@@ -1114,6 +1142,8 @@ bool emaBearOk = not useEmaf or ((na(tlE50) or close < tlE50) and (na(tlE21) or 
 float brkDist = useATRf ? atrNow * atrBreakMult : 0.0
 
 bool barOk = barstate.isconfirmed
+// Only search for new lines in the recent window (see "Search window" input).
+bool tlWin = bar_index >= last_bar_index - math.max(tlHistBars, 3 * maxAnalyze)
 
 type TL
     int id
@@ -1298,7 +1328,7 @@ float promLo = ta.lowest(low, math.max(3, L * 3))[L]
 bool alNewStrongRes = false
 bool alNewStrongSup = false
 
-if tlOn and barOk and not na(tlPh)
+if tlOn and tlWin and barOk and not na(tlPh)
     int pb = bar_index - L
     float pv = tlPh
     float pst = pv >= promHi ? 1.0 : 0.6
@@ -1337,7 +1367,7 @@ if tlOn and barOk and not na(tlPh)
                                         alNewStrongRes := true
             f_prune(true)
 
-if tlOn and barOk and not na(tlPl)
+if tlOn and tlWin and barOk and not na(tlPl)
     int pb = bar_index - L
     float pv = tlPl
     float pst = pv <= promLo ? 1.0 : 0.6

@@ -69,6 +69,8 @@ File: `pine/AIO_Trading_Suite_K_v1.0.pine` (one indicator, overlay).
 | 10 | Trendlines | `f_alreadyBroken` is checked before `f_validate`. Validation exits early once violations exceed the limit. | **Identical** accepted lines and scores. |
 | 11 | Trendlines | Rendering runs on the last bar only. `setupIdx` is replaced by a stable line id (bug fix). | Display identical, except that clean mode now highlights the correct setup line. |
 | 12 | Trendlines | Global `max_bars_back = 1100` kept as in the original. (v1.0 tried per-series buffers; TradingView ignored them and threw RE10143 on 5m, so this was reverted.) | None. |
+| 12b | Trendlines | NEW **Search window** (default 1500 bars, never < 3 × Maximum bars to analyze): new lines are only searched for in recent bars. Added after RE10110 on 1m with 20,000 calculated bars. | Lines/signals near current price unchanged (a line dies once its anchor is 2 × maxAnalyze old); older history shows no trendline labels. |
+| 12c | MTF | A row on the chart's own timeframe is computed locally instead of via request.security. | Identical value, one less request context. |
 | 13 | Trendlines | The EMA 9/21/50/200 plots default **off**, because section 5 and the ribbon already draw EMAs. They are still calculated for the trend and filters. Global Clean Mode / Lite force trendline clean display, and Lite keeps 10 labels instead of 30. | Display only. |
 | 14 | Dashboard | One table. Default text **Small** (was Normal). Trendline rows condensed from 5 to 4 (Resistance/Support merged into "TL lines"). | Display only. |
 
